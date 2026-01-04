@@ -60,11 +60,9 @@ type ServerConfig struct {
 	Port int `mapstructure:"port"`
 }
 
-// Load loads configuration from YAML file, environment variables, and CLI flags.
-// Priority: CLI flags > ENV vars > .env file > YAML file > defaults.
-// The configFile parameter is the path to the YAML config file (can be empty).
-func Load(configFile string) (*Config, error) {
-	// Load .env file first (if exists)
+// setupViper creates and configures a new viper instance with defaults and environment bindings.
+// This is the common setup used by all config loading functions.
+func setupViper(configFile string) (*viper.Viper, error) {
 	loadDotEnv()
 
 	v := viper.New()
@@ -84,7 +82,6 @@ func Load(configFile string) (*Config, error) {
 	}
 
 	// Enable environment variable overrides
-	// HA_URL, HA_TOKEN, SERVER_PORT
 	v.SetEnvPrefix("")
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
@@ -94,6 +91,18 @@ func Load(configFile string) (*Config, error) {
 	mustBindEnv(v, "homeassistant.token", "HA_TOKEN")
 	mustBindEnv(v, "server.port", "HA_MCP_PORT")
 	mustBindEnv(v, "logging.level", "HA_MCP_LOG_LEVEL")
+
+	return v, nil
+}
+
+// Load loads configuration from YAML file, environment variables, and CLI flags.
+// Priority: CLI flags > ENV vars > .env file > YAML file > defaults.
+// The configFile parameter is the path to the YAML config file (can be empty).
+func Load(configFile string) (*Config, error) {
+	v, err := setupViper(configFile)
+	if err != nil {
+		return nil, err
+	}
 
 	// Unmarshal into struct
 	cfg := &Config{}
@@ -126,7 +135,6 @@ func BindFlags(v *viper.Viper, haURL, haToken string, port int) {
 // LoadWithViper loads configuration using a pre-configured viper instance.
 // This allows CLI flags to be bound before loading.
 func LoadWithViper(v *viper.Viper, configFile string) (*Config, error) {
-	// Load .env file first (if exists)
 	loadDotEnv()
 
 	// Set defaults
@@ -171,35 +179,10 @@ func LoadWithViper(v *viper.Viper, configFile string) (*Config, error) {
 // LoadForDisplay loads configuration without validation, for display purposes.
 // This allows showing the effective configuration even if required fields are missing.
 func LoadForDisplay(configFile string) (*Config, error) {
-	// Load .env file first (if exists)
-	loadDotEnv()
-
-	v := viper.New()
-
-	// Set defaults
-	v.SetDefault("homeassistant.url", "http://homeassistant.local:8123")
-	v.SetDefault("homeassistant.token", "")
-	v.SetDefault("server.port", 8080)
-	v.SetDefault("logging.level", "INFO")
-
-	// Load from config file if specified
-	if configFile != "" {
-		v.SetConfigFile(configFile)
-		if err := v.ReadInConfig(); err != nil {
-			return nil, fmt.Errorf("reading config file: %w", err)
-		}
+	v, err := setupViper(configFile)
+	if err != nil {
+		return nil, err
 	}
-
-	// Enable environment variable overrides
-	v.SetEnvPrefix("")
-	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-	v.AutomaticEnv()
-
-	// Bind specific env vars to config keys
-	mustBindEnv(v, "homeassistant.url", "HA_URL")
-	mustBindEnv(v, "homeassistant.token", "HA_TOKEN")
-	mustBindEnv(v, "server.port", "HA_MCP_PORT")
-	mustBindEnv(v, "logging.level", "HA_MCP_LOG_LEVEL")
 
 	// Unmarshal into struct
 	cfg := &Config{}

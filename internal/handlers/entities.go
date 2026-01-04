@@ -231,12 +231,11 @@ func (h *EntityHandlers) handleListDomains(ctx context.Context, client homeassis
 		}, nil
 	}
 
-	// Extract unique domains
+	// Extract unique domains using index lookup for efficiency
 	domainSet := make(map[string]int)
 	for _, state := range states {
-		parts := strings.SplitN(state.EntityID, ".", 2)
-		if len(parts) > 0 {
-			domainSet[parts[0]]++
+		if idx := strings.Index(state.EntityID, "."); idx > 0 {
+			domainSet[state.EntityID[:idx]]++
 		}
 	}
 

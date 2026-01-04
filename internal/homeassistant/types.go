@@ -137,12 +137,6 @@ type SceneState struct {
 	Attributes map[string]any `json:"attributes,omitempty"`
 }
 
-// ServiceData represents data passed to a service call.
-type ServiceData struct {
-	EntityID string         `json:"entity_id,omitempty"`
-	Data     map[string]any `json:"data,omitempty"`
-}
-
 // EntityRegistryEntry represents an entry in the Home Assistant entity registry.
 type EntityRegistryEntry struct {
 	EntityID      string `json:"entity_id"`

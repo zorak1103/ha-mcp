@@ -149,6 +149,9 @@ func (r *Registry) ResourceCount() int {
 	return len(r.resources)
 }
 
+// maxDescriptionLen is the maximum length for tool descriptions in log output.
+const maxDescriptionLen = 80
+
 // LogRegisteredTools logs all registered tools at Debug level.
 // This is useful for debugging and verifying that all expected tools are available.
 func (r *Registry) LogRegisteredTools(logger *logging.Logger) {
@@ -169,7 +172,7 @@ func (r *Registry) LogRegisteredTools(logger *logging.Logger) {
 	logger.Debug("Registered MCP tools:")
 	for _, name := range toolNames {
 		entry := r.tools[name]
-		logger.Debug("  - "+name, "description", truncateDescription(entry.tool.Description, 80))
+		logger.Debug("  - "+name, "description", truncateDescription(entry.tool.Description, maxDescriptionLen))
 	}
 
 	// Also log resources if any
