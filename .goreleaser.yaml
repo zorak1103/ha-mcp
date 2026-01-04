@@ -36,7 +36,7 @@ archives:
       group: root
       owner: root
     files:
-      - LICENSE*
+      - LICENSE
       - README.md
       - configs/config.example.yaml
 
@@ -63,7 +63,7 @@ nfpms:
     homepage: https://github.com/zorak1103/ha-mcp
     maintainer: zorak1103
     description: MCP Server for Home Assistant - AI agent integration
-    license: MIT
+    license: GPL-3.0
     
     formats:
       - deb
@@ -74,8 +74,8 @@ nfpms:
     bindir: /usr/bin
     
     contents:
-      - src: LICENSE*
-        dst: /usr/share/doc/ha-mcp/
+      - src: LICENSE
+        dst: /usr/share/doc/ha-mcp/LICENSE
       - src: README.md
         dst: /usr/share/doc/ha-mcp/README.md
       - src: configs/config.example.yaml
