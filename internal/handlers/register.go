@@ -16,8 +16,39 @@ func RegisterAutomationTools(registry *mcp.Registry) {
 }
 
 // RegisterHelperTools registers all helper-related tools with the registry.
+// This registers the generic list_helpers tool.
 func RegisterHelperTools(registry *mcp.Registry) {
 	h := NewHelperHandlers()
+	h.RegisterTools(registry)
+}
+
+// RegisterInputBooleanTools registers all input_boolean helper tools with the registry.
+func RegisterInputBooleanTools(registry *mcp.Registry) {
+	h := NewInputBooleanHandlers()
+	h.RegisterTools(registry)
+}
+
+// RegisterInputNumberTools registers all input_number helper tools with the registry.
+func RegisterInputNumberTools(registry *mcp.Registry) {
+	h := NewInputNumberHandlers()
+	h.RegisterTools(registry)
+}
+
+// RegisterInputTextTools registers all input_text helper tools with the registry.
+func RegisterInputTextTools(registry *mcp.Registry) {
+	h := NewInputTextHandlers()
+	h.RegisterTools(registry)
+}
+
+// RegisterInputSelectTools registers all input_select helper tools with the registry.
+func RegisterInputSelectTools(registry *mcp.Registry) {
+	h := NewInputSelectHandlers()
+	h.RegisterTools(registry)
+}
+
+// RegisterInputDatetimeTools registers all input_datetime helper tools with the registry.
+func RegisterInputDatetimeTools(registry *mcp.Registry) {
+	h := NewInputDatetimeHandlers()
 	h.RegisterTools(registry)
 }
 
@@ -51,9 +82,18 @@ func RegisterAllTools(registry *mcp.Registry) {
 	// Core entity and automation handlers
 	RegisterEntityTools(registry)
 	RegisterAutomationTools(registry)
-	RegisterHelperTools(registry)
 	RegisterScriptTools(registry)
 	RegisterSceneTools(registry)
+
+	// Helper tools (generic list_helpers)
+	RegisterHelperTools(registry)
+
+	// Input helper handlers (create, delete, actions)
+	RegisterInputBooleanTools(registry)
+	RegisterInputNumberTools(registry)
+	RegisterInputTextTools(registry)
+	RegisterInputSelectTools(registry)
+	RegisterInputDatetimeTools(registry)
 
 	// Registry, media, and advanced handlers
 	RegisterRegistryTools(registry)
