@@ -70,6 +70,18 @@ func RegisterTimerTools(registry *mcp.Registry) {
 	h.RegisterTools(registry)
 }
 
+// RegisterScheduleTools registers all schedule helper tools with the registry.
+func RegisterScheduleTools(registry *mcp.Registry) {
+	h := NewScheduleHandlers()
+	h.RegisterTools(registry)
+}
+
+// RegisterGroupTools registers all group helper tools with the registry.
+func RegisterGroupTools(registry *mcp.Registry) {
+	h := NewGroupHandlers()
+	h.RegisterTools(registry)
+}
+
 // RegisterRegistryTools registers all registry-related tools (entity/device/area registries).
 func RegisterRegistryTools(registry *mcp.Registry) {
 	h := NewRegistryHandlers()
@@ -117,6 +129,10 @@ func RegisterAllTools(registry *mcp.Registry) {
 	RegisterInputButtonTools(registry)
 	RegisterCounterTools(registry)
 	RegisterTimerTools(registry)
+
+	// Tier 2 helper handlers (schedule, group)
+	RegisterScheduleTools(registry)
+	RegisterGroupTools(registry)
 
 	// Registry, media, and advanced handlers
 	RegisterRegistryTools(registry)
