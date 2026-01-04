@@ -1,0 +1,178 @@
+# GitHub Actions CI/CD Pipeline for ha-mcp
+# Home Assistant MCP Server
+# Go Version: 1.25.5
+# Migrated from GitLab CI
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+env:
+  GO_VERSION: "1.25.5"
+  CGO_ENABLED: "0"
+
+jobs:
+  # ============================================================================
+  # LINT - Code Quality and Formatting
+  # ============================================================================
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: --timeout=5m
+
+      - name: Check Go formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "The following files are not formatted:"
+            echo "$unformatted"
+            echo ""
+            echo "Run 'gofmt -w .' to fix formatting"
+            exit 1
+          fi
+          echo "All files are properly formatted"
+
+  # ============================================================================
+  # TEST - Unit Tests and Coverage
+  # ============================================================================
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "1"  # Required for race detector
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run tests with coverage
+        run: |
+          go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+          
+      - name: Generate coverage report
+        run: |
+          go tool cover -func=coverage.out | tee coverage-report.txt
+          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}')
+          echo "Total Coverage: $COVERAGE"
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            coverage.out
+            coverage-report.txt
+          retention-days: 30
+
+  # ============================================================================
+  # BUILD - Syntax Check
+  # ============================================================================
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Build syntax check
+        run: |
+          echo "Checking build syntax for main package..."
+          go build -n ./cmd/ha-mcp
+          echo "✓ Build syntax check passed"
+
+      - name: Verify package
+        run: |
+          PACKAGE_NAME=$(go list -f '{{.Name}}' ./cmd/ha-mcp)
+          if [ -z "$PACKAGE_NAME" ]; then
+            echo "Error: Could not determine package name"
+            exit 1
+          fi
+          echo "Package name: $PACKAGE_NAME"
+
+  # ============================================================================
+  # SECURITY - gosec Static Analysis
+  # ============================================================================
+  gosec:
+    name: Security (gosec)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+
+      - name: Run gosec
+        run: |
+          gosec -fmt sarif -out gosec-results.sarif ./cmd/... ./internal/... || true
+          gosec -fmt text ./cmd/... ./internal/...
+
+      - name: Upload SARIF results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: gosec-results.sarif
+        continue-on-error: true
+
+  # ============================================================================
+  # SECURITY - govulncheck Vulnerability Scanner
+  # ============================================================================
+  govulncheck:
+    name: Security (govulncheck)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run govulncheck
+        run: govulncheck -show verbose ./...

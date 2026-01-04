@@ -1,0 +1,38 @@
+# ha-mcp Configuration Example
+# Copy this file to config.yaml and adjust values
+
+# Home Assistant connection settings
+homeassistant:
+  # URL of your Home Assistant instance
+  # Examples:
+  #   - http://homeassistant.local:8123
+  #   - http://192.168.1.100:8123
+  #   - https://your-ha-domain.duckdns.org
+  url: "http://homeassistant.local:8123"
+  
+  # Long-Lived Access Token
+  # Generate at: Home Assistant → Profile → Long-Lived Access Tokens
+  # Keep this secret! Do not commit to version control.
+  token: "your-long-lived-access-token"
+  
+  # Request timeout in seconds (optional, default: 30)
+  timeout: 30
+
+# MCP Server settings
+server:
+  # Port for the MCP HTTP server
+  port: 8080
+  
+  # Host to bind to (optional, default: localhost)
+  # Use "0.0.0.0" to listen on all interfaces
+  host: "localhost"
+
+# Logging settings (optional)
+logging:
+  # Log level: trace, debug, info, warn, error
+  # TRACE: Full request/response bodies (very verbose)
+  # DEBUG: Detailed debugging information
+  # INFO:  General operational information (default)
+  # WARN:  Warnings only
+  # ERROR: Errors only
+  level: "info"

@@ -1,0 +1,118 @@
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+    - golangci-lint run ./...
+
+builds:
+  - main: ./cmd/ha-mcp
+    binary: ha-mcp
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - LICENSE*
+      - README.md
+      - configs/config.example.yaml
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - Merge pull request
+      - Merge branch
+
+nfpms:
+  - id: packages
+    package_name: ha-mcp
+    vendor: zorak1103
+    homepage: https://github.com/zorak1103/ha-mcp
+    maintainer: zorak1103
+    description: MCP Server for Home Assistant - AI agent integration
+    license: MIT
+    
+    formats:
+      - deb
+      - rpm
+      - apk
+      - archlinux
+    
+    bindir: /usr/bin
+    
+    contents:
+      - src: LICENSE*
+        dst: /usr/share/doc/ha-mcp/
+      - src: README.md
+        dst: /usr/share/doc/ha-mcp/README.md
+      - src: configs/config.example.yaml
+        dst: /etc/ha-mcp/config.example.yaml
+        type: config
+    
+    # RPM specific
+    rpm:
+      group: Applications/System
+      compression: lzma
+    
+    # DEB specific
+    deb:
+      compression: xz
+    
+    # Arch Linux specific
+    archlinux:
+      pkgbase: ha-mcp
+      packager: zorak1103
+
+# Docker builds disabled for now (can be re-enabled later)
+# dockers:
+#   - image_templates:
+#       - "ghcr.io/zorak1103/ha-mcp:{{ .Tag }}"
+#       - "ghcr.io/zorak1103/ha-mcp:latest"
+#     dockerfile: Dockerfile
+#     build_flag_templates:
+#       - "--pull"
+#       - "--label=org.opencontainers.image.created={{.Date}}"
+#       - "--label=org.opencontainers.image.title={{.ProjectName}}"
+#       - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+#       - "--label=org.opencontainers.image.version={{.Version}}"
+#     goos: linux
+#     goarch: amd64
+
+release:
+  github:
+    owner: zorak1103
+    name: ha-mcp
+  draft: false
+  prerelease: auto

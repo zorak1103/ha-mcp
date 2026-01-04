@@ -1,0 +1,78 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+ha-mcp
+
+# Binary output directory
+bin/
+dist/
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.html
+coverage.txt
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Dependency directories
+vendor/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Configuration files with secrets
+config.yaml
+config.yml
+configs/config.yaml
+configs/config.yml
+!configs/config.example.yaml
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Log files
+*.log
+logs/
+
+# GoReleaser
+dist/
+
+# Clavix output (optional - remove if you want to track)
+# .clavix/outputs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Debug files
+debug
+__debug_bin*
+
+# Air live reload
+tmp/
+
+# GoLand
+.idea/
+
+# Profiling
+*.prof
+*.pprof
+
+.clavix/
+.clinerules/

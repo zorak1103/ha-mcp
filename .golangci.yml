@@ -1,0 +1,180 @@
+# golangci-lint configuration for DLIA (Docker Log Intelligence Agent)
+# See https://golangci-lint.run/usage/configuration/ for all options
+version: 2
+
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+
+output:
+  print-issued-lines: true
+  print-linter-name: true
+  sort-results: true
+
+linters:
+  enable:
+    # Enabled by default
+    - errcheck      # Check for unchecked errors
+    # - gosimple      # Simplify code (removed: deprecated in v2)
+    - govet         # Standard Go vet checks
+    - ineffassign   # Detect ineffectual assignments
+    - staticcheck   # Advanced static analysis
+    - unused        # Find unused code
+    
+    # Additional recommended linters
+    # - gofmt         # Check code formatting (removed: treated as formatter in v2)
+    # - goimports   # Check import formatting (disabled: requires 'diff' command)
+    - misspell      # Find commonly misspelled words
+    - revive        # Fast, configurable, extensible linter
+    - unconvert     # Remove unnecessary type conversions
+    - unparam       # Find unused function parameters
+    - gosec         # Security-focused linter
+    - gocritic      # Opinionated linter with many checks
+    - bodyclose     # Check HTTP response body is closed
+    - noctx         # Find http requests without context
+    - errname       # Check error naming conventions
+    - errorlint     # Find code that will cause problems with Go 1.13+ error wrapping
+    - copyloopvar   # Check for pointers to loop variables (replaces exportloopref for Go 1.22+)
+    - gochecknoinits # Check for init functions
+    - goconst       # Find repeated strings that could be constants
+    - gocyclo       # Check cyclomatic complexity
+    - goprintffuncname # Check printf-like function names
+    - nakedret      # Check for naked returns in long functions
+    - nilerr        # Find code returning nil even when error is not nil
+    - nilnil        # Check for returning nil values with nil errors
+    - predeclared   # Find code shadowing predeclared identifiers
+    - thelper       # Detect test helpers without t.Helper()
+    - tparallel     # Check for t.Parallel() usage
+    - whitespace    # Check for unnecessary whitespace
+
+  disable:
+    - gocognit      # Can be too strict for complex logic
+    - godox         # Don't fail on TODO/FIXME comments
+    - funlen        # Function length can be subjective
+    - lll           # Line length is subjective and formatting handles it
+
+linters-settings:
+  errcheck:
+    # Check for ignored errors from specific functions
+    check-type-assertions: true
+    check-blank: true
+    exclude-functions:
+      - (*database/sql.DB).Close
+      - (*database/sql.Rows).Close
+      
+  govet:
+    enable:
+      - shadow      # Report shadowed variables
+    disable:
+      - fieldalignment  # Can be overly strict
+      
+  gocyclo:
+    min-complexity: 15
+    
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - style
+      - performance
+    disabled-checks:
+      - commentFormatting
+      - unnamedResult
+      
+  revive:
+    rules:
+      - name: var-naming
+        disabled: false
+      - name: exported
+        disabled: false
+      - name: indent-error-flow
+        disabled: false
+      - name: blank-imports
+        disabled: false
+      - name: context-as-argument
+        disabled: false
+      - name: dot-imports
+        disabled: false
+      - name: error-return
+        disabled: false
+      - name: error-strings
+        disabled: false
+      - name: error-naming
+        disabled: false
+      - name: if-return
+        disabled: false
+      - name: increment-decrement
+        disabled: false
+      - name: var-declaration
+        disabled: false
+      - name: package-comments
+        disabled: true  # Can be too strict for internal packages
+      - name: range
+        disabled: false
+      - name: receiver-naming
+        disabled: false
+      - name: time-naming
+        disabled: false
+      - name: unexported-return
+        disabled: false
+      - name: indent-error-flow
+        disabled: false
+      - name: errorf
+        disabled: false
+      - name: empty-block
+        disabled: false
+      - name: superfluous-else
+        disabled: false
+      - name: unused-parameter
+        disabled: false
+      - name: unreachable-code
+        disabled: false
+      - name: redefines-builtin-id
+        disabled: false
+        
+  gosec:
+    excludes:
+      - G307  # Can be too strict about defer Close()
+    
+  nakedret:
+    max-func-lines: 30
+    
+  goconst:
+    min-len: 3
+    min-occurrences: 3
+    
+  misspell:
+    locale: US
+
+issues:
+  # Maximum issues count per one linter
+  max-issues-per-linter: 0
+  
+  # Maximum count of issues with the same text
+  max-same-issues: 0
+  
+  # Exclude some linters from running on tests files
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck
+        - gosec
+        - gocritic
+        - gocyclo
+        
+    # Exclude some staticcheck messages on test files
+    - path: _test\.go
+      text: "SA1019:"  # Ignore deprecation warnings in tests
+      
+    # Exclude lll issues for long lines with go:generate
+    - linters:
+        - lll
+      source: "^//go:generate "
+      
+  # Independently from option `exclude` use default exclude patterns
+  exclude-use-default: false
+  
+  # Show all issues from all linters
+  exclude:
+    # Ignore certain error strings for common patterns
+    - 'Error return value of .((os\.)?std(out|err)\..*|.*Close|.*Flush|os\.Remove(All)?|.*print(f|ln)?|os\.(Un)?Setenv). is not checked'
