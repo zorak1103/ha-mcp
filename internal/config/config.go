@@ -18,9 +18,8 @@ var loadEnvOnce sync.Once
 // It is called once before loading configuration.
 func loadDotEnv() {
 	loadEnvOnce.Do(func() {
-		// Try common locations for .env file
-		envFiles := []string{".env", "configs/.env"}
-		for _, f := range envFiles {
+		dotEnvSearchPaths := []string{".env", "configs/.env"}
+		for _, f := range dotEnvSearchPaths {
 			if _, err := os.Stat(f); err == nil {
 				// Load .env but don't override existing environment variables
 				_ = godotenv.Load(f)

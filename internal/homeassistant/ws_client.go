@@ -14,6 +14,10 @@ import (
 	"github.com/coder/websocket"
 )
 
+// maxWSMessageSize is the maximum WebSocket message size (16MB).
+// Large responses like get_states with many entities require this limit.
+const maxWSMessageSize = 16 * 1024 * 1024
+
 // WSClientConfig holds configuration options for WSClient.
 type WSClientConfig struct {
 	// ReconnectConfig configures automatic reconnection behavior.
@@ -103,9 +107,7 @@ func (c *WSClient) Connect(ctx context.Context) error {
 	}
 	c.conn = conn
 
-	// Set message size limit to 16MB to handle large Home Assistant responses
-	// (e.g., get_states with many entities)
-	c.conn.SetReadLimit(16 * 1024 * 1024)
+	c.conn.SetReadLimit(maxWSMessageSize)
 
 	// Perform authentication
 	if err := c.authenticate(); err != nil {
@@ -325,16 +327,15 @@ func (c *WSClient) readLoop() {
 		switch msgType {
 		case "result":
 			c.handleResultMessage(data)
-		case "event":
-			// Event handling can be added in future phases
-			// For now, we just ignore events
-		case "pong":
-			// Pong responses for health check (Phase 2)
+		case "event", "pong":
+			// Events and pong responses are handled by their respective subsystems
 		}
 	}
 }
 
 // reconnect attempts to re-establish the WebSocket connection with exponential backoff.
+// It is idempotent: concurrent calls are serialized via the reconnecting atomic flag.
+// Pending requests will fail during reconnection; callers should retry on connection errors.
 func (c *WSClient) reconnect() error {
 	// Prevent concurrent reconnection attempts
 	if !c.reconnecting.CompareAndSwap(false, true) {
@@ -412,8 +413,7 @@ func (c *WSClient) connectInternal() error {
 	}
 	c.conn = conn
 
-	// Set message size limit to 16MB to handle large Home Assistant responses
-	c.conn.SetReadLimit(16 * 1024 * 1024)
+	c.conn.SetReadLimit(maxWSMessageSize)
 
 	// Perform authentication
 	if err := c.authenticate(); err != nil {

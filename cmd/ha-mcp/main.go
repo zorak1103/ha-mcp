@@ -60,7 +60,6 @@ func (a *App) setupFlags() {
 	a.rootCmd.PersistentFlags().StringVar(&a.haToken, "ha-token", "", "Home Assistant long-lived access token")
 	a.rootCmd.PersistentFlags().IntVar(&a.port, "port", 0, "MCP server port")
 
-	// Bind flags to viper
 	bindPFlag("homeassistant.url", a.rootCmd.PersistentFlags().Lookup("ha-url"))
 	bindPFlag("homeassistant.token", a.rootCmd.PersistentFlags().Lookup("ha-token"))
 	bindPFlag("server.port", a.rootCmd.PersistentFlags().Lookup("port"))

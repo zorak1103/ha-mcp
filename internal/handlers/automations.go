@@ -30,8 +30,6 @@ func (h *AutomationHandlers) RegisterTools(registry *mcp.Registry) {
 	registry.RegisterTool(h.toggleAutomationTool(), h.handleToggleAutomation)
 }
 
-// Tool definitions
-
 func (h *AutomationHandlers) listAutomationsTool() mcp.Tool {
 	return mcp.Tool{
 		Name:        "list_automations",
@@ -180,8 +178,6 @@ func (h *AutomationHandlers) toggleAutomationTool() mcp.Tool {
 		},
 	}
 }
-
-// Handler implementations
 
 func (h *AutomationHandlers) handleListAutomations(ctx context.Context, client homeassistant.Client, _ map[string]any) (*mcp.ToolsCallResult, error) {
 	automations, err := client.ListAutomations(ctx)
@@ -396,8 +392,6 @@ func (h *AutomationHandlers) handleToggleAutomation(ctx context.Context, client 
 		Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Automation '%s' %s successfully", automationID, state))},
 	}, nil
 }
-
-// Helper functions
 
 // getString safely extracts a string value from a map of arguments.
 // It returns an empty string if the key doesn't exist or the value is not a string.

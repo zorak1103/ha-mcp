@@ -24,6 +24,14 @@ const (
 	ProtocolVersion = "2024-11-05"
 )
 
+// HTTP server timeout constants.
+const (
+	httpReadHeaderTimeout = 10 * time.Second
+	httpReadTimeout       = 30 * time.Second
+	httpWriteTimeout      = 30 * time.Second
+	httpIdleTimeout       = 60 * time.Second
+)
+
 // Server represents the MCP server.
 type Server struct {
 	haClient    homeassistant.Client
@@ -57,10 +65,10 @@ func (s *Server) Start() error {
 	s.httpServer = &http.Server{
 		Addr:              fmt.Sprintf(":%d", s.port),
 		Handler:           mux,
-		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       60 * time.Second,
+		ReadHeaderTimeout: httpReadHeaderTimeout,
+		ReadTimeout:       httpReadTimeout,
+		WriteTimeout:      httpWriteTimeout,
+		IdleTimeout:       httpIdleTimeout,
 	}
 
 	s.logger.Info("MCP server starting", "port", s.port)
@@ -242,7 +250,9 @@ func (s *Server) handleInitialize(req *Request) *Response {
 }
 
 // handleInitialized handles the initialized notification.
-// Per JSON-RPC 2.0, notifications (requests without id) must not receive a response.
+// Per JSON-RPC 2.0 spec section 4.1, notifications (requests without id) MUST NOT
+// receive a response. However, some MCP clients incorrectly send initialized as a
+// request with an id, so we handle both cases for compatibility.
 func (s *Server) handleInitialized(req *Request) *Response {
 	s.mu.Lock()
 	s.initialized = true
