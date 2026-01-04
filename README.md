@@ -82,12 +82,110 @@ ha-mcp supports configuration via YAML file, environment variables, or command-l
 
 ### Connection Requirements
 
-ha-mcp connects to Home Assistant via **WebSocket** (`ws://{host}/api/websocket`). Ensure:
+ha-mcp connects to Home Assistant via **WebSocket** (`ws://{host}/api/websocket` or `wss://{host}/api/websocket` for HTTPS). Ensure:
 
 - Home Assistant is running and accessible
 - WebSocket connections are allowed (default in HA)
-- The URL points to your Home Assistant instance (HTTP URL is converted to WebSocket internally)
+- The URL points to your Home Assistant instance (HTTP/HTTPS URL is converted to WebSocket internally)
 - A valid long-lived access token is configured
+
+### HTTPS/WSS Support
+
+ha-mcp fully supports secure connections. The URL scheme is automatically converted:
+
+| Input URL Scheme | WebSocket Scheme |
+|-----------------|------------------|
+| `http://`       | `ws://`          |
+| `https://`      | `wss://`         |
+| `ws://`         | `ws://`          |
+| `wss://`        | `wss://`         |
+
+**Example configurations for secure connections:**
+
+```yaml
+# config.yaml with HTTPS
+homeassistant:
+  url: "https://homeassistant.example.com"  # Converted to wss://
+  token: "your-long-lived-access-token"
+```
+
+```bash
+# Environment variables with HTTPS
+export HA_URL=https://homeassistant.example.com
+export HA_TOKEN=your-long-lived-access-token
+```
+
+```bash
+# Command-line with HTTPS
+ha-mcp --ha-url https://homeassistant.example.com --ha-token your-token
+```
+
+**Important notes for HTTPS/WSS:**
+
+1. **SSL/TLS Certificates**: The system's certificate store is used for validation. Self-signed certificates may require additional configuration on the host system.
+
+2. **Reverse Proxy Setup**: When using a reverse proxy (nginx, Traefik, Caddy), ensure WebSocket upgrade headers are properly forwarded:
+   ```nginx
+   # nginx example
+   location /api/websocket {
+       proxy_pass http://homeassistant:8123;
+       proxy_http_version 1.1;
+       proxy_set_header Upgrade $http_upgrade;
+       proxy_set_header Connection "upgrade";
+       proxy_set_header Host $host;
+   }
+   ```
+
+3. **Home Assistant Cloud (Nabu Casa)**: For remote access via Nabu Casa, use your unique URL:
+   ```yaml
+   homeassistant:
+     url: "https://your-instance.ui.nabu.casa"
+     token: "your-long-lived-access-token"
+   ```
+
+### Proxy Support
+
+ha-mcp supports HTTP/HTTPS proxies via standard environment variables. The underlying WebSocket library (`coder/websocket`) uses Go's standard HTTP client, which automatically respects these proxy settings.
+
+**Supported environment variables:**
+
+| Variable | Description |
+|----------|-------------|
+| `HTTP_PROXY` | Proxy for HTTP connections (e.g., `http://proxy:8080`) |
+| `HTTPS_PROXY` | Proxy for HTTPS connections (e.g., `http://proxy:8080`) |
+| `NO_PROXY` | Comma-separated list of hosts to bypass proxy |
+
+**Example usage:**
+
+```bash
+# Set proxy environment variables
+export HTTP_PROXY=http://proxy.example.com:8080
+export HTTPS_PROXY=http://proxy.example.com:8080
+export NO_PROXY=localhost,127.0.0.1
+
+# Start ha-mcp (will use proxy for Home Assistant connection)
+ha-mcp --ha-url https://homeassistant.example.com --ha-token your-token
+```
+
+**Docker with proxy:**
+
+```bash
+docker run -d \
+  --name ha-mcp \
+  -p 8080:8080 \
+  -e HA_URL=https://homeassistant.example.com \
+  -e HA_TOKEN=your-token \
+  -e HTTP_PROXY=http://proxy.example.com:8080 \
+  -e HTTPS_PROXY=http://proxy.example.com:8080 \
+  ha-mcp:latest
+```
+
+**Notes:**
+
+- Proxy authentication is supported via URL format: `http://user:password@proxy:8080`
+- SOCKS5 proxies are supported: `socks5://proxy:1080`
+- For WebSocket connections over HTTPS (wss://), the `HTTPS_PROXY` variable is used
+- Ensure the proxy allows WebSocket upgrade requests (HTTP 101 Switching Protocols)
 
 ### Configuration File
 
