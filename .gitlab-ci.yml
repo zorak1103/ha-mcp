@@ -50,7 +50,7 @@ golangci-lint:
   image: golang:${GO_VERSION}-alpine
   before_script:
     - apk add --no-cache git gcc musl-dev
-    - go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+    - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.7.2
   script:
     - export PATH=$PATH:$(go env GOPATH)/bin
     - golangci-lint --version
