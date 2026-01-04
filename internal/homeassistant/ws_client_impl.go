@@ -5,7 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
+)
+
+// Entity domain prefixes for filtering.
+const (
+	automationPrefix = "automation."
+	scriptPrefix     = "script."
+	scenePrefix      = "scene."
 )
 
 // wsClientImpl implements the Client interface using WebSocket commands.
@@ -141,7 +149,7 @@ func (c *wsClientImpl) ListAutomations(ctx context.Context) ([]Automation, error
 
 	var automations []Automation
 	for _, entity := range entities {
-		if len(entity.EntityID) > 11 && entity.EntityID[:11] == "automation." {
+		if strings.HasPrefix(entity.EntityID, automationPrefix) {
 			automations = append(automations, Automation{
 				EntityID:      entity.EntityID,
 				State:         entity.State,
@@ -160,8 +168,8 @@ func (c *wsClientImpl) ListAutomations(ctx context.Context) ([]Automation, error
 func (c *wsClientImpl) GetAutomation(ctx context.Context, automationID string) (*Automation, error) {
 	// Build entity_id from automation_id if needed
 	entityID := automationID
-	if len(automationID) < 11 || automationID[:11] != "automation." {
-		entityID = "automation." + automationID
+	if !strings.HasPrefix(automationID, automationPrefix) {
+		entityID = automationPrefix + automationID
 	}
 
 	result, err := c.ws.SendCommand(ctx, "automation/config", map[string]any{
@@ -279,6 +287,15 @@ func (c *wsClientImpl) ToggleAutomation(ctx context.Context, entityID string, en
 // Helper Operations
 // =============================================================================
 
+// helperPrefixes defines all known input helper domain prefixes.
+var helperPrefixes = []string{
+	"input_boolean.",
+	"input_number.",
+	"input_text.",
+	"input_select.",
+	"input_datetime.",
+}
+
 // ListHelpers lists all input helpers.
 func (c *wsClientImpl) ListHelpers(ctx context.Context) ([]Entity, error) {
 	entities, err := c.GetStates(ctx)
@@ -287,11 +304,9 @@ func (c *wsClientImpl) ListHelpers(ctx context.Context) ([]Entity, error) {
 	}
 
 	var helpers []Entity
-	helperPrefixes := []string{"input_boolean.", "input_number.", "input_text.", "input_select.", "input_datetime."}
-
 	for _, entity := range entities {
 		for _, prefix := range helperPrefixes {
-			if len(entity.EntityID) > len(prefix) && entity.EntityID[:len(prefix)] == prefix {
+			if strings.HasPrefix(entity.EntityID, prefix) {
 				helpers = append(helpers, entity)
 				break
 			}
@@ -435,7 +450,7 @@ func (c *wsClientImpl) ListScripts(ctx context.Context) ([]Entity, error) {
 
 	var scripts []Entity
 	for _, entity := range entities {
-		if len(entity.EntityID) > 7 && entity.EntityID[:7] == "script." {
+		if strings.HasPrefix(entity.EntityID, scriptPrefix) {
 			scripts = append(scripts, entity)
 		}
 	}
@@ -532,7 +547,7 @@ func (c *wsClientImpl) ListScenes(ctx context.Context) ([]Entity, error) {
 
 	var scenes []Entity
 	for _, entity := range entities {
-		if len(entity.EntityID) > 6 && entity.EntityID[:6] == "scene." {
+		if strings.HasPrefix(entity.EntityID, scenePrefix) {
 			scenes = append(scenes, entity)
 		}
 	}
