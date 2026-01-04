@@ -52,6 +52,24 @@ func RegisterInputDatetimeTools(registry *mcp.Registry) {
 	h.RegisterTools(registry)
 }
 
+// RegisterInputButtonTools registers all input_button helper tools with the registry.
+func RegisterInputButtonTools(registry *mcp.Registry) {
+	h := NewInputButtonHandlers()
+	h.RegisterTools(registry)
+}
+
+// RegisterCounterTools registers all counter helper tools with the registry.
+func RegisterCounterTools(registry *mcp.Registry) {
+	h := NewCounterHandlers()
+	h.RegisterTools(registry)
+}
+
+// RegisterTimerTools registers all timer helper tools with the registry.
+func RegisterTimerTools(registry *mcp.Registry) {
+	h := NewTimerHandlers()
+	h.RegisterTools(registry)
+}
+
 // RegisterRegistryTools registers all registry-related tools (entity/device/area registries).
 func RegisterRegistryTools(registry *mcp.Registry) {
 	h := NewRegistryHandlers()
@@ -94,6 +112,11 @@ func RegisterAllTools(registry *mcp.Registry) {
 	RegisterInputTextTools(registry)
 	RegisterInputSelectTools(registry)
 	RegisterInputDatetimeTools(registry)
+
+	// Tier 1 helper handlers (input_button, counter, timer)
+	RegisterInputButtonTools(registry)
+	RegisterCounterTools(registry)
+	RegisterTimerTools(registry)
 
 	// Registry, media, and advanced handlers
 	RegisterRegistryTools(registry)
