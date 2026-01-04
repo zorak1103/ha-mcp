@@ -82,6 +82,30 @@ func RegisterGroupTools(registry *mcp.Registry) {
 	h.RegisterTools(registry)
 }
 
+// RegisterTemplateHelperTools registers all template helper tools with the registry.
+func RegisterTemplateHelperTools(registry *mcp.Registry) {
+	h := NewTemplateHelperHandlers()
+	h.RegisterTools(registry)
+}
+
+// RegisterThresholdTools registers all threshold helper tools with the registry.
+func RegisterThresholdTools(registry *mcp.Registry) {
+	h := NewThresholdHandlers()
+	h.RegisterTools(registry)
+}
+
+// RegisterDerivativeTools registers all derivative helper tools with the registry.
+func RegisterDerivativeTools(registry *mcp.Registry) {
+	h := NewDerivativeHandlers()
+	h.RegisterTools(registry)
+}
+
+// RegisterIntegralTools registers all integral (integration) helper tools with the registry.
+func RegisterIntegralTools(registry *mcp.Registry) {
+	h := NewIntegralHandlers()
+	h.RegisterTools(registry)
+}
+
 // RegisterRegistryTools registers all registry-related tools (entity/device/area registries).
 func RegisterRegistryTools(registry *mcp.Registry) {
 	h := NewRegistryHandlers()
@@ -133,6 +157,12 @@ func RegisterAllTools(registry *mcp.Registry) {
 	// Tier 2 helper handlers (schedule, group)
 	RegisterScheduleTools(registry)
 	RegisterGroupTools(registry)
+
+	// Tier 3 helper handlers (template, threshold, derivative, integral)
+	RegisterTemplateHelperTools(registry)
+	RegisterThresholdTools(registry)
+	RegisterDerivativeTools(registry)
+	RegisterIntegralTools(registry)
 
 	// Registry, media, and advanced handlers
 	RegisterRegistryTools(registry)
