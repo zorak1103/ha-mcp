@@ -3,7 +3,7 @@ version: 2
 before:
   hooks:
     - go mod tidy
-    - golangci-lint run ./...
+    # golangci-lint is run in CI lint job, not needed here
 
 builds:
   - main: ./cmd/ha-mcp
@@ -31,9 +31,7 @@ archives:
       {{- else if eq .Arch "386" }}i386
       {{- else }}{{ .Arch }}{{ end }}
       {{- if .Arm }}v{{ .Arm }}{{ end }}
-    format_overrides:
-      - goos: windows
-        format: zip
+    format: '{{ if eq .Os "windows" }}zip{{ else }}tar.gz{{ end }}'
     files:
       - LICENSE*
       - README.md
