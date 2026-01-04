@@ -254,19 +254,8 @@ func (a *App) run(_ *cobra.Command, _ []string) error {
 	// Initialize MCP registry and register all tools
 	registry := mcp.NewRegistry()
 
-	// Register REST API compatible handlers
-	handlers.RegisterEntityTools(registry)
-	handlers.RegisterAutomationTools(registry)
-	handlers.RegisterHelperTools(registry)
-	handlers.NewScriptHandlers().Register(registry)
-	handlers.NewSceneHandlers().Register(registry)
-
-	// Register WebSocket-only handlers
-	handlers.RegisterRegistryTools(registry)
-	handlers.RegisterMediaTools(registry)
-	handlers.RegisterStatisticsTools(registry)
-	handlers.RegisterLovelaceTools(registry)
-	handlers.RegisterTargetTools(registry)
+	// Register all tool handlers (entity, automation, helpers, media, etc.)
+	handlers.RegisterAllTools(registry)
 
 	logger.Info("Registered MCP tools", "count", registry.ToolCount())
 

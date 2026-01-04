@@ -13,7 +13,7 @@ A Model Context Protocol (MCP) server that provides AI assistants with access to
 - **Entity Management**: Read and control all Home Assistant entities
 - **Registry Access**: Query entity, device, and area registries
 - **Automation CRUD**: Create, read, update, and delete automations
-- **Helper Management**: Manage input_boolean, input_number, input_text, input_select, input_datetime
+- **Helper Management**: Full support for all 14 Home Assistant helper types with CRUD operations
 - **Script & Scene Control**: Full CRUD operations for scripts and scenes
 - **Service Calls**: Execute any Home Assistant service
 - **History & Statistics**: Query entity state history and recorder statistics
@@ -359,13 +359,132 @@ Content-Type: application/json
 
 #### Helper Tools
 
+ha-mcp provides comprehensive support for all 14 Home Assistant helper types. Each helper type has its own dedicated tools.
+
+##### Generic Helper Tools
+
 | Tool | Description |
 |------|-------------|
-| `list_helpers` | List all input helpers |
-| `create_helper` | Create a new helper |
-| `update_helper` | Update a helper |
-| `delete_helper` | Delete a helper |
-| `set_helper_value` | Set helper value |
+| `list_helpers` | List all helpers across all types |
+
+##### Input Boolean
+
+| Tool | Description |
+|------|-------------|
+| `create_input_boolean` | Create an input_boolean toggle |
+| `delete_input_boolean` | Delete an input_boolean |
+| `toggle_input_boolean` | Toggle an input_boolean on/off |
+
+##### Input Number
+
+| Tool | Description |
+|------|-------------|
+| `create_input_number` | Create an input_number with min/max/step |
+| `delete_input_number` | Delete an input_number |
+| `set_input_number_value` | Set the value of an input_number |
+
+##### Input Text
+
+| Tool | Description |
+|------|-------------|
+| `create_input_text` | Create an input_text field |
+| `delete_input_text` | Delete an input_text |
+| `set_input_text_value` | Set the value of an input_text |
+
+##### Input Select
+
+| Tool | Description |
+|------|-------------|
+| `create_input_select` | Create an input_select dropdown |
+| `delete_input_select` | Delete an input_select |
+| `select_option` | Select an option from the dropdown |
+| `set_options` | Update the available options |
+
+##### Input Datetime
+
+| Tool | Description |
+|------|-------------|
+| `create_input_datetime` | Create an input_datetime picker |
+| `delete_input_datetime` | Delete an input_datetime |
+| `set_input_datetime` | Set the date/time value |
+
+##### Input Button
+
+| Tool | Description |
+|------|-------------|
+| `create_input_button` | Create an input_button |
+| `delete_input_button` | Delete an input_button |
+| `press_input_button` | Press/trigger the button |
+
+##### Counter
+
+| Tool | Description |
+|------|-------------|
+| `create_counter` | Create a counter with initial/step/min/max |
+| `delete_counter` | Delete a counter |
+| `increment_counter` | Increment the counter by step |
+| `decrement_counter` | Decrement the counter by step |
+| `reset_counter` | Reset the counter to initial value |
+| `set_counter_value` | Set the counter to a specific value |
+
+##### Timer
+
+| Tool | Description |
+|------|-------------|
+| `create_timer` | Create a timer with duration |
+| `delete_timer` | Delete a timer |
+| `start_timer` | Start the timer (optionally with duration) |
+| `pause_timer` | Pause a running timer |
+| `cancel_timer` | Cancel the timer |
+| `finish_timer` | Finish the timer immediately |
+| `change_timer` | Change duration of running timer |
+
+##### Schedule
+
+| Tool | Description |
+|------|-------------|
+| `create_schedule` | Create a weekly schedule with time blocks |
+| `delete_schedule` | Delete a schedule |
+| `reload_schedule` | Reload schedule from configuration |
+
+##### Group
+
+| Tool | Description |
+|------|-------------|
+| `create_group` | Create a group of entities |
+| `delete_group` | Delete a group |
+| `set_group_entities` | Add or remove entities from group |
+| `reload_group` | Reload group from configuration |
+
+##### Template (Sensor/Binary Sensor)
+
+| Tool | Description |
+|------|-------------|
+| `create_template_sensor` | Create a template sensor with Jinja2 state template |
+| `create_template_binary_sensor` | Create a template binary sensor |
+| `delete_template_helper` | Delete a template sensor/binary sensor |
+
+##### Threshold
+
+| Tool | Description |
+|------|-------------|
+| `create_threshold` | Create a threshold binary sensor from a source sensor |
+| `delete_threshold` | Delete a threshold sensor |
+
+##### Derivative
+
+| Tool | Description |
+|------|-------------|
+| `create_derivative` | Create a derivative sensor (rate of change) |
+| `delete_derivative` | Delete a derivative sensor |
+
+##### Integral (Integration)
+
+| Tool | Description |
+|------|-------------|
+| `create_integral` | Create an integral sensor (Riemann sum) |
+| `delete_integral` | Delete an integral sensor |
+| `reset_integral` | Reset the integral value to zero |
 
 #### Script Tools
 

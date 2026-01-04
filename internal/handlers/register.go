@@ -16,8 +16,93 @@ func RegisterAutomationTools(registry *mcp.Registry) {
 }
 
 // RegisterHelperTools registers all helper-related tools with the registry.
+// This registers the generic list_helpers tool.
 func RegisterHelperTools(registry *mcp.Registry) {
 	h := NewHelperHandlers()
+	h.RegisterTools(registry)
+}
+
+// RegisterInputBooleanTools registers all input_boolean helper tools with the registry.
+func RegisterInputBooleanTools(registry *mcp.Registry) {
+	h := NewInputBooleanHandlers()
+	h.RegisterTools(registry)
+}
+
+// RegisterInputNumberTools registers all input_number helper tools with the registry.
+func RegisterInputNumberTools(registry *mcp.Registry) {
+	h := NewInputNumberHandlers()
+	h.RegisterTools(registry)
+}
+
+// RegisterInputTextTools registers all input_text helper tools with the registry.
+func RegisterInputTextTools(registry *mcp.Registry) {
+	h := NewInputTextHandlers()
+	h.RegisterTools(registry)
+}
+
+// RegisterInputSelectTools registers all input_select helper tools with the registry.
+func RegisterInputSelectTools(registry *mcp.Registry) {
+	h := NewInputSelectHandlers()
+	h.RegisterTools(registry)
+}
+
+// RegisterInputDatetimeTools registers all input_datetime helper tools with the registry.
+func RegisterInputDatetimeTools(registry *mcp.Registry) {
+	h := NewInputDatetimeHandlers()
+	h.RegisterTools(registry)
+}
+
+// RegisterInputButtonTools registers all input_button helper tools with the registry.
+func RegisterInputButtonTools(registry *mcp.Registry) {
+	h := NewInputButtonHandlers()
+	h.RegisterTools(registry)
+}
+
+// RegisterCounterTools registers all counter helper tools with the registry.
+func RegisterCounterTools(registry *mcp.Registry) {
+	h := NewCounterHandlers()
+	h.RegisterTools(registry)
+}
+
+// RegisterTimerTools registers all timer helper tools with the registry.
+func RegisterTimerTools(registry *mcp.Registry) {
+	h := NewTimerHandlers()
+	h.RegisterTools(registry)
+}
+
+// RegisterScheduleTools registers all schedule helper tools with the registry.
+func RegisterScheduleTools(registry *mcp.Registry) {
+	h := NewScheduleHandlers()
+	h.RegisterTools(registry)
+}
+
+// RegisterGroupTools registers all group helper tools with the registry.
+func RegisterGroupTools(registry *mcp.Registry) {
+	h := NewGroupHandlers()
+	h.RegisterTools(registry)
+}
+
+// RegisterTemplateHelperTools registers all template helper tools with the registry.
+func RegisterTemplateHelperTools(registry *mcp.Registry) {
+	h := NewTemplateHelperHandlers()
+	h.RegisterTools(registry)
+}
+
+// RegisterThresholdTools registers all threshold helper tools with the registry.
+func RegisterThresholdTools(registry *mcp.Registry) {
+	h := NewThresholdHandlers()
+	h.RegisterTools(registry)
+}
+
+// RegisterDerivativeTools registers all derivative helper tools with the registry.
+func RegisterDerivativeTools(registry *mcp.Registry) {
+	h := NewDerivativeHandlers()
+	h.RegisterTools(registry)
+}
+
+// RegisterIntegralTools registers all integral (integration) helper tools with the registry.
+func RegisterIntegralTools(registry *mcp.Registry) {
+	h := NewIntegralHandlers()
 	h.RegisterTools(registry)
 }
 
@@ -51,9 +136,33 @@ func RegisterAllTools(registry *mcp.Registry) {
 	// Core entity and automation handlers
 	RegisterEntityTools(registry)
 	RegisterAutomationTools(registry)
-	RegisterHelperTools(registry)
 	RegisterScriptTools(registry)
 	RegisterSceneTools(registry)
+
+	// Helper tools (generic list_helpers)
+	RegisterHelperTools(registry)
+
+	// Input helper handlers (create, delete, actions)
+	RegisterInputBooleanTools(registry)
+	RegisterInputNumberTools(registry)
+	RegisterInputTextTools(registry)
+	RegisterInputSelectTools(registry)
+	RegisterInputDatetimeTools(registry)
+
+	// Tier 1 helper handlers (input_button, counter, timer)
+	RegisterInputButtonTools(registry)
+	RegisterCounterTools(registry)
+	RegisterTimerTools(registry)
+
+	// Tier 2 helper handlers (schedule, group)
+	RegisterScheduleTools(registry)
+	RegisterGroupTools(registry)
+
+	// Tier 3 helper handlers (template, threshold, derivative, integral)
+	RegisterTemplateHelperTools(registry)
+	RegisterThresholdTools(registry)
+	RegisterDerivativeTools(registry)
+	RegisterIntegralTools(registry)
 
 	// Registry, media, and advanced handlers
 	RegisterRegistryTools(registry)
