@@ -45,10 +45,6 @@ func RegisterLovelaceTools(registry *mcp.Registry) {
 	h.RegisterTools(registry)
 }
 
-// Note: RegisterScriptTools is defined in scripts.go
-// Note: RegisterSceneTools is defined in scenes.go
-// Note: RegisterTargetTools is defined in targets.go
-
 // RegisterAllTools registers all available tool handlers with the registry.
 // All handlers use the WebSocket API for communication with Home Assistant.
 func RegisterAllTools(registry *mcp.Registry) {

@@ -27,8 +27,6 @@ func (h *HelperHandlers) RegisterTools(registry *mcp.Registry) {
 	registry.RegisterTool(h.setHelperValueTool(), h.handleSetHelperValue)
 }
 
-// Tool definitions
-
 func (h *HelperHandlers) listHelpersTool() mcp.Tool {
 	return mcp.Tool{
 		Name:        "list_helpers",
@@ -171,8 +169,6 @@ func (h *HelperHandlers) setHelperValueTool() mcp.Tool {
 		},
 	}
 }
-
-// Handler implementations
 
 func (h *HelperHandlers) handleListHelpers(ctx context.Context, client homeassistant.Client, _ map[string]any) (*mcp.ToolsCallResult, error) {
 	helpers, err := client.ListHelpers(ctx)
@@ -445,7 +441,9 @@ func (h *HelperHandlers) handleSetHelperValue(ctx context.Context, client homeas
 	}, nil
 }
 
-// parseEntityID extracts platform and ID from an entity_id like "input_boolean.my_switch"
+// parseEntityID extracts platform and ID from an entity_id like "input_boolean.my_switch".
+// It iterates through known helper platforms to find a matching prefix.
+// Returns empty strings if the entity_id doesn't match any known helper platform.
 func parseEntityID(entityID string) (platform, id string) {
 	platforms := []string{"input_boolean", "input_number", "input_text", "input_select", "input_datetime"}
 	for _, p := range platforms {

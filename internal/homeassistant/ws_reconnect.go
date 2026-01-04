@@ -122,7 +122,9 @@ func (r *ReconnectManager) WaitForReconnect(ctx context.Context) error {
 	r.attempts++
 	waitDuration := r.currentWait
 
-	// Calculate next wait duration with exponential backoff
+	// Calculate next wait duration with exponential backoff.
+	// We update currentWait BEFORE waiting so that if this goroutine is
+	// interrupted and another caller enters, they will see the increased delay.
 	nextWait := time.Duration(float64(r.currentWait) * r.config.BackoffFactor)
 	if nextWait > r.config.MaxDelay {
 		nextWait = r.config.MaxDelay

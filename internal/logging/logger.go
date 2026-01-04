@@ -65,7 +65,8 @@ type Logger struct {
 	level slog.Level
 }
 
-// cleanHandler is a custom slog.Handler that outputs a cleaner log format.
+// cleanHandler implements slog.Handler with a simplified log format:
+// "YYYY-MM-DD HH:MM:SS LEVEL message key=value key=value..."
 type cleanHandler struct {
 	level slog.Level
 	out   io.Writer

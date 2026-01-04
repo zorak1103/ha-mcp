@@ -20,8 +20,8 @@ func DefaultClientOptions() ClientOptions {
 	}
 }
 
-// NewClientWithOptions creates a new Home Assistant WebSocket client.
-// This establishes a connection before returning.
+// NewClientWithOptions creates and connects a Home Assistant WebSocket client with custom options.
+// The connection is established before returning; use CloseClient() for cleanup.
 func NewClientWithOptions(ctx context.Context, baseURL, token string, opts ClientOptions) (Client, error) {
 	return NewConnectedWSClient(ctx, baseURL, token, opts.WSConfig)
 }
@@ -52,8 +52,8 @@ func NewConnectedWSClient(ctx context.Context, baseURL, token string, config *WS
 	return NewWSClientImplWithCloser(wsClient), nil
 }
 
-// NewDefaultWSClient creates a WebSocket client with default configuration and connects.
-// This is the primary way to create a Home Assistant client.
+// NewDefaultWSClient creates a connected WebSocket client using default configuration.
+// This is the recommended factory function for most use cases.
 func NewDefaultWSClient(ctx context.Context, baseURL, token string) (Client, error) {
 	return NewConnectedWSClient(ctx, baseURL, token, nil)
 }

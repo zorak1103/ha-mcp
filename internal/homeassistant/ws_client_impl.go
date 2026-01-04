@@ -117,8 +117,10 @@ func (c *wsClientImpl) CallService(ctx context.Context, domain, service string, 
 	}
 	if result.Result != nil {
 		if err := json.Unmarshal(result.Result, &response); err != nil {
-			// Some service calls don't return entities, return empty slice
-			return []Entity{}, nil //nolint:nilerr // Unmarshal failure is expected for some services
+			// Some service calls (e.g., script.turn_on, automation.trigger) return only
+			// a context without entities. Unmarshal fails because the response structure
+			// differs. This is expected behavior, not an error.
+			return []Entity{}, nil //nolint:nilerr
 		}
 	}
 

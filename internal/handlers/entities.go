@@ -28,8 +28,6 @@ func (h *EntityHandlers) RegisterTools(registry *mcp.Registry) {
 	registry.RegisterTool(h.listDomainsTool(), h.handleListDomains)
 }
 
-// Tool definitions
-
 func (h *EntityHandlers) getStatesTool() mcp.Tool {
 	return mcp.Tool{
 		Name:        "get_states",
@@ -101,8 +99,6 @@ func (h *EntityHandlers) listDomainsTool() mcp.Tool {
 		},
 	}
 }
-
-// Handler implementations
 
 func (h *EntityHandlers) handleGetStates(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
 	states, err := client.GetStates(ctx)
