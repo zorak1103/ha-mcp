@@ -1,6 +1,6 @@
-# golangci-lint configuration for DLIA (Docker Log Intelligence Agent)
+# golangci-lint configuration for ha-mcp
 # See https://golangci-lint.run/usage/configuration/ for all options
-version: 2
+version: "2"
 
 run:
   timeout: 5m
