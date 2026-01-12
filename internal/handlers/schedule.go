@@ -3,6 +3,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
@@ -21,9 +22,28 @@ func NewScheduleHandlers() *ScheduleHandlers {
 
 // RegisterTools registers all schedule-related tools with the registry.
 func (h *ScheduleHandlers) RegisterTools(registry *mcp.Registry) {
+	registry.RegisterTool(h.getScheduleDetailsTool(), h.handleGetScheduleDetails)
 	registry.RegisterTool(h.createScheduleTool(), h.handleCreateSchedule)
 	registry.RegisterTool(h.deleteScheduleTool(), h.handleDeleteSchedule)
 	registry.RegisterTool(h.reloadScheduleTool(), h.handleReloadSchedule)
+}
+
+func (h *ScheduleHandlers) getScheduleDetailsTool() mcp.Tool {
+	return mcp.Tool{
+		Name:        "get_schedule_details",
+		Description: "Get detailed information about a schedule helper including all time blocks for each day of the week. Shows when the schedule is active.",
+		InputSchema: mcp.JSONSchema{
+			Type:        "object",
+			Description: "Schedule entity ID to get details for",
+			Properties: map[string]mcp.JSONSchema{
+				"entity_id": {
+					Type:        "string",
+					Description: "The full entity ID of the schedule (e.g., schedule.work_hours)",
+				},
+			},
+			Required: []string{"entity_id"},
+		},
+	}
 }
 
 func (h *ScheduleHandlers) createScheduleTool() mcp.Tool {
@@ -109,6 +129,125 @@ func (h *ScheduleHandlers) reloadScheduleTool() mcp.Tool {
 			Properties:  map[string]mcp.JSONSchema{},
 		},
 	}
+}
+
+func (h *ScheduleHandlers) handleGetScheduleDetails(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+	entityID, ok := args["entity_id"].(string)
+	if !ok || entityID == "" {
+		return &mcp.ToolsCallResult{
+			Content: []mcp.ContentBlock{mcp.NewTextContent("entity_id is required")},
+			IsError: true,
+		}, nil
+	}
+
+	platform, _ := ParseHelperEntityID(entityID)
+	if platform != platformSchedule {
+		return &mcp.ToolsCallResult{
+			Content: []mcp.ContentBlock{mcp.NewTextContent("entity_id must be a schedule entity (e.g., schedule.work_hours)")},
+			IsError: true,
+		}, nil
+	}
+
+	// Get the state for current status info
+	state, err := client.GetState(ctx, entityID)
+	if err != nil {
+		return &mcp.ToolsCallResult{
+			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error getting schedule state: %v", err))},
+			IsError: true,
+		}, nil
+	}
+
+	// Try to get the config which may contain time blocks (may not be available in all HA versions)
+	config, configErr := client.GetScheduleConfig(ctx, entityID)
+	if configErr != nil {
+		// Config API not available - use empty config, we'll only have state info
+		config = make(map[string]any)
+	}
+
+	// Build a detailed response with all schedule information
+	type timeBlock struct {
+		From string `json:"from"`
+		To   string `json:"to"`
+	}
+
+	type scheduleDetails struct {
+		EntityID     string      `json:"entity_id"`
+		State        string      `json:"state"`
+		FriendlyName string      `json:"friendly_name,omitempty"`
+		Icon         string      `json:"icon,omitempty"`
+		NextEvent    string      `json:"next_event,omitempty"`
+		Monday       []timeBlock `json:"monday,omitempty"`
+		Tuesday      []timeBlock `json:"tuesday,omitempty"`
+		Wednesday    []timeBlock `json:"wednesday,omitempty"`
+		Thursday     []timeBlock `json:"thursday,omitempty"`
+		Friday       []timeBlock `json:"friday,omitempty"`
+		Saturday     []timeBlock `json:"saturday,omitempty"`
+		Sunday       []timeBlock `json:"sunday,omitempty"`
+	}
+
+	details := scheduleDetails{
+		EntityID: state.EntityID,
+		State:    state.State,
+	}
+
+	// Extract attributes from state
+	if name, ok := state.Attributes["friendly_name"].(string); ok {
+		details.FriendlyName = name
+	}
+	if icon, ok := state.Attributes["icon"].(string); ok {
+		details.Icon = icon
+	}
+	if nextEvent, ok := state.Attributes["next_event"].(string); ok {
+		details.NextEvent = nextEvent
+	}
+
+	// Extract time blocks from config (this is where they are stored)
+	days := []string{"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
+	for _, day := range days {
+		if blocks, ok := config[day].([]any); ok {
+			var dayBlocks []timeBlock
+			for _, block := range blocks {
+				if blockMap, ok := block.(map[string]any); ok {
+					tb := timeBlock{}
+					if from, ok := blockMap["from"].(string); ok {
+						tb.From = from
+					}
+					if to, ok := blockMap["to"].(string); ok {
+						tb.To = to
+					}
+					dayBlocks = append(dayBlocks, tb)
+				}
+			}
+			switch day {
+			case "monday":
+				details.Monday = dayBlocks
+			case "tuesday":
+				details.Tuesday = dayBlocks
+			case "wednesday":
+				details.Wednesday = dayBlocks
+			case "thursday":
+				details.Thursday = dayBlocks
+			case "friday":
+				details.Friday = dayBlocks
+			case "saturday":
+				details.Saturday = dayBlocks
+			case "sunday":
+				details.Sunday = dayBlocks
+			}
+		}
+	}
+
+	output, err := json.MarshalIndent(details, "", "  ")
+	if err != nil {
+		return &mcp.ToolsCallResult{
+			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error formatting schedule: %v", err))},
+			IsError: true,
+		}, nil
+	}
+
+	return &mcp.ToolsCallResult{
+		Content: []mcp.ContentBlock{mcp.NewTextContent(string(output))},
+	}, nil
 }
 
 func (h *ScheduleHandlers) handleCreateSchedule(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {

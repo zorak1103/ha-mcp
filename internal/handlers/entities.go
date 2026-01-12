@@ -12,6 +12,8 @@ import (
 	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
 
+const configKeyEntityID = "entity_id"
+
 // EntityHandlers provides MCP tool handlers for entity operations.
 type EntityHandlers struct{}
 
@@ -26,6 +28,7 @@ func (h *EntityHandlers) RegisterTools(registry *mcp.Registry) {
 	registry.RegisterTool(h.getStateTool(), h.handleGetState)
 	registry.RegisterTool(h.getHistoryTool(), h.handleGetHistory)
 	registry.RegisterTool(h.listDomainsTool(), h.handleListDomains)
+	registry.RegisterTool(h.getEntityDependenciesTool(), h.handleGetEntityDependencies)
 }
 
 func (h *EntityHandlers) getStatesTool() mcp.Tool {
@@ -128,6 +131,24 @@ func (h *EntityHandlers) listDomainsTool() mcp.Tool {
 		InputSchema: mcp.JSONSchema{
 			Type:        "object",
 			Description: "No parameters required",
+		},
+	}
+}
+
+func (h *EntityHandlers) getEntityDependenciesTool() mcp.Tool {
+	return mcp.Tool{
+		Name:        "get_entity_dependencies",
+		Description: "Find all automations that use a specific entity. Shows where the entity is used as trigger, condition, or action target. Useful for understanding the impact of changing or removing an entity.",
+		InputSchema: mcp.JSONSchema{
+			Type:        "object",
+			Description: "Parameters for finding entity dependencies",
+			Properties: map[string]mcp.JSONSchema{
+				"entity_id": {
+					Type:        "string",
+					Description: "The entity ID to search for (e.g., 'binary_sensor.motion_living_room')",
+				},
+			},
+			Required: []string{"entity_id"},
 		},
 	}
 }
@@ -257,6 +278,150 @@ func (h *EntityHandlers) handleGetState(ctx context.Context, client homeassistan
 	return &mcp.ToolsCallResult{
 		Content: []mcp.ContentBlock{mcp.NewTextContent(string(output))},
 	}, nil
+}
+
+// entityDependency represents where an entity is used in an automation.
+type entityDependency struct {
+	AutomationID    string   `json:"automation_id"`
+	AutomationAlias string   `json:"automation_alias"`
+	UsedIn          []string `json:"used_in"` // "trigger", "condition", "action"
+}
+
+// entityDependenciesResult is the result of get_entity_dependencies.
+type entityDependenciesResult struct {
+	EntityID     string             `json:"entity_id"`
+	Automations  []entityDependency `json:"automations"`
+	TotalUsages  int                `json:"total_usages"`
+}
+
+func (h *EntityHandlers) handleGetEntityDependencies(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+	entityID, ok := args["entity_id"].(string)
+	if !ok || entityID == "" {
+		return &mcp.ToolsCallResult{
+			Content: []mcp.ContentBlock{mcp.NewTextContent("entity_id is required")},
+			IsError: true,
+		}, nil
+	}
+
+	// Get all automations
+	automations, err := client.ListAutomations(ctx)
+	if err != nil {
+		return &mcp.ToolsCallResult{
+			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error listing automations: %v", err))},
+			IsError: true,
+		}, nil
+	}
+
+	var dependencies []entityDependency
+
+	for _, auto := range automations {
+		// Extract automation ID from entity_id (automation.xxx -> xxx)
+		autoID := strings.TrimPrefix(auto.EntityID, "automation.")
+		
+		// Get full automation config
+		fullAuto, err := client.GetAutomation(ctx, autoID)
+		if err != nil {
+			continue // Skip automations we can't read
+		}
+
+		var usedIn []string
+
+		// Search in triggers
+		if searchEntityInConfig(fullAuto.Config.Triggers, entityID) {
+			usedIn = append(usedIn, "trigger")
+		}
+
+		// Search in conditions
+		if searchEntityInConfig(fullAuto.Config.Conditions, entityID) {
+			usedIn = append(usedIn, "condition")
+		}
+
+		// Search in actions
+		if searchEntityInConfig(fullAuto.Config.Actions, entityID) {
+			usedIn = append(usedIn, "action")
+		}
+
+		if len(usedIn) > 0 {
+			alias := fullAuto.FriendlyName
+			if fullAuto.Config != nil && fullAuto.Config.Alias != "" {
+				alias = fullAuto.Config.Alias
+			}
+			dep := entityDependency{
+				AutomationID:    autoID,
+				AutomationAlias: alias,
+				UsedIn:          usedIn,
+			}
+			dependencies = append(dependencies, dep)
+		}
+	}
+
+	result := entityDependenciesResult{
+		EntityID:    entityID,
+		Automations: dependencies,
+		TotalUsages: len(dependencies),
+	}
+
+	output, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return &mcp.ToolsCallResult{
+			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error formatting result: %v", err))},
+			IsError: true,
+		}, nil
+	}
+
+	summary := fmt.Sprintf("Found %d automations using '%s'", len(dependencies), entityID)
+
+	return &mcp.ToolsCallResult{
+		Content: []mcp.ContentBlock{mcp.NewTextContent(summary + "\n\n" + string(output))},
+	}, nil
+}
+
+// searchEntityInConfig recursively searches for an entity ID in a config structure.
+func searchEntityInConfig(config any, entityID string) bool {
+	if config == nil {
+		return false
+	}
+
+	switch v := config.(type) {
+	case string:
+		return v == entityID
+	case []any:
+		for _, item := range v {
+			if searchEntityInConfig(item, entityID) {
+				return true
+			}
+		}
+	case map[string]any:
+		for key, val := range v {
+			// Check common entity_id fields
+			if key == configKeyEntityID {
+				if searchEntityInConfig(val, entityID) {
+					return true
+				}
+			}
+			// Check target.entity_id
+			if key == "target" {
+				if targetMap, ok := val.(map[string]any); ok {
+					if searchEntityInConfig(targetMap[configKeyEntityID], entityID) {
+						return true
+					}
+				}
+			}
+			// Check data.entity_id
+			if key == "data" {
+				if dataMap, ok := val.(map[string]any); ok {
+					if searchEntityInConfig(dataMap[configKeyEntityID], entityID) {
+						return true
+					}
+				}
+			}
+			// Recursively search in nested structures
+			if searchEntityInConfig(val, entityID) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // compactHistoryEntry represents a minimal history entry for compact output.

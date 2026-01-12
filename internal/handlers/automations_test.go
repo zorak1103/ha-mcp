@@ -26,9 +26,10 @@ type mockAutomationClient struct {
 	automations    []homeassistant.Automation
 	automationsErr error
 
-	// Get automation
-	automation    *homeassistant.Automation
-	automationErr error
+	// Get automation - can be a single automation or a map for multiple
+	automation     *homeassistant.Automation
+	automationMap  map[string]*homeassistant.Automation
+	automationErr  error
 
 	// Create automation
 	createErr error
@@ -50,9 +51,15 @@ func (m *mockAutomationClient) ListAutomations(_ context.Context) ([]homeassista
 	return m.automations, nil
 }
 
-func (m *mockAutomationClient) GetAutomation(_ context.Context, _ string) (*homeassistant.Automation, error) {
+func (m *mockAutomationClient) GetAutomation(_ context.Context, automationID string) (*homeassistant.Automation, error) {
 	if m.automationErr != nil {
 		return nil, m.automationErr
+	}
+	// Check automationMap first for multiple automations
+	if m.automationMap != nil {
+		if auto, ok := m.automationMap[automationID]; ok {
+			return auto, nil
+		}
 	}
 	return m.automation, nil
 }
@@ -395,6 +402,60 @@ func TestHandleListAutomations(t *testing.T) {
 			args: map[string]any{"verbose": true},
 			client: &mockAutomationClient{
 				automations: testAutomations,
+				automationMap: map[string]*homeassistant.Automation{
+					"turn_on_lights": {
+						EntityID:      "automation.turn_on_lights",
+						State:         "on",
+						FriendlyName:  "Turn On Lights",
+						LastTriggered: "2024-01-15T10:30:00Z",
+						Config: &homeassistant.AutomationConfig{
+							ID:       "turn_on_lights",
+							Alias:    "Turn On Lights",
+							Mode:     "single",
+							Triggers: []any{map[string]any{"platform": "state"}},
+							Actions:  []any{map[string]any{"service": "light.turn_on"}},
+						},
+					},
+					"turn_off_lights": {
+						EntityID:      "automation.turn_off_lights",
+						State:         "off",
+						FriendlyName:  "Turn Off Lights",
+						LastTriggered: "2024-01-14T22:00:00Z",
+						Config: &homeassistant.AutomationConfig{
+							ID:       "turn_off_lights",
+							Alias:    "Turn Off Lights",
+							Mode:     "single",
+							Triggers: []any{map[string]any{"platform": "state"}},
+							Actions:  []any{map[string]any{"service": "light.turn_off"}},
+						},
+					},
+					"morning_routine": {
+						EntityID:      "automation.morning_routine",
+						State:         "on",
+						FriendlyName:  "Morning Routine",
+						LastTriggered: "2024-01-15T07:00:00Z",
+						Config: &homeassistant.AutomationConfig{
+							ID:       "morning_routine",
+							Alias:    "Morning Routine",
+							Mode:     "single",
+							Triggers: []any{map[string]any{"platform": "time"}},
+							Actions:  []any{map[string]any{"service": "scene.activate"}},
+						},
+					},
+					"night_mode": {
+						EntityID:      "automation.night_mode",
+						State:         "on",
+						FriendlyName:  "Night Mode Activation",
+						LastTriggered: "2024-01-15T21:00:00Z",
+						Config: &homeassistant.AutomationConfig{
+							ID:       "night_mode",
+							Alias:    "Night Mode Activation",
+							Mode:     "single",
+							Triggers: []any{map[string]any{"platform": "time"}},
+							Actions:  []any{map[string]any{"service": "scene.activate"}},
+						},
+					},
+				},
 			},
 			wantError:           false,
 			wantAutomationCount: 4,
@@ -404,6 +465,9 @@ func TestHandleListAutomations(t *testing.T) {
 				"state",
 				"friendly_name",
 				"last_triggered",
+				"config",
+				"triggers",
+				"actions",
 			},
 		},
 		{

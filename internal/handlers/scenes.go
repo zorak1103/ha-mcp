@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 	"github.com/zorak1103/ha-mcp/internal/mcp"
@@ -43,10 +44,20 @@ func (h *SceneHandlers) Register(registry *mcp.Registry) {
 func (h *SceneHandlers) listScenesTool() mcp.Tool {
 	return mcp.Tool{
 		Name:        "list_scenes",
-		Description: "List all scenes in Home Assistant",
+		Description: "List all scenes in Home Assistant. Use filters to narrow down results.",
 		InputSchema: mcp.JSONSchema{
-			Type:       "object",
-			Properties: map[string]mcp.JSONSchema{},
+			Type:        "object",
+			Description: "Filter options for scenes list",
+			Properties: map[string]mcp.JSONSchema{
+				"name_contains": {
+					Type:        "string",
+					Description: "Filter by scene name or entity_id containing this string (case-insensitive)",
+				},
+				"entity_contains": {
+					Type:        "string",
+					Description: "Filter to scenes that contain this entity ID in their entity list",
+				},
+			},
 		},
 	}
 }
@@ -165,7 +176,7 @@ func (h *SceneHandlers) activateSceneTool() mcp.Tool {
 }
 
 // HandleListScenes handles the list_scenes tool call.
-func (h *SceneHandlers) HandleListScenes(ctx context.Context, client homeassistant.Client, _ map[string]any) (*mcp.ToolsCallResult, error) {
+func (h *SceneHandlers) HandleListScenes(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
 	scenes, err := client.ListScenes(ctx)
 	if err != nil {
 		return &mcp.ToolsCallResult{
@@ -173,6 +184,14 @@ func (h *SceneHandlers) HandleListScenes(ctx context.Context, client homeassista
 			IsError: true,
 		}, nil
 	}
+
+	// Parse filter parameters
+	nameContains, _ := args["name_contains"].(string)
+	entityContains, _ := args["entity_contains"].(string)
+
+	// Normalize filters for case-insensitive matching
+	nameContainsLower := strings.ToLower(nameContains)
+	entityContainsLower := strings.ToLower(entityContains)
 
 	type sceneInfo struct {
 		EntityID     string   `json:"entity_id"`
@@ -197,6 +216,30 @@ func (h *SceneHandlers) HandleListScenes(ctx context.Context, client homeassista
 				}
 			}
 		}
+
+		// Apply name_contains filter
+		if nameContains != "" {
+			matchesName := strings.Contains(strings.ToLower(info.EntityID), nameContainsLower) ||
+				strings.Contains(strings.ToLower(info.FriendlyName), nameContainsLower)
+			if !matchesName {
+				continue
+			}
+		}
+
+		// Apply entity_contains filter
+		if entityContains != "" {
+			containsEntity := false
+			for _, eid := range info.EntityIDs {
+				if strings.Contains(strings.ToLower(eid), entityContainsLower) {
+					containsEntity = true
+					break
+				}
+			}
+			if !containsEntity {
+				continue
+			}
+		}
+
 		result = append(result, info)
 	}
 
@@ -208,8 +251,10 @@ func (h *SceneHandlers) HandleListScenes(ctx context.Context, client homeassista
 		}, nil
 	}
 
+	summary := fmt.Sprintf("Found %d scenes\n\n", len(result))
+
 	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{mcp.NewTextContent(string(jsonBytes))},
+		Content: []mcp.ContentBlock{mcp.NewTextContent(summary + string(jsonBytes))},
 	}, nil
 }
 

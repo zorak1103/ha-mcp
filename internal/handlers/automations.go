@@ -46,6 +46,10 @@ func (h *AutomationHandlers) listAutomationsTool() mcp.Tool {
 					Type:        "string",
 					Description: "Filter by alias/name (case-insensitive, partial match)",
 				},
+				"entity_id": {
+					Type:        "string",
+					Description: "Filter by entity used in the automation (searches triggers, conditions, and actions)",
+				},
 				"verbose": {
 					Type:        "boolean",
 					Description: "If true, return full details including configuration. Default: false (compact output with entity_id, state, alias, last_triggered)",
@@ -201,6 +205,15 @@ type compactAutomationEntry struct {
 	LastTriggered string `json:"last_triggered,omitempty"`
 }
 
+// verboseAutomationEntry represents a full automation entry including configuration.
+type verboseAutomationEntry struct {
+	EntityID      string                        `json:"entity_id"`
+	State         string                        `json:"state"`
+	FriendlyName  string                        `json:"friendly_name,omitempty"`
+	LastTriggered string                        `json:"last_triggered,omitempty"`
+	Config        *homeassistant.AutomationConfig `json:"config,omitempty"`
+}
+
 func (h *AutomationHandlers) handleListAutomations(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
 	automations, err := client.ListAutomations(ctx)
 	if err != nil {
@@ -213,6 +226,7 @@ func (h *AutomationHandlers) handleListAutomations(ctx context.Context, client h
 	// Parse filter parameters
 	stateFilter, _ := args["state"].(string)
 	aliasFilter, _ := args["alias"].(string)
+	entityIDFilter, _ := args["entity_id"].(string)
 	verbose, _ := args["verbose"].(bool)
 
 	// Normalize filter for case-insensitive matching
@@ -231,13 +245,49 @@ func (h *AutomationHandlers) handleListAutomations(ctx context.Context, client h
 			continue
 		}
 
+		// Apply entity_id filter (requires fetching full config)
+		if entityIDFilter != "" {
+			autoID := strings.TrimPrefix(automation.EntityID, "automation.")
+			fullAuto, err := client.GetAutomation(ctx, autoID)
+			if err != nil || fullAuto.Config == nil {
+				continue
+			}
+			// Search in triggers, conditions, and actions
+			found := searchEntityInAutomationConfig(fullAuto.Config, entityIDFilter)
+			if !found {
+				continue
+			}
+		}
+
 		filtered = append(filtered, automation)
 	}
 
 	// Format output based on verbose flag
 	var output []byte
 	if verbose {
-		output, err = json.MarshalIndent(filtered, "", "  ")
+		// Verbose output: fetch full configuration for each automation
+		verboseList := make([]verboseAutomationEntry, 0, len(filtered))
+		for _, automation := range filtered {
+			entry := verboseAutomationEntry{
+				EntityID:      automation.EntityID,
+				State:         automation.State,
+				FriendlyName:  automation.FriendlyName,
+				LastTriggered: automation.LastTriggered,
+			}
+
+			// Extract automation ID from entity_id (automation.xxx -> xxx)
+			automationID := strings.TrimPrefix(automation.EntityID, "automation.")
+			if automationID != automation.EntityID {
+				// Fetch full automation config
+				fullAutomation, err := client.GetAutomation(ctx, automationID)
+				if err == nil && fullAutomation.Config != nil {
+					entry.Config = fullAutomation.Config
+				}
+			}
+
+			verboseList = append(verboseList, entry)
+		}
+		output, err = json.MarshalIndent(verboseList, "", "  ")
 	} else {
 		// Compact output: only essential fields
 		compact := make([]compactAutomationEntry, 0, len(filtered))
@@ -480,6 +530,66 @@ func getSlice(args map[string]any, key string) []any {
 		return v
 	}
 	return nil
+}
+
+// searchEntityInAutomationConfig searches for an entity ID in automation triggers, conditions, and actions.
+func searchEntityInAutomationConfig(config *homeassistant.AutomationConfig, entityID string) bool {
+	if config == nil {
+		return false
+	}
+	return searchInConfigSlice(config.Triggers, entityID) ||
+		searchInConfigSlice(config.Conditions, entityID) ||
+		searchInConfigSlice(config.Actions, entityID)
+}
+
+// searchInConfigSlice recursively searches for an entity ID in a config slice.
+func searchInConfigSlice(items []any, entityID string) bool {
+	for _, item := range items {
+		if searchInConfigValue(item, entityID) {
+			return true
+		}
+	}
+	return false
+}
+
+// searchInConfigValue recursively searches for an entity ID in any config value.
+func searchInConfigValue(val any, entityID string) bool {
+	if val == nil {
+		return false
+	}
+
+	switch v := val.(type) {
+	case string:
+		return v == entityID
+	case []any:
+		for _, item := range v {
+			if searchInConfigValue(item, entityID) {
+				return true
+			}
+		}
+	case map[string]any:
+		for key, subval := range v {
+			// Check entity_id fields directly
+			if key == configKeyEntityID {
+				if searchInConfigValue(subval, entityID) {
+					return true
+				}
+			}
+			// Check target.entity_id
+			if key == "target" {
+				if targetMap, ok := subval.(map[string]any); ok {
+					if searchInConfigValue(targetMap[configKeyEntityID], entityID) {
+						return true
+					}
+				}
+			}
+			// Recursively search all nested structures
+			if searchInConfigValue(subval, entityID) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // generateAutomationID converts an alias to a valid automation ID.

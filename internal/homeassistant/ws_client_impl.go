@@ -612,6 +612,34 @@ func (c *wsClientImpl) DeleteScene(ctx context.Context, sceneID string) error {
 }
 
 // =============================================================================
+// Schedule Config Operations (WebSocket-only)
+// =============================================================================
+
+// GetScheduleConfig retrieves the full configuration of a schedule helper.
+// Uses the schedule/config WebSocket command to get all time blocks for each day.
+func (c *wsClientImpl) GetScheduleConfig(ctx context.Context, scheduleID string) (map[string]any, error) {
+	// Build entity_id from schedule_id if needed
+	entityID := scheduleID
+	if !strings.HasPrefix(scheduleID, "schedule.") {
+		entityID = "schedule." + scheduleID
+	}
+
+	result, err := c.ws.SendCommand(ctx, "schedule/config", map[string]any{
+		"entity_id": entityID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get schedule config failed: %w", err)
+	}
+
+	var config map[string]any
+	if err := json.Unmarshal(result.Result, &config); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal schedule config: %w", err)
+	}
+
+	return config, nil
+}
+
+// =============================================================================
 // Registry Operations (WebSocket-only)
 // =============================================================================
 

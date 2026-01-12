@@ -166,6 +166,10 @@ func (m *mockHAClient) ExtractFromTarget(_ context.Context, _ homeassistant.Targ
 	return nil, nil
 }
 
+func (m *mockHAClient) GetScheduleConfig(_ context.Context, _ string) (map[string]any, error) {
+	return nil, nil
+}
+
 func TestNewServer(t *testing.T) {
 	t.Parallel()
 

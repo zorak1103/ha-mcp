@@ -76,6 +76,9 @@ type Client interface {
 	GetConditionsForTarget(ctx context.Context, target Target, expandGroup *bool) ([]string, error)
 	GetServicesForTarget(ctx context.Context, target Target, expandGroup *bool) ([]string, error)
 	ExtractFromTarget(ctx context.Context, target Target, expandGroup *bool) (*ExtractFromTargetResult, error)
+
+	// Config operations - get full configuration for helpers
+	GetScheduleConfig(ctx context.Context, scheduleID string) (map[string]any, error)
 }
 
 // APIError represents an error response from the Home Assistant API.

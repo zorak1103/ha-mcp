@@ -275,6 +275,9 @@ func (m *mockNonCloserClient) GetServicesForTarget(_ context.Context, _ Target, 
 func (m *mockNonCloserClient) ExtractFromTarget(_ context.Context, _ Target, _ *bool) (*ExtractFromTargetResult, error) {
 	return &ExtractFromTargetResult{}, nil
 }
+func (m *mockNonCloserClient) GetScheduleConfig(_ context.Context, _ string) (map[string]any, error) {
+	return map[string]any{}, nil
+}
 
 // Ensure mockNonCloserClient implements Client but NOT ClientCloser
 var _ Client = (*mockNonCloserClient)(nil)
