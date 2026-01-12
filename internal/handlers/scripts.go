@@ -272,6 +272,7 @@ func (h *ScriptHandlers) HandleListScripts(ctx context.Context, client homeassis
 }
 
 // HandleGetScript handles the get_script tool call.
+// Returns the full script configuration including sequence, fields, mode, and variables.
 func (h *ScriptHandlers) HandleGetScript(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
 	scriptID, ok := args["script_id"].(string)
 	if !ok || scriptID == "" {
@@ -281,8 +282,7 @@ func (h *ScriptHandlers) HandleGetScript(ctx context.Context, client homeassista
 		}, nil
 	}
 
-	entityID := "script." + scriptID
-	state, err := client.GetState(ctx, entityID)
+	script, err := client.GetScript(ctx, scriptID)
 	if err != nil {
 		return &mcp.ToolsCallResult{
 			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error getting script: %v", err))},
@@ -290,7 +290,7 @@ func (h *ScriptHandlers) HandleGetScript(ctx context.Context, client homeassista
 		}, nil
 	}
 
-	jsonBytes, err := json.MarshalIndent(state, "", "  ")
+	jsonBytes, err := json.MarshalIndent(script, "", "  ")
 	if err != nil {
 		return &mcp.ToolsCallResult{
 			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error marshaling script: %v", err))},

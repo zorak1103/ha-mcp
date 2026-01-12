@@ -42,6 +42,7 @@ type Client interface {
 
 	// Script operations
 	ListScripts(ctx context.Context) ([]Entity, error)
+	GetScript(ctx context.Context, scriptID string) (*Script, error)
 	CreateScript(ctx context.Context, scriptID string, script ScriptConfig) error
 	UpdateScript(ctx context.Context, scriptID string, script ScriptConfig) error
 	DeleteScript(ctx context.Context, scriptID string) error

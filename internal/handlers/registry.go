@@ -95,6 +95,21 @@ func (h *RegistryHandlers) handleListEntityRegistry(
 	verbose, _ := args["verbose"].(bool)
 	includeDisabled, _ := args["include_disabled"].(bool)
 
+	// Build a set of device IDs in the target area (for area_id filtering)
+	// This allows us to find entities that belong to devices in the area,
+	// even if the entity itself doesn't have an area_id set
+	deviceIDsInArea := make(map[string]bool)
+	if areaIDFilter != "" {
+		devices, devErr := client.GetDeviceRegistry(ctx)
+		if devErr == nil {
+			for _, device := range devices {
+				if device.AreaID == areaIDFilter {
+					deviceIDsInArea[device.ID] = true
+				}
+			}
+		}
+	}
+
 	// Filter entries
 	filtered := make([]homeassistant.EntityRegistryEntry, 0, len(entries))
 	for _, entry := range entries {
@@ -121,9 +136,13 @@ func (h *RegistryHandlers) handleListEntityRegistry(
 			continue
 		}
 
-		// Apply area_id filter
-		if areaIDFilter != "" && entry.AreaID != areaIDFilter {
-			continue
+		// Apply area_id filter - match entities directly in area OR via device in area
+		if areaIDFilter != "" {
+			directMatch := entry.AreaID == areaIDFilter
+			deviceMatch := entry.DeviceID != "" && deviceIDsInArea[entry.DeviceID]
+			if !directMatch && !deviceMatch {
+				continue
+			}
 		}
 
 		filtered = append(filtered, entry)

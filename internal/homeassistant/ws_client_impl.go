@@ -458,6 +458,49 @@ func (c *wsClientImpl) ListScripts(ctx context.Context) ([]Entity, error) {
 	return scripts, nil
 }
 
+// GetScript retrieves a specific script by ID including its full configuration.
+// Uses the script/config WebSocket command with entity_id parameter.
+// The response contains the full script configuration including sequence, fields, and mode.
+func (c *wsClientImpl) GetScript(ctx context.Context, scriptID string) (*Script, error) {
+	// Build entity_id from script_id if needed
+	entityID := scriptID
+	if !strings.HasPrefix(scriptID, scriptPrefix) {
+		entityID = scriptPrefix + scriptID
+	}
+
+	// Get the entity state first for metadata
+	state, err := c.GetState(ctx, entityID)
+	if err != nil {
+		return nil, fmt.Errorf("get script state failed: %w", err)
+	}
+
+	script := &Script{
+		EntityID:      entityID,
+		State:         state.State,
+		FriendlyName:  getStringAttr(state.Attributes, "friendly_name"),
+		LastTriggered: getStringAttr(state.Attributes, "last_triggered"),
+	}
+
+	// Get the full script configuration via WebSocket
+	result, err := c.ws.SendCommand(ctx, "script/config", map[string]any{
+		"entity_id": entityID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get script config failed: %w", err)
+	}
+
+	// Response is wrapped in {"config": {...}}
+	var response struct {
+		Config ScriptConfig `json:"config"`
+	}
+	if err := json.Unmarshal(result.Result, &response); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal script config: %w", err)
+	}
+
+	script.Config = &response.Config
+	return script, nil
+}
+
 // CreateScript creates a new script.
 func (c *wsClientImpl) CreateScript(ctx context.Context, scriptID string, config ScriptConfig) error {
 	params := map[string]any{

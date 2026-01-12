@@ -214,6 +214,15 @@ type InputDateTimeConfig struct {
 	Initial string `json:"initial,omitempty"`
 }
 
+// Script represents a Home Assistant script with state and configuration.
+type Script struct {
+	EntityID      string        `json:"entity_id"`
+	State         string        `json:"state"`
+	FriendlyName  string        `json:"friendly_name,omitempty"`
+	LastTriggered string        `json:"last_triggered,omitempty"`
+	Config        *ScriptConfig `json:"config,omitempty"`
+}
+
 // ScriptConfig represents the configuration of a script.
 type ScriptConfig struct {
 	Alias       string         `json:"alias,omitempty"`

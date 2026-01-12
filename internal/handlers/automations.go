@@ -329,12 +329,20 @@ func (h *AutomationHandlers) handleGetAutomation(ctx context.Context, client hom
 		}, nil
 	}
 
-	automation, err := client.GetAutomation(ctx, automationID)
+	// Normalize the automation ID - strip "automation." prefix if present
+	normalizedID := strings.TrimPrefix(automationID, "automation.")
+
+	// First, try to get automation directly with the provided ID
+	automation, err := client.GetAutomation(ctx, normalizedID)
 	if err != nil {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error getting automation: %v", err))},
-			IsError: true,
-		}, nil
+		// If direct lookup failed, try to find by unique_id or entity_id
+		automation, err = h.findAutomationByID(ctx, client, automationID)
+		if err != nil {
+			return &mcp.ToolsCallResult{
+				Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error getting automation: %v", err))},
+				IsError: true,
+			}, nil
+		}
 	}
 
 	output, err := json.MarshalIndent(automation, "", "  ")
@@ -348,6 +356,44 @@ func (h *AutomationHandlers) handleGetAutomation(ctx context.Context, client hom
 	return &mcp.ToolsCallResult{
 		Content: []mcp.ContentBlock{mcp.NewTextContent(string(output))},
 	}, nil
+}
+
+// findAutomationByID searches for an automation by various ID formats:
+// - entity_id (automation.xxx)
+// - unique_id (numeric ID from entity registry)
+// - automation ID (the id field in automation config)
+func (h *AutomationHandlers) findAutomationByID(ctx context.Context, client homeassistant.Client, searchID string) (*homeassistant.Automation, error) {
+	automations, err := client.ListAutomations(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list automations: %w", err)
+	}
+
+	// Check if searchID matches entity_id pattern
+	if strings.HasPrefix(searchID, "automation.") {
+		entityID := searchID
+		for _, auto := range automations {
+			if auto.EntityID == entityID {
+				autoID := strings.TrimPrefix(auto.EntityID, "automation.")
+				return client.GetAutomation(ctx, autoID)
+			}
+		}
+	}
+
+	// Try to find by iterating through automations and checking config ID or unique_id
+	for _, auto := range automations {
+		autoID := strings.TrimPrefix(auto.EntityID, "automation.")
+		fullAuto, getErr := client.GetAutomation(ctx, autoID)
+		if getErr != nil {
+			continue
+		}
+
+		// Check if config ID matches
+		if fullAuto.Config != nil && fullAuto.Config.ID == searchID {
+			return fullAuto, nil
+		}
+	}
+
+	return nil, fmt.Errorf("automation not found with ID: %s (tried as automation_id, entity_id, and config.id)", searchID)
 }
 
 func (h *AutomationHandlers) handleCreateAutomation(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {

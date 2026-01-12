@@ -86,6 +86,10 @@ func (m *mockHAClient) ListScripts(_ context.Context) ([]homeassistant.Entity, e
 	return nil, nil
 }
 
+func (m *mockHAClient) GetScript(_ context.Context, _ string) (*homeassistant.Script, error) {
+	return nil, nil
+}
+
 func (m *mockHAClient) CreateScript(_ context.Context, _ string, _ homeassistant.ScriptConfig) error {
 	return nil
 }

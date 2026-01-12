@@ -215,6 +215,9 @@ func (m *mockNonCloserClient) SetHelperValue(_ context.Context, _ string, _ any)
 func (m *mockNonCloserClient) ListScripts(_ context.Context) ([]Entity, error) {
 	return []Entity{}, nil
 }
+func (m *mockNonCloserClient) GetScript(_ context.Context, _ string) (*Script, error) {
+	return &Script{}, nil
+}
 func (m *mockNonCloserClient) CreateScript(_ context.Context, _ string, _ ScriptConfig) error {
 	return nil
 }
