@@ -1,7 +1,81 @@
 // Package homeassistant provides types for the Home Assistant REST API.
 package homeassistant
 
-import "time"
+import (
+	"encoding/json"
+	"strings"
+	"time"
+)
+
+// FlexibleString is a type that can unmarshal from either a JSON string or an array of strings.
+// Home Assistant sometimes returns version fields as arrays instead of strings.
+type FlexibleString string
+
+// UnmarshalJSON implements json.Unmarshaler for FlexibleString.
+func (fs *FlexibleString) UnmarshalJSON(data []byte) error {
+	// Try to unmarshal as string first
+	var str string
+	if err := json.Unmarshal(data, &str); err == nil {
+		*fs = FlexibleString(str)
+		return nil
+	}
+
+	// Try to unmarshal as array of strings
+	var arr []string
+	if err := json.Unmarshal(data, &arr); err == nil {
+		*fs = FlexibleString(strings.Join(arr, ", "))
+		return nil
+	}
+
+	// If both fail, set to empty string
+	*fs = ""
+	return nil
+}
+
+// String returns the string value of FlexibleString.
+func (fs FlexibleString) String() string {
+	return string(fs)
+}
+
+// MarshalJSON implements json.Marshaler for FlexibleString.
+func (fs FlexibleString) MarshalJSON() ([]byte, error) {
+	return json.Marshal(string(fs))
+}
+
+// FlexibleIdentifier is a type that can unmarshal from either a JSON string or a number.
+// Home Assistant sometimes returns identifiers as numbers instead of strings.
+type FlexibleIdentifier string
+
+// UnmarshalJSON implements json.Unmarshaler for FlexibleIdentifier.
+func (fi *FlexibleIdentifier) UnmarshalJSON(data []byte) error {
+	// Try to unmarshal as string first
+	var str string
+	if err := json.Unmarshal(data, &str); err == nil {
+		*fi = FlexibleIdentifier(str)
+		return nil
+	}
+
+	// Try to unmarshal as number (float64 covers all JSON numbers)
+	var num float64
+	if err := json.Unmarshal(data, &num); err == nil {
+		*fi = FlexibleIdentifier(json.Number(data).String())
+		return nil
+	}
+
+	// If both fail, set to empty string
+	*fi = ""
+	return nil
+}
+
+// String returns the string value of FlexibleIdentifier.
+func (fi FlexibleIdentifier) String() string {
+	return string(fi)
+}
+
+// MarshalJSON implements json.Marshaler for FlexibleIdentifier.
+func (fi FlexibleIdentifier) MarshalJSON() ([]byte, error) {
+	return json.Marshal(string(fi))
+}
 
 // Entity represents a Home Assistant entity state.
 type Entity struct {
@@ -153,19 +227,19 @@ type EntityRegistryEntry struct {
 
 // DeviceRegistryEntry represents an entry in the Home Assistant device registry.
 type DeviceRegistryEntry struct {
-	ID               string     `json:"id"`
-	ConfigEntries    []string   `json:"config_entries,omitempty"`
-	Connections      [][]string `json:"connections,omitempty"`
-	Identifiers      [][]string `json:"identifiers,omitempty"`
-	Manufacturer     string     `json:"manufacturer,omitempty"`
-	Model            string     `json:"model,omitempty"`
-	Name             string     `json:"name,omitempty"`
-	SWVersion        string     `json:"sw_version,omitempty"`
-	HWVersion        string     `json:"hw_version,omitempty"`
-	AreaID           string     `json:"area_id,omitempty"`
-	NameByUser       string     `json:"name_by_user,omitempty"`
-	DisabledBy       string     `json:"disabled_by,omitempty"`
-	ConfigurationURL string     `json:"configuration_url,omitempty"`
+	ID               string                   `json:"id"`
+	ConfigEntries    []string                 `json:"config_entries,omitempty"`
+	Connections      [][]FlexibleIdentifier   `json:"connections,omitempty"`
+	Identifiers      [][]FlexibleIdentifier   `json:"identifiers,omitempty"`
+	Manufacturer     string                   `json:"manufacturer,omitempty"`
+	Model            FlexibleString           `json:"model,omitempty"`
+	Name             string                   `json:"name,omitempty"`
+	SWVersion        FlexibleString           `json:"sw_version,omitempty"`
+	HWVersion        FlexibleString           `json:"hw_version,omitempty"`
+	AreaID           string                   `json:"area_id,omitempty"`
+	NameByUser       string                   `json:"name_by_user,omitempty"`
+	DisabledBy       string                   `json:"disabled_by,omitempty"`
+	ConfigurationURL string                   `json:"configuration_url,omitempty"`
 }
 
 // AreaRegistryEntry represents an entry in the Home Assistant area registry.

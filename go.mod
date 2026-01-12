@@ -3,17 +3,18 @@ module gitlab.com/zorak1103/ha-mcp
 go 1.25.5
 
 require (
+	github.com/coder/websocket v1.8.14
+	github.com/google/go-cmp v0.5.9
+	github.com/joho/godotenv v1.5.1
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9
 	github.com/spf13/viper v1.19.0
 )
 
 require (
-	github.com/coder/websocket v1.8.14 // indirect
 	github.com/fsnotify/fsnotify v1.7.0 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/joho/godotenv v1.5.1 // indirect
 	github.com/magiconair/properties v1.8.7 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.2 // indirect
