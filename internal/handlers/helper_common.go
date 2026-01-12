@@ -3,6 +3,9 @@ package handlers
 
 import "strings"
 
+// VerboseHint is the hint message shown when verbose mode is available.
+const VerboseHint = " (use verbose=true for full details)"
+
 // HelperPlatforms defines all known helper platform prefixes.
 // This list is used across helper handlers for entity ID parsing and validation.
 var HelperPlatforms = []string{

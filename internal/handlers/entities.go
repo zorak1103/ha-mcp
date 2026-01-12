@@ -31,7 +31,7 @@ func (h *EntityHandlers) RegisterTools(registry *mcp.Registry) {
 func (h *EntityHandlers) getStatesTool() mcp.Tool {
 	return mcp.Tool{
 		Name:        "get_states",
-		Description: "Get all entity states from Home Assistant",
+		Description: "Get all entity states from Home Assistant. By default returns a compact list with entity_id, state, and friendly_name. Use 'verbose' for full details including all attributes.",
 		InputSchema: mcp.JSONSchema{
 			Type:        "object",
 			Description: "Optional filters for entity states",
@@ -39,6 +39,22 @@ func (h *EntityHandlers) getStatesTool() mcp.Tool {
 				"domain": {
 					Type:        "string",
 					Description: "Filter by domain (e.g., 'light', 'switch', 'sensor')",
+				},
+				"state": {
+					Type:        "string",
+					Description: "Filter by state value (e.g., 'on', 'off', 'unavailable', 'unknown')",
+				},
+				"state_not": {
+					Type:        "string",
+					Description: "Exclude entities with this state (e.g., 'unavailable' to exclude unavailable entities)",
+				},
+				"name_contains": {
+					Type:        "string",
+					Description: "Filter by entity_id or friendly_name containing this string (case-insensitive)",
+				},
+				"verbose": {
+					Type:        "boolean",
+					Description: "If true, return full details (all attributes, timestamps, context). Default: false (compact output with entity_id, state, friendly_name only)",
 				},
 			},
 		},
@@ -100,6 +116,13 @@ func (h *EntityHandlers) listDomainsTool() mcp.Tool {
 	}
 }
 
+// compactEntityState represents a minimal entity state for compact output.
+type compactEntityState struct {
+	EntityID     string `json:"entity_id"`
+	State        string `json:"state"`
+	FriendlyName string `json:"friendly_name,omitempty"`
+}
+
 func (h *EntityHandlers) handleGetStates(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
 	states, err := client.GetStates(ctx)
 	if err != nil {
@@ -109,21 +132,69 @@ func (h *EntityHandlers) handleGetStates(ctx context.Context, client homeassista
 		}, nil
 	}
 
-	// Filter by domain if specified
+	// Parse filter parameters
 	domain, _ := args["domain"].(string)
-	if domain != "" {
-		filtered := make([]homeassistant.Entity, 0)
-		prefix := domain + "."
-		for _, state := range states {
-			if strings.HasPrefix(state.EntityID, prefix) {
-				filtered = append(filtered, state)
+	stateFilter, _ := args["state"].(string)
+	stateNotFilter, _ := args["state_not"].(string)
+	nameContains, _ := args["name_contains"].(string)
+	verbose, _ := args["verbose"].(bool)
+
+	// Normalize name filter for case-insensitive matching
+	nameContainsLower := strings.ToLower(nameContains)
+
+	// Apply filters
+	filtered := make([]homeassistant.Entity, 0, len(states))
+	for _, state := range states {
+		// Apply domain filter
+		if domain != "" && !strings.HasPrefix(state.EntityID, domain+".") {
+			continue
+		}
+
+		// Apply state filter
+		if stateFilter != "" && state.State != stateFilter {
+			continue
+		}
+
+		// Apply state_not filter
+		if stateNotFilter != "" && state.State == stateNotFilter {
+			continue
+		}
+
+		// Apply name_contains filter (checks entity_id and friendly_name)
+		if nameContains != "" {
+			entityIDMatch := strings.Contains(strings.ToLower(state.EntityID), nameContainsLower)
+			friendlyName, _ := state.Attributes["friendly_name"].(string)
+			friendlyNameMatch := strings.Contains(strings.ToLower(friendlyName), nameContainsLower)
+			if !entityIDMatch && !friendlyNameMatch {
+				continue
 			}
 		}
-		states = filtered
+
+		filtered = append(filtered, state)
+	}
+	states = filtered
+
+	// Format output based on verbose flag
+	var output []byte
+	if verbose {
+		output, err = json.MarshalIndent(states, "", "  ")
+	} else {
+		// Compact output: only entity_id, state, friendly_name
+		compact := make([]compactEntityState, 0, len(states))
+		for _, state := range states {
+			entry := compactEntityState{
+				EntityID: state.EntityID,
+				State:    state.State,
+			}
+			// Extract friendly_name from attributes if present
+			if friendlyName, ok := state.Attributes["friendly_name"].(string); ok {
+				entry.FriendlyName = friendlyName
+			}
+			compact = append(compact, entry)
+		}
+		output, err = json.MarshalIndent(compact, "", "  ")
 	}
 
-	// Format output
-	output, err := json.MarshalIndent(states, "", "  ")
 	if err != nil {
 		return &mcp.ToolsCallResult{
 			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error formatting states: %v", err))},
@@ -131,8 +202,14 @@ func (h *EntityHandlers) handleGetStates(ctx context.Context, client homeassista
 		}, nil
 	}
 
+	// Add summary info
+	summary := fmt.Sprintf("Found %d entities", len(states))
+	if !verbose {
+		summary += VerboseHint
+	}
+
 	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{mcp.NewTextContent(string(output))},
+		Content: []mcp.ContentBlock{mcp.NewTextContent(summary + "\n\n" + string(output))},
 	}, nil
 }
 

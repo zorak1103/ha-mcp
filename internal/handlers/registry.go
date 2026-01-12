@@ -158,7 +158,7 @@ func (h *RegistryHandlers) handleListEntityRegistry(
 	// Add summary info
 	summary := fmt.Sprintf("Found %d entities", len(filtered))
 	if !verbose {
-		summary += " (use verbose=true for full details)"
+		summary += VerboseHint
 	}
 
 	return &mcp.ToolsCallResult{
@@ -305,7 +305,7 @@ func (h *RegistryHandlers) handleListDeviceRegistry(
 	// Add summary info
 	summary := fmt.Sprintf("Found %d devices", len(filtered))
 	if !verbose {
-		summary += " (use verbose=true for full details)"
+		summary += VerboseHint
 	}
 
 	return &mcp.ToolsCallResult{
