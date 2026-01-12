@@ -75,3 +75,6 @@ tmp/
 
 .clavix/
 .clinerules/
+.claude/
+CLAUDE.md
+AGENTS.md
