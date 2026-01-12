@@ -9,19 +9,19 @@ import (
 	"testing"
 	"time"
 
-	"gitlab.com/zorak1103/ha-mcp/internal/homeassistant"
-	"gitlab.com/zorak1103/ha-mcp/internal/mcp"
+	"github.com/zorak1103/ha-mcp/internal/homeassistant"
+	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
 
 // mockEntityClient implements homeassistant.Client for testing.
 type mockEntityClient struct {
 	homeassistant.Client
-	states       []homeassistant.Entity
-	statesErr    error
-	state        *homeassistant.Entity
-	stateErr     error
-	history      [][]homeassistant.HistoryEntry
-	historyErr   error
+	states     []homeassistant.Entity
+	statesErr  error
+	state      *homeassistant.Entity
+	stateErr   error
+	history    [][]homeassistant.HistoryEntry
+	historyErr error
 }
 
 func (m *mockEntityClient) GetStates(_ context.Context) ([]homeassistant.Entity, error) {
@@ -578,7 +578,7 @@ func TestHandleGetHistory(t *testing.T) {
 				history: testHistory,
 			},
 			wantError:       false,
-			wantContains:    []string{"22.0", "Showing 1 of 1"},
+			wantContains:    []string{"22.0", "Found 1 history entries"},
 			wantNotContains: []string{"21.5", "22.5"},
 		},
 		{
@@ -854,4 +854,3 @@ func TestListDomainsTool(t *testing.T) {
 		t.Errorf("Expected input schema type 'object', got %q", tool.InputSchema.Type)
 	}
 }
-

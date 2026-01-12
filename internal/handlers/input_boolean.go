@@ -5,8 +5,8 @@ import (
 	"context"
 	"fmt"
 
-	"gitlab.com/zorak1103/ha-mcp/internal/homeassistant"
-	"gitlab.com/zorak1103/ha-mcp/internal/mcp"
+	"github.com/zorak1103/ha-mcp/internal/homeassistant"
+	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
 
 // InputBooleanHandlers provides MCP tool handlers for input_boolean helper operations.

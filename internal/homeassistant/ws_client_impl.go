@@ -752,7 +752,7 @@ func (c *wsClientImpl) GetLovelaceConfig(ctx context.Context) (map[string]any, e
 func (c *wsClientImpl) GetStatistics(ctx context.Context, statIDs []string, period string) ([]StatisticsResult, error) {
 	// Default to last 24 hours if no start_time provided
 	startTime := time.Now().Add(-24 * time.Hour)
-	
+
 	params := map[string]any{
 		"statistic_ids": statIDs,
 		"period":        period,

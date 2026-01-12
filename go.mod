@@ -1,4 +1,4 @@
-module gitlab.com/zorak1103/ha-mcp
+module github.com/zorak1103/ha-mcp
 
 go 1.25.5
 

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"unicode"
 
-	"gitlab.com/zorak1103/ha-mcp/internal/homeassistant"
-	"gitlab.com/zorak1103/ha-mcp/internal/mcp"
+	"github.com/zorak1103/ha-mcp/internal/homeassistant"
+	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
 
 // AutomationHandlers provides MCP tool handlers for automation operations.

@@ -6,8 +6,8 @@ import (
 	"sort"
 	"sync"
 
-	"gitlab.com/zorak1103/ha-mcp/internal/homeassistant"
-	"gitlab.com/zorak1103/ha-mcp/internal/logging"
+	"github.com/zorak1103/ha-mcp/internal/homeassistant"
+	"github.com/zorak1103/ha-mcp/internal/logging"
 )
 
 // ToolHandler is a function that handles a tool call.

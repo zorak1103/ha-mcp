@@ -1,7 +1,7 @@
 // Package handlers provides MCP tool handlers for Home Assistant operations.
 package handlers
 
-import "gitlab.com/zorak1103/ha-mcp/internal/mcp"
+import "github.com/zorak1103/ha-mcp/internal/mcp"
 
 // RegisterEntityTools registers all entity-related tools with the registry.
 func RegisterEntityTools(registry *mcp.Registry) {

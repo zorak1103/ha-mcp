@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"strings"
 
-	"gitlab.com/zorak1103/ha-mcp/internal/homeassistant"
-	"gitlab.com/zorak1103/ha-mcp/internal/mcp"
+	"github.com/zorak1103/ha-mcp/internal/homeassistant"
+	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
 
 // LovelaceHandlers provides handlers for Home Assistant Lovelace dashboard operations.

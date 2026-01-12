@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"gitlab.com/zorak1103/ha-mcp/internal/homeassistant"
-	"gitlab.com/zorak1103/ha-mcp/internal/mcp"
+	"github.com/zorak1103/ha-mcp/internal/homeassistant"
+	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
 
 // HelperHandlers provides MCP tool handlers for generic helper operations.

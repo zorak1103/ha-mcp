@@ -104,10 +104,10 @@ type StateUpdate struct {
 // The WebSocket API returns a compact format with short field names.
 type HistoryEntry struct {
 	EntityID    string         `json:"entity_id,omitempty"`
-	State       string         `json:"s"`                    // "s" in WS API, "state" in REST API
-	Attributes  map[string]any `json:"a,omitempty"`          // "a" in WS API, "attributes" in REST API
-	LastChanged float64        `json:"lc"`                   // Unix timestamp (seconds) in WS API
-	LastUpdated float64        `json:"lu,omitempty"`         // Unix timestamp (seconds) in WS API
+	State       string         `json:"s"`            // "s" in WS API, "state" in REST API
+	Attributes  map[string]any `json:"a,omitempty"`  // "a" in WS API, "attributes" in REST API
+	LastChanged float64        `json:"lc"`           // Unix timestamp (seconds) in WS API
+	LastUpdated float64        `json:"lu,omitempty"` // Unix timestamp (seconds) in WS API
 }
 
 // LastChangedTime returns LastChanged as time.Time.
@@ -254,19 +254,19 @@ type EntityRegistryEntry struct {
 
 // DeviceRegistryEntry represents an entry in the Home Assistant device registry.
 type DeviceRegistryEntry struct {
-	ID               string                   `json:"id"`
-	ConfigEntries    []string                 `json:"config_entries,omitempty"`
-	Connections      [][]FlexibleIdentifier   `json:"connections,omitempty"`
-	Identifiers      [][]FlexibleIdentifier   `json:"identifiers,omitempty"`
-	Manufacturer     string                   `json:"manufacturer,omitempty"`
-	Model            FlexibleString           `json:"model,omitempty"`
-	Name             string                   `json:"name,omitempty"`
-	SWVersion        FlexibleString           `json:"sw_version,omitempty"`
-	HWVersion        FlexibleString           `json:"hw_version,omitempty"`
-	AreaID           string                   `json:"area_id,omitempty"`
-	NameByUser       string                   `json:"name_by_user,omitempty"`
-	DisabledBy       string                   `json:"disabled_by,omitempty"`
-	ConfigurationURL string                   `json:"configuration_url,omitempty"`
+	ID               string                 `json:"id"`
+	ConfigEntries    []string               `json:"config_entries,omitempty"`
+	Connections      [][]FlexibleIdentifier `json:"connections,omitempty"`
+	Identifiers      [][]FlexibleIdentifier `json:"identifiers,omitempty"`
+	Manufacturer     string                 `json:"manufacturer,omitempty"`
+	Model            FlexibleString         `json:"model,omitempty"`
+	Name             string                 `json:"name,omitempty"`
+	SWVersion        FlexibleString         `json:"sw_version,omitempty"`
+	HWVersion        FlexibleString         `json:"hw_version,omitempty"`
+	AreaID           string                 `json:"area_id,omitempty"`
+	NameByUser       string                 `json:"name_by_user,omitempty"`
+	DisabledBy       string                 `json:"disabled_by,omitempty"`
+	ConfigurationURL string                 `json:"configuration_url,omitempty"`
 }
 
 // AreaRegistryEntry represents an entry in the Home Assistant area registry.
@@ -297,7 +297,7 @@ type MediaBrowseResult struct {
 // StatisticsResult represents statistics data from the Home Assistant recorder.
 type StatisticsResult struct {
 	StatisticID string   `json:"statistic_id"`
-	Start       float64  `json:"start"`       // Unix timestamp
+	Start       float64  `json:"start"`         // Unix timestamp
 	End         float64  `json:"end,omitempty"` // Unix timestamp
 	Mean        *float64 `json:"mean,omitempty"`
 	Min         *float64 `json:"min,omitempty"`

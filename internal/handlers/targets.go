@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"gitlab.com/zorak1103/ha-mcp/internal/homeassistant"
-	"gitlab.com/zorak1103/ha-mcp/internal/mcp"
+	"github.com/zorak1103/ha-mcp/internal/homeassistant"
+	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
 
 // TargetHandlers provides handlers for Home Assistant target operations.

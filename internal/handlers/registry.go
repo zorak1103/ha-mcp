@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"strings"
 
-	"gitlab.com/zorak1103/ha-mcp/internal/homeassistant"
-	"gitlab.com/zorak1103/ha-mcp/internal/mcp"
+	"github.com/zorak1103/ha-mcp/internal/homeassistant"
+	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
 
 // RegistryHandlers provides handlers for Home Assistant registry operations.

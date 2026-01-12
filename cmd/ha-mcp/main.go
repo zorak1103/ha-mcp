@@ -13,12 +13,12 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 
-	"gitlab.com/zorak1103/ha-mcp/configs"
-	"gitlab.com/zorak1103/ha-mcp/internal/config"
-	"gitlab.com/zorak1103/ha-mcp/internal/handlers"
-	"gitlab.com/zorak1103/ha-mcp/internal/homeassistant"
-	"gitlab.com/zorak1103/ha-mcp/internal/logging"
-	"gitlab.com/zorak1103/ha-mcp/internal/mcp"
+	"github.com/zorak1103/ha-mcp/configs"
+	"github.com/zorak1103/ha-mcp/internal/config"
+	"github.com/zorak1103/ha-mcp/internal/handlers"
+	"github.com/zorak1103/ha-mcp/internal/homeassistant"
+	"github.com/zorak1103/ha-mcp/internal/logging"
+	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
 
 // App holds the CLI application state and dependencies.
