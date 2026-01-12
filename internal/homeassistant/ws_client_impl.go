@@ -750,9 +750,13 @@ func (c *wsClientImpl) GetLovelaceConfig(ctx context.Context) (map[string]any, e
 
 // GetStatistics retrieves long-term statistics for entities.
 func (c *wsClientImpl) GetStatistics(ctx context.Context, statIDs []string, period string) ([]StatisticsResult, error) {
+	// Default to last 24 hours if no start_time provided
+	startTime := time.Now().Add(-24 * time.Hour)
+	
 	params := map[string]any{
 		"statistic_ids": statIDs,
 		"period":        period,
+		"start_time":    startTime.Format(time.RFC3339),
 	}
 
 	result, err := c.ws.SendCommand(ctx, "recorder/statistics_during_period", params)

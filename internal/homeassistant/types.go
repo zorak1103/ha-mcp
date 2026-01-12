@@ -101,12 +101,39 @@ type StateUpdate struct {
 }
 
 // HistoryEntry represents a single history entry for an entity.
+// The WebSocket API returns a compact format with short field names.
 type HistoryEntry struct {
-	EntityID    string         `json:"entity_id"`
-	State       string         `json:"state"`
-	Attributes  map[string]any `json:"attributes"`
-	LastChanged time.Time      `json:"last_changed"`
-	LastUpdated time.Time      `json:"last_updated"`
+	EntityID    string         `json:"entity_id,omitempty"`
+	State       string         `json:"s"`                    // "s" in WS API, "state" in REST API
+	Attributes  map[string]any `json:"a,omitempty"`          // "a" in WS API, "attributes" in REST API
+	LastChanged float64        `json:"lc"`                   // Unix timestamp (seconds) in WS API
+	LastUpdated float64        `json:"lu,omitempty"`         // Unix timestamp (seconds) in WS API
+}
+
+// LastChangedTime returns LastChanged as time.Time.
+// The WebSocket API returns timestamps in seconds (Unix epoch).
+// If LastChanged is 0, falls back to LastUpdated.
+func (h HistoryEntry) LastChangedTime() time.Time {
+	ts := h.LastChanged
+	// Fall back to LastUpdated if LastChanged is 0
+	if ts == 0 && h.LastUpdated > 0 {
+		ts = h.LastUpdated
+	}
+	// If timestamp looks like it's in milliseconds (very large number), convert
+	if ts > 1e12 {
+		return time.UnixMilli(int64(ts))
+	}
+	return time.Unix(int64(ts), 0)
+}
+
+// LastUpdatedTime returns LastUpdated as time.Time.
+// The WebSocket API returns timestamps in seconds (Unix epoch).
+func (h HistoryEntry) LastUpdatedTime() time.Time {
+	// If timestamp looks like it's in milliseconds (very large number), convert
+	if h.LastUpdated > 1e12 {
+		return time.UnixMilli(int64(h.LastUpdated))
+	}
+	return time.Unix(int64(h.LastUpdated), 0)
 }
 
 // Automation represents a Home Assistant automation.
@@ -270,8 +297,8 @@ type MediaBrowseResult struct {
 // StatisticsResult represents statistics data from the Home Assistant recorder.
 type StatisticsResult struct {
 	StatisticID string   `json:"statistic_id"`
-	Start       string   `json:"start"`
-	End         string   `json:"end,omitempty"`
+	Start       float64  `json:"start"`       // Unix timestamp
+	End         float64  `json:"end,omitempty"` // Unix timestamp
 	Mean        *float64 `json:"mean,omitempty"`
 	Min         *float64 `json:"min,omitempty"`
 	Max         *float64 `json:"max,omitempty"`

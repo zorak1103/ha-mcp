@@ -261,8 +261,8 @@ func (h *EntityHandlers) handleGetState(ctx context.Context, client homeassistan
 
 // compactHistoryEntry represents a minimal history entry for compact output.
 type compactHistoryEntry struct {
-	State       string    `json:"state"`
-	LastChanged time.Time `json:"last_changed"`
+	State       string `json:"state"`
+	LastChanged string `json:"last_changed"`
 }
 
 func (h *EntityHandlers) handleGetHistory(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
@@ -353,7 +353,7 @@ func (h *EntityHandlers) handleGetHistory(ctx context.Context, client homeassist
 		for _, entry := range entries {
 			compact = append(compact, compactHistoryEntry{
 				State:       entry.State,
-				LastChanged: entry.LastChanged,
+				LastChanged: entry.LastChangedTime().Format(time.RFC3339),
 			})
 		}
 		output, err = json.MarshalIndent(compact, "", "  ")
