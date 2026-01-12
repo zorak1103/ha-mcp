@@ -134,13 +134,17 @@ func (r *ReconnectManager) WaitForReconnect(ctx context.Context) error {
 	// Create timer and cancellation context
 	waitCtx, cancel := context.WithCancel(ctx)
 	r.cancelFunc = cancel
-	r.timer = time.NewTimer(waitDuration)
+	timer := time.NewTimer(waitDuration)
+	r.timer = timer
+
+	// Capture channel before unlocking to avoid race condition
+	timerChan := timer.C
 
 	r.mu.Unlock()
 
 	// Wait for timer or cancellation
 	select {
-	case <-r.timer.C:
+	case <-timerChan:
 		return nil
 	case <-waitCtx.Done():
 		r.Stop()
