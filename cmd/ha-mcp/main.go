@@ -203,18 +203,38 @@ func main() {
 
 // run executes the main server logic.
 func (a *App) run(_ *cobra.Command, _ []string) error {
-	// Load configuration
 	cfg, err := config.Load(a.cfgFile)
 	if err != nil {
 		return fmt.Errorf("loading configuration: %w", err)
 	}
 
-	// Setup logger with configured level
+	logger := a.setupLogger(cfg)
+	ctx, cancel := a.setupGracefulShutdown(logger)
+	defer cancel()
+
+	haClient, err := a.initHomeAssistantClient(ctx, cfg, logger)
+	if err != nil {
+		return err
+	}
+	defer a.closeHomeAssistantClient(haClient, logger)
+
+	mcpServer := a.initMCPServer(haClient, cfg.Server.Port, logger)
+	a.startMCPServer(mcpServer, logger, cancel)
+
+	<-ctx.Done()
+	logger.Info("Shutdown complete")
+
+	return nil
+}
+
+// setupLogger configures and returns a logger based on the configuration.
+func (a *App) setupLogger(cfg *config.Config) *logging.Logger {
 	logLevel, err := logging.ParseLevel(cfg.Logging.Level)
 	if err != nil {
 		log.Printf("Warning: invalid log level %q, using INFO", cfg.Logging.Level)
 		logLevel = logging.LevelInfo
 	}
+
 	logger := logging.New(logLevel)
 	logging.SetDefault(logger)
 
@@ -222,9 +242,12 @@ func (a *App) run(_ *cobra.Command, _ []string) error {
 	logger.Info("Home Assistant URL", "url", cfg.HomeAssistant.URL)
 	logger.Info("Log level", "level", logging.LevelString(logLevel))
 
-	// Setup graceful shutdown
+	return logger
+}
+
+// setupGracefulShutdown configures signal handling for graceful shutdown.
+func (a *App) setupGracefulShutdown(logger *logging.Logger) (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -235,47 +258,57 @@ func (a *App) run(_ *cobra.Command, _ []string) error {
 		cancel()
 	}()
 
-	// Initialize Home Assistant WebSocket client
+	return ctx, cancel
+}
+
+// initHomeAssistantClient creates and connects the Home Assistant WebSocket client.
+func (a *App) initHomeAssistantClient(
+	ctx context.Context,
+	cfg *config.Config,
+	logger *logging.Logger,
+) (homeassistant.Client, error) {
 	logger.Info("Connecting to Home Assistant WebSocket API...")
+
 	haClient, err := homeassistant.NewDefaultWSClient(ctx, cfg.HomeAssistant.URL, cfg.HomeAssistant.Token)
 	if err != nil {
-		return fmt.Errorf("connecting to Home Assistant: %w", err)
+		return nil, fmt.Errorf("connecting to Home Assistant: %w", err)
 	}
+
 	logger.Info("Connected to Home Assistant WebSocket API")
 
-	// Ensure graceful shutdown of WebSocket connection
-	defer func() {
-		logger.Info("Closing Home Assistant WebSocket connection...")
-		if closeErr := homeassistant.CloseClient(haClient); closeErr != nil {
-			logger.Error("Error closing Home Assistant client", "error", closeErr)
-		}
-	}()
+	return haClient, nil
+}
 
-	// Initialize MCP registry and register all tools
+// closeHomeAssistantClient gracefully closes the Home Assistant WebSocket connection.
+func (a *App) closeHomeAssistantClient(client homeassistant.Client, logger *logging.Logger) {
+	logger.Info("Closing Home Assistant WebSocket connection...")
+
+	if err := homeassistant.CloseClient(client); err != nil {
+		logger.Error("Error closing Home Assistant client", "error", err)
+	}
+}
+
+// initMCPServer creates and configures the MCP server with all registered tools.
+func (a *App) initMCPServer(
+	haClient homeassistant.Client,
+	port int,
+	logger *logging.Logger,
+) *mcp.Server {
 	registry := mcp.NewRegistry()
-
-	// Register all tool handlers (entity, automation, helpers, media, etc.)
 	handlers.RegisterAllTools(registry)
 
 	logger.Info("Registered MCP tools", "count", registry.ToolCount())
-
-	// Log all registered tools at debug level
 	registry.LogRegisteredTools(logger)
 
-	// Initialize MCP server with logger
-	mcpServer := mcp.NewServer(haClient, registry, cfg.Server.Port, logger)
+	return mcp.NewServer(haClient, registry, port, logger)
+}
 
-	// Start MCP server in goroutine
+// startMCPServer starts the MCP server in a goroutine.
+func (a *App) startMCPServer(server *mcp.Server, logger *logging.Logger, cancel context.CancelFunc) {
 	go func() {
-		if err := mcpServer.Start(); err != nil {
+		if err := server.Start(); err != nil {
 			logger.Error("MCP server error", "error", err)
 			cancel()
 		}
 	}()
-
-	// Wait for shutdown signal
-	<-ctx.Done()
-	logger.Info("Shutdown complete")
-
-	return nil
 }
