@@ -204,7 +204,6 @@ homeassistant:
   token: "your-long-lived-access-token"
 
 server:
-  host: "0.0.0.0"
   port: 8080
 
 logging:
@@ -216,9 +215,8 @@ logging:
 ```bash
 export HA_URL=http://homeassistant.local:8123
 export HA_TOKEN=your-long-lived-access-token
-export SERVER_HOST=0.0.0.0
-export SERVER_PORT=8080
-export LOG_LEVEL=info
+export HA_MCP_PORT=8080
+export HA_MCP_LOG_LEVEL=info
 ```
 
 ### Command-Line Flags
@@ -227,9 +225,7 @@ export LOG_LEVEL=info
 ha-mcp \
   --ha-url http://homeassistant.local:8123 \
   --ha-token your-long-lived-access-token \
-  --host 0.0.0.0 \
-  --port 8080 \
-  --log-level info
+  --port 8080
 ```
 
 ### Getting a Home Assistant Token
@@ -287,7 +283,7 @@ Add to your Cline MCP configuration (`~/.config/cline/mcp.json`):
 {
   "servers": {
     "ha-mcp": {
-      "url": "http://localhost:8080/mcp",
+      "url": "http://localhost:8080",
       "description": "Home Assistant MCP Server"
     }
   }
@@ -302,7 +298,7 @@ Add to Claude Desktop's MCP configuration:
 {
   "mcpServers": {
     "homeassistant": {
-      "url": "http://localhost:8080/mcp"
+      "url": "http://localhost:8080"
     }
   }
 }
@@ -316,7 +312,7 @@ Configure in your opencode settings:
 mcp:
   servers:
     - name: homeassistant
-      url: http://localhost:8080/mcp
+      url: http://localhost:8080
 ```
 
 ## API Reference
@@ -326,7 +322,7 @@ mcp:
 All MCP requests are sent to:
 
 ```
-POST http://localhost:8080/mcp
+POST http://localhost:8080/
 Content-Type: application/json
 ```
 
@@ -708,7 +704,13 @@ ha-mcp includes automatic reconnection with exponential backoff:
 Enable debug logging for more detailed output:
 
 ```bash
-ha-mcp --log-level debug
+# Via environment variable
+export HA_MCP_LOG_LEVEL=debug
+ha-mcp
+
+# Or in config.yaml
+# logging:
+#   level: "debug"
 ```
 
 Debug logs show:
