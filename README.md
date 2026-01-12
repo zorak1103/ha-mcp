@@ -2,8 +2,11 @@
 
 [![CI](https://github.com/zorak1103/ha-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/zorak1103/ha-mcp/actions/workflows/ci.yml)
 [![Release](https://github.com/zorak1103/ha-mcp/actions/workflows/release.yml/badge.svg)](https://github.com/zorak1103/ha-mcp/actions/workflows/release.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/zorak1103/ha-mcp)](https://goreportcard.com/report/github.com/zorak1103/ha-mcp)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/zorak1103/ha-mcp)](https://go.dev/)
+[![Go Reference](https://pkg.go.dev/badge/github.com/zorak1103/ha-mcp.svg)](https://pkg.go.dev/github.com/zorak1103/ha-mcp)
 [![License](https://img.shields.io/github/license/zorak1103/ha-mcp)](LICENSE)
+[![GitHub release](https://img.shields.io/github/v/release/zorak1103/ha-mcp)](https://github.com/zorak1103/ha-mcp/releases/latest)
 
 A Model Context Protocol (MCP) server that provides AI assistants with access to Home Assistant via WebSocket, enabling smart home control and automation management.
 
