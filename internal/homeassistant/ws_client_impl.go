@@ -659,7 +659,8 @@ func (c *wsClientImpl) DeleteScene(ctx context.Context, sceneID string) error {
 // =============================================================================
 
 // GetScheduleConfig retrieves the full configuration of a schedule helper.
-// Uses the schedule/config WebSocket command to get all time blocks for each day.
+// Uses the schedule/list WebSocket command to get all schedules with their time blocks,
+// then filters for the requested schedule.
 func (c *wsClientImpl) GetScheduleConfig(ctx context.Context, scheduleID string) (map[string]any, error) {
 	// Build entity_id from schedule_id if needed
 	entityID := scheduleID
@@ -667,19 +668,32 @@ func (c *wsClientImpl) GetScheduleConfig(ctx context.Context, scheduleID string)
 		entityID = "schedule." + scheduleID
 	}
 
-	result, err := c.ws.SendCommand(ctx, "schedule/config", map[string]any{
-		"entity_id": entityID,
-	})
+	// Extract the ID part without "schedule." prefix
+	id := entityID
+	if strings.HasPrefix(entityID, "schedule.") {
+		id = entityID[len("schedule."):]
+	}
+
+	// Use schedule/list to get all schedules with their configurations
+	result, err := c.ws.SendCommand(ctx, "schedule/list", nil)
 	if err != nil {
-		return nil, fmt.Errorf("get schedule config failed: %w", err)
+		return nil, fmt.Errorf("get schedule list failed: %w", err)
 	}
 
-	var config map[string]any
-	if err := json.Unmarshal(result.Result, &config); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal schedule config: %w", err)
+	// schedule/list returns an array of schedule configurations
+	var schedules []map[string]any
+	if err := json.Unmarshal(result.Result, &schedules); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal schedule list: %w", err)
 	}
 
-	return config, nil
+	// Find the requested schedule by ID
+	for _, schedule := range schedules {
+		if scheduleID, ok := schedule["id"].(string); ok && scheduleID == id {
+			return schedule, nil
+		}
+	}
+
+	return nil, fmt.Errorf("schedule not found: %s", entityID)
 }
 
 // =============================================================================
