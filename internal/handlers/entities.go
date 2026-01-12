@@ -82,7 +82,7 @@ func (h *EntityHandlers) getStateTool() mcp.Tool {
 func (h *EntityHandlers) getHistoryTool() mcp.Tool {
 	return mcp.Tool{
 		Name:        "get_history",
-		Description: "Get historical state changes for an entity",
+		Description: "Get historical state changes for an entity. By default returns compact output with state and timestamp. Use 'verbose' for full details.",
 		InputSchema: mcp.JSONSchema{
 			Type:        "object",
 			Description: "Parameters for getting entity history",
@@ -93,11 +93,27 @@ func (h *EntityHandlers) getHistoryTool() mcp.Tool {
 				},
 				"start_time": {
 					Type:        "string",
-					Description: "Start time in RFC3339 format (default: 24 hours ago)",
+					Description: "Start time in RFC3339 format (default: 24 hours ago). Alternative: use 'hours' parameter.",
 				},
 				"end_time": {
 					Type:        "string",
 					Description: "End time in RFC3339 format (default: now)",
+				},
+				"hours": {
+					Type:        "number",
+					Description: "Number of hours to look back from now (e.g., 6 for last 6 hours). Overrides start_time if specified.",
+				},
+				"state": {
+					Type:        "string",
+					Description: "Filter to only show entries with this state value",
+				},
+				"limit": {
+					Type:        "integer",
+					Description: "Maximum number of entries to return (most recent first). Default: all entries.",
+				},
+				"verbose": {
+					Type:        "boolean",
+					Description: "If true, return full details (all attributes). Default: false (compact output with state and timestamp only)",
 				},
 			},
 			Required: []string{"entity_id"},
@@ -243,6 +259,12 @@ func (h *EntityHandlers) handleGetState(ctx context.Context, client homeassistan
 	}, nil
 }
 
+// compactHistoryEntry represents a minimal history entry for compact output.
+type compactHistoryEntry struct {
+	State       string    `json:"state"`
+	LastChanged time.Time `json:"last_changed"`
+}
+
 func (h *EntityHandlers) handleGetHistory(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
 	entityID, ok := args["entity_id"].(string)
 	if !ok || entityID == "" {
@@ -256,7 +278,10 @@ func (h *EntityHandlers) handleGetHistory(ctx context.Context, client homeassist
 	endTime := time.Now()
 	startTime := endTime.Add(-24 * time.Hour)
 
-	if startStr, ok := args["start_time"].(string); ok && startStr != "" {
+	// Check for 'hours' parameter first (overrides start_time)
+	if hours, ok := args["hours"].(float64); ok && hours > 0 {
+		startTime = endTime.Add(-time.Duration(hours) * time.Hour)
+	} else if startStr, ok := args["start_time"].(string); ok && startStr != "" {
 		parsed, err := time.Parse(time.RFC3339, startStr)
 		if err != nil {
 			return &mcp.ToolsCallResult{
@@ -278,6 +303,14 @@ func (h *EntityHandlers) handleGetHistory(ctx context.Context, client homeassist
 		endTime = parsed
 	}
 
+	// Parse filter and output parameters
+	stateFilter, _ := args["state"].(string)
+	limit := 0
+	if limitVal, ok := args["limit"].(float64); ok && limitVal > 0 {
+		limit = int(limitVal)
+	}
+	verbose, _ := args["verbose"].(bool)
+
 	history, err := client.GetHistory(ctx, entityID, startTime, endTime)
 	if err != nil {
 		return &mcp.ToolsCallResult{
@@ -286,7 +319,46 @@ func (h *EntityHandlers) handleGetHistory(ctx context.Context, client homeassist
 		}, nil
 	}
 
-	output, err := json.MarshalIndent(history, "", "  ")
+	// Flatten history (it's [][]HistoryEntry, typically with one inner array per entity)
+	var entries []homeassistant.HistoryEntry
+	for _, entityHistory := range history {
+		entries = append(entries, entityHistory...)
+	}
+
+	// Apply state filter
+	if stateFilter != "" {
+		filtered := make([]homeassistant.HistoryEntry, 0)
+		for _, entry := range entries {
+			if entry.State == stateFilter {
+				filtered = append(filtered, entry)
+			}
+		}
+		entries = filtered
+	}
+
+	totalCount := len(entries)
+
+	// Apply limit (take most recent entries)
+	if limit > 0 && len(entries) > limit {
+		entries = entries[len(entries)-limit:]
+	}
+
+	// Format output based on verbose flag
+	var output []byte
+	if verbose {
+		output, err = json.MarshalIndent(entries, "", "  ")
+	} else {
+		// Compact output: only state and last_changed
+		compact := make([]compactHistoryEntry, 0, len(entries))
+		for _, entry := range entries {
+			compact = append(compact, compactHistoryEntry{
+				State:       entry.State,
+				LastChanged: entry.LastChanged,
+			})
+		}
+		output, err = json.MarshalIndent(compact, "", "  ")
+	}
+
 	if err != nil {
 		return &mcp.ToolsCallResult{
 			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error formatting history: %v", err))},
@@ -294,8 +366,20 @@ func (h *EntityHandlers) handleGetHistory(ctx context.Context, client homeassist
 		}, nil
 	}
 
+	// Build summary
+	summary := fmt.Sprintf("Found %d history entries for %s", len(entries), entityID)
+	if limit > 0 && totalCount > limit {
+		summary = fmt.Sprintf("Showing %d of %d history entries for %s (limited)", len(entries), totalCount, entityID)
+	}
+	if stateFilter != "" {
+		summary += fmt.Sprintf(" (filtered by state='%s')", stateFilter)
+	}
+	if !verbose {
+		summary += VerboseHint
+	}
+
 	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{mcp.NewTextContent(string(output))},
+		Content: []mcp.ContentBlock{mcp.NewTextContent(summary + "\n\n" + string(output))},
 	}, nil
 }
 

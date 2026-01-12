@@ -33,10 +33,24 @@ func (h *AutomationHandlers) RegisterTools(registry *mcp.Registry) {
 func (h *AutomationHandlers) listAutomationsTool() mcp.Tool {
 	return mcp.Tool{
 		Name:        "list_automations",
-		Description: "List all automations in Home Assistant",
+		Description: "List all automations in Home Assistant. By default returns a compact list. Use filters to narrow down results and 'verbose' for full details including configuration.",
 		InputSchema: mcp.JSONSchema{
 			Type:        "object",
-			Description: "No parameters required",
+			Description: "Filter and output options for automations list",
+			Properties: map[string]mcp.JSONSchema{
+				"state": {
+					Type:        "string",
+					Description: "Filter by state: 'on' (enabled), 'off' (disabled), or omit for all",
+				},
+				"alias": {
+					Type:        "string",
+					Description: "Filter by alias/name (case-insensitive, partial match)",
+				},
+				"verbose": {
+					Type:        "boolean",
+					Description: "If true, return full details including configuration. Default: false (compact output with entity_id, state, alias, last_triggered)",
+				},
+			},
 		},
 	}
 }
@@ -179,7 +193,15 @@ func (h *AutomationHandlers) toggleAutomationTool() mcp.Tool {
 	}
 }
 
-func (h *AutomationHandlers) handleListAutomations(ctx context.Context, client homeassistant.Client, _ map[string]any) (*mcp.ToolsCallResult, error) {
+// compactAutomationEntry represents a minimal automation entry for compact output.
+type compactAutomationEntry struct {
+	EntityID      string `json:"entity_id"`
+	State         string `json:"state"`
+	Alias         string `json:"alias,omitempty"`
+	LastTriggered string `json:"last_triggered,omitempty"`
+}
+
+func (h *AutomationHandlers) handleListAutomations(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
 	automations, err := client.ListAutomations(ctx)
 	if err != nil {
 		return &mcp.ToolsCallResult{
@@ -188,7 +210,48 @@ func (h *AutomationHandlers) handleListAutomations(ctx context.Context, client h
 		}, nil
 	}
 
-	output, err := json.MarshalIndent(automations, "", "  ")
+	// Parse filter parameters
+	stateFilter, _ := args["state"].(string)
+	aliasFilter, _ := args["alias"].(string)
+	verbose, _ := args["verbose"].(bool)
+
+	// Normalize filter for case-insensitive matching
+	aliasFilterLower := strings.ToLower(aliasFilter)
+
+	// Filter automations
+	filtered := make([]homeassistant.Automation, 0, len(automations))
+	for _, automation := range automations {
+		// Apply state filter
+		if stateFilter != "" && automation.State != stateFilter {
+			continue
+		}
+
+		// Apply alias filter (case-insensitive, partial match)
+		if aliasFilter != "" && !strings.Contains(strings.ToLower(automation.FriendlyName), aliasFilterLower) {
+			continue
+		}
+
+		filtered = append(filtered, automation)
+	}
+
+	// Format output based on verbose flag
+	var output []byte
+	if verbose {
+		output, err = json.MarshalIndent(filtered, "", "  ")
+	} else {
+		// Compact output: only essential fields
+		compact := make([]compactAutomationEntry, 0, len(filtered))
+		for _, automation := range filtered {
+			compact = append(compact, compactAutomationEntry{
+				EntityID:      automation.EntityID,
+				State:         automation.State,
+				Alias:         automation.FriendlyName,
+				LastTriggered: automation.LastTriggered,
+			})
+		}
+		output, err = json.MarshalIndent(compact, "", "  ")
+	}
+
 	if err != nil {
 		return &mcp.ToolsCallResult{
 			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error formatting automations: %v", err))},
@@ -196,8 +259,14 @@ func (h *AutomationHandlers) handleListAutomations(ctx context.Context, client h
 		}, nil
 	}
 
+	// Add summary info
+	summary := fmt.Sprintf("Found %d automations", len(filtered))
+	if !verbose {
+		summary += VerboseHint
+	}
+
 	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{mcp.NewTextContent(string(output))},
+		Content: []mcp.ContentBlock{mcp.NewTextContent(summary + "\n\n" + string(output))},
 	}, nil
 }
 
