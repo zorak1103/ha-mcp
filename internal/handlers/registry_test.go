@@ -15,10 +15,15 @@ import (
 type mockRegistryClient struct {
 	homeassistant.Client
 	entityRegistry []homeassistant.EntityRegistryEntry
+	deviceRegistry []homeassistant.DeviceRegistryEntry
 }
 
 func (m *mockRegistryClient) GetEntityRegistry(_ context.Context) ([]homeassistant.EntityRegistryEntry, error) {
 	return m.entityRegistry, nil
+}
+
+func (m *mockRegistryClient) GetDeviceRegistry(_ context.Context) ([]homeassistant.DeviceRegistryEntry, error) {
+	return m.deviceRegistry, nil
 }
 
 func TestHandleListEntityRegistry(t *testing.T) {
