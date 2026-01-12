@@ -309,12 +309,12 @@ func TestCleanHandler_Handle(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		level      slog.Level
-		message    string
-		attrs      []slog.Attr
-		wantParts  []string
-		wantErr    bool
+		name      string
+		level     slog.Level
+		message   string
+		attrs     []slog.Attr
+		wantParts []string
+		wantErr   bool
 	}{
 		{
 			name:      "info message without attrs",
