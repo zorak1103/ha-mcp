@@ -23,6 +23,8 @@ const (
 	LevelWarn = slog.LevelWarn
 	// LevelError re-exports slog.LevelError.
 	LevelError = slog.LevelError
+	// LevelOff disables all logging - useful for tests.
+	LevelOff = slog.Level(100)
 )
 
 // ParseLevel parses a string into a slog.Level.

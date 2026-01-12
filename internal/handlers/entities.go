@@ -289,9 +289,9 @@ type entityDependency struct {
 
 // entityDependenciesResult is the result of get_entity_dependencies.
 type entityDependenciesResult struct {
-	EntityID     string             `json:"entity_id"`
-	Automations  []entityDependency `json:"automations"`
-	TotalUsages  int                `json:"total_usages"`
+	EntityID    string             `json:"entity_id"`
+	Automations []entityDependency `json:"automations"`
+	TotalUsages int                `json:"total_usages"`
 }
 
 func (h *EntityHandlers) handleGetEntityDependencies(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
@@ -317,7 +317,7 @@ func (h *EntityHandlers) handleGetEntityDependencies(ctx context.Context, client
 	for _, auto := range automations {
 		// Extract automation ID from entity_id (automation.xxx -> xxx)
 		autoID := strings.TrimPrefix(auto.EntityID, "automation.")
-		
+
 		// Get full automation config
 		fullAuto, err := client.GetAutomation(ctx, autoID)
 		if err != nil {

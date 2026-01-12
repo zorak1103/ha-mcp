@@ -27,9 +27,9 @@ type mockAutomationClient struct {
 	automationsErr error
 
 	// Get automation - can be a single automation or a map for multiple
-	automation     *homeassistant.Automation
-	automationMap  map[string]*homeassistant.Automation
-	automationErr  error
+	automation    *homeassistant.Automation
+	automationMap map[string]*homeassistant.Automation
+	automationErr error
 
 	// Create automation
 	createErr error
@@ -288,13 +288,13 @@ func TestHandleListAutomations(t *testing.T) {
 	}
 
 	tests := []struct {
-		name                 string
-		args                 map[string]any
-		client               *mockAutomationClient
-		wantError            bool
-		wantAutomationCount  int
-		wantContains         []string
-		wantNotContains      []string
+		name                string
+		args                map[string]any
+		client              *mockAutomationClient
+		wantError           bool
+		wantAutomationCount int
+		wantContains        []string
+		wantNotContains     []string
 	}{
 		{
 			name: "success - no filters, compact output",

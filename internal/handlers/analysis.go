@@ -69,34 +69,34 @@ func (h *AnalysisHandlers) getEntityDependenciesTool() mcp.Tool {
 
 // EntityAnalysis represents the comprehensive analysis of an entity.
 type EntityAnalysis struct {
-	EntityID     string                 `json:"entity_id"`
-	State        string                 `json:"state"`
-	FriendlyName string                 `json:"friendly_name,omitempty"`
-	Domain       string                 `json:"domain"`
-	Attributes   map[string]any         `json:"attributes,omitempty"`
-	LastChanged  string                 `json:"last_changed,omitempty"`
-	References   *EntityReferences      `json:"references"`
-	Summary      string                 `json:"summary"`
-	History      []HistoryEntry         `json:"history,omitempty"`
+	EntityID     string            `json:"entity_id"`
+	State        string            `json:"state"`
+	FriendlyName string            `json:"friendly_name,omitempty"`
+	Domain       string            `json:"domain"`
+	Attributes   map[string]any    `json:"attributes,omitempty"`
+	LastChanged  string            `json:"last_changed,omitempty"`
+	References   *EntityReferences `json:"references"`
+	Summary      string            `json:"summary"`
+	History      []HistoryEntry    `json:"history,omitempty"`
 }
 
 // EntityReferences contains all automations, scripts, and scenes referencing an entity.
 type EntityReferences struct {
-	Automations       []AutomationReference `json:"automations,omitempty"`
-	Scripts           []ScriptReference     `json:"scripts,omitempty"`
-	Scenes            []SceneReference      `json:"scenes,omitempty"`
-	Groups            []string              `json:"groups,omitempty"`
-	AreaReferences    []AreaReference       `json:"area_references,omitempty"`
-	TotalReferences   int                   `json:"total_references"`
+	Automations     []AutomationReference `json:"automations,omitempty"`
+	Scripts         []ScriptReference     `json:"scripts,omitempty"`
+	Scenes          []SceneReference      `json:"scenes,omitempty"`
+	Groups          []string              `json:"groups,omitempty"`
+	AreaReferences  []AreaReference       `json:"area_references,omitempty"`
+	TotalReferences int                   `json:"total_references"`
 }
 
 // AreaReference describes how an automation/script references an entity via its area.
 type AreaReference struct {
-	EntityID     string   `json:"entity_id"`
-	Alias        string   `json:"alias,omitempty"`
-	Type         string   `json:"type"` // "automation" or "script"
-	AreaID       string   `json:"area_id"`
-	UsedIn       []string `json:"used_in"` // "trigger", "condition", "action"
+	EntityID string   `json:"entity_id"`
+	Alias    string   `json:"alias,omitempty"`
+	Type     string   `json:"type"` // "automation" or "script"
+	AreaID   string   `json:"area_id"`
+	UsedIn   []string `json:"used_in"` // "trigger", "condition", "action"
 }
 
 // AutomationReference describes how an automation references an entity.
@@ -129,11 +129,11 @@ type HistoryEntry struct {
 
 // EntityDependencies represents all dependencies of an automation or script.
 type EntityDependencies struct {
-	EntityID      string                `json:"entity_id"`
-	FriendlyName  string                `json:"friendly_name,omitempty"`
-	Type          string                `json:"type"` // "automation" or "script"
-	Dependencies  *DependencyCategories `json:"dependencies"`
-	Summary       string                `json:"summary"`
+	EntityID     string                `json:"entity_id"`
+	FriendlyName string                `json:"friendly_name,omitempty"`
+	Type         string                `json:"type"` // "automation" or "script"
+	Dependencies *DependencyCategories `json:"dependencies"`
+	Summary      string                `json:"summary"`
 }
 
 // DependencyCategories organizes dependencies by their role.
@@ -611,10 +611,10 @@ func (h *AnalysisHandlers) getAutomationDependencies(ctx context.Context, client
 
 	// Extract triggers
 	deps.Dependencies.Triggers = h.extractDependenciesFromSlice(automation.Config.Triggers, "trigger")
-	
+
 	// Extract conditions
 	deps.Dependencies.Conditions = h.extractDependenciesFromSlice(automation.Config.Conditions, "condition")
-	
+
 	// Extract actions
 	deps.Dependencies.Actions = h.extractDependenciesFromSlice(automation.Config.Actions, "action")
 

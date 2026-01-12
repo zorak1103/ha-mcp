@@ -189,7 +189,7 @@ func TestNewServer(t *testing.T) {
 			haClient: &mockHAClient{},
 			registry: NewRegistry(),
 			port:     8080,
-			logger:   logging.New(logging.LevelInfo),
+			logger:   logging.New(logging.LevelOff),
 		},
 		{
 			name:     "with nil logger",
@@ -228,7 +228,7 @@ func TestNewServer(t *testing.T) {
 func TestServer_HandleHealth(t *testing.T) {
 	t.Parallel()
 
-	s := NewServer(&mockHAClient{}, NewRegistry(), 8080, logging.New(logging.LevelError))
+	s := NewServer(&mockHAClient{}, NewRegistry(), 8080, logging.New(logging.LevelOff))
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	w := httptest.NewRecorder()
@@ -260,7 +260,7 @@ func TestServer_HandleHealth(t *testing.T) {
 func TestServer_HandleMCP_InvalidMethod(t *testing.T) {
 	t.Parallel()
 
-	s := NewServer(&mockHAClient{}, NewRegistry(), 8080, logging.New(logging.LevelError))
+	s := NewServer(&mockHAClient{}, NewRegistry(), 8080, logging.New(logging.LevelOff))
 
 	tests := []string{http.MethodGet, http.MethodPut, http.MethodDelete, http.MethodPatch}
 
@@ -294,7 +294,7 @@ func TestServer_HandleMCP_InvalidMethod(t *testing.T) {
 func TestServer_HandleMCP_InvalidJSON(t *testing.T) {
 	t.Parallel()
 
-	s := NewServer(&mockHAClient{}, NewRegistry(), 8080, logging.New(logging.LevelError))
+	s := NewServer(&mockHAClient{}, NewRegistry(), 8080, logging.New(logging.LevelOff))
 
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("not valid json"))
 	w := httptest.NewRecorder()
@@ -320,7 +320,7 @@ func TestServer_HandleMCP_InvalidJSON(t *testing.T) {
 func TestServer_HandleMCP_InvalidJSONRPCVersion(t *testing.T) {
 	t.Parallel()
 
-	s := NewServer(&mockHAClient{}, NewRegistry(), 8080, logging.New(logging.LevelError))
+	s := NewServer(&mockHAClient{}, NewRegistry(), 8080, logging.New(logging.LevelOff))
 
 	reqBody := `{"jsonrpc":"1.0","id":1,"method":"ping"}`
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(reqBody))
@@ -347,7 +347,7 @@ func TestServer_HandleMCP_InvalidJSONRPCVersion(t *testing.T) {
 func TestServer_HandleInitialize(t *testing.T) {
 	t.Parallel()
 
-	s := NewServer(&mockHAClient{}, NewRegistry(), 8080, logging.New(logging.LevelError))
+	s := NewServer(&mockHAClient{}, NewRegistry(), 8080, logging.New(logging.LevelOff))
 
 	params := InitializeParams{
 		ProtocolVersion: "2024-11-05",
@@ -403,7 +403,7 @@ func TestServer_HandleInitialize(t *testing.T) {
 func TestServer_HandleInitialize_InvalidParams(t *testing.T) {
 	t.Parallel()
 
-	s := NewServer(&mockHAClient{}, NewRegistry(), 8080, logging.New(logging.LevelError))
+	s := NewServer(&mockHAClient{}, NewRegistry(), 8080, logging.New(logging.LevelOff))
 
 	reqBody := Request{
 		JSONRPC: JSONRPCVersion,
@@ -440,7 +440,7 @@ func TestServer_HandleInitialized(t *testing.T) {
 	t.Run("notification without id", func(t *testing.T) {
 		t.Parallel()
 
-		s := NewServer(&mockHAClient{}, NewRegistry(), 8080, logging.New(logging.LevelError))
+		s := NewServer(&mockHAClient{}, NewRegistry(), 8080, logging.New(logging.LevelOff))
 
 		reqBody := Request{
 			JSONRPC: JSONRPCVersion,
@@ -470,7 +470,7 @@ func TestServer_HandleInitialized(t *testing.T) {
 	t.Run("request with id", func(t *testing.T) {
 		t.Parallel()
 
-		s := NewServer(&mockHAClient{}, NewRegistry(), 8080, logging.New(logging.LevelError))
+		s := NewServer(&mockHAClient{}, NewRegistry(), 8080, logging.New(logging.LevelOff))
 
 		reqBody := Request{
 			JSONRPC: JSONRPCVersion,
@@ -506,7 +506,7 @@ func TestServer_HandleInitialized(t *testing.T) {
 func TestServer_HandlePing(t *testing.T) {
 	t.Parallel()
 
-	s := NewServer(&mockHAClient{}, NewRegistry(), 8080, logging.New(logging.LevelError))
+	s := NewServer(&mockHAClient{}, NewRegistry(), 8080, logging.New(logging.LevelOff))
 
 	reqBody := Request{
 		JSONRPC: JSONRPCVersion,
@@ -540,7 +540,7 @@ func TestServer_HandleToolsList(t *testing.T) {
 	registry.RegisterTool(Tool{Name: "tool_a", Description: "Tool A"}, nil)
 	registry.RegisterTool(Tool{Name: "tool_b", Description: "Tool B"}, nil)
 
-	s := NewServer(&mockHAClient{}, registry, 8080, logging.New(logging.LevelError))
+	s := NewServer(&mockHAClient{}, registry, 8080, logging.New(logging.LevelOff))
 
 	reqBody := Request{
 		JSONRPC: JSONRPCVersion,
@@ -593,7 +593,7 @@ func TestServer_HandleToolsCall(t *testing.T) {
 			},
 		)
 
-		s := NewServer(&mockHAClient{}, registry, 8080, logging.New(logging.LevelError))
+		s := NewServer(&mockHAClient{}, registry, 8080, logging.New(logging.LevelOff))
 
 		params := ToolsCallParams{
 			Name:      "test_tool",
@@ -630,7 +630,7 @@ func TestServer_HandleToolsCall(t *testing.T) {
 	t.Run("tool not found", func(t *testing.T) {
 		t.Parallel()
 
-		s := NewServer(&mockHAClient{}, NewRegistry(), 8080, logging.New(logging.LevelError))
+		s := NewServer(&mockHAClient{}, NewRegistry(), 8080, logging.New(logging.LevelOff))
 
 		params := ToolsCallParams{Name: "nonexistent"}
 		paramsJSON, _ := json.Marshal(params)
@@ -675,7 +675,7 @@ func TestServer_HandleToolsCall(t *testing.T) {
 			},
 		)
 
-		s := NewServer(&mockHAClient{}, registry, 8080, logging.New(logging.LevelError))
+		s := NewServer(&mockHAClient{}, registry, 8080, logging.New(logging.LevelOff))
 
 		params := ToolsCallParams{Name: "failing_tool"}
 		paramsJSON, _ := json.Marshal(params)
@@ -712,7 +712,7 @@ func TestServer_HandleToolsCall(t *testing.T) {
 	t.Run("invalid params", func(t *testing.T) {
 		t.Parallel()
 
-		s := NewServer(&mockHAClient{}, NewRegistry(), 8080, logging.New(logging.LevelError))
+		s := NewServer(&mockHAClient{}, NewRegistry(), 8080, logging.New(logging.LevelOff))
 
 		reqBody := Request{
 			JSONRPC: JSONRPCVersion,
@@ -751,7 +751,7 @@ func TestServer_HandleResourcesList(t *testing.T) {
 	registry.RegisterResource(Resource{URI: "test://a", Name: "Resource A"}, nil)
 	registry.RegisterResource(Resource{URI: "test://b", Name: "Resource B"}, nil)
 
-	s := NewServer(&mockHAClient{}, registry, 8080, logging.New(logging.LevelError))
+	s := NewServer(&mockHAClient{}, registry, 8080, logging.New(logging.LevelOff))
 
 	reqBody := Request{
 		JSONRPC: JSONRPCVersion,
@@ -804,7 +804,7 @@ func TestServer_HandleResourcesRead(t *testing.T) {
 			},
 		)
 
-		s := NewServer(&mockHAClient{}, registry, 8080, logging.New(logging.LevelError))
+		s := NewServer(&mockHAClient{}, registry, 8080, logging.New(logging.LevelOff))
 
 		params := ResourcesReadParams{URI: "test://resource"}
 		paramsJSON, _ := json.Marshal(params)
@@ -838,7 +838,7 @@ func TestServer_HandleResourcesRead(t *testing.T) {
 	t.Run("resource not found", func(t *testing.T) {
 		t.Parallel()
 
-		s := NewServer(&mockHAClient{}, NewRegistry(), 8080, logging.New(logging.LevelError))
+		s := NewServer(&mockHAClient{}, NewRegistry(), 8080, logging.New(logging.LevelOff))
 
 		params := ResourcesReadParams{URI: "test://nonexistent"}
 		paramsJSON, _ := json.Marshal(params)
@@ -883,7 +883,7 @@ func TestServer_HandleResourcesRead(t *testing.T) {
 			},
 		)
 
-		s := NewServer(&mockHAClient{}, registry, 8080, logging.New(logging.LevelError))
+		s := NewServer(&mockHAClient{}, registry, 8080, logging.New(logging.LevelOff))
 
 		params := ResourcesReadParams{URI: "test://failing"}
 		paramsJSON, _ := json.Marshal(params)
@@ -920,7 +920,7 @@ func TestServer_HandleResourcesRead(t *testing.T) {
 	t.Run("invalid params", func(t *testing.T) {
 		t.Parallel()
 
-		s := NewServer(&mockHAClient{}, NewRegistry(), 8080, logging.New(logging.LevelError))
+		s := NewServer(&mockHAClient{}, NewRegistry(), 8080, logging.New(logging.LevelOff))
 
 		reqBody := Request{
 			JSONRPC: JSONRPCVersion,
@@ -955,7 +955,7 @@ func TestServer_HandleResourcesRead(t *testing.T) {
 func TestServer_UnknownMethod(t *testing.T) {
 	t.Parallel()
 
-	s := NewServer(&mockHAClient{}, NewRegistry(), 8080, logging.New(logging.LevelError))
+	s := NewServer(&mockHAClient{}, NewRegistry(), 8080, logging.New(logging.LevelOff))
 
 	reqBody := Request{
 		JSONRPC: JSONRPCVersion,
@@ -988,7 +988,7 @@ func TestServer_UnknownMethod(t *testing.T) {
 func TestServer_IsInitialized(t *testing.T) {
 	t.Parallel()
 
-	s := NewServer(&mockHAClient{}, NewRegistry(), 8080, logging.New(logging.LevelError))
+	s := NewServer(&mockHAClient{}, NewRegistry(), 8080, logging.New(logging.LevelOff))
 
 	if s.IsInitialized() {
 		t.Error("IsInitialized() = true, want false for new server")
@@ -1014,7 +1014,7 @@ func TestServer_HAClient(t *testing.T) {
 	t.Parallel()
 
 	client := &mockHAClient{}
-	s := NewServer(client, NewRegistry(), 8080, logging.New(logging.LevelError))
+	s := NewServer(client, NewRegistry(), 8080, logging.New(logging.LevelOff))
 
 	if s.HAClient() != client {
 		t.Error("HAClient() did not return the expected client")
@@ -1027,7 +1027,7 @@ func TestServer_Shutdown(t *testing.T) {
 	t.Run("shutdown nil server", func(t *testing.T) {
 		t.Parallel()
 
-		s := NewServer(&mockHAClient{}, NewRegistry(), 8080, logging.New(logging.LevelError))
+		s := NewServer(&mockHAClient{}, NewRegistry(), 8080, logging.New(logging.LevelOff))
 
 		// httpServer is nil before Start() is called
 		err := s.Shutdown(context.Background())
@@ -1145,7 +1145,7 @@ func TestServer_Constants(t *testing.T) {
 func TestServer_HandleInitialize_NilParams(t *testing.T) {
 	t.Parallel()
 
-	s := NewServer(&mockHAClient{}, NewRegistry(), 8080, logging.New(logging.LevelError))
+	s := NewServer(&mockHAClient{}, NewRegistry(), 8080, logging.New(logging.LevelOff))
 
 	reqBody := Request{
 		JSONRPC: JSONRPCVersion,

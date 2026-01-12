@@ -207,10 +207,10 @@ type compactAutomationEntry struct {
 
 // verboseAutomationEntry represents a full automation entry including configuration.
 type verboseAutomationEntry struct {
-	EntityID      string                        `json:"entity_id"`
-	State         string                        `json:"state"`
-	FriendlyName  string                        `json:"friendly_name,omitempty"`
-	LastTriggered string                        `json:"last_triggered,omitempty"`
+	EntityID      string                          `json:"entity_id"`
+	State         string                          `json:"state"`
+	FriendlyName  string                          `json:"friendly_name,omitempty"`
+	LastTriggered string                          `json:"last_triggered,omitempty"`
 	Config        *homeassistant.AutomationConfig `json:"config,omitempty"`
 }
 
