@@ -29,8 +29,9 @@ func NewClientWithOptions(ctx context.Context, baseURL, token string, opts Clien
 // NewConnectedWSClient creates a new WebSocket client and establishes a connection.
 // This is the recommended way to create a client for production use.
 //
-// The returned Client implements all operations including registry access,
-// media browsing, and statistics.
+// The returned Client is a HybridClient that uses WebSocket for most operations
+// but falls back to REST API for operations not supported via WebSocket
+// (e.g., deleting automations, scripts, and scenes).
 //
 // The provided context is used for the initial connection. For the client's
 // lifecycle, use the CloseClient() function to disconnect.
@@ -43,13 +44,16 @@ func NewConnectedWSClient(ctx context.Context, baseURL, token string, config *WS
 		wsClient = NewWSClient(baseURL, token)
 	}
 
-	// Establish connection
+	// Establish WebSocket connection
 	if err := wsClient.Connect(ctx); err != nil {
 		return nil, fmt.Errorf("connecting to Home Assistant WebSocket API: %w", err)
 	}
 
-	// Wrap in Client interface implementation with closer support
-	return NewWSClientImplWithCloser(wsClient), nil
+	// Create REST client for operations not supported via WebSocket
+	restClient := NewRESTClient(baseURL, token)
+
+	// Return hybrid client that combines both
+	return NewHybridClientCloser(wsClient, restClient), nil
 }
 
 // NewDefaultWSClient creates a connected WebSocket client using default configuration.
