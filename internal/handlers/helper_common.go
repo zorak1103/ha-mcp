@@ -25,6 +25,9 @@ var HelperPlatforms = []string{
 	"threshold",
 	"derivative",
 	"integration", // Note: Home Assistant uses "integration" not "integral"
+	// Entity platforms created by derivative/integral/threshold helpers
+	"sensor",
+	"binary_sensor",
 }
 
 // ParseHelperEntityID extracts platform and ID from an entity_id like "input_boolean.my_switch".
