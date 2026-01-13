@@ -93,8 +93,8 @@ func TestCounterHandlers_createCounterTool(t *testing.T) {
 		t.Errorf("Tool name = %q, want %q", tool.Name, "create_counter")
 	}
 
-	if tool.InputSchema.Type != "object" {
-		t.Errorf("InputSchema.Type = %q, want %q", tool.InputSchema.Type, "object")
+	if tool.InputSchema.Type != testSchemaTypeObject {
+		t.Errorf("InputSchema.Type = %q, want %q", tool.InputSchema.Type, testSchemaTypeObject)
 	}
 
 	const expectedRequiredCount = 2

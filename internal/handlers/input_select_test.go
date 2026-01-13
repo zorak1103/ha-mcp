@@ -90,8 +90,8 @@ func TestInputSelectHandlers_createInputSelectTool(t *testing.T) {
 		t.Errorf("Tool name = %q, want %q", tool.Name, "create_input_select")
 	}
 
-	if tool.InputSchema.Type != "object" {
-		t.Errorf("InputSchema.Type = %q, want %q", tool.InputSchema.Type, "object")
+	if tool.InputSchema.Type != testSchemaTypeObject {
+		t.Errorf("InputSchema.Type = %q, want %q", tool.InputSchema.Type, testSchemaTypeObject)
 	}
 
 	if len(tool.InputSchema.Required) != 3 {
