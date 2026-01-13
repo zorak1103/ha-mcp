@@ -266,6 +266,16 @@ func TestIsValidHelperPlatform(t *testing.T) {
 			want:     true,
 		},
 		{
+			name:     "sensor is valid (for derivative/integral helpers)",
+			platform: "sensor",
+			want:     true,
+		},
+		{
+			name:     "binary_sensor is valid (for threshold helpers)",
+			platform: "binary_sensor",
+			want:     true,
+		},
+		{
 			name:     "light is not valid",
 			platform: "light",
 			want:     false,
@@ -273,11 +283,6 @@ func TestIsValidHelperPlatform(t *testing.T) {
 		{
 			name:     "switch is not valid",
 			platform: "switch",
-			want:     false,
-		},
-		{
-			name:     "sensor is not valid",
-			platform: "sensor",
 			want:     false,
 		},
 		{
