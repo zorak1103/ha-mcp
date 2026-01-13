@@ -190,7 +190,6 @@ func TestInputTextHandlers_handleCreateInputText(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -277,7 +276,6 @@ func TestInputTextHandlers_handleDeleteInputText(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -378,7 +376,6 @@ func TestInputTextHandlers_handleSetInputTextValue(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -543,7 +540,6 @@ func TestBuildInputTextHelperConfig(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 

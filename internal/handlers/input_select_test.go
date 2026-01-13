@@ -213,7 +213,6 @@ func TestInputSelectHandlers_handleCreateInputSelect(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -300,7 +299,6 @@ func TestInputSelectHandlers_handleDeleteInputSelect(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -410,7 +408,6 @@ func TestInputSelectHandlers_handleSelectOption(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -529,7 +526,6 @@ func TestInputSelectHandlers_handleSetOptions(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -650,7 +646,6 @@ func TestBuildInputSelectHelperConfig(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 

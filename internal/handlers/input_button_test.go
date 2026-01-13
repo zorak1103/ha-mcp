@@ -185,7 +185,6 @@ func TestInputButtonHandlers_handleCreateInputButton(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -272,7 +271,6 @@ func TestInputButtonHandlers_handleDeleteInputButton(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -359,7 +357,6 @@ func TestInputButtonHandlers_handlePressInputButton(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -439,7 +436,6 @@ func TestBuildInputButtonHelperConfig(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 

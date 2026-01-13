@@ -186,7 +186,6 @@ func TestInputBooleanHandlers_handleCreateInputBoolean(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -273,7 +272,6 @@ func TestInputBooleanHandlers_handleDeleteInputBoolean(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -360,7 +358,6 @@ func TestInputBooleanHandlers_handleToggleInputBoolean(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -478,7 +475,6 @@ func TestBuildInputBooleanHelperConfig(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 

@@ -218,7 +218,6 @@ func TestInputDatetimeHandlers_handleCreateInputDatetime(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -305,7 +304,6 @@ func TestInputDatetimeHandlers_handleDeleteInputDatetime(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -442,7 +440,6 @@ func TestInputDatetimeHandlers_handleSetInputDatetime(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -611,7 +608,6 @@ func TestBuildInputDatetimeHelperConfig(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
