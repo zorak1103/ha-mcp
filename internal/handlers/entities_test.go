@@ -259,7 +259,7 @@ func TestCompactEntityStateOmitsEmpty(t *testing.T) {
 	if strings.Contains(result, "friendly_name") {
 		t.Errorf("Expected empty friendly_name to be omitted, got: %s", result)
 	}
-	if !strings.Contains(result, "entity_id") {
+	if !strings.Contains(result, configKeyEntityID) {
 		t.Errorf("Expected entity_id to be present, got: %s", result)
 	}
 	if !strings.Contains(result, "state") {
@@ -810,8 +810,8 @@ func TestGetStateTool(t *testing.T) {
 	}
 
 	// Check entity_id is required
-	if len(tool.InputSchema.Required) == 0 || tool.InputSchema.Required[0] != "entity_id" {
-		t.Error("Expected 'entity_id' to be required")
+	if len(tool.InputSchema.Required) == 0 || tool.InputSchema.Required[0] != configKeyEntityID {
+		t.Errorf("Expected '%s' to be required", configKeyEntityID)
 	}
 }
 
@@ -827,7 +827,7 @@ func TestGetHistoryTool(t *testing.T) {
 	}
 
 	// Check expected properties exist
-	expectedProps := []string{"entity_id", "start_time", "end_time", "hours", "state", "limit", "verbose"}
+	expectedProps := []string{configKeyEntityID, "start_time", "end_time", "hours", "state", "limit", "verbose"}
 	for _, prop := range expectedProps {
 		if _, ok := tool.InputSchema.Properties[prop]; !ok {
 			t.Errorf("Expected property %q in input schema", prop)
@@ -835,8 +835,8 @@ func TestGetHistoryTool(t *testing.T) {
 	}
 
 	// Check entity_id is required
-	if len(tool.InputSchema.Required) == 0 || tool.InputSchema.Required[0] != "entity_id" {
-		t.Error("Expected 'entity_id' to be required")
+	if len(tool.InputSchema.Required) == 0 || tool.InputSchema.Required[0] != configKeyEntityID {
+		t.Errorf("Expected '%s' to be required", configKeyEntityID)
 	}
 }
 
