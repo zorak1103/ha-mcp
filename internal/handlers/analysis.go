@@ -474,6 +474,7 @@ func (h *AnalysisHandlers) searchAreaInSlice(items []any, areaID string) bool {
 }
 
 // searchAreaInValue recursively searches for an area_id in any config value.
+// It delegates to specialized functions based on the value type.
 func (h *AnalysisHandlers) searchAreaInValue(val any, areaID string) bool {
 	if val == nil {
 		return false
@@ -483,41 +484,49 @@ func (h *AnalysisHandlers) searchAreaInValue(val any, areaID string) bool {
 	case string:
 		return v == areaID
 	case []any:
-		for _, item := range v {
-			if h.searchAreaInValue(item, areaID) {
-				return true
-			}
-		}
+		return h.searchAreaInSlice(v, areaID)
 	case map[string]any:
-		// Check area_id fields
-		if a, ok := v["area_id"].(string); ok && a == areaID {
+		return h.searchAreaInMap(v, areaID)
+	default:
+		return false
+	}
+}
+
+// searchAreaInMap searches for an area_id in a map structure.
+func (h *AnalysisHandlers) searchAreaInMap(m map[string]any, areaID string) bool {
+	// Check direct area_id field
+	if h.matchAreaIDField(m["area_id"], areaID) {
+		return true
+	}
+
+	// Check target.area_id
+	if target, ok := m["target"].(map[string]any); ok {
+		if h.matchAreaIDField(target["area_id"], areaID) {
 			return true
 		}
-		if areaIDs, ok := v["area_id"].([]any); ok {
-			for _, a := range areaIDs {
-				if aStr, ok := a.(string); ok && aStr == areaID {
-					return true
-				}
-			}
-		}
+	}
 
-		// Check target.area_id
-		if target, ok := v["target"].(map[string]any); ok {
-			if a, ok := target["area_id"].(string); ok && a == areaID {
-				return true
-			}
-			if areaIDs, ok := target["area_id"].([]any); ok {
-				for _, a := range areaIDs {
-					if aStr, ok := a.(string); ok && aStr == areaID {
-						return true
-					}
-				}
-			}
+	// Recursively search nested structures
+	for _, subval := range m {
+		if h.searchAreaInValue(subval, areaID) {
+			return true
 		}
+	}
+	return false
+}
 
-		// Recursively search nested structures
-		for _, subval := range v {
-			if h.searchAreaInValue(subval, areaID) {
+// matchAreaIDField checks if an area_id field (string or []any) matches the target areaID.
+func (h *AnalysisHandlers) matchAreaIDField(field any, areaID string) bool {
+	if field == nil {
+		return false
+	}
+
+	switch v := field.(type) {
+	case string:
+		return v == areaID
+	case []any:
+		for _, item := range v {
+			if str, ok := item.(string); ok && str == areaID {
 				return true
 			}
 		}

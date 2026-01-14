@@ -500,3 +500,315 @@ func TestRegisterAnalysisTools(t *testing.T) {
 		t.Errorf("RegisterAnalysisTools() registered %d tools, want 2", len(tools))
 	}
 }
+
+func TestAnalysisHandlers_matchAreaIDField(t *testing.T) {
+	t.Parallel()
+
+	h := NewAnalysisHandlers()
+
+	tests := []struct {
+		name   string
+		field  any
+		areaID string
+		want   bool
+	}{
+		{
+			name:   "nil field returns false",
+			field:  nil,
+			areaID: "living_room",
+			want:   false,
+		},
+		{
+			name:   "matching string field",
+			field:  "living_room",
+			areaID: "living_room",
+			want:   true,
+		},
+		{
+			name:   "non-matching string field",
+			field:  "bedroom",
+			areaID: "living_room",
+			want:   false,
+		},
+		{
+			name:   "matching in slice field",
+			field:  []any{"bedroom", "living_room", "kitchen"},
+			areaID: "living_room",
+			want:   true,
+		},
+		{
+			name:   "not matching in slice field",
+			field:  []any{"bedroom", "kitchen"},
+			areaID: "living_room",
+			want:   false,
+		},
+		{
+			name:   "empty slice field",
+			field:  []any{},
+			areaID: "living_room",
+			want:   false,
+		},
+		{
+			name:   "slice with non-string elements",
+			field:  []any{123, true, nil},
+			areaID: "living_room",
+			want:   false,
+		},
+		{
+			name:   "unsupported type returns false",
+			field:  123,
+			areaID: "living_room",
+			want:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := h.matchAreaIDField(tt.field, tt.areaID)
+			if got != tt.want {
+				t.Errorf("matchAreaIDField() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAnalysisHandlers_searchAreaInMap(t *testing.T) {
+	t.Parallel()
+
+	h := NewAnalysisHandlers()
+
+	tests := []struct {
+		name   string
+		m      map[string]any
+		areaID string
+		want   bool
+	}{
+		{
+			name:   "direct area_id string match",
+			m:      map[string]any{"area_id": "living_room"},
+			areaID: "living_room",
+			want:   true,
+		},
+		{
+			name:   "direct area_id slice match",
+			m:      map[string]any{"area_id": []any{"bedroom", "living_room"}},
+			areaID: "living_room",
+			want:   true,
+		},
+		{
+			name:   "target.area_id string match",
+			m:      map[string]any{"target": map[string]any{"area_id": "living_room"}},
+			areaID: "living_room",
+			want:   true,
+		},
+		{
+			name:   "target.area_id slice match",
+			m:      map[string]any{"target": map[string]any{"area_id": []any{"living_room"}}},
+			areaID: "living_room",
+			want:   true,
+		},
+		{
+			name:   "nested match in subvalue",
+			m:      map[string]any{"data": map[string]any{"area_id": "living_room"}},
+			areaID: "living_room",
+			want:   true,
+		},
+		{
+			name:   "deeply nested match",
+			m:      map[string]any{"outer": map[string]any{"inner": map[string]any{"area_id": "living_room"}}},
+			areaID: "living_room",
+			want:   true,
+		},
+		{
+			name:   "no match",
+			m:      map[string]any{"area_id": "bedroom", "target": map[string]any{"area_id": "kitchen"}},
+			areaID: "living_room",
+			want:   false,
+		},
+		{
+			name:   "empty map",
+			m:      map[string]any{},
+			areaID: "living_room",
+			want:   false,
+		},
+		{
+			name:   "target is not a map",
+			m:      map[string]any{"target": "not_a_map"},
+			areaID: "living_room",
+			want:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := h.searchAreaInMap(tt.m, tt.areaID)
+			if got != tt.want {
+				t.Errorf("searchAreaInMap() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAnalysisHandlers_searchAreaInValue(t *testing.T) {
+	t.Parallel()
+
+	h := NewAnalysisHandlers()
+
+	tests := []struct {
+		name   string
+		val    any
+		areaID string
+		want   bool
+	}{
+		{
+			name:   "nil value returns false",
+			val:    nil,
+			areaID: "living_room",
+			want:   false,
+		},
+		{
+			name:   "matching string",
+			val:    "living_room",
+			areaID: "living_room",
+			want:   true,
+		},
+		{
+			name:   "non-matching string",
+			val:    "bedroom",
+			areaID: "living_room",
+			want:   false,
+		},
+		{
+			name:   "slice with match",
+			val:    []any{"bedroom", "living_room"},
+			areaID: "living_room",
+			want:   true,
+		},
+		{
+			name:   "slice without match",
+			val:    []any{"bedroom", "kitchen"},
+			areaID: "living_room",
+			want:   false,
+		},
+		{
+			name:   "map with area_id match",
+			val:    map[string]any{"area_id": "living_room"},
+			areaID: "living_room",
+			want:   true,
+		},
+		{
+			name:   "unsupported type returns false",
+			val:    123,
+			areaID: "living_room",
+			want:   false,
+		},
+		{
+			name:   "bool type returns false",
+			val:    true,
+			areaID: "living_room",
+			want:   false,
+		},
+		{
+			name:   "float type returns false",
+			val:    3.14,
+			areaID: "living_room",
+			want:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := h.searchAreaInValue(tt.val, tt.areaID)
+			if got != tt.want {
+				t.Errorf("searchAreaInValue() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAnalysisHandlers_searchAreaInSlice(t *testing.T) {
+	t.Parallel()
+
+	h := NewAnalysisHandlers()
+
+	tests := []struct {
+		name   string
+		items  []any
+		areaID string
+		want   bool
+	}{
+		{
+			name:   "empty slice",
+			items:  []any{},
+			areaID: "living_room",
+			want:   false,
+		},
+		{
+			name:   "direct string match in slice",
+			items:  []any{"bedroom", "living_room", "kitchen"},
+			areaID: "living_room",
+			want:   true,
+		},
+		{
+			name:   "map with area_id in slice",
+			items:  []any{map[string]any{"area_id": "living_room"}},
+			areaID: "living_room",
+			want:   true,
+		},
+		{
+			name:   "nested slice with match",
+			items:  []any{[]any{"living_room"}},
+			areaID: "living_room",
+			want:   true,
+		},
+		{
+			name:   "no match in slice",
+			items:  []any{"bedroom", map[string]any{"area_id": "kitchen"}},
+			areaID: "living_room",
+			want:   false,
+		},
+		{
+			name: "complex Home Assistant action structure",
+			items: []any{
+				map[string]any{
+					"service": "light.turn_on",
+					"target": map[string]any{
+						"area_id": "living_room",
+					},
+				},
+			},
+			areaID: "living_room",
+			want:   true,
+		},
+		{
+			name: "multiple areas in target",
+			items: []any{
+				map[string]any{
+					"service": "light.turn_off",
+					"target": map[string]any{
+						"area_id": []any{"bedroom", "living_room"},
+					},
+				},
+			},
+			areaID: "living_room",
+			want:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := h.searchAreaInSlice(tt.items, tt.areaID)
+			if got != tt.want {
+				t.Errorf("searchAreaInSlice() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
