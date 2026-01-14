@@ -13,6 +13,7 @@ import (
 )
 
 const configKeyEntityID = "entity_id"
+const configKeyTarget = "target"
 
 // EntityHandlers provides MCP tool handlers for entity operations.
 type EntityHandlers struct{}
@@ -400,7 +401,7 @@ func searchEntityInConfig(config any, entityID string) bool {
 				}
 			}
 			// Check target.entity_id
-			if key == "target" {
+			if key == configKeyTarget {
 				if targetMap, ok := val.(map[string]any); ok {
 					if searchEntityInConfig(targetMap[configKeyEntityID], entityID) {
 						return true

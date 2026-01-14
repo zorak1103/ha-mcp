@@ -697,7 +697,11 @@ func (h *AnalysisHandlers) extractDependenciesFromSlice(items []any, _ string) [
 		h.extractDependenciesRecursive(item, seen)
 	}
 
-	// Convert map to sorted slice
+	return h.dependenciesToSortedSlice(seen)
+}
+
+// dependenciesToSortedSlice converts a dependency map to a sorted slice.
+func (h *AnalysisHandlers) dependenciesToSortedSlice(seen map[string]DependencyEntry) []DependencyEntry {
 	result := make([]DependencyEntry, 0, len(seen))
 	for _, dep := range seen {
 		result = append(result, dep)
@@ -705,10 +709,10 @@ func (h *AnalysisHandlers) extractDependenciesFromSlice(items []any, _ string) [
 	sort.Slice(result, func(i, j int) bool {
 		return result[i].EntityID < result[j].EntityID
 	})
-
 	return result
 }
 
+// extractDependenciesRecursive traverses a value recursively and extracts dependencies.
 func (h *AnalysisHandlers) extractDependenciesRecursive(val any, seen map[string]DependencyEntry) {
 	if val == nil {
 		return
@@ -716,43 +720,89 @@ func (h *AnalysisHandlers) extractDependenciesRecursive(val any, seen map[string
 
 	switch v := val.(type) {
 	case []any:
-		for _, item := range v {
-			h.extractDependenciesRecursive(item, seen)
-		}
+		h.extractDependenciesFromSliceRecursive(v, seen)
 	case map[string]any:
-		// Check for entity_id in this map
-		if entityID := h.extractEntityID(v); entityID != "" {
-			triggerType := h.extractTriggerType(v)
-			if _, exists := seen[entityID]; !exists {
-				seen[entityID] = DependencyEntry{
-					EntityID:    entityID,
-					Type:        triggerType,
-					Description: h.generateTriggerDescription(v, triggerType),
-				}
-			}
-		}
+		h.extractDependenciesFromMap(v, seen)
+	}
+}
 
-		// Check target.entity_id
-		if target, ok := v["target"].(map[string]any); ok {
-			if entityID := h.extractEntityID(target); entityID != "" {
-				if _, exists := seen[entityID]; !exists {
-					seen[entityID] = DependencyEntry{
-						EntityID:    entityID,
-						Type:        "target",
-						Description: "Action target",
-					}
-				}
-			}
-		}
+// extractDependenciesFromSliceRecursive processes a slice of items recursively.
+func (h *AnalysisHandlers) extractDependenciesFromSliceRecursive(items []any, seen map[string]DependencyEntry) {
+	for _, item := range items {
+		h.extractDependenciesRecursive(item, seen)
+	}
+}
 
-		// Recurse into nested structures
-		for key, subval := range v {
-			// Skip certain keys to avoid noise
-			if key == "data" || key == "choose" || key == "sequence" || key == "conditions" || key == "then" || key == "else" || key == "default" {
-				h.extractDependenciesRecursive(subval, seen)
-			}
+// extractDependenciesFromMap extracts dependencies from a map structure.
+func (h *AnalysisHandlers) extractDependenciesFromMap(m map[string]any, seen map[string]DependencyEntry) {
+	h.extractDirectEntityDependency(m, seen)
+	h.extractTargetEntityDependency(m, seen)
+	h.recurseIntoNestedStructures(m, seen)
+}
+
+// extractDirectEntityDependency extracts entity_id directly from a map.
+func (h *AnalysisHandlers) extractDirectEntityDependency(m map[string]any, seen map[string]DependencyEntry) {
+	entityID := h.extractEntityID(m)
+	if entityID == "" {
+		return
+	}
+
+	if _, exists := seen[entityID]; exists {
+		return
+	}
+
+	triggerType := h.extractTriggerType(m)
+	seen[entityID] = DependencyEntry{
+		EntityID:    entityID,
+		Type:        triggerType,
+		Description: h.generateTriggerDescription(m, triggerType),
+	}
+}
+
+// extractTargetEntityDependency extracts entity_id from the target field.
+func (h *AnalysisHandlers) extractTargetEntityDependency(m map[string]any, seen map[string]DependencyEntry) {
+	target, ok := m["target"].(map[string]any)
+	if !ok {
+		return
+	}
+
+	entityID := h.extractEntityID(target)
+	if entityID == "" {
+		return
+	}
+
+	if _, exists := seen[entityID]; exists {
+		return
+	}
+
+	seen[entityID] = DependencyEntry{
+		EntityID:    entityID,
+		Type:        "target",
+		Description: "Action target",
+	}
+}
+
+// recurseIntoNestedStructures recurses into nested structures for dependency extraction.
+func (h *AnalysisHandlers) recurseIntoNestedStructures(m map[string]any, seen map[string]DependencyEntry) {
+	for key, subval := range m {
+		if h.shouldRecurseIntoKey(key) {
+			h.extractDependenciesRecursive(subval, seen)
 		}
 	}
+}
+
+// shouldRecurseIntoKey determines if a key should be recursively searched for dependencies.
+func (h *AnalysisHandlers) shouldRecurseIntoKey(key string) bool {
+	recursiveKeys := map[string]bool{
+		"data":       true,
+		"choose":     true,
+		"sequence":   true,
+		"conditions": true,
+		"then":       true,
+		"else":       true,
+		"default":    true,
+	}
+	return recursiveKeys[key]
 }
 
 func (h *AnalysisHandlers) extractEntityID(m map[string]any) string {
