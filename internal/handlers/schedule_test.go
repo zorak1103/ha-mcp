@@ -584,6 +584,388 @@ func TestScheduleHandlers_handleReloadSchedule(t *testing.T) {
 	}
 }
 
+func TestValidateScheduleEntityID(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		entityID  string
+		wantError bool
+		wantMsg   string
+	}{
+		{
+			name:      "valid schedule entity",
+			entityID:  "schedule.work_hours",
+			wantError: false,
+		},
+		{
+			name:      "empty entity_id",
+			entityID:  "",
+			wantError: true,
+			wantMsg:   "entity_id is required",
+		},
+		{
+			name:      "wrong platform - timer",
+			entityID:  "timer.test_timer",
+			wantError: true,
+			wantMsg:   "must be a schedule entity",
+		},
+		{
+			name:      "wrong platform - input_boolean",
+			entityID:  "input_boolean.test",
+			wantError: true,
+			wantMsg:   "must be a schedule entity",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := validateScheduleEntityID(tt.entityID)
+
+			if tt.wantError {
+				if err == nil {
+					t.Error("validateScheduleEntityID() expected error, got nil")
+					return
+				}
+				if tt.wantMsg != "" && !contains(err.Error(), tt.wantMsg) {
+					t.Errorf("error = %q, want to contain %q", err.Error(), tt.wantMsg)
+				}
+			} else if err != nil {
+				t.Errorf("validateScheduleEntityID() unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestExtractScheduleAttributes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name             string
+		attributes       map[string]any
+		wantFriendlyName string
+		wantIcon         string
+		wantNextEvent    string
+	}{
+		{
+			name:             "all attributes present",
+			attributes:       map[string]any{"friendly_name": "Work Hours", "icon": "mdi:clock", "next_event": "2024-01-15T08:00:00"},
+			wantFriendlyName: "Work Hours",
+			wantIcon:         "mdi:clock",
+			wantNextEvent:    "2024-01-15T08:00:00",
+		},
+		{
+			name:             "empty attributes",
+			attributes:       map[string]any{},
+			wantFriendlyName: "",
+			wantIcon:         "",
+			wantNextEvent:    "",
+		},
+		{
+			name:             "nil attributes",
+			attributes:       nil,
+			wantFriendlyName: "",
+			wantIcon:         "",
+			wantNextEvent:    "",
+		},
+		{
+			name:             "partial attributes",
+			attributes:       map[string]any{"friendly_name": "Test Schedule"},
+			wantFriendlyName: "Test Schedule",
+			wantIcon:         "",
+			wantNextEvent:    "",
+		},
+		{
+			name:             "wrong type for friendly_name",
+			attributes:       map[string]any{"friendly_name": 123},
+			wantFriendlyName: "",
+			wantIcon:         "",
+			wantNextEvent:    "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			friendlyName, icon, nextEvent := extractScheduleAttributes(tt.attributes)
+
+			if friendlyName != tt.wantFriendlyName {
+				t.Errorf("friendlyName = %q, want %q", friendlyName, tt.wantFriendlyName)
+			}
+			if icon != tt.wantIcon {
+				t.Errorf("icon = %q, want %q", icon, tt.wantIcon)
+			}
+			if nextEvent != tt.wantNextEvent {
+				t.Errorf("nextEvent = %q, want %q", nextEvent, tt.wantNextEvent)
+			}
+		})
+	}
+}
+
+func TestParseBlocksForDay(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		blocks []any
+		want   []TimeBlock
+	}{
+		{
+			name: "single block",
+			blocks: []any{
+				map[string]any{"from": "08:00:00", "to": "17:00:00"},
+			},
+			want: []TimeBlock{{From: "08:00:00", To: "17:00:00"}},
+		},
+		{
+			name: "multiple blocks",
+			blocks: []any{
+				map[string]any{"from": "08:00:00", "to": "12:00:00"},
+				map[string]any{"from": "13:00:00", "to": "17:00:00"},
+			},
+			want: []TimeBlock{
+				{From: "08:00:00", To: "12:00:00"},
+				{From: "13:00:00", To: "17:00:00"},
+			},
+		},
+		{
+			name:   "empty blocks",
+			blocks: []any{},
+			want:   nil,
+		},
+		{
+			name:   "nil blocks",
+			blocks: nil,
+			want:   nil,
+		},
+		{
+			name: "invalid block type ignored",
+			blocks: []any{
+				"invalid",
+				map[string]any{"from": "08:00:00", "to": "17:00:00"},
+			},
+			want: []TimeBlock{{From: "08:00:00", To: "17:00:00"}},
+		},
+		{
+			name: "missing from field",
+			blocks: []any{
+				map[string]any{"to": "17:00:00"},
+			},
+			want: []TimeBlock{{From: "", To: "17:00:00"}},
+		},
+		{
+			name: "missing to field",
+			blocks: []any{
+				map[string]any{"from": "08:00:00"},
+			},
+			want: []TimeBlock{{From: "08:00:00", To: ""}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := parseBlocksForDay(tt.blocks)
+
+			if len(got) != len(tt.want) {
+				t.Errorf("parseBlocksForDay() returned %d blocks, want %d", len(got), len(tt.want))
+				return
+			}
+
+			for i, block := range got {
+				if block.From != tt.want[i].From {
+					t.Errorf("block[%d].From = %q, want %q", i, block.From, tt.want[i].From)
+				}
+				if block.To != tt.want[i].To {
+					t.Errorf("block[%d].To = %q, want %q", i, block.To, tt.want[i].To)
+				}
+			}
+		})
+	}
+}
+
+func TestParseTimeBlocks(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		config map[string]any
+		want   map[string][]TimeBlock
+	}{
+		{
+			name: "single day",
+			config: map[string]any{
+				"monday": []any{
+					map[string]any{"from": "08:00:00", "to": "17:00:00"},
+				},
+			},
+			want: map[string][]TimeBlock{
+				"monday": {{From: "08:00:00", To: "17:00:00"}},
+			},
+		},
+		{
+			name: "multiple days",
+			config: map[string]any{
+				"monday": []any{
+					map[string]any{"from": "08:00:00", "to": "17:00:00"},
+				},
+				"friday": []any{
+					map[string]any{"from": "08:00:00", "to": "12:00:00"},
+				},
+			},
+			want: map[string][]TimeBlock{
+				"monday": {{From: "08:00:00", To: "17:00:00"}},
+				"friday": {{From: "08:00:00", To: "12:00:00"}},
+			},
+		},
+		{
+			name:   "empty config",
+			config: map[string]any{},
+			want:   map[string][]TimeBlock{},
+		},
+		{
+			name: "non-day keys ignored",
+			config: map[string]any{
+				"name": "Test",
+				"monday": []any{
+					map[string]any{"from": "08:00:00", "to": "17:00:00"},
+				},
+			},
+			want: map[string][]TimeBlock{
+				"monday": {{From: "08:00:00", To: "17:00:00"}},
+			},
+		},
+		{
+			name: "wrong type for day value ignored",
+			config: map[string]any{
+				"monday": "not an array",
+			},
+			want: map[string][]TimeBlock{},
+		},
+		{
+			name: "empty day array ignored",
+			config: map[string]any{
+				"monday": []any{},
+			},
+			want: map[string][]TimeBlock{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := parseTimeBlocks(tt.config)
+
+			if len(got) != len(tt.want) {
+				t.Errorf("parseTimeBlocks() returned %d days, want %d", len(got), len(tt.want))
+			}
+
+			for day, wantBlocks := range tt.want {
+				gotBlocks, ok := got[day]
+				if !ok {
+					t.Errorf("parseTimeBlocks() missing day %q", day)
+					continue
+				}
+				if len(gotBlocks) != len(wantBlocks) {
+					t.Errorf("parseTimeBlocks()[%q] has %d blocks, want %d", day, len(gotBlocks), len(wantBlocks))
+					continue
+				}
+				for i, block := range gotBlocks {
+					if block.From != wantBlocks[i].From || block.To != wantBlocks[i].To {
+						t.Errorf("parseTimeBlocks()[%q][%d] = %+v, want %+v", day, i, block, wantBlocks[i])
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestBuildScheduleDetails(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		state      *homeassistant.Entity
+		timeBlocks map[string][]TimeBlock
+		want       ScheduleDetails
+	}{
+		{
+			name: "full details",
+			state: &homeassistant.Entity{
+				EntityID: "schedule.work_hours",
+				State:    "on",
+				Attributes: map[string]any{
+					"friendly_name": "Work Hours",
+					"icon":          "mdi:clock",
+					"next_event":    "2024-01-15T08:00:00",
+				},
+			},
+			timeBlocks: map[string][]TimeBlock{
+				"monday": {{From: "08:00:00", To: "17:00:00"}},
+			},
+			want: ScheduleDetails{
+				EntityID:     "schedule.work_hours",
+				State:        "on",
+				FriendlyName: "Work Hours",
+				Icon:         "mdi:clock",
+				NextEvent:    "2024-01-15T08:00:00",
+				Days: map[string][]TimeBlock{
+					"monday": {{From: "08:00:00", To: "17:00:00"}},
+				},
+			},
+		},
+		{
+			name: "minimal details",
+			state: &homeassistant.Entity{
+				EntityID:   "schedule.test",
+				State:      "off",
+				Attributes: map[string]any{},
+			},
+			timeBlocks: map[string][]TimeBlock{},
+			want: ScheduleDetails{
+				EntityID:     "schedule.test",
+				State:        "off",
+				FriendlyName: "",
+				Icon:         "",
+				NextEvent:    "",
+				Days:         map[string][]TimeBlock{},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := buildScheduleDetails(tt.state, tt.timeBlocks)
+
+			if got.EntityID != tt.want.EntityID {
+				t.Errorf("EntityID = %q, want %q", got.EntityID, tt.want.EntityID)
+			}
+			if got.State != tt.want.State {
+				t.Errorf("State = %q, want %q", got.State, tt.want.State)
+			}
+			if got.FriendlyName != tt.want.FriendlyName {
+				t.Errorf("FriendlyName = %q, want %q", got.FriendlyName, tt.want.FriendlyName)
+			}
+			if got.Icon != tt.want.Icon {
+				t.Errorf("Icon = %q, want %q", got.Icon, tt.want.Icon)
+			}
+			if got.NextEvent != tt.want.NextEvent {
+				t.Errorf("NextEvent = %q, want %q", got.NextEvent, tt.want.NextEvent)
+			}
+			if len(got.Days) != len(tt.want.Days) {
+				t.Errorf("Days length = %d, want %d", len(got.Days), len(tt.want.Days))
+			}
+		})
+	}
+}
+
 func TestBuildScheduleHelperConfig(t *testing.T) {
 	t.Parallel()
 
