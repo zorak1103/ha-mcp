@@ -163,6 +163,81 @@ func TestTargetHandlers_targetInputSchema(t *testing.T) {
 	}
 }
 
+func TestTargetHandlers_extractStringArray(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		params map[string]any
+		key    string
+		want   []string
+	}{
+		{
+			name:   "key exists with valid strings",
+			params: map[string]any{"ids": []any{"a", "b", "c"}},
+			key:    "ids",
+			want:   []string{"a", "b", "c"},
+		},
+		{
+			name:   "key does not exist",
+			params: map[string]any{"other": []any{"a"}},
+			key:    "ids",
+			want:   nil,
+		},
+		{
+			name:   "empty array",
+			params: map[string]any{"ids": []any{}},
+			key:    "ids",
+			want:   []string{},
+		},
+		{
+			name:   "mixed types in array - only strings extracted",
+			params: map[string]any{"ids": []any{"a", 123, "b", true}},
+			key:    "ids",
+			want:   []string{"a", "b"},
+		},
+		{
+			name:   "value is not an array",
+			params: map[string]any{"ids": "not_an_array"},
+			key:    "ids",
+			want:   nil,
+		},
+		{
+			name:   "nil params",
+			params: nil,
+			key:    "ids",
+			want:   nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			h := NewTargetHandlers()
+			got := h.extractStringArray(tt.params, tt.key)
+
+			if tt.want == nil {
+				if got != nil {
+					t.Errorf("extractStringArray() = %v, want nil", got)
+				}
+				return
+			}
+
+			if len(got) != len(tt.want) {
+				t.Errorf("extractStringArray() length = %d, want %d", len(got), len(tt.want))
+				return
+			}
+
+			for i, v := range got {
+				if v != tt.want[i] {
+					t.Errorf("extractStringArray()[%d] = %q, want %q", i, v, tt.want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestTargetHandlers_parseTargetParams(t *testing.T) {
 	t.Parallel()
 
