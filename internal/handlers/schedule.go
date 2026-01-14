@@ -12,6 +12,22 @@ import (
 
 const platformSchedule = "schedule"
 
+// TimeBlock represents a time range with from and to times.
+type TimeBlock struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+// ScheduleDetails contains detailed information about a schedule helper.
+type ScheduleDetails struct {
+	EntityID     string                 `json:"entity_id"`
+	State        string                 `json:"state"`
+	FriendlyName string                 `json:"friendly_name,omitempty"`
+	Icon         string                 `json:"icon,omitempty"`
+	NextEvent    string                 `json:"next_event,omitempty"`
+	Days         map[string][]TimeBlock `json:"days,omitempty"`
+}
+
 // ScheduleHandlers provides MCP tool handlers for schedule helper operations.
 type ScheduleHandlers struct{}
 
@@ -131,24 +147,93 @@ func (h *ScheduleHandlers) reloadScheduleTool() mcp.Tool {
 	}
 }
 
-func (h *ScheduleHandlers) handleGetScheduleDetails(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	entityID, ok := args["entity_id"].(string)
-	if !ok || entityID == "" {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent("entity_id is required")},
-			IsError: true,
-		}, nil
-	}
+// weekdays contains all days of the week for schedule processing.
+var weekdays = []string{"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
 
+// validateScheduleEntityID validates that the entity ID is a schedule entity.
+func validateScheduleEntityID(entityID string) error {
+	if entityID == "" {
+		return fmt.Errorf("entity_id is required")
+	}
 	platform, _ := ParseHelperEntityID(entityID)
 	if platform != platformSchedule {
+		return fmt.Errorf("entity_id must be a schedule entity (e.g., schedule.work_hours)")
+	}
+	return nil
+}
+
+// extractScheduleAttributes extracts friendly_name, icon, and next_event from state attributes.
+func extractScheduleAttributes(attributes map[string]any) (friendlyName, icon, nextEvent string) {
+	if name, ok := attributes["friendly_name"].(string); ok {
+		friendlyName = name
+	}
+	if ic, ok := attributes["icon"].(string); ok {
+		icon = ic
+	}
+	if ne, ok := attributes["next_event"].(string); ok {
+		nextEvent = ne
+	}
+	return friendlyName, icon, nextEvent
+}
+
+// parseTimeBlocks extracts time blocks for all weekdays from config.
+func parseTimeBlocks(config map[string]any) map[string][]TimeBlock {
+	result := make(map[string][]TimeBlock)
+	for _, day := range weekdays {
+		blocks, ok := config[day].([]any)
+		if !ok {
+			continue
+		}
+		dayBlocks := parseBlocksForDay(blocks)
+		if len(dayBlocks) > 0 {
+			result[day] = dayBlocks
+		}
+	}
+	return result
+}
+
+// parseBlocksForDay parses a single day's time blocks from raw config data.
+func parseBlocksForDay(blocks []any) []TimeBlock {
+	var dayBlocks []TimeBlock
+	for _, block := range blocks {
+		blockMap, ok := block.(map[string]any)
+		if !ok {
+			continue
+		}
+		tb := TimeBlock{}
+		if from, ok := blockMap["from"].(string); ok {
+			tb.From = from
+		}
+		if to, ok := blockMap["to"].(string); ok {
+			tb.To = to
+		}
+		dayBlocks = append(dayBlocks, tb)
+	}
+	return dayBlocks
+}
+
+// buildScheduleDetails constructs a ScheduleDetails from state and time blocks.
+func buildScheduleDetails(state *homeassistant.Entity, timeBlocks map[string][]TimeBlock) ScheduleDetails {
+	friendlyName, icon, nextEvent := extractScheduleAttributes(state.Attributes)
+	return ScheduleDetails{
+		EntityID:     state.EntityID,
+		State:        state.State,
+		FriendlyName: friendlyName,
+		Icon:         icon,
+		NextEvent:    nextEvent,
+		Days:         timeBlocks,
+	}
+}
+
+func (h *ScheduleHandlers) handleGetScheduleDetails(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+	entityID, _ := args["entity_id"].(string)
+	if err := validateScheduleEntityID(entityID); err != nil {
 		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent("entity_id must be a schedule entity (e.g., schedule.work_hours)")},
+			Content: []mcp.ContentBlock{mcp.NewTextContent(err.Error())},
 			IsError: true,
 		}, nil
 	}
 
-	// Get the state for current status info
 	state, err := client.GetState(ctx, entityID)
 	if err != nil {
 		return &mcp.ToolsCallResult{
@@ -157,85 +242,13 @@ func (h *ScheduleHandlers) handleGetScheduleDetails(ctx context.Context, client 
 		}, nil
 	}
 
-	// Try to get the config which may contain time blocks (may not be available in all HA versions)
 	config, configErr := client.GetScheduleConfig(ctx, entityID)
 	if configErr != nil {
-		// Config API not available - use empty config, we'll only have state info
 		config = make(map[string]any)
 	}
 
-	// Build a detailed response with all schedule information
-	type timeBlock struct {
-		From string `json:"from"`
-		To   string `json:"to"`
-	}
-
-	type scheduleDetails struct {
-		EntityID     string      `json:"entity_id"`
-		State        string      `json:"state"`
-		FriendlyName string      `json:"friendly_name,omitempty"`
-		Icon         string      `json:"icon,omitempty"`
-		NextEvent    string      `json:"next_event,omitempty"`
-		Monday       []timeBlock `json:"monday,omitempty"`
-		Tuesday      []timeBlock `json:"tuesday,omitempty"`
-		Wednesday    []timeBlock `json:"wednesday,omitempty"`
-		Thursday     []timeBlock `json:"thursday,omitempty"`
-		Friday       []timeBlock `json:"friday,omitempty"`
-		Saturday     []timeBlock `json:"saturday,omitempty"`
-		Sunday       []timeBlock `json:"sunday,omitempty"`
-	}
-
-	details := scheduleDetails{
-		EntityID: state.EntityID,
-		State:    state.State,
-	}
-
-	// Extract attributes from state
-	if name, ok := state.Attributes["friendly_name"].(string); ok {
-		details.FriendlyName = name
-	}
-	if icon, ok := state.Attributes["icon"].(string); ok {
-		details.Icon = icon
-	}
-	if nextEvent, ok := state.Attributes["next_event"].(string); ok {
-		details.NextEvent = nextEvent
-	}
-
-	// Extract time blocks from config (this is where they are stored)
-	days := []string{"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
-	for _, day := range days {
-		if blocks, ok := config[day].([]any); ok {
-			var dayBlocks []timeBlock
-			for _, block := range blocks {
-				if blockMap, ok := block.(map[string]any); ok {
-					tb := timeBlock{}
-					if from, ok := blockMap["from"].(string); ok {
-						tb.From = from
-					}
-					if to, ok := blockMap["to"].(string); ok {
-						tb.To = to
-					}
-					dayBlocks = append(dayBlocks, tb)
-				}
-			}
-			switch day {
-			case "monday":
-				details.Monday = dayBlocks
-			case "tuesday":
-				details.Tuesday = dayBlocks
-			case "wednesday":
-				details.Wednesday = dayBlocks
-			case "thursday":
-				details.Thursday = dayBlocks
-			case "friday":
-				details.Friday = dayBlocks
-			case "saturday":
-				details.Saturday = dayBlocks
-			case "sunday":
-				details.Sunday = dayBlocks
-			}
-		}
-	}
+	timeBlocks := parseTimeBlocks(config)
+	details := buildScheduleDetails(state, timeBlocks)
 
 	output, err := json.MarshalIndent(details, "", "  ")
 	if err != nil {

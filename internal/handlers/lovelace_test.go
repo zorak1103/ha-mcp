@@ -263,6 +263,275 @@ func TestLovelaceHandlers_handleGetLovelaceConfig(t *testing.T) {
 	}
 }
 
+func TestFilterViewsByQuery(t *testing.T) {
+	t.Parallel()
+
+	views := []any{
+		map[string]any{"title": "Overview", "path": "overview"},
+		map[string]any{"title": "Lights", "path": "lights"},
+		map[string]any{"title": "Climate Control", "path": "climate"},
+	}
+
+	tests := []struct {
+		name      string
+		views     []any
+		query     string
+		wantCount int
+	}{
+		{
+			name:      "exact match by path",
+			views:     views,
+			query:     "overview",
+			wantCount: 1,
+		},
+		{
+			name:      "partial match by title",
+			views:     views,
+			query:     "control",
+			wantCount: 1,
+		},
+		{
+			name:      "case insensitive match",
+			views:     views,
+			query:     "LIGHTS",
+			wantCount: 1,
+		},
+		{
+			name:      "no match",
+			views:     views,
+			query:     "nonexistent",
+			wantCount: 0,
+		},
+		{
+			name:      "empty query matches all",
+			views:     views,
+			query:     "",
+			wantCount: 3,
+		},
+		{
+			name:      "empty views",
+			views:     []any{},
+			query:     "test",
+			wantCount: 0,
+		},
+		{
+			name:      "invalid view type skipped",
+			views:     []any{"not a map", map[string]any{"title": "Valid"}},
+			query:     "valid",
+			wantCount: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := filterViewsByQuery(tt.views, tt.query)
+			if len(result) != tt.wantCount {
+				t.Errorf("filterViewsByQuery() returned %d views, want %d", len(result), tt.wantCount)
+			}
+		})
+	}
+}
+
+func TestCountCardsInView(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		viewMap map[string]any
+		want    int
+	}{
+		{
+			name:    "empty view",
+			viewMap: map[string]any{},
+			want:    0,
+		},
+		{
+			name: "cards only",
+			viewMap: map[string]any{
+				"cards": []any{
+					map[string]any{"type": "entities"},
+					map[string]any{"type": "button"},
+				},
+			},
+			want: 2,
+		},
+		{
+			name: "sections only",
+			viewMap: map[string]any{
+				"sections": []any{
+					map[string]any{
+						"cards": []any{
+							map[string]any{"type": "light"},
+						},
+					},
+					map[string]any{
+						"cards": []any{
+							map[string]any{"type": "sensor"},
+							map[string]any{"type": "weather"},
+						},
+					},
+				},
+			},
+			want: 3,
+		},
+		{
+			name: "cards and sections combined",
+			viewMap: map[string]any{
+				"cards": []any{
+					map[string]any{"type": "entities"},
+				},
+				"sections": []any{
+					map[string]any{
+						"cards": []any{
+							map[string]any{"type": "button"},
+							map[string]any{"type": "light"},
+						},
+					},
+				},
+			},
+			want: 3,
+		},
+		{
+			name: "section without cards",
+			viewMap: map[string]any{
+				"sections": []any{
+					map[string]any{"title": "Empty Section"},
+				},
+			},
+			want: 0,
+		},
+		{
+			name: "invalid section type skipped",
+			viewMap: map[string]any{
+				"sections": []any{
+					"not a map",
+					map[string]any{
+						"cards": []any{map[string]any{"type": "button"}},
+					},
+				},
+			},
+			want: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := countCardsInView(tt.viewMap)
+			if got != tt.want {
+				t.Errorf("countCardsInView() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildCompactViewEntry(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		viewMap map[string]any
+		want    compactViewEntry
+	}{
+		{
+			name:    "empty view",
+			viewMap: map[string]any{},
+			want:    compactViewEntry{},
+		},
+		{
+			name: "full view",
+			viewMap: map[string]any{
+				"title":   "Overview",
+				"path":    "overview",
+				"icon":    "mdi:home",
+				"subview": true,
+				"cards":   []any{map[string]any{"type": "entities"}},
+				"badges":  []any{map[string]any{"entity": "sensor.temp"}},
+			},
+			want: compactViewEntry{
+				Title:      "Overview",
+				Path:       "overview",
+				Icon:       "mdi:home",
+				Subview:    true,
+				CardCount:  1,
+				BadgeCount: 1,
+			},
+		},
+		{
+			name: "view without badges",
+			viewMap: map[string]any{
+				"title": "Simple",
+				"path":  "simple",
+				"cards": []any{map[string]any{"type": "button"}, map[string]any{"type": "light"}},
+			},
+			want: compactViewEntry{
+				Title:     "Simple",
+				Path:      "simple",
+				CardCount: 2,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := buildCompactViewEntry(tt.viewMap)
+			if got != tt.want {
+				t.Errorf("buildCompactViewEntry() = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildCompactViews(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		views []any
+		want  int
+	}{
+		{
+			name:  "empty views",
+			views: []any{},
+			want:  0,
+		},
+		{
+			name: "multiple views",
+			views: []any{
+				map[string]any{"title": "View1"},
+				map[string]any{"title": "View2"},
+				map[string]any{"title": "View3"},
+			},
+			want: 3,
+		},
+		{
+			name: "invalid views skipped",
+			views: []any{
+				"not a map",
+				map[string]any{"title": "Valid"},
+				42,
+			},
+			want: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := buildCompactViews(tt.views)
+			if len(got) != tt.want {
+				t.Errorf("buildCompactViews() returned %d entries, want %d", len(got), tt.want)
+			}
+		})
+	}
+}
+
 func TestLovelaceHandlers_compactViewEntry(t *testing.T) {
 	t.Parallel()
 

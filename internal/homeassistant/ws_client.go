@@ -150,51 +150,62 @@ func (c *WSClient) healthLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if !c.connected.Load() {
-				continue
-			}
-
-			// Check if last pong is too old
-			if lastPong, ok := c.lastPong.Load().(time.Time); ok {
-				if time.Since(lastPong) > c.config.PingInterval+c.config.PingTimeout {
-					// Connection appears dead, trigger reconnect
-					if c.config.OnDisconnect != nil {
-						c.config.OnDisconnect(errors.New("ping timeout"))
-					}
-					if c.config.AutoReconnect {
-						go func() {
-							_ = c.reconnect()
-						}()
-					}
-					return
-				}
-			}
-
-			// Send ping
-			pingCtx, pingCancel := context.WithTimeout(ctx, c.config.PingTimeout)
-			err := c.conn.Ping(pingCtx)
-			pingCancel()
-
-			if err != nil {
-				// Ping failed
-				if ctx.Err() != nil {
-					return // Context cancelled, clean shutdown
-				}
-				// Connection might be dead
-				if c.config.OnDisconnect != nil {
-					c.config.OnDisconnect(fmt.Errorf("ping failed: %w", err))
-				}
-				if c.config.AutoReconnect {
-					go func() {
-						_ = c.reconnect()
-					}()
-				}
+			if shouldExit := c.performHealthCheck(ctx); shouldExit {
 				return
 			}
-
-			// Ping successful, update last pong time
-			c.lastPong.Store(time.Now())
 		}
+	}
+}
+
+// performHealthCheck executes a single health check cycle.
+// Returns true if the health loop should exit.
+func (c *WSClient) performHealthCheck(ctx context.Context) bool {
+	if !c.connected.Load() {
+		return false
+	}
+
+	if c.isPongTimeout() {
+		c.handleConnectionFailure(errors.New("ping timeout"))
+		return true
+	}
+
+	if err := c.sendPing(ctx); err != nil {
+		if ctx.Err() != nil {
+			return true // Context canceled, clean shutdown
+		}
+		c.handleConnectionFailure(fmt.Errorf("ping failed: %w", err))
+		return true
+	}
+
+	c.lastPong.Store(time.Now())
+	return false
+}
+
+// isPongTimeout checks if the last pong response is too old.
+func (c *WSClient) isPongTimeout() bool {
+	lastPong, ok := c.lastPong.Load().(time.Time)
+	if !ok {
+		return false
+	}
+	return time.Since(lastPong) > c.config.PingInterval+c.config.PingTimeout
+}
+
+// sendPing sends a ping to the WebSocket connection with timeout.
+func (c *WSClient) sendPing(ctx context.Context) error {
+	pingCtx, pingCancel := context.WithTimeout(ctx, c.config.PingTimeout)
+	defer pingCancel()
+	return c.conn.Ping(pingCtx)
+}
+
+// handleConnectionFailure notifies disconnect callback and triggers reconnection.
+func (c *WSClient) handleConnectionFailure(err error) {
+	if c.config.OnDisconnect != nil {
+		c.config.OnDisconnect(err)
+	}
+	if c.config.AutoReconnect {
+		go func() {
+			_ = c.reconnect()
+		}()
 	}
 }
 
@@ -248,8 +259,8 @@ func (c *WSClient) authenticate() error {
 		return fmt.Errorf("marshaling auth message: %w", err)
 	}
 
-	if err := c.conn.Write(c.ctx, websocket.MessageText, authData); err != nil {
-		return fmt.Errorf("sending auth message: %w", err)
+	if writeErr := c.conn.Write(c.ctx, websocket.MessageText, authData); writeErr != nil {
+		return fmt.Errorf("sending auth message: %w", writeErr)
 	}
 
 	// Read auth response
@@ -295,7 +306,7 @@ func (c *WSClient) readLoop() {
 		if err != nil {
 			// Connection closed or error
 			if c.ctx.Err() != nil {
-				// Context cancelled, clean shutdown
+				// Context canceled, clean shutdown
 				return
 			}
 

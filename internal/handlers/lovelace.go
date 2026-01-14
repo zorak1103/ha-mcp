@@ -56,6 +56,100 @@ type compactViewEntry struct {
 	Subview    bool   `json:"subview,omitempty"`
 }
 
+// filterViewsByQuery filters views by title or path (case-insensitive, partial match).
+func filterViewsByQuery(views []any, query string) []any {
+	queryLower := strings.ToLower(query)
+	filtered := make([]any, 0)
+
+	for _, v := range views {
+		viewMap, ok := v.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		title, _ := viewMap["title"].(string)
+		path, _ := viewMap["path"].(string)
+
+		if strings.Contains(strings.ToLower(title), queryLower) ||
+			strings.Contains(strings.ToLower(path), queryLower) {
+			filtered = append(filtered, viewMap)
+		}
+	}
+
+	return filtered
+}
+
+// countCardsInView counts all cards in a view, including cards in sections.
+func countCardsInView(viewMap map[string]any) int {
+	count := 0
+
+	if cards, ok := viewMap["cards"].([]any); ok {
+		count = len(cards)
+	}
+
+	if sections, ok := viewMap["sections"].([]any); ok {
+		for _, section := range sections {
+			if sectionMap, ok := section.(map[string]any); ok {
+				if sectionCards, ok := sectionMap["cards"].([]any); ok {
+					count += len(sectionCards)
+				}
+			}
+		}
+	}
+
+	return count
+}
+
+// buildCompactViewEntry creates a compact view entry from a view map.
+func buildCompactViewEntry(viewMap map[string]any) compactViewEntry {
+	entry := compactViewEntry{}
+	entry.Title, _ = viewMap["title"].(string)
+	entry.Path, _ = viewMap["path"].(string)
+	entry.Icon, _ = viewMap["icon"].(string)
+	entry.Subview, _ = viewMap["subview"].(bool)
+	entry.CardCount = countCardsInView(viewMap)
+
+	if badges, ok := viewMap["badges"].([]any); ok {
+		entry.BadgeCount = len(badges)
+	}
+
+	return entry
+}
+
+// buildCompactViews converts views to compact format.
+func buildCompactViews(views []any) []compactViewEntry {
+	compact := make([]compactViewEntry, 0, len(views))
+
+	for _, v := range views {
+		viewMap, ok := v.(map[string]any)
+		if !ok {
+			continue
+		}
+		compact = append(compact, buildCompactViewEntry(viewMap))
+	}
+
+	return compact
+}
+
+// formatLovelaceResponse creates a ToolsCallResult with JSON-formatted data.
+func formatLovelaceResponse(data any, summary string) (*mcp.ToolsCallResult, error) {
+	output, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return &mcp.ToolsCallResult{
+			Content: []mcp.ContentBlock{
+				mcp.NewTextContent(fmt.Sprintf("Error formatting response: %v", err)),
+			},
+			IsError: true,
+		}, nil
+	}
+
+	return &mcp.ToolsCallResult{
+		Content: []mcp.ContentBlock{
+			mcp.NewTextContent(summary + "\n\n" + string(output)),
+		},
+	}, nil
+}
+
 // handleGetLovelaceConfig handles requests to get Lovelace dashboard configuration.
 func (h *LovelaceHandlers) handleGetLovelaceConfig(
 	ctx context.Context,
@@ -72,132 +166,41 @@ func (h *LovelaceHandlers) handleGetLovelaceConfig(
 		}, nil
 	}
 
-	// Parse filter parameters
 	viewFilter, _ := args["view"].(string)
 	verbose, _ := args["verbose"].(bool)
-
-	// Extract views from config (config is already map[string]any)
 	views, _ := config["views"].([]any)
 
-	// If view filter is specified, return matching views with full details
 	if viewFilter != "" {
-		viewFilterLower := strings.ToLower(viewFilter)
-		filteredViews := make([]any, 0)
-
-		for _, v := range views {
-			viewMap, ok := v.(map[string]any)
-			if !ok {
-				continue
-			}
-
-			title, _ := viewMap["title"].(string)
-			path, _ := viewMap["path"].(string)
-
-			// Match by title or path (case-insensitive, partial match)
-			if strings.Contains(strings.ToLower(title), viewFilterLower) ||
-				strings.Contains(strings.ToLower(path), viewFilterLower) {
-				filteredViews = append(filteredViews, viewMap)
-			}
-		}
-
-		if len(filteredViews) == 0 {
-			return &mcp.ToolsCallResult{
-				Content: []mcp.ContentBlock{
-					mcp.NewTextContent(fmt.Sprintf("No views found matching '%s'", viewFilter)),
-				},
-			}, nil
-		}
-
-		output, marshalErr := json.MarshalIndent(filteredViews, "", "  ")
-		if marshalErr != nil {
-			return &mcp.ToolsCallResult{
-				Content: []mcp.ContentBlock{
-					mcp.NewTextContent(fmt.Sprintf("Error formatting response: %v", marshalErr)),
-				},
-				IsError: true,
-			}, nil
-		}
-
-		summary := fmt.Sprintf("Found %d view(s) matching '%s'", len(filteredViews), viewFilter)
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{
-				mcp.NewTextContent(summary + "\n\n" + string(output)),
-			},
-		}, nil
+		return h.handleFilteredViews(views, viewFilter)
 	}
 
-	// Verbose mode: return full configuration
 	if verbose {
-		output, marshalErr := json.MarshalIndent(config, "", "  ")
-		if marshalErr != nil {
-			return &mcp.ToolsCallResult{
-				Content: []mcp.ContentBlock{
-					mcp.NewTextContent(fmt.Sprintf("Error formatting response: %v", marshalErr)),
-				},
-				IsError: true,
-			}, nil
-		}
-
 		summary := fmt.Sprintf("Lovelace configuration with %d views", len(views))
+		return formatLovelaceResponse(config, summary)
+	}
+
+	return h.handleCompactViews(views)
+}
+
+// handleFilteredViews handles requests with a view filter.
+func (h *LovelaceHandlers) handleFilteredViews(views []any, filter string) (*mcp.ToolsCallResult, error) {
+	filteredViews := filterViewsByQuery(views, filter)
+
+	if len(filteredViews) == 0 {
 		return &mcp.ToolsCallResult{
 			Content: []mcp.ContentBlock{
-				mcp.NewTextContent(summary + "\n\n" + string(output)),
+				mcp.NewTextContent(fmt.Sprintf("No views found matching '%s'", filter)),
 			},
 		}, nil
 	}
 
-	// Compact mode: return view overview
-	compact := make([]compactViewEntry, 0, len(views))
-	for _, v := range views {
-		viewMap, ok := v.(map[string]any)
-		if !ok {
-			continue
-		}
+	summary := fmt.Sprintf("Found %d view(s) matching '%s'", len(filteredViews), filter)
+	return formatLovelaceResponse(filteredViews, summary)
+}
 
-		entry := compactViewEntry{}
-		entry.Title, _ = viewMap["title"].(string)
-		entry.Path, _ = viewMap["path"].(string)
-		entry.Icon, _ = viewMap["icon"].(string)
-		entry.Subview, _ = viewMap["subview"].(bool)
-
-		// Count cards (from both "cards" and "sections")
-		if cards, ok := viewMap["cards"].([]any); ok {
-			entry.CardCount = len(cards)
-		}
-		if sections, ok := viewMap["sections"].([]any); ok {
-			for _, section := range sections {
-				if sectionMap, ok := section.(map[string]any); ok {
-					if sectionCards, ok := sectionMap["cards"].([]any); ok {
-						entry.CardCount += len(sectionCards)
-					}
-				}
-			}
-		}
-
-		// Count badges
-		if badges, ok := viewMap["badges"].([]any); ok {
-			entry.BadgeCount = len(badges)
-		}
-
-		compact = append(compact, entry)
-	}
-
-	output, marshalErr := json.MarshalIndent(compact, "", "  ")
-	if marshalErr != nil {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{
-				mcp.NewTextContent(fmt.Sprintf("Error formatting response: %v", marshalErr)),
-			},
-			IsError: true,
-		}, nil
-	}
-
-	summary := fmt.Sprintf("Found %d views", len(compact))
-	summary += VerboseHint
-
-	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{
-			mcp.NewTextContent(summary + "\n\n" + string(output)),
-		},
-	}, nil
+// handleCompactViews handles requests for compact view output.
+func (h *LovelaceHandlers) handleCompactViews(views []any) (*mcp.ToolsCallResult, error) {
+	compact := buildCompactViews(views)
+	summary := fmt.Sprintf("Found %d views", len(compact)) + VerboseHint
+	return formatLovelaceResponse(compact, summary)
 }

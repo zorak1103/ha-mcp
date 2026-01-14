@@ -13,6 +13,7 @@ import (
 )
 
 const configKeyEntityID = "entity_id"
+const configKeyTarget = "target"
 
 // EntityHandlers provides MCP tool handlers for entity operations.
 type EntityHandlers struct{}
@@ -160,6 +161,102 @@ type compactEntityState struct {
 	FriendlyName string `json:"friendly_name,omitempty"`
 }
 
+// stateFilterParams holds parsed filter parameters for entity states.
+type stateFilterParams struct {
+	domain         string
+	stateFilter    string
+	stateNotFilter string
+	nameContains   string
+	verbose        bool
+}
+
+// parseStateFilterParams extracts filter parameters from args.
+func parseStateFilterParams(args map[string]any) stateFilterParams {
+	return stateFilterParams{
+		domain:         getStringArg(args, "domain"),
+		stateFilter:    getStringArg(args, "state"),
+		stateNotFilter: getStringArg(args, "state_not"),
+		nameContains:   getStringArg(args, "name_contains"),
+		verbose:        getBoolArg(args, "verbose"),
+	}
+}
+
+// getStringArg safely extracts a string argument.
+func getStringArg(args map[string]any, key string) string {
+	val, _ := args[key].(string)
+	return val
+}
+
+// getBoolArg safely extracts a boolean argument.
+func getBoolArg(args map[string]any, key string) bool {
+	val, _ := args[key].(bool)
+	return val
+}
+
+// filterStates applies all filters to a list of entities.
+func filterStates(states []homeassistant.Entity, params stateFilterParams) []homeassistant.Entity {
+	nameContainsLower := strings.ToLower(params.nameContains)
+	filtered := make([]homeassistant.Entity, 0, len(states))
+
+	for _, state := range states {
+		if matchesStateFilters(state, params, nameContainsLower) {
+			filtered = append(filtered, state)
+		}
+	}
+
+	return filtered
+}
+
+// matchesStateFilters checks if a single entity matches all filters.
+func matchesStateFilters(state homeassistant.Entity, params stateFilterParams, nameContainsLower string) bool {
+	if params.domain != "" && !strings.HasPrefix(state.EntityID, params.domain+".") {
+		return false
+	}
+	if params.stateFilter != "" && state.State != params.stateFilter {
+		return false
+	}
+	if params.stateNotFilter != "" && state.State == params.stateNotFilter {
+		return false
+	}
+	if params.nameContains != "" && !matchesNameFilter(state, nameContainsLower) {
+		return false
+	}
+	return true
+}
+
+// matchesNameFilter checks if entity matches the name filter.
+func matchesNameFilter(state homeassistant.Entity, nameContainsLower string) bool {
+	if strings.Contains(strings.ToLower(state.EntityID), nameContainsLower) {
+		return true
+	}
+	friendlyName, _ := state.Attributes["friendly_name"].(string)
+	return strings.Contains(strings.ToLower(friendlyName), nameContainsLower)
+}
+
+// formatStatesOutput formats entity states based on verbose flag.
+func formatStatesOutput(states []homeassistant.Entity, verbose bool) ([]byte, error) {
+	if verbose {
+		return json.MarshalIndent(states, "", "  ")
+	}
+	return json.MarshalIndent(toCompactStates(states), "", "  ")
+}
+
+// toCompactStates converts entities to compact format.
+func toCompactStates(states []homeassistant.Entity) []compactEntityState {
+	compact := make([]compactEntityState, 0, len(states))
+	for _, state := range states {
+		entry := compactEntityState{
+			EntityID: state.EntityID,
+			State:    state.State,
+		}
+		if friendlyName, ok := state.Attributes["friendly_name"].(string); ok {
+			entry.FriendlyName = friendlyName
+		}
+		compact = append(compact, entry)
+	}
+	return compact
+}
+
 func (h *EntityHandlers) handleGetStates(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
 	states, err := client.GetStates(ctx)
 	if err != nil {
@@ -169,69 +266,10 @@ func (h *EntityHandlers) handleGetStates(ctx context.Context, client homeassista
 		}, nil
 	}
 
-	// Parse filter parameters
-	domain, _ := args["domain"].(string)
-	stateFilter, _ := args["state"].(string)
-	stateNotFilter, _ := args["state_not"].(string)
-	nameContains, _ := args["name_contains"].(string)
-	verbose, _ := args["verbose"].(bool)
+	params := parseStateFilterParams(args)
+	states = filterStates(states, params)
 
-	// Normalize name filter for case-insensitive matching
-	nameContainsLower := strings.ToLower(nameContains)
-
-	// Apply filters
-	filtered := make([]homeassistant.Entity, 0, len(states))
-	for _, state := range states {
-		// Apply domain filter
-		if domain != "" && !strings.HasPrefix(state.EntityID, domain+".") {
-			continue
-		}
-
-		// Apply state filter
-		if stateFilter != "" && state.State != stateFilter {
-			continue
-		}
-
-		// Apply state_not filter
-		if stateNotFilter != "" && state.State == stateNotFilter {
-			continue
-		}
-
-		// Apply name_contains filter (checks entity_id and friendly_name)
-		if nameContains != "" {
-			entityIDMatch := strings.Contains(strings.ToLower(state.EntityID), nameContainsLower)
-			friendlyName, _ := state.Attributes["friendly_name"].(string)
-			friendlyNameMatch := strings.Contains(strings.ToLower(friendlyName), nameContainsLower)
-			if !entityIDMatch && !friendlyNameMatch {
-				continue
-			}
-		}
-
-		filtered = append(filtered, state)
-	}
-	states = filtered
-
-	// Format output based on verbose flag
-	var output []byte
-	if verbose {
-		output, err = json.MarshalIndent(states, "", "  ")
-	} else {
-		// Compact output: only entity_id, state, friendly_name
-		compact := make([]compactEntityState, 0, len(states))
-		for _, state := range states {
-			entry := compactEntityState{
-				EntityID: state.EntityID,
-				State:    state.State,
-			}
-			// Extract friendly_name from attributes if present
-			if friendlyName, ok := state.Attributes["friendly_name"].(string); ok {
-				entry.FriendlyName = friendlyName
-			}
-			compact = append(compact, entry)
-		}
-		output, err = json.MarshalIndent(compact, "", "  ")
-	}
-
+	output, err := formatStatesOutput(states, params.verbose)
 	if err != nil {
 		return &mcp.ToolsCallResult{
 			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error formatting states: %v", err))},
@@ -239,9 +277,8 @@ func (h *EntityHandlers) handleGetStates(ctx context.Context, client homeassista
 		}, nil
 	}
 
-	// Add summary info
 	summary := fmt.Sprintf("Found %d entities", len(states))
-	if !verbose {
+	if !params.verbose {
 		summary += VerboseHint
 	}
 
@@ -303,7 +340,6 @@ func (h *EntityHandlers) handleGetEntityDependencies(ctx context.Context, client
 		}, nil
 	}
 
-	// Get all automations
 	automations, err := client.ListAutomations(ctx)
 	if err != nil {
 		return &mcp.ToolsCallResult{
@@ -312,48 +348,7 @@ func (h *EntityHandlers) handleGetEntityDependencies(ctx context.Context, client
 		}, nil
 	}
 
-	var dependencies []entityDependency
-
-	for _, auto := range automations {
-		// Extract automation ID from entity_id (automation.xxx -> xxx)
-		autoID := strings.TrimPrefix(auto.EntityID, "automation.")
-
-		// Get full automation config
-		fullAuto, err := client.GetAutomation(ctx, autoID)
-		if err != nil {
-			continue // Skip automations we can't read
-		}
-
-		var usedIn []string
-
-		// Search in triggers
-		if searchEntityInConfig(fullAuto.Config.Triggers, entityID) {
-			usedIn = append(usedIn, "trigger")
-		}
-
-		// Search in conditions
-		if searchEntityInConfig(fullAuto.Config.Conditions, entityID) {
-			usedIn = append(usedIn, "condition")
-		}
-
-		// Search in actions
-		if searchEntityInConfig(fullAuto.Config.Actions, entityID) {
-			usedIn = append(usedIn, "action")
-		}
-
-		if len(usedIn) > 0 {
-			alias := fullAuto.FriendlyName
-			if fullAuto.Config != nil && fullAuto.Config.Alias != "" {
-				alias = fullAuto.Config.Alias
-			}
-			dep := entityDependency{
-				AutomationID:    autoID,
-				AutomationAlias: alias,
-				UsedIn:          usedIn,
-			}
-			dependencies = append(dependencies, dep)
-		}
-	}
+	dependencies := findEntityDependencies(ctx, client, automations, entityID)
 
 	result := entityDependenciesResult{
 		EntityID:    entityID,
@@ -376,6 +371,65 @@ func (h *EntityHandlers) handleGetEntityDependencies(ctx context.Context, client
 	}, nil
 }
 
+// findEntityDependencies searches all automations for entity usage.
+func findEntityDependencies(ctx context.Context, client homeassistant.Client, automations []homeassistant.Automation, entityID string) []entityDependency {
+	var dependencies []entityDependency
+
+	for _, auto := range automations {
+		autoID := strings.TrimPrefix(auto.EntityID, "automation.")
+		fullAuto, err := client.GetAutomation(ctx, autoID)
+		if err != nil {
+			continue
+		}
+
+		if dep := checkAutomationForEntity(fullAuto, autoID, entityID); dep != nil {
+			dependencies = append(dependencies, *dep)
+		}
+	}
+
+	return dependencies
+}
+
+// checkAutomationForEntity checks if an automation uses the entity.
+func checkAutomationForEntity(auto *homeassistant.Automation, autoID, entityID string) *entityDependency {
+	usedIn := findEntityUsageLocations(auto.Config, entityID)
+	if len(usedIn) == 0 {
+		return nil
+	}
+
+	alias := auto.FriendlyName
+	if auto.Config != nil && auto.Config.Alias != "" {
+		alias = auto.Config.Alias
+	}
+
+	return &entityDependency{
+		AutomationID:    autoID,
+		AutomationAlias: alias,
+		UsedIn:          usedIn,
+	}
+}
+
+// findEntityUsageLocations finds where an entity is used in automation config.
+func findEntityUsageLocations(config *homeassistant.AutomationConfig, entityID string) []string {
+	var usedIn []string
+
+	if config == nil {
+		return usedIn
+	}
+
+	if searchEntityInConfig(config.Triggers, entityID) {
+		usedIn = append(usedIn, "trigger")
+	}
+	if searchEntityInConfig(config.Conditions, entityID) {
+		usedIn = append(usedIn, "condition")
+	}
+	if searchEntityInConfig(config.Actions, entityID) {
+		usedIn = append(usedIn, "action")
+	}
+
+	return usedIn
+}
+
 // searchEntityInConfig recursively searches for an entity ID in a config structure.
 func searchEntityInConfig(config any, entityID string) bool {
 	if config == nil {
@@ -386,42 +440,59 @@ func searchEntityInConfig(config any, entityID string) bool {
 	case string:
 		return v == entityID
 	case []any:
-		for _, item := range v {
-			if searchEntityInConfig(item, entityID) {
-				return true
-			}
-		}
+		return searchEntityInSlice(v, entityID)
 	case map[string]any:
-		for key, val := range v {
-			// Check common entity_id fields
-			if key == configKeyEntityID {
-				if searchEntityInConfig(val, entityID) {
-					return true
-				}
-			}
-			// Check target.entity_id
-			if key == "target" {
-				if targetMap, ok := val.(map[string]any); ok {
-					if searchEntityInConfig(targetMap[configKeyEntityID], entityID) {
-						return true
-					}
-				}
-			}
-			// Check data.entity_id
-			if key == "data" {
-				if dataMap, ok := val.(map[string]any); ok {
-					if searchEntityInConfig(dataMap[configKeyEntityID], entityID) {
-						return true
-					}
-				}
-			}
-			// Recursively search in nested structures
-			if searchEntityInConfig(val, entityID) {
-				return true
-			}
+		return searchEntityInMap(v, entityID)
+	}
+
+	return false
+}
+
+// searchEntityInSlice searches for an entity ID in a slice.
+func searchEntityInSlice(items []any, entityID string) bool {
+	for _, item := range items {
+		if searchEntityInConfig(item, entityID) {
+			return true
 		}
 	}
 	return false
+}
+
+// searchEntityInMap searches for an entity ID in a map structure.
+func searchEntityInMap(m map[string]any, entityID string) bool {
+	for key, val := range m {
+		if searchEntityInMapEntry(key, val, entityID) {
+			return true
+		}
+	}
+	return false
+}
+
+// searchEntityInMapEntry checks a single map entry for entity ID references.
+func searchEntityInMapEntry(key string, val any, entityID string) bool {
+	// Check direct entity_id field
+	if key == configKeyEntityID {
+		return searchEntityInConfig(val, entityID)
+	}
+
+	// Check nested entity_id in target or data fields
+	if key == configKeyTarget || key == "data" {
+		if found := searchEntityInNestedMap(val, entityID); found {
+			return true
+		}
+	}
+
+	// Recursively search in nested structures
+	return searchEntityInConfig(val, entityID)
+}
+
+// searchEntityInNestedMap checks for entity_id in a nested map.
+func searchEntityInNestedMap(val any, entityID string) bool {
+	nestedMap, ok := val.(map[string]any)
+	if !ok {
+		return false
+	}
+	return searchEntityInConfig(nestedMap[configKeyEntityID], entityID)
 }
 
 // compactHistoryEntry represents a minimal history entry for compact output.
@@ -430,60 +501,84 @@ type compactHistoryEntry struct {
 	LastChanged string `json:"last_changed"`
 }
 
-func (h *EntityHandlers) handleGetHistory(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+// historyParams encapsulates all parsed parameters for history queries.
+type historyParams struct {
+	entityID    string
+	startTime   time.Time
+	endTime     time.Time
+	stateFilter string
+	limit       int
+	verbose     bool
+}
+
+// historyResult encapsulates processed history data.
+type historyResult struct {
+	entries    []homeassistant.HistoryEntry
+	totalCount int
+}
+
+// parseHistoryParams extracts and validates all parameters from args.
+func parseHistoryParams(args map[string]any) (*historyParams, error) {
 	entityID, ok := args["entity_id"].(string)
 	if !ok || entityID == "" {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent("entity_id is required")},
-			IsError: true,
-		}, nil
+		return nil, fmt.Errorf("entity_id is required")
 	}
 
-	// Parse time parameters
-	endTime := time.Now()
-	startTime := endTime.Add(-24 * time.Hour)
-
-	// Check for 'hours' parameter first (overrides start_time)
-	if hours, ok := args["hours"].(float64); ok && hours > 0 {
-		startTime = endTime.Add(-time.Duration(hours) * time.Hour)
-	} else if startStr, ok := args["start_time"].(string); ok && startStr != "" {
-		parsed, err := time.Parse(time.RFC3339, startStr)
-		if err != nil {
-			return &mcp.ToolsCallResult{
-				Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Invalid start_time format: %v", err))},
-				IsError: true,
-			}, nil
-		}
-		startTime = parsed
+	startTime, endTime, err := parseTimeRange(args)
+	if err != nil {
+		return nil, err
 	}
 
-	if endStr, ok := args["end_time"].(string); ok && endStr != "" {
-		parsed, err := time.Parse(time.RFC3339, endStr)
-		if err != nil {
-			return &mcp.ToolsCallResult{
-				Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Invalid end_time format: %v", err))},
-				IsError: true,
-			}, nil
-		}
-		endTime = parsed
-	}
-
-	// Parse filter and output parameters
 	stateFilter, _ := args["state"].(string)
+
 	limit := 0
 	if limitVal, ok := args["limit"].(float64); ok && limitVal > 0 {
 		limit = int(limitVal)
 	}
+
 	verbose, _ := args["verbose"].(bool)
 
-	history, err := client.GetHistory(ctx, entityID, startTime, endTime)
-	if err != nil {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error getting history: %v", err))},
-			IsError: true,
-		}, nil
+	return &historyParams{
+		entityID:    entityID,
+		startTime:   startTime,
+		endTime:     endTime,
+		stateFilter: stateFilter,
+		limit:       limit,
+		verbose:     verbose,
+	}, nil
+}
+
+// parseTimeRange parses start_time, end_time, and hours parameters.
+func parseTimeRange(args map[string]any) (start, end time.Time, err error) {
+	end = time.Now()
+	start = end.Add(-24 * time.Hour)
+
+	// 'hours' parameter takes precedence over 'start_time'
+	if hours, ok := args["hours"].(float64); ok && hours > 0 {
+		start = end.Add(-time.Duration(hours) * time.Hour)
+	} else if startStr, ok := args["start_time"].(string); ok && startStr != "" {
+		start, err = time.Parse(time.RFC3339, startStr)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("invalid start_time format: %w", err)
+		}
 	}
 
+	if endStr, ok := args["end_time"].(string); ok && endStr != "" {
+		end, err = time.Parse(time.RFC3339, endStr)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("invalid end_time format: %w", err)
+		}
+	}
+
+	return start, end, nil
+}
+
+// processHistoryEntries flattens, filters, and limits history entries.
+func processHistoryEntries(
+	history [][]homeassistant.HistoryEntry,
+	stateFilter string,
+	limit int,
+) historyResult {
 	// Flatten history (it's [][]HistoryEntry, typically with one inner array per entity)
 	var entries []homeassistant.HistoryEntry
 	for _, entityHistory := range history {
@@ -492,7 +587,7 @@ func (h *EntityHandlers) handleGetHistory(ctx context.Context, client homeassist
 
 	// Apply state filter
 	if stateFilter != "" {
-		filtered := make([]homeassistant.HistoryEntry, 0)
+		filtered := make([]homeassistant.HistoryEntry, 0, len(entries))
 		for _, entry := range entries {
 			if entry.State == stateFilter {
 				filtered = append(filtered, entry)
@@ -508,22 +603,71 @@ func (h *EntityHandlers) handleGetHistory(ctx context.Context, client homeassist
 		entries = entries[len(entries)-limit:]
 	}
 
-	// Format output based on verbose flag
-	var output []byte
+	return historyResult{
+		entries:    entries,
+		totalCount: totalCount,
+	}
+}
+
+// formatHistoryOutput formats entries based on verbose flag.
+func formatHistoryOutput(entries []homeassistant.HistoryEntry, verbose bool) ([]byte, error) {
 	if verbose {
-		output, err = json.MarshalIndent(entries, "", "  ")
-	} else {
-		// Compact output: only state and last_changed
-		compact := make([]compactHistoryEntry, 0, len(entries))
-		for _, entry := range entries {
-			compact = append(compact, compactHistoryEntry{
-				State:       entry.State,
-				LastChanged: entry.LastChangedTime().Format(time.RFC3339),
-			})
-		}
-		output, err = json.MarshalIndent(compact, "", "  ")
+		return json.MarshalIndent(entries, "", "  ")
 	}
 
+	compact := make([]compactHistoryEntry, 0, len(entries))
+	for _, entry := range entries {
+		compact = append(compact, compactHistoryEntry{
+			State:       entry.State,
+			LastChanged: entry.LastChangedTime().Format(time.RFC3339),
+		})
+	}
+
+	return json.MarshalIndent(compact, "", "  ")
+}
+
+// buildHistorySummary creates the summary message for history results.
+func buildHistorySummary(entityID string, result historyResult, stateFilter string, verbose bool) string {
+	var summary string
+
+	if result.totalCount > len(result.entries) {
+		summary = fmt.Sprintf("Showing %d of %d history entries for %s (limited)",
+			len(result.entries), result.totalCount, entityID)
+	} else {
+		summary = fmt.Sprintf("Found %d history entries for %s", len(result.entries), entityID)
+	}
+
+	if stateFilter != "" {
+		summary += fmt.Sprintf(" (filtered by state='%s')", stateFilter)
+	}
+
+	if !verbose {
+		summary += VerboseHint
+	}
+
+	return summary
+}
+
+func (h *EntityHandlers) handleGetHistory(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+	params, err := parseHistoryParams(args)
+	if err != nil {
+		return &mcp.ToolsCallResult{
+			Content: []mcp.ContentBlock{mcp.NewTextContent(err.Error())},
+			IsError: true,
+		}, nil
+	}
+
+	history, err := client.GetHistory(ctx, params.entityID, params.startTime, params.endTime)
+	if err != nil {
+		return &mcp.ToolsCallResult{
+			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error getting history: %v", err))},
+			IsError: true,
+		}, nil
+	}
+
+	result := processHistoryEntries(history, params.stateFilter, params.limit)
+
+	output, err := formatHistoryOutput(result.entries, params.verbose)
 	if err != nil {
 		return &mcp.ToolsCallResult{
 			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error formatting history: %v", err))},
@@ -531,17 +675,7 @@ func (h *EntityHandlers) handleGetHistory(ctx context.Context, client homeassist
 		}, nil
 	}
 
-	// Build summary
-	summary := fmt.Sprintf("Found %d history entries for %s", len(entries), entityID)
-	if limit > 0 && totalCount > limit {
-		summary = fmt.Sprintf("Showing %d of %d history entries for %s (limited)", len(entries), totalCount, entityID)
-	}
-	if stateFilter != "" {
-		summary += fmt.Sprintf(" (filtered by state='%s')", stateFilter)
-	}
-	if !verbose {
-		summary += VerboseHint
-	}
+	summary := buildHistorySummary(params.entityID, result, params.stateFilter, params.verbose)
 
 	return &mcp.ToolsCallResult{
 		Content: []mcp.ContentBlock{mcp.NewTextContent(summary + "\n\n" + string(output))},

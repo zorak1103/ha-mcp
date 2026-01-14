@@ -70,48 +70,36 @@ func (h *TargetHandlers) targetInputSchema() mcp.JSONSchema {
 	}
 }
 
+// extractStringArray extracts a string array from parameters by key.
+// Returns nil if the key doesn't exist or is not a valid array of strings.
+func (h *TargetHandlers) extractStringArray(params map[string]any, key string) []string {
+	value, ok := params[key]
+	if !ok {
+		return nil
+	}
+
+	arr, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+
+	result := make([]string, 0, len(arr))
+	for _, v := range arr {
+		if s, ok := v.(string); ok {
+			result = append(result, s)
+		}
+	}
+
+	return result
+}
+
 // parseTargetParams extracts target and expand_group from parameters.
 func (h *TargetHandlers) parseTargetParams(params map[string]any) (homeassistant.Target, *bool, error) {
-	var target homeassistant.Target
-
-	if entityIDs, ok := params["entity_id"]; ok {
-		if arr, ok := entityIDs.([]any); ok {
-			for _, v := range arr {
-				if s, ok := v.(string); ok {
-					target.EntityID = append(target.EntityID, s)
-				}
-			}
-		}
-	}
-
-	if deviceIDs, ok := params["device_id"]; ok {
-		if arr, ok := deviceIDs.([]any); ok {
-			for _, v := range arr {
-				if s, ok := v.(string); ok {
-					target.DeviceID = append(target.DeviceID, s)
-				}
-			}
-		}
-	}
-
-	if areaIDs, ok := params["area_id"]; ok {
-		if arr, ok := areaIDs.([]any); ok {
-			for _, v := range arr {
-				if s, ok := v.(string); ok {
-					target.AreaID = append(target.AreaID, s)
-				}
-			}
-		}
-	}
-
-	if labelIDs, ok := params["label_id"]; ok {
-		if arr, ok := labelIDs.([]any); ok {
-			for _, v := range arr {
-				if s, ok := v.(string); ok {
-					target.LabelID = append(target.LabelID, s)
-				}
-			}
-		}
+	target := homeassistant.Target{
+		EntityID: h.extractStringArray(params, "entity_id"),
+		DeviceID: h.extractStringArray(params, "device_id"),
+		AreaID:   h.extractStringArray(params, "area_id"),
+		LabelID:  h.extractStringArray(params, "label_id"),
 	}
 
 	// Check if at least one target type is specified

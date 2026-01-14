@@ -8,11 +8,11 @@
 [![License](https://img.shields.io/github/license/zorak1103/ha-mcp)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/zorak1103/ha-mcp)](https://github.com/zorak1103/ha-mcp/releases/latest)
 
-A Model Context Protocol (MCP) server that provides AI assistants with access to Home Assistant via WebSocket, enabling smart home control and automation management.
+A Model Context Protocol (MCP) server that provides AI assistants with access to Home Assistant, enabling smart home control and automation management.
 
 ## Features
 
-- **WebSocket-Only Architecture**: Native Home Assistant WebSocket API for real-time, bidirectional communication
+- **Hybrid Architecture**: Primary WebSocket communication with REST API fallback for delete operations (automations, scripts, scenes)
 - **Entity Management**: Read and control all Home Assistant entities
 - **Registry Access**: Query entity, device, and area registries
 - **Automation CRUD**: Create, read, update, and delete automations
@@ -763,9 +763,11 @@ ha-mcp/
 │   │   └── config.go            # Configuration handling
 │   ├── homeassistant/
 │   │   ├── client.go            # Client interface (~70 methods)
-│   │   ├── factory.go           # WebSocket client factory
+│   │   ├── factory.go           # Client factory (creates HybridClient)
+│   │   ├── hybrid_client.go     # Hybrid client combining WS + REST
+│   │   ├── rest_client.go       # REST client for delete operations
 │   │   ├── ws_client.go         # WebSocket connection management
-│   │   ├── ws_client_impl.go    # Full Client implementation
+│   │   ├── ws_client_impl.go    # WebSocket Client implementation
 │   │   ├── ws_messages.go       # WebSocket message types
 │   │   ├── ws_reconnect.go      # Reconnection logic
 │   │   └── types.go             # Data types
@@ -797,9 +799,12 @@ ha-mcp/
 
 ## Architecture
 
-### WebSocket Communication
+### Hybrid Communication
 
-ha-mcp uses the Home Assistant WebSocket API exclusively for all operations:
+ha-mcp uses a hybrid approach combining WebSocket and REST APIs:
+
+- **WebSocket (primary)**: Used for most operations including state queries, service calls, entity management, and real-time updates
+- **REST API (fallback)**: Used specifically for delete operations (automations, scripts, scenes) that are not reliably supported via WebSocket
 
 ```
 ┌─────────────┐     HTTP/JSON-RPC      ┌─────────────┐
@@ -808,19 +813,23 @@ ha-mcp uses the Home Assistant WebSocket API exclusively for all operations:
 │   Cline)    │                         │             │
 └─────────────┘                         └──────┬──────┘
                                                │
-                                               │ WebSocket
-                                               │ (ws://host/api/websocket)
-                                               │
-                                        ┌──────▼──────┐
-                                        │    Home     │
-                                        │  Assistant  │
-                                        └─────────────┘
+                           ┌───────────────────┴───────────────────┐
+                           │                                       │
+                           │ WebSocket (primary)                   │ REST API (delete ops)
+                           │ ws://host/api/websocket               │ http://host/api/...
+                           │                                       │
+                           └───────────────┬───────────────────────┘
+                                           │
+                                    ┌──────▼──────┐
+                                    │    Home     │
+                                    │  Assistant  │
+                                    └─────────────┘
 ```
 
 ### Message Flow
 
 1. AI client sends JSON-RPC request to ha-mcp
-2. ha-mcp translates to WebSocket command
+2. ha-mcp routes to WebSocket (most operations) or REST API (delete operations)
 3. Home Assistant processes and responds
 4. ha-mcp returns result to AI client
 

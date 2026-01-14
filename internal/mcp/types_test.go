@@ -264,7 +264,7 @@ func TestMethodConstants(t *testing.T) {
 		"MethodPromptsGet":    "prompts/get",
 		"MethodLoggingSetLvl": "logging/setLevel",
 		"MethodPing":          "ping",
-		"MethodCancelled":     "notifications/cancelled",
+		"MethodCanceled":      "notifications/cancelled", //nolint:misspell // MCP protocol-defined value
 		"MethodProgress":      "notifications/progress",
 	}
 
@@ -279,7 +279,7 @@ func TestMethodConstants(t *testing.T) {
 		"MethodPromptsGet":    MethodPromptsGet,
 		"MethodLoggingSetLvl": MethodLoggingSetLvl,
 		"MethodPing":          MethodPing,
-		"MethodCancelled":     MethodCancelled,
+		"MethodCanceled":      MethodCanceled,
 		"MethodProgress":      MethodProgress,
 	}
 

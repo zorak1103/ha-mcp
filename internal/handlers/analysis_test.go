@@ -500,3 +500,614 @@ func TestRegisterAnalysisTools(t *testing.T) {
 		t.Errorf("RegisterAnalysisTools() registered %d tools, want 2", len(tools))
 	}
 }
+
+func TestAnalysisHandlers_matchAreaIDField(t *testing.T) {
+	t.Parallel()
+
+	h := NewAnalysisHandlers()
+
+	tests := []struct {
+		name   string
+		field  any
+		areaID string
+		want   bool
+	}{
+		{
+			name:   "nil field returns false",
+			field:  nil,
+			areaID: "living_room",
+			want:   false,
+		},
+		{
+			name:   "matching string field",
+			field:  "living_room",
+			areaID: "living_room",
+			want:   true,
+		},
+		{
+			name:   "non-matching string field",
+			field:  "bedroom",
+			areaID: "living_room",
+			want:   false,
+		},
+		{
+			name:   "matching in slice field",
+			field:  []any{"bedroom", "living_room", "kitchen"},
+			areaID: "living_room",
+			want:   true,
+		},
+		{
+			name:   "not matching in slice field",
+			field:  []any{"bedroom", "kitchen"},
+			areaID: "living_room",
+			want:   false,
+		},
+		{
+			name:   "empty slice field",
+			field:  []any{},
+			areaID: "living_room",
+			want:   false,
+		},
+		{
+			name:   "slice with non-string elements",
+			field:  []any{123, true, nil},
+			areaID: "living_room",
+			want:   false,
+		},
+		{
+			name:   "unsupported type returns false",
+			field:  123,
+			areaID: "living_room",
+			want:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := h.matchAreaIDField(tt.field, tt.areaID)
+			if got != tt.want {
+				t.Errorf("matchAreaIDField() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAnalysisHandlers_searchAreaInMap(t *testing.T) {
+	t.Parallel()
+
+	h := NewAnalysisHandlers()
+
+	tests := []struct {
+		name   string
+		m      map[string]any
+		areaID string
+		want   bool
+	}{
+		{
+			name:   "direct area_id string match",
+			m:      map[string]any{"area_id": "living_room"},
+			areaID: "living_room",
+			want:   true,
+		},
+		{
+			name:   "direct area_id slice match",
+			m:      map[string]any{"area_id": []any{"bedroom", "living_room"}},
+			areaID: "living_room",
+			want:   true,
+		},
+		{
+			name:   "target.area_id string match",
+			m:      map[string]any{"target": map[string]any{"area_id": "living_room"}},
+			areaID: "living_room",
+			want:   true,
+		},
+		{
+			name:   "target.area_id slice match",
+			m:      map[string]any{"target": map[string]any{"area_id": []any{"living_room"}}},
+			areaID: "living_room",
+			want:   true,
+		},
+		{
+			name:   "nested match in subvalue",
+			m:      map[string]any{"data": map[string]any{"area_id": "living_room"}},
+			areaID: "living_room",
+			want:   true,
+		},
+		{
+			name:   "deeply nested match",
+			m:      map[string]any{"outer": map[string]any{"inner": map[string]any{"area_id": "living_room"}}},
+			areaID: "living_room",
+			want:   true,
+		},
+		{
+			name:   "no match",
+			m:      map[string]any{"area_id": "bedroom", "target": map[string]any{"area_id": "kitchen"}},
+			areaID: "living_room",
+			want:   false,
+		},
+		{
+			name:   "empty map",
+			m:      map[string]any{},
+			areaID: "living_room",
+			want:   false,
+		},
+		{
+			name:   "target is not a map",
+			m:      map[string]any{"target": "not_a_map"},
+			areaID: "living_room",
+			want:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := h.searchAreaInMap(tt.m, tt.areaID)
+			if got != tt.want {
+				t.Errorf("searchAreaInMap() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAnalysisHandlers_searchAreaInValue(t *testing.T) {
+	t.Parallel()
+
+	h := NewAnalysisHandlers()
+
+	tests := []struct {
+		name   string
+		val    any
+		areaID string
+		want   bool
+	}{
+		{
+			name:   "nil value returns false",
+			val:    nil,
+			areaID: "living_room",
+			want:   false,
+		},
+		{
+			name:   "matching string",
+			val:    "living_room",
+			areaID: "living_room",
+			want:   true,
+		},
+		{
+			name:   "non-matching string",
+			val:    "bedroom",
+			areaID: "living_room",
+			want:   false,
+		},
+		{
+			name:   "slice with match",
+			val:    []any{"bedroom", "living_room"},
+			areaID: "living_room",
+			want:   true,
+		},
+		{
+			name:   "slice without match",
+			val:    []any{"bedroom", "kitchen"},
+			areaID: "living_room",
+			want:   false,
+		},
+		{
+			name:   "map with area_id match",
+			val:    map[string]any{"area_id": "living_room"},
+			areaID: "living_room",
+			want:   true,
+		},
+		{
+			name:   "unsupported type returns false",
+			val:    123,
+			areaID: "living_room",
+			want:   false,
+		},
+		{
+			name:   "bool type returns false",
+			val:    true,
+			areaID: "living_room",
+			want:   false,
+		},
+		{
+			name:   "float type returns false",
+			val:    3.14,
+			areaID: "living_room",
+			want:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := h.searchAreaInValue(tt.val, tt.areaID)
+			if got != tt.want {
+				t.Errorf("searchAreaInValue() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAnalysisHandlers_shouldRecurseIntoKey(t *testing.T) {
+	t.Parallel()
+
+	h := NewAnalysisHandlers()
+
+	tests := []struct {
+		name string
+		key  string
+		want bool
+	}{
+		{name: "data key should recurse", key: "data", want: true},
+		{name: "choose key should recurse", key: "choose", want: true},
+		{name: "sequence key should recurse", key: "sequence", want: true},
+		{name: "conditions key should recurse", key: "conditions", want: true},
+		{name: "then key should recurse", key: "then", want: true},
+		{name: "else key should recurse", key: "else", want: true},
+		{name: "default key should recurse", key: "default", want: true},
+		{name: "entity_id key should not recurse", key: "entity_id", want: false},
+		{name: "service key should not recurse", key: "service", want: false},
+		{name: "random key should not recurse", key: "random_key", want: false},
+		{name: "empty key should not recurse", key: "", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := h.shouldRecurseIntoKey(tt.key)
+			if got != tt.want {
+				t.Errorf("shouldRecurseIntoKey(%q) = %v, want %v", tt.key, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAnalysisHandlers_extractDependenciesRecursive(t *testing.T) {
+	t.Parallel()
+
+	h := NewAnalysisHandlers()
+
+	tests := []struct {
+		name       string
+		val        any
+		wantCount  int
+		wantEntity string
+	}{
+		{
+			name:      "nil value returns empty",
+			val:       nil,
+			wantCount: 0,
+		},
+		{
+			name:       "map with entity_id",
+			val:        map[string]any{"entity_id": "light.living_room", "platform": "state"},
+			wantCount:  1,
+			wantEntity: "light.living_room",
+		},
+		{
+			name: "map with target.entity_id",
+			val: map[string]any{
+				"service": "light.turn_on",
+				"target":  map[string]any{"entity_id": "light.bedroom"},
+			},
+			wantCount:  1,
+			wantEntity: "light.bedroom",
+		},
+		{
+			name: "slice with multiple entities",
+			val: []any{
+				map[string]any{"entity_id": "light.living_room"},
+				map[string]any{"entity_id": "light.bedroom"},
+			},
+			wantCount: 2,
+		},
+		{
+			name: "nested structure with choose",
+			val: map[string]any{
+				"choose": []any{
+					map[string]any{
+						"conditions": []any{
+							map[string]any{"entity_id": "sensor.motion"},
+						},
+						"sequence": []any{
+							map[string]any{"entity_id": "light.hallway"},
+						},
+					},
+				},
+			},
+			wantCount: 2,
+		},
+		{
+			name: "entity_id as slice",
+			val: map[string]any{
+				"entity_id": []any{"light.one", "light.two"},
+			},
+			wantCount:  1,
+			wantEntity: "light.one",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			seen := make(map[string]DependencyEntry)
+			h.extractDependenciesRecursive(tt.val, seen)
+
+			if len(seen) != tt.wantCount {
+				t.Errorf("extractDependenciesRecursive() found %d entities, want %d", len(seen), tt.wantCount)
+			}
+
+			if tt.wantEntity != "" {
+				if _, exists := seen[tt.wantEntity]; !exists {
+					t.Errorf("extractDependenciesRecursive() did not find expected entity %q", tt.wantEntity)
+				}
+			}
+		})
+	}
+}
+
+func TestAnalysisHandlers_extractDirectEntityDependency(t *testing.T) {
+	t.Parallel()
+
+	h := NewAnalysisHandlers()
+
+	tests := []struct {
+		name       string
+		m          map[string]any
+		wantCount  int
+		wantEntity string
+		wantType   string
+	}{
+		{
+			name:      "empty map",
+			m:         map[string]any{},
+			wantCount: 0,
+		},
+		{
+			name:       "map with entity_id and platform",
+			m:          map[string]any{"entity_id": "sensor.temp", "platform": "state"},
+			wantCount:  1,
+			wantEntity: "sensor.temp",
+			wantType:   "state",
+		},
+		{
+			name:       "map with entity_id and service",
+			m:          map[string]any{"entity_id": "light.test", "service": "light.turn_on"},
+			wantCount:  1,
+			wantEntity: "light.test",
+			wantType:   "service_call",
+		},
+		{
+			name:       "duplicate entity not added",
+			m:          map[string]any{"entity_id": "light.existing"},
+			wantCount:  1,
+			wantEntity: "light.existing",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			seen := make(map[string]DependencyEntry)
+			if tt.name == "duplicate entity not added" {
+				seen["light.existing"] = DependencyEntry{EntityID: "light.existing", Type: "original"}
+			}
+
+			h.extractDirectEntityDependency(tt.m, seen)
+
+			if len(seen) != tt.wantCount {
+				t.Errorf("extractDirectEntityDependency() found %d entities, want %d", len(seen), tt.wantCount)
+			}
+
+			if tt.wantEntity != "" && tt.wantType != "" {
+				if entry, exists := seen[tt.wantEntity]; exists {
+					if entry.Type != tt.wantType && tt.name != "duplicate entity not added" {
+						t.Errorf("extractDirectEntityDependency() type = %q, want %q", entry.Type, tt.wantType)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestAnalysisHandlers_extractTargetEntityDependency(t *testing.T) {
+	t.Parallel()
+
+	h := NewAnalysisHandlers()
+
+	tests := []struct {
+		name       string
+		m          map[string]any
+		wantCount  int
+		wantEntity string
+	}{
+		{
+			name:      "no target field",
+			m:         map[string]any{"entity_id": "light.test"},
+			wantCount: 0,
+		},
+		{
+			name:      "target is not a map",
+			m:         map[string]any{"target": "not_a_map"},
+			wantCount: 0,
+		},
+		{
+			name: "target with entity_id",
+			m: map[string]any{
+				"service": "light.turn_on",
+				"target":  map[string]any{"entity_id": "light.target"},
+			},
+			wantCount:  1,
+			wantEntity: "light.target",
+		},
+		{
+			name: "target without entity_id",
+			m: map[string]any{
+				"target": map[string]any{"area_id": "living_room"},
+			},
+			wantCount: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			seen := make(map[string]DependencyEntry)
+			h.extractTargetEntityDependency(tt.m, seen)
+
+			if len(seen) != tt.wantCount {
+				t.Errorf("extractTargetEntityDependency() found %d entities, want %d", len(seen), tt.wantCount)
+			}
+
+			if tt.wantEntity != "" {
+				if entry, exists := seen[tt.wantEntity]; !exists {
+					t.Errorf("extractTargetEntityDependency() did not find expected entity %q", tt.wantEntity)
+				} else if entry.Type != "target" {
+					t.Errorf("extractTargetEntityDependency() type = %q, want 'target'", entry.Type)
+				}
+			}
+		})
+	}
+}
+
+func TestAnalysisHandlers_dependenciesToSortedSlice(t *testing.T) {
+	t.Parallel()
+
+	h := NewAnalysisHandlers()
+
+	tests := []struct {
+		name string
+		seen map[string]DependencyEntry
+		want []string
+	}{
+		{
+			name: "empty map",
+			seen: map[string]DependencyEntry{},
+			want: []string{},
+		},
+		{
+			name: "single entry",
+			seen: map[string]DependencyEntry{
+				"light.test": {EntityID: "light.test"},
+			},
+			want: []string{"light.test"},
+		},
+		{
+			name: "multiple entries sorted",
+			seen: map[string]DependencyEntry{
+				"sensor.z": {EntityID: "sensor.z"},
+				"light.a":  {EntityID: "light.a"},
+				"switch.m": {EntityID: "switch.m"},
+			},
+			want: []string{"light.a", "sensor.z", "switch.m"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := h.dependenciesToSortedSlice(tt.seen)
+
+			if len(result) != len(tt.want) {
+				t.Errorf("dependenciesToSortedSlice() returned %d entries, want %d", len(result), len(tt.want))
+				return
+			}
+
+			for i, expected := range tt.want {
+				if result[i].EntityID != expected {
+					t.Errorf("dependenciesToSortedSlice()[%d] = %q, want %q", i, result[i].EntityID, expected)
+				}
+			}
+		})
+	}
+}
+
+func TestAnalysisHandlers_searchAreaInSlice(t *testing.T) {
+	t.Parallel()
+
+	h := NewAnalysisHandlers()
+
+	tests := []struct {
+		name   string
+		items  []any
+		areaID string
+		want   bool
+	}{
+		{
+			name:   "empty slice",
+			items:  []any{},
+			areaID: "living_room",
+			want:   false,
+		},
+		{
+			name:   "direct string match in slice",
+			items:  []any{"bedroom", "living_room", "kitchen"},
+			areaID: "living_room",
+			want:   true,
+		},
+		{
+			name:   "map with area_id in slice",
+			items:  []any{map[string]any{"area_id": "living_room"}},
+			areaID: "living_room",
+			want:   true,
+		},
+		{
+			name:   "nested slice with match",
+			items:  []any{[]any{"living_room"}},
+			areaID: "living_room",
+			want:   true,
+		},
+		{
+			name:   "no match in slice",
+			items:  []any{"bedroom", map[string]any{"area_id": "kitchen"}},
+			areaID: "living_room",
+			want:   false,
+		},
+		{
+			name: "complex Home Assistant action structure",
+			items: []any{
+				map[string]any{
+					"service": "light.turn_on",
+					"target": map[string]any{
+						"area_id": "living_room",
+					},
+				},
+			},
+			areaID: "living_room",
+			want:   true,
+		},
+		{
+			name: "multiple areas in target",
+			items: []any{
+				map[string]any{
+					"service": "light.turn_off",
+					"target": map[string]any{
+						"area_id": []any{"bedroom", "living_room"},
+					},
+				},
+			},
+			areaID: "living_room",
+			want:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := h.searchAreaInSlice(tt.items, tt.areaID)
+			if got != tt.want {
+				t.Errorf("searchAreaInSlice() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
