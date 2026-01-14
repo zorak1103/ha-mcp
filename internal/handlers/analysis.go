@@ -247,8 +247,8 @@ func (h *AnalysisHandlers) findAutomationReferences(ctx context.Context, client 
 
 	for _, auto := range automations {
 		autoID := strings.TrimPrefix(auto.EntityID, "automation.")
-		fullAuto, err := client.GetAutomation(ctx, autoID)
-		if err != nil || fullAuto.Config == nil {
+		fullAuto, getErr := client.GetAutomation(ctx, autoID)
+		if getErr != nil || fullAuto.Config == nil {
 			continue
 		}
 
@@ -359,8 +359,8 @@ func (h *AnalysisHandlers) findAreaReferences(ctx context.Context, client homeas
 
 	for _, auto := range automations {
 		autoID := strings.TrimPrefix(auto.EntityID, "automation.")
-		fullAuto, err := client.GetAutomation(ctx, autoID)
-		if err != nil || fullAuto.Config == nil {
+		fullAuto, getErr := client.GetAutomation(ctx, autoID)
+		if getErr != nil || fullAuto.Config == nil {
 			continue
 		}
 

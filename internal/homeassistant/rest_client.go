@@ -69,7 +69,7 @@ func (c *RESTClient) DeleteAutomation(ctx context.Context, automationID string) 
 	url := fmt.Sprintf("%s/api/config/automation/config/%s", c.baseURL, automationID)
 
 	// Create the DELETE request
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, http.NoBody)
 	if err != nil {
 		return fmt.Errorf("creating delete request: %w", err)
 	}
@@ -130,7 +130,7 @@ func (c *RESTClient) DeleteAutomation(ctx context.Context, automationID string) 
 func (c *RESTClient) DeleteScript(ctx context.Context, scriptID string) error {
 	url := fmt.Sprintf("%s/api/config/script/config/%s", c.baseURL, scriptID)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, http.NoBody)
 	if err != nil {
 		return fmt.Errorf("creating delete request: %w", err)
 	}
@@ -186,7 +186,7 @@ func (c *RESTClient) DeleteScript(ctx context.Context, scriptID string) error {
 func (c *RESTClient) DeleteScene(ctx context.Context, sceneID string) error {
 	url := fmt.Sprintf("%s/api/config/scene/config/%s", c.baseURL, sceneID)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, http.NoBody)
 	if err != nil {
 		return fmt.Errorf("creating delete request: %w", err)
 	}

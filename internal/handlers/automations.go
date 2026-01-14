@@ -564,32 +564,11 @@ func (h *AutomationHandlers) handleUpdateAutomation(ctx context.Context, client 
 		}, nil
 	}
 
-	// Ensure Config exists
+	// Ensure Config exists and apply updates
 	if current.Config == nil {
-		current.Config = &homeassistant.AutomationConfig{
-			ID: automationID,
-		}
+		current.Config = &homeassistant.AutomationConfig{ID: automationID}
 	}
-
-	// Update only provided fields in Config
-	if alias, ok := args["alias"].(string); ok && alias != "" {
-		current.Config.Alias = alias
-	}
-	if desc, ok := args["description"].(string); ok {
-		current.Config.Description = desc
-	}
-	if trigger, ok := args["trigger"].([]any); ok && len(trigger) > 0 {
-		current.Config.Triggers = trigger
-	}
-	if condition, ok := args["condition"].([]any); ok {
-		current.Config.Conditions = condition
-	}
-	if action, ok := args["action"].([]any); ok && len(action) > 0 {
-		current.Config.Actions = action
-	}
-	if mode, ok := args["mode"].(string); ok && mode != "" {
-		current.Config.Mode = mode
-	}
+	applyAutomationConfigUpdates(current.Config, args)
 
 	if err := client.UpdateAutomation(ctx, automationID, *current.Config); err != nil {
 		return &mcp.ToolsCallResult{
@@ -601,6 +580,28 @@ func (h *AutomationHandlers) handleUpdateAutomation(ctx context.Context, client 
 	return &mcp.ToolsCallResult{
 		Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Automation '%s' updated successfully", automationID))},
 	}, nil
+}
+
+// applyAutomationConfigUpdates applies provided fields from args to the automation config.
+func applyAutomationConfigUpdates(config *homeassistant.AutomationConfig, args map[string]any) {
+	if alias, ok := args["alias"].(string); ok && alias != "" {
+		config.Alias = alias
+	}
+	if desc, ok := args["description"].(string); ok {
+		config.Description = desc
+	}
+	if trigger, ok := args["trigger"].([]any); ok && len(trigger) > 0 {
+		config.Triggers = trigger
+	}
+	if condition, ok := args["condition"].([]any); ok {
+		config.Conditions = condition
+	}
+	if action, ok := args["action"].([]any); ok && len(action) > 0 {
+		config.Actions = action
+	}
+	if mode, ok := args["mode"].(string); ok && mode != "" {
+		config.Mode = mode
+	}
 }
 
 func (h *AutomationHandlers) handleDeleteAutomation(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {

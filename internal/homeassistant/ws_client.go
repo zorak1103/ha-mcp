@@ -171,7 +171,7 @@ func (c *WSClient) performHealthCheck(ctx context.Context) bool {
 
 	if err := c.sendPing(ctx); err != nil {
 		if ctx.Err() != nil {
-			return true // Context cancelled, clean shutdown
+			return true // Context canceled, clean shutdown
 		}
 		c.handleConnectionFailure(fmt.Errorf("ping failed: %w", err))
 		return true
@@ -259,8 +259,8 @@ func (c *WSClient) authenticate() error {
 		return fmt.Errorf("marshaling auth message: %w", err)
 	}
 
-	if err := c.conn.Write(c.ctx, websocket.MessageText, authData); err != nil {
-		return fmt.Errorf("sending auth message: %w", err)
+	if writeErr := c.conn.Write(c.ctx, websocket.MessageText, authData); writeErr != nil {
+		return fmt.Errorf("sending auth message: %w", writeErr)
 	}
 
 	// Read auth response
@@ -306,7 +306,7 @@ func (c *WSClient) readLoop() {
 		if err != nil {
 			// Connection closed or error
 			if c.ctx.Err() != nil {
-				// Context cancelled, clean shutdown
+				// Context canceled, clean shutdown
 				return
 			}
 

@@ -108,7 +108,7 @@ func (r *ReconnectManager) GetCurrentDelay() time.Duration {
 }
 
 // WaitForReconnect waits for the appropriate backoff duration before reconnecting.
-// Returns an error if the context is cancelled or max attempts reached.
+// Returns an error if the context is canceled or max attempts reached.
 func (r *ReconnectManager) WaitForReconnect(ctx context.Context) error {
 	r.mu.Lock()
 

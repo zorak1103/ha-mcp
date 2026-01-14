@@ -306,7 +306,7 @@ func TestReconnectManager_WaitForReconnect_MaxAttemptsReached(t *testing.T) {
 	}
 }
 
-func TestReconnectManager_WaitForReconnect_ContextCancelled(t *testing.T) {
+func TestReconnectManager_WaitForReconnect_ContextCanceled(t *testing.T) {
 	t.Parallel()
 
 	config := ReconnectConfig{
@@ -333,9 +333,9 @@ func TestReconnectManager_WaitForReconnect_ContextCancelled(t *testing.T) {
 		t.Errorf("WaitForReconnect() error = %v, want context.Canceled", err)
 	}
 
-	// Should have been cancelled before the full 1s delay
+	// Should have been canceled before the full 1s delay
 	if elapsed >= 500*time.Millisecond {
-		t.Errorf("WaitForReconnect() elapsed = %v, should have been cancelled earlier", elapsed)
+		t.Errorf("WaitForReconnect() elapsed = %v, should have been canceled earlier", elapsed)
 	}
 }
 
@@ -384,10 +384,10 @@ func TestReconnectManager_Stop(t *testing.T) {
 	// Stop the manager
 	mgr.Stop()
 
-	// Wait should have been cancelled
+	// Wait should have been canceled
 	select {
 	case <-done:
-		// Timer might have completed or been cancelled - both are acceptable
+		// Timer might have completed or been canceled - both are acceptable
 		// if it happened fast enough. We don't check the error value because
 		// the outcome depends on timing.
 	case <-time.After(500 * time.Millisecond):

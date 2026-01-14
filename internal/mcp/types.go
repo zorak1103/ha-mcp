@@ -62,7 +62,7 @@ const (
 	MethodPromptsGet    = "prompts/get"
 	MethodLoggingSetLvl = "logging/setLevel"
 	MethodPing          = "ping"
-	MethodCancelled     = "notifications/cancelled"
+	MethodCanceled      = "notifications/cancelled" //nolint:misspell // MCP protocol-defined value
 	MethodProgress      = "notifications/progress"
 )
 

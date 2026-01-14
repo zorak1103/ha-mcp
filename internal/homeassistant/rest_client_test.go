@@ -372,14 +372,14 @@ func TestRESTClient_ContextCancellation(t *testing.T) {
 
 	client := NewRESTClient(server.URL, "test-token")
 
-	// Create context that's already cancelled
+	// Create context that's already canceled
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
 	err := client.DeleteAutomation(ctx, "test")
 
 	if err == nil {
-		t.Error("expected error for cancelled context, got nil")
+		t.Error("expected error for canceled context, got nil")
 	}
 }
 

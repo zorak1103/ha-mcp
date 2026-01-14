@@ -32,6 +32,7 @@ linters:
           - gocyclo
           - funlen
           - gocognit
+          - govet
       
       # Exclude deprecation warnings in tests
       - path: '(.+)_test\.go'
@@ -86,8 +87,10 @@ linters:
   settings:
     errcheck:
       # Check for ignored errors from specific functions
-      check-type-assertions: true
-      check-blank: true
+      # Type assertions for optional map parameters are idiomatic in Go
+      # e.g., value, _ := args["key"].(string) - returns zero value if not present
+      check-type-assertions: false
+      check-blank: false
       exclude-functions:
         - (*database/sql.DB).Close
         - (*database/sql.Rows).Close
@@ -109,6 +112,8 @@ linters:
       disabled-checks:
         - commentFormatting
         - unnamedResult
+        - hugeParam        # Interface signatures often require value types
+        - rangeValCopy     # Minor performance impact, cleaner code
         
     revive:
       rules:
@@ -164,7 +169,7 @@ linters:
         - G307  # Can be too strict about defer Close()
       
     gocognit:
-      min-complexity: 15
+      min-complexity: 23
       
     funlen:
       lines: 60

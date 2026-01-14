@@ -128,7 +128,7 @@ func (c *wsClientImpl) CallService(ctx context.Context, domain, service string, 
 			// Some service calls (e.g., script.turn_on, automation.trigger) return only
 			// a context without entities. Unmarshal fails because the response structure
 			// differs. This is expected behavior, not an error.
-			return []Entity{}, nil //nolint:nilerr
+			return []Entity{}, nil //nolint:nilerr // service calls return context-only response without entities
 		}
 	}
 

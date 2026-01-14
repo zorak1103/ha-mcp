@@ -145,7 +145,7 @@ func (a *App) writeConfigFile(filename string, content []byte) (bool, error) {
 		return false, nil
 	}
 
-	if err := os.WriteFile(filename, content, 0600); err != nil {
+	if err := os.WriteFile(filename, content, 0o600); err != nil {
 		return false, fmt.Errorf("writing %s: %w", filename, err)
 	}
 
