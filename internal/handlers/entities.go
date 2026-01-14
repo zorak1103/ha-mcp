@@ -430,60 +430,84 @@ type compactHistoryEntry struct {
 	LastChanged string `json:"last_changed"`
 }
 
-func (h *EntityHandlers) handleGetHistory(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+// historyParams encapsulates all parsed parameters for history queries.
+type historyParams struct {
+	entityID    string
+	startTime   time.Time
+	endTime     time.Time
+	stateFilter string
+	limit       int
+	verbose     bool
+}
+
+// historyResult encapsulates processed history data.
+type historyResult struct {
+	entries    []homeassistant.HistoryEntry
+	totalCount int
+}
+
+// parseHistoryParams extracts and validates all parameters from args.
+func parseHistoryParams(args map[string]any) (*historyParams, error) {
 	entityID, ok := args["entity_id"].(string)
 	if !ok || entityID == "" {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent("entity_id is required")},
-			IsError: true,
-		}, nil
+		return nil, fmt.Errorf("entity_id is required")
 	}
 
-	// Parse time parameters
-	endTime := time.Now()
-	startTime := endTime.Add(-24 * time.Hour)
-
-	// Check for 'hours' parameter first (overrides start_time)
-	if hours, ok := args["hours"].(float64); ok && hours > 0 {
-		startTime = endTime.Add(-time.Duration(hours) * time.Hour)
-	} else if startStr, ok := args["start_time"].(string); ok && startStr != "" {
-		parsed, err := time.Parse(time.RFC3339, startStr)
-		if err != nil {
-			return &mcp.ToolsCallResult{
-				Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Invalid start_time format: %v", err))},
-				IsError: true,
-			}, nil
-		}
-		startTime = parsed
+	startTime, endTime, err := parseTimeRange(args)
+	if err != nil {
+		return nil, err
 	}
 
-	if endStr, ok := args["end_time"].(string); ok && endStr != "" {
-		parsed, err := time.Parse(time.RFC3339, endStr)
-		if err != nil {
-			return &mcp.ToolsCallResult{
-				Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Invalid end_time format: %v", err))},
-				IsError: true,
-			}, nil
-		}
-		endTime = parsed
-	}
-
-	// Parse filter and output parameters
 	stateFilter, _ := args["state"].(string)
+
 	limit := 0
 	if limitVal, ok := args["limit"].(float64); ok && limitVal > 0 {
 		limit = int(limitVal)
 	}
+
 	verbose, _ := args["verbose"].(bool)
 
-	history, err := client.GetHistory(ctx, entityID, startTime, endTime)
-	if err != nil {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error getting history: %v", err))},
-			IsError: true,
-		}, nil
+	return &historyParams{
+		entityID:    entityID,
+		startTime:   startTime,
+		endTime:     endTime,
+		stateFilter: stateFilter,
+		limit:       limit,
+		verbose:     verbose,
+	}, nil
+}
+
+// parseTimeRange parses start_time, end_time, and hours parameters.
+func parseTimeRange(args map[string]any) (start, end time.Time, err error) {
+	end = time.Now()
+	start = end.Add(-24 * time.Hour)
+
+	// 'hours' parameter takes precedence over 'start_time'
+	if hours, ok := args["hours"].(float64); ok && hours > 0 {
+		start = end.Add(-time.Duration(hours) * time.Hour)
+	} else if startStr, ok := args["start_time"].(string); ok && startStr != "" {
+		start, err = time.Parse(time.RFC3339, startStr)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("invalid start_time format: %w", err)
+		}
 	}
 
+	if endStr, ok := args["end_time"].(string); ok && endStr != "" {
+		end, err = time.Parse(time.RFC3339, endStr)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("invalid end_time format: %w", err)
+		}
+	}
+
+	return start, end, nil
+}
+
+// processHistoryEntries flattens, filters, and limits history entries.
+func processHistoryEntries(
+	history [][]homeassistant.HistoryEntry,
+	stateFilter string,
+	limit int,
+) historyResult {
 	// Flatten history (it's [][]HistoryEntry, typically with one inner array per entity)
 	var entries []homeassistant.HistoryEntry
 	for _, entityHistory := range history {
@@ -492,7 +516,7 @@ func (h *EntityHandlers) handleGetHistory(ctx context.Context, client homeassist
 
 	// Apply state filter
 	if stateFilter != "" {
-		filtered := make([]homeassistant.HistoryEntry, 0)
+		filtered := make([]homeassistant.HistoryEntry, 0, len(entries))
 		for _, entry := range entries {
 			if entry.State == stateFilter {
 				filtered = append(filtered, entry)
@@ -508,22 +532,71 @@ func (h *EntityHandlers) handleGetHistory(ctx context.Context, client homeassist
 		entries = entries[len(entries)-limit:]
 	}
 
-	// Format output based on verbose flag
-	var output []byte
+	return historyResult{
+		entries:    entries,
+		totalCount: totalCount,
+	}
+}
+
+// formatHistoryOutput formats entries based on verbose flag.
+func formatHistoryOutput(entries []homeassistant.HistoryEntry, verbose bool) ([]byte, error) {
 	if verbose {
-		output, err = json.MarshalIndent(entries, "", "  ")
-	} else {
-		// Compact output: only state and last_changed
-		compact := make([]compactHistoryEntry, 0, len(entries))
-		for _, entry := range entries {
-			compact = append(compact, compactHistoryEntry{
-				State:       entry.State,
-				LastChanged: entry.LastChangedTime().Format(time.RFC3339),
-			})
-		}
-		output, err = json.MarshalIndent(compact, "", "  ")
+		return json.MarshalIndent(entries, "", "  ")
 	}
 
+	compact := make([]compactHistoryEntry, 0, len(entries))
+	for _, entry := range entries {
+		compact = append(compact, compactHistoryEntry{
+			State:       entry.State,
+			LastChanged: entry.LastChangedTime().Format(time.RFC3339),
+		})
+	}
+
+	return json.MarshalIndent(compact, "", "  ")
+}
+
+// buildHistorySummary creates the summary message for history results.
+func buildHistorySummary(entityID string, result historyResult, stateFilter string, verbose bool) string {
+	var summary string
+
+	if result.totalCount > len(result.entries) {
+		summary = fmt.Sprintf("Showing %d of %d history entries for %s (limited)",
+			len(result.entries), result.totalCount, entityID)
+	} else {
+		summary = fmt.Sprintf("Found %d history entries for %s", len(result.entries), entityID)
+	}
+
+	if stateFilter != "" {
+		summary += fmt.Sprintf(" (filtered by state='%s')", stateFilter)
+	}
+
+	if !verbose {
+		summary += VerboseHint
+	}
+
+	return summary
+}
+
+func (h *EntityHandlers) handleGetHistory(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+	params, err := parseHistoryParams(args)
+	if err != nil {
+		return &mcp.ToolsCallResult{
+			Content: []mcp.ContentBlock{mcp.NewTextContent(err.Error())},
+			IsError: true,
+		}, nil
+	}
+
+	history, err := client.GetHistory(ctx, params.entityID, params.startTime, params.endTime)
+	if err != nil {
+		return &mcp.ToolsCallResult{
+			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error getting history: %v", err))},
+			IsError: true,
+		}, nil
+	}
+
+	result := processHistoryEntries(history, params.stateFilter, params.limit)
+
+	output, err := formatHistoryOutput(result.entries, params.verbose)
 	if err != nil {
 		return &mcp.ToolsCallResult{
 			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error formatting history: %v", err))},
@@ -531,17 +604,7 @@ func (h *EntityHandlers) handleGetHistory(ctx context.Context, client homeassist
 		}, nil
 	}
 
-	// Build summary
-	summary := fmt.Sprintf("Found %d history entries for %s", len(entries), entityID)
-	if limit > 0 && totalCount > limit {
-		summary = fmt.Sprintf("Showing %d of %d history entries for %s (limited)", len(entries), totalCount, entityID)
-	}
-	if stateFilter != "" {
-		summary += fmt.Sprintf(" (filtered by state='%s')", stateFilter)
-	}
-	if !verbose {
-		summary += VerboseHint
-	}
+	summary := buildHistorySummary(params.entityID, result, params.stateFilter, params.verbose)
 
 	return &mcp.ToolsCallResult{
 		Content: []mcp.ContentBlock{mcp.NewTextContent(summary + "\n\n" + string(output))},
