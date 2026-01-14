@@ -4,6 +4,8 @@ version: "2"
 
 run:
   timeout: 5m
+  # Note: For CI, use 'golangci-lint run --tests=false' to skip test files
+  # Test files are excluded from funlen/gocognit via exclude-rules below
   tests: true
   modules-download-mode: readonly
 
@@ -47,11 +49,11 @@ linters:
     - thelper       # Detect test helpers without t.Helper()
     - tparallel     # Check for t.Parallel() usage
     - whitespace    # Check for unnecessary whitespace
+    - gocognit      # Check cognitive complexity
+    - funlen        # Check function length
 
   disable:
-    - gocognit      # Can be too strict for complex logic
     - godox         # Don't fail on TODO/FIXME comments
-    - funlen        # Function length can be subjective
     - lll           # Line length is subjective and formatting handles it
 
 linters-settings:
@@ -136,6 +138,13 @@ linters-settings:
     excludes:
       - G307  # Can be too strict about defer Close()
     
+  gocognit:
+    min-complexity: 15
+    
+  funlen:
+    lines: 60
+    statements: 40
+    
   nakedret:
     max-func-lines: 30
     
@@ -161,6 +170,8 @@ issues:
         - gosec
         - gocritic
         - gocyclo
+        - funlen
+        - gocognit
         
     # Exclude some staticcheck messages on test files
     - path: _test\.go
@@ -170,11 +181,3 @@ issues:
     - linters:
         - lll
       source: "^//go:generate "
-      
-  # Independently from option `exclude` use default exclude patterns
-  exclude-use-default: false
-  
-  # Show all issues from all linters
-  exclude:
-    # Ignore certain error strings for common patterns
-    - 'Error return value of .((os\.)?std(out|err)\..*|.*Close|.*Flush|os\.Remove(All)?|.*print(f|ln)?|os\.(Un)?Setenv). is not checked'

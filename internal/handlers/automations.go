@@ -708,34 +708,59 @@ func searchInConfigValue(val any, entityID string) bool {
 	case string:
 		return v == entityID
 	case []any:
-		for _, item := range v {
-			if searchInConfigValue(item, entityID) {
-				return true
-			}
-		}
+		return searchInConfigSliceValue(v, entityID)
 	case map[string]any:
-		for key, subval := range v {
-			// Check entity_id fields directly
-			if key == configKeyEntityID {
-				if searchInConfigValue(subval, entityID) {
-					return true
-				}
-			}
-			// Check target.entity_id
-			if key == "target" {
-				if targetMap, ok := subval.(map[string]any); ok {
-					if searchInConfigValue(targetMap[configKeyEntityID], entityID) {
-						return true
-					}
-				}
-			}
-			// Recursively search all nested structures
-			if searchInConfigValue(subval, entityID) {
-				return true
-			}
+		return searchInConfigMapValue(v, entityID)
+	}
+
+	return false
+}
+
+// searchInConfigSliceValue searches for entity ID in a slice value.
+func searchInConfigSliceValue(items []any, entityID string) bool {
+	for _, item := range items {
+		if searchInConfigValue(item, entityID) {
+			return true
 		}
 	}
 	return false
+}
+
+// searchInConfigMapValue searches for entity ID in a map value.
+func searchInConfigMapValue(m map[string]any, entityID string) bool {
+	for key, subval := range m {
+		if searchInConfigMapEntry(key, subval, entityID) {
+			return true
+		}
+	}
+	return false
+}
+
+// searchInConfigMapEntry checks a single map entry for entity ID.
+func searchInConfigMapEntry(key string, subval any, entityID string) bool {
+	// Check entity_id fields directly
+	if key == configKeyEntityID {
+		return searchInConfigValue(subval, entityID)
+	}
+
+	// Check target.entity_id
+	if key == "target" {
+		if found := searchTargetEntityID(subval, entityID); found {
+			return true
+		}
+	}
+
+	// Recursively search all nested structures
+	return searchInConfigValue(subval, entityID)
+}
+
+// searchTargetEntityID searches for entity ID in a target map.
+func searchTargetEntityID(val any, entityID string) bool {
+	targetMap, ok := val.(map[string]any)
+	if !ok {
+		return false
+	}
+	return searchInConfigValue(targetMap[configKeyEntityID], entityID)
 }
 
 // generateAutomationID converts an alias to a valid automation ID.

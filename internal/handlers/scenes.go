@@ -175,6 +175,103 @@ func (h *SceneHandlers) activateSceneTool() mcp.Tool {
 	}
 }
 
+// sceneInfo represents scene information for list output.
+type sceneInfo struct {
+	EntityID     string   `json:"entity_id"`
+	State        string   `json:"state"`
+	FriendlyName string   `json:"friendly_name,omitempty"`
+	EntityIDs    []string `json:"entity_ids,omitempty"`
+}
+
+// sceneFilters holds filter parameters for listing scenes.
+type sceneFilters struct {
+	nameContains   string
+	entityContains string
+}
+
+// parseSceneFilters extracts filter parameters from args.
+func parseSceneFilters(args map[string]any) sceneFilters {
+	nameContains, _ := args["name_contains"].(string)
+	entityContains, _ := args["entity_contains"].(string)
+	return sceneFilters{
+		nameContains:   nameContains,
+		entityContains: entityContains,
+	}
+}
+
+// entityToSceneInfo converts an Entity to sceneInfo.
+func entityToSceneInfo(s homeassistant.Entity) sceneInfo {
+	info := sceneInfo{
+		EntityID: s.EntityID,
+		State:    s.State,
+	}
+	if name, ok := s.Attributes["friendly_name"].(string); ok {
+		info.FriendlyName = name
+	}
+	if entityIDs, ok := s.Attributes["entity_id"].([]any); ok {
+		info.EntityIDs = extractStringSlice(entityIDs)
+	}
+	return info
+}
+
+// extractStringSlice converts []any to []string.
+func extractStringSlice(items []any) []string {
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		if s, ok := item.(string); ok {
+			result = append(result, s)
+		}
+	}
+	return result
+}
+
+// matchesSceneFilters checks if scene info matches all filters.
+func matchesSceneFilters(info sceneInfo, filters sceneFilters) bool {
+	if !matchesSceneNameFilter(info, filters.nameContains) {
+		return false
+	}
+	if !matchesSceneEntityFilter(info, filters.entityContains) {
+		return false
+	}
+	return true
+}
+
+// matchesSceneNameFilter checks if scene matches name filter.
+func matchesSceneNameFilter(info sceneInfo, nameContains string) bool {
+	if nameContains == "" {
+		return true
+	}
+	nameLower := strings.ToLower(nameContains)
+	return strings.Contains(strings.ToLower(info.EntityID), nameLower) ||
+		strings.Contains(strings.ToLower(info.FriendlyName), nameLower)
+}
+
+// matchesSceneEntityFilter checks if scene contains the entity.
+func matchesSceneEntityFilter(info sceneInfo, entityContains string) bool {
+	if entityContains == "" {
+		return true
+	}
+	entityLower := strings.ToLower(entityContains)
+	for _, eid := range info.EntityIDs {
+		if strings.Contains(strings.ToLower(eid), entityLower) {
+			return true
+		}
+	}
+	return false
+}
+
+// filterScenes applies filters to scenes and converts to sceneInfo.
+func filterScenes(scenes []homeassistant.Entity, filters sceneFilters) []sceneInfo {
+	result := make([]sceneInfo, 0, len(scenes))
+	for _, s := range scenes {
+		info := entityToSceneInfo(s)
+		if matchesSceneFilters(info, filters) {
+			result = append(result, info)
+		}
+	}
+	return result
+}
+
 // HandleListScenes handles the list_scenes tool call.
 func (h *SceneHandlers) HandleListScenes(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
 	scenes, err := client.ListScenes(ctx)
@@ -185,63 +282,8 @@ func (h *SceneHandlers) HandleListScenes(ctx context.Context, client homeassista
 		}, nil
 	}
 
-	// Parse filter parameters
-	nameContains, _ := args["name_contains"].(string)
-	entityContains, _ := args["entity_contains"].(string)
-
-	// Normalize filters for case-insensitive matching
-	nameContainsLower := strings.ToLower(nameContains)
-	entityContainsLower := strings.ToLower(entityContains)
-
-	type sceneInfo struct {
-		EntityID     string   `json:"entity_id"`
-		State        string   `json:"state"`
-		FriendlyName string   `json:"friendly_name,omitempty"`
-		EntityIDs    []string `json:"entity_ids,omitempty"`
-	}
-
-	result := make([]sceneInfo, 0, len(scenes))
-	for _, s := range scenes {
-		info := sceneInfo{
-			EntityID: s.EntityID,
-			State:    s.State,
-		}
-		if name, ok := s.Attributes["friendly_name"].(string); ok {
-			info.FriendlyName = name
-		}
-		if entityIDs, ok := s.Attributes["entity_id"].([]any); ok {
-			for _, eid := range entityIDs {
-				if id, ok := eid.(string); ok {
-					info.EntityIDs = append(info.EntityIDs, id)
-				}
-			}
-		}
-
-		// Apply name_contains filter
-		if nameContains != "" {
-			matchesName := strings.Contains(strings.ToLower(info.EntityID), nameContainsLower) ||
-				strings.Contains(strings.ToLower(info.FriendlyName), nameContainsLower)
-			if !matchesName {
-				continue
-			}
-		}
-
-		// Apply entity_contains filter
-		if entityContains != "" {
-			containsEntity := false
-			for _, eid := range info.EntityIDs {
-				if strings.Contains(strings.ToLower(eid), entityContainsLower) {
-					containsEntity = true
-					break
-				}
-			}
-			if !containsEntity {
-				continue
-			}
-		}
-
-		result = append(result, info)
-	}
+	filters := parseSceneFilters(args)
+	result := filterScenes(scenes, filters)
 
 	jsonBytes, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
@@ -290,6 +332,40 @@ func (h *SceneHandlers) HandleGetScene(ctx context.Context, client homeassistant
 	}, nil
 }
 
+// parseSceneState converts raw state data to SceneState.
+func parseSceneState(stateRaw any) (homeassistant.SceneState, bool) {
+	sceneState := homeassistant.SceneState{}
+
+	switch v := stateRaw.(type) {
+	case string:
+		sceneState.State = v
+		return sceneState, true
+	case map[string]any:
+		if state, ok := v["state"].(string); ok {
+			sceneState.State = state
+		}
+		if attrs, ok := v["attributes"].(map[string]any); ok {
+			sceneState.Attributes = attrs
+		}
+		return sceneState, true
+	default:
+		return sceneState, false
+	}
+}
+
+// parseSceneEntities converts raw entities map to SceneState map.
+func parseSceneEntities(entitiesRaw map[string]any) (map[string]homeassistant.SceneState, string) {
+	entities := make(map[string]homeassistant.SceneState, len(entitiesRaw))
+	for entityID, stateRaw := range entitiesRaw {
+		sceneState, ok := parseSceneState(stateRaw)
+		if !ok {
+			return nil, entityID
+		}
+		entities[entityID] = sceneState
+	}
+	return entities, ""
+}
+
 // HandleCreateScene handles the create_scene tool call.
 func (h *SceneHandlers) HandleCreateScene(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
 	sceneID, ok := args["scene_id"].(string)
@@ -316,38 +392,15 @@ func (h *SceneHandlers) HandleCreateScene(ctx context.Context, client homeassist
 		}, nil
 	}
 
-	// Convert entities to SceneState map
-	entities := make(map[string]homeassistant.SceneState)
-	for entityID, stateRaw := range entitiesRaw {
-		sceneState := homeassistant.SceneState{}
-
-		switch v := stateRaw.(type) {
-		case string:
-			// Simple state value
-			sceneState.State = v
-		case map[string]any:
-			// Full state object with state and attributes
-			if state, ok := v["state"].(string); ok {
-				sceneState.State = state
-			}
-			if attrs, ok := v["attributes"].(map[string]any); ok {
-				sceneState.Attributes = attrs
-			}
-		default:
-			return &mcp.ToolsCallResult{
-				Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Invalid state format for entity %s", entityID))},
-				IsError: true,
-			}, nil
-		}
-
-		entities[entityID] = sceneState
+	entities, invalidEntity := parseSceneEntities(entitiesRaw)
+	if invalidEntity != "" {
+		return &mcp.ToolsCallResult{
+			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Invalid state format for entity %s", invalidEntity))},
+			IsError: true,
+		}, nil
 	}
 
-	config := homeassistant.SceneConfig{
-		Name:     name,
-		Entities: entities,
-	}
-
+	config := homeassistant.SceneConfig{Name: name, Entities: entities}
 	if icon, ok := args["icon"].(string); ok {
 		config.Icon = icon
 	}
@@ -364,6 +417,30 @@ func (h *SceneHandlers) HandleCreateScene(ctx context.Context, client homeassist
 	}, nil
 }
 
+// buildSceneConfigFromArgs builds scene config from current state and args.
+func buildSceneConfigFromArgs(current *homeassistant.Entity, args map[string]any) homeassistant.SceneConfig {
+	config := homeassistant.SceneConfig{Entities: make(map[string]homeassistant.SceneState)}
+
+	if name, ok := current.Attributes["friendly_name"].(string); ok {
+		config.Name = name
+	}
+	if name, ok := args["name"].(string); ok {
+		config.Name = name
+	}
+	if icon, ok := args["icon"].(string); ok {
+		config.Icon = icon
+	}
+
+	if entitiesRaw, ok := args["entities"].(map[string]any); ok {
+		for eid, stateRaw := range entitiesRaw {
+			sceneState, _ := parseSceneState(stateRaw)
+			config.Entities[eid] = sceneState
+		}
+	}
+
+	return config
+}
+
 // HandleUpdateScene handles the update_scene tool call.
 func (h *SceneHandlers) HandleUpdateScene(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
 	sceneID, ok := args["scene_id"].(string)
@@ -374,7 +451,6 @@ func (h *SceneHandlers) HandleUpdateScene(ctx context.Context, client homeassist
 		}, nil
 	}
 
-	// Get current scene state to preserve existing values
 	entityID := "scene." + sceneID
 	current, err := client.GetState(ctx, entityID)
 	if err != nil {
@@ -384,44 +460,7 @@ func (h *SceneHandlers) HandleUpdateScene(ctx context.Context, client homeassist
 		}, nil
 	}
 
-	// Build config from current state and args
-	config := homeassistant.SceneConfig{
-		Entities: make(map[string]homeassistant.SceneState),
-	}
-
-	// Get current name from attributes
-	if name, ok := current.Attributes["friendly_name"].(string); ok {
-		config.Name = name
-	}
-
-	// Override with new values from args
-	if name, ok := args["name"].(string); ok {
-		config.Name = name
-	}
-	if icon, ok := args["icon"].(string); ok {
-		config.Icon = icon
-	}
-
-	// Handle entities update
-	if entitiesRaw, ok := args["entities"].(map[string]any); ok {
-		for eid, stateRaw := range entitiesRaw {
-			sceneState := homeassistant.SceneState{}
-
-			switch v := stateRaw.(type) {
-			case string:
-				sceneState.State = v
-			case map[string]any:
-				if state, ok := v["state"].(string); ok {
-					sceneState.State = state
-				}
-				if attrs, ok := v["attributes"].(map[string]any); ok {
-					sceneState.Attributes = attrs
-				}
-			}
-
-			config.Entities[eid] = sceneState
-		}
-	}
+	config := buildSceneConfigFromArgs(current, args)
 
 	if err := client.UpdateScene(ctx, sceneID, config); err != nil {
 		return &mcp.ToolsCallResult{

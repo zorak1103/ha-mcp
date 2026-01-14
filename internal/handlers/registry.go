@@ -279,6 +279,74 @@ type compactDeviceEntry struct {
 	AreaID       string `json:"area_id,omitempty"`
 }
 
+// deviceRegistryFilter encapsulates filter criteria for device registry queries.
+type deviceRegistryFilter struct {
+	areaID          string
+	manufacturer    string
+	model           string
+	includeDisabled bool
+}
+
+// parseDeviceRegistryFilter creates a filter from tool arguments.
+func parseDeviceRegistryFilter(args map[string]any) deviceRegistryFilter {
+	areaID, _ := args["area_id"].(string)
+	manufacturer, _ := args["manufacturer"].(string)
+	model, _ := args["model"].(string)
+	includeDisabled, _ := args["include_disabled"].(bool)
+	return deviceRegistryFilter{
+		areaID:          areaID,
+		manufacturer:    manufacturer,
+		model:           model,
+		includeDisabled: includeDisabled,
+	}
+}
+
+// matches returns true if the entry passes all filter criteria.
+func (f deviceRegistryFilter) matches(entry homeassistant.DeviceRegistryEntry) bool {
+	if !f.includeDisabled && entry.DisabledBy != "" {
+		return false
+	}
+	if f.areaID != "" && entry.AreaID != f.areaID {
+		return false
+	}
+	if f.manufacturer != "" && !strings.Contains(strings.ToLower(entry.Manufacturer), strings.ToLower(f.manufacturer)) {
+		return false
+	}
+	if f.model != "" && !strings.Contains(strings.ToLower(string(entry.Model)), strings.ToLower(f.model)) {
+		return false
+	}
+	return true
+}
+
+// filterDeviceRegistry applies the filter to entries.
+func filterDeviceRegistry(entries []homeassistant.DeviceRegistryEntry, f deviceRegistryFilter) []homeassistant.DeviceRegistryEntry {
+	filtered := make([]homeassistant.DeviceRegistryEntry, 0, len(entries))
+	for _, entry := range entries {
+		if f.matches(entry) {
+			filtered = append(filtered, entry)
+		}
+	}
+	return filtered
+}
+
+// formatDeviceRegistryOutput formats entries as JSON with optional verbosity.
+func formatDeviceRegistryOutput(entries []homeassistant.DeviceRegistryEntry, verbose bool) ([]byte, error) {
+	if verbose {
+		return json.MarshalIndent(entries, "", "  ")
+	}
+	compact := make([]compactDeviceEntry, 0, len(entries))
+	for _, entry := range entries {
+		compact = append(compact, compactDeviceEntry{
+			ID:           entry.ID,
+			Name:         entry.Name,
+			Manufacturer: entry.Manufacturer,
+			Model:        string(entry.Model),
+			AreaID:       entry.AreaID,
+		})
+	}
+	return json.MarshalIndent(compact, "", "  ")
+}
+
 // handleListDeviceRegistry handles requests to list device registry entries.
 func (h *RegistryHandlers) handleListDeviceRegistry(
 	ctx context.Context,
@@ -288,88 +356,30 @@ func (h *RegistryHandlers) handleListDeviceRegistry(
 	entries, err := client.GetDeviceRegistry(ctx)
 	if err != nil {
 		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{
-				mcp.NewTextContent(fmt.Sprintf("Error getting device registry: %v", err)),
-			},
+			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error getting device registry: %v", err))},
 			IsError: true,
 		}, nil
 	}
 
-	// Parse filter parameters
-	areaIDFilter, _ := args["area_id"].(string)
-	manufacturerFilter, _ := args["manufacturer"].(string)
-	modelFilter, _ := args["model"].(string)
+	filter := parseDeviceRegistryFilter(args)
+	filtered := filterDeviceRegistry(entries, filter)
+
 	verbose, _ := args["verbose"].(bool)
-	includeDisabled, _ := args["include_disabled"].(bool)
-
-	// Normalize filters for case-insensitive matching
-	manufacturerFilterLower := strings.ToLower(manufacturerFilter)
-	modelFilterLower := strings.ToLower(modelFilter)
-
-	// Filter entries
-	filtered := make([]homeassistant.DeviceRegistryEntry, 0, len(entries))
-	for _, entry := range entries {
-		// Skip disabled entries unless explicitly requested
-		if !includeDisabled && entry.DisabledBy != "" {
-			continue
-		}
-
-		// Apply area_id filter
-		if areaIDFilter != "" && entry.AreaID != areaIDFilter {
-			continue
-		}
-
-		// Apply manufacturer filter (case-insensitive, partial match)
-		if manufacturerFilter != "" && !strings.Contains(strings.ToLower(entry.Manufacturer), manufacturerFilterLower) {
-			continue
-		}
-
-		// Apply model filter (case-insensitive, partial match)
-		if modelFilter != "" && !strings.Contains(strings.ToLower(string(entry.Model)), modelFilterLower) {
-			continue
-		}
-
-		filtered = append(filtered, entry)
-	}
-
-	// Format output based on verbose flag
-	var output []byte
-	if verbose {
-		output, err = json.MarshalIndent(filtered, "", "  ")
-	} else {
-		// Compact output: only essential fields
-		compact := make([]compactDeviceEntry, 0, len(filtered))
-		for _, entry := range filtered {
-			compact = append(compact, compactDeviceEntry{
-				ID:           entry.ID,
-				Name:         entry.Name,
-				Manufacturer: entry.Manufacturer,
-				Model:        string(entry.Model),
-				AreaID:       entry.AreaID,
-			})
-		}
-		output, err = json.MarshalIndent(compact, "", "  ")
-	}
-
+	output, err := formatDeviceRegistryOutput(filtered, verbose)
 	if err != nil {
 		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{
-				mcp.NewTextContent(fmt.Sprintf("Error formatting response: %v", err)),
-			},
+			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error formatting response: %v", err))},
 			IsError: true,
 		}, nil
 	}
 
-	// Add summary info
 	summary := fmt.Sprintf("Found %d devices", len(filtered))
 	if !verbose {
 		summary += VerboseHint
 	}
 
 	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{
-			mcp.NewTextContent(summary + "\n\n" + string(output)),
-		},
+		Content: []mcp.ContentBlock{mcp.NewTextContent(summary + "\n\n" + string(output))},
 	}, nil
 }
 
