@@ -13,39 +13,11 @@ import (
 	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
 
-// mockEntityClient implements homeassistant.Client for testing.
-type mockEntityClient struct {
-	homeassistant.Client
-	states     []homeassistant.Entity
-	statesErr  error
-	state      *homeassistant.Entity
-	stateErr   error
-	history    [][]homeassistant.HistoryEntry
-	historyErr error
-}
-
-func (m *mockEntityClient) GetStates(_ context.Context) ([]homeassistant.Entity, error) {
-	if m.statesErr != nil {
-		return nil, m.statesErr
-	}
-	return m.states, nil
-}
-
-func (m *mockEntityClient) GetState(_ context.Context, _ string) (*homeassistant.Entity, error) {
-	if m.stateErr != nil {
-		return nil, m.stateErr
-	}
-	return m.state, nil
-}
-
-func (m *mockEntityClient) GetHistory(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
-	if m.historyErr != nil {
-		return nil, m.historyErr
-	}
-	return m.history, nil
-}
+// Tests use UniversalMockClient from testing_helpers_test.go
 
 func TestHandleGetStates(t *testing.T) {
+	t.Parallel()
+
 	testStates := []homeassistant.Entity{
 		{
 			EntityID: "light.living_room",
@@ -191,8 +163,14 @@ func TestHandleGetStates(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			h := &EntityHandlers{}
-			client := &mockEntityClient{states: testStates}
+			client := &UniversalMockClient{
+				GetStatesFn: func(_ context.Context) ([]homeassistant.Entity, error) {
+					return testStates, nil
+				},
+			}
 
 			result, err := h.handleGetStates(context.Background(), client, tt.args)
 			if err != nil {
@@ -216,18 +194,10 @@ func TestHandleGetStates(t *testing.T) {
 			}
 
 			// Check contains
-			for _, want := range tt.wantContains {
-				if !strings.Contains(content, want) {
-					t.Errorf("Expected content to contain %q, but it didn't.\nContent: %s", want, content)
-				}
-			}
+			assertContainsAll(t, content, tt.wantContains)
 
 			// Check not contains
-			for _, notWant := range tt.wantNotContains {
-				if strings.Contains(content, notWant) {
-					t.Errorf("Expected content NOT to contain %q, but it did.\nContent: %s", notWant, content)
-				}
-			}
+			assertNotContainsAny(t, content, tt.wantNotContains)
 		})
 	}
 }
@@ -244,6 +214,8 @@ func itoa(n int) string {
 }
 
 func TestCompactEntityStateOmitsEmpty(t *testing.T) {
+	t.Parallel()
+
 	entry := compactEntityState{
 		EntityID:     "light.test",
 		State:        "on",
@@ -268,6 +240,8 @@ func TestCompactEntityStateOmitsEmpty(t *testing.T) {
 }
 
 func TestCompactEntityStateIncludesFriendlyName(t *testing.T) {
+	t.Parallel()
+
 	entry := compactEntityState{
 		EntityID:     "light.test",
 		State:        "on",
@@ -289,9 +263,13 @@ func TestCompactEntityStateIncludesFriendlyName(t *testing.T) {
 }
 
 func TestHandleGetStatesClientError(t *testing.T) {
+	t.Parallel()
+
 	h := &EntityHandlers{}
-	client := &mockEntityClient{
-		statesErr: errors.New("connection refused"),
+	client := &UniversalMockClient{
+		GetStatesFn: func(_ context.Context) ([]homeassistant.Entity, error) {
+			return nil, errors.New("connection refused")
+		},
 	}
 
 	result, err := h.handleGetStates(context.Background(), client, map[string]any{})
@@ -304,16 +282,13 @@ func TestHandleGetStatesClientError(t *testing.T) {
 	}
 
 	content := result.Content[0].Text
-	if !strings.Contains(content, "Error getting states") {
-		t.Errorf("Expected error message, got: %s", content)
-	}
-	if !strings.Contains(content, "connection refused") {
-		t.Errorf("Expected original error in message, got: %s", content)
-	}
+	assertContainsAll(t, content, []string{"Error getting states", "connection refused"})
 }
 
 func TestHandleGetState(t *testing.T) {
-	testEntity := &homeassistant.Entity{
+	t.Parallel()
+
+	testEntityData := &homeassistant.Entity{
 		EntityID: "light.living_room",
 		State:    "on",
 		Attributes: map[string]any{
@@ -327,15 +302,17 @@ func TestHandleGetState(t *testing.T) {
 	tests := []struct {
 		name         string
 		args         map[string]any
-		client       *mockEntityClient
+		setupMock    func(*UniversalMockClient)
 		wantError    bool
 		wantContains []string
 	}{
 		{
 			name: "success - returns entity state",
 			args: map[string]any{"entity_id": "light.living_room"},
-			client: &mockEntityClient{
-				state: testEntity,
+			setupMock: func(m *UniversalMockClient) {
+				m.GetStateFn = func(_ context.Context, _ string) (*homeassistant.Entity, error) {
+					return testEntityData, nil
+				}
 			},
 			wantError:    false,
 			wantContains: []string{"light.living_room", "on", "Living Room Light", "brightness", "255"},
@@ -343,22 +320,24 @@ func TestHandleGetState(t *testing.T) {
 		{
 			name:         "error - missing entity_id",
 			args:         map[string]any{},
-			client:       &mockEntityClient{},
+			setupMock:    nil,
 			wantError:    true,
 			wantContains: []string{"entity_id is required"},
 		},
 		{
 			name:         "error - empty entity_id",
 			args:         map[string]any{"entity_id": ""},
-			client:       &mockEntityClient{},
+			setupMock:    nil,
 			wantError:    true,
 			wantContains: []string{"entity_id is required"},
 		},
 		{
 			name: "error - client error",
 			args: map[string]any{"entity_id": "light.nonexistent"},
-			client: &mockEntityClient{
-				stateErr: errors.New("entity not found"),
+			setupMock: func(m *UniversalMockClient) {
+				m.GetStateFn = func(_ context.Context, _ string) (*homeassistant.Entity, error) {
+					return nil, errors.New("entity not found")
+				}
 			},
 			wantError:    true,
 			wantContains: []string{"Error getting state", "entity not found"},
@@ -367,9 +346,15 @@ func TestHandleGetState(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := &EntityHandlers{}
+			t.Parallel()
 
-			result, err := h.handleGetState(context.Background(), tt.client, tt.args)
+			h := &EntityHandlers{}
+			client := &UniversalMockClient{}
+			if tt.setupMock != nil {
+				tt.setupMock(client)
+			}
+
+			result, err := h.handleGetState(context.Background(), client, tt.args)
 			if err != nil {
 				t.Fatalf("handleGetState() unexpected error = %v", err)
 			}
@@ -383,16 +368,14 @@ func TestHandleGetState(t *testing.T) {
 			}
 
 			content := result.Content[0].Text
-			for _, want := range tt.wantContains {
-				if !strings.Contains(content, want) {
-					t.Errorf("Expected content to contain %q, got: %s", want, content)
-				}
-			}
+			assertContainsAll(t, content, tt.wantContains)
 		})
 	}
 }
 
 func TestHandleGetHistory(t *testing.T) {
+	t.Parallel()
+
 	now := time.Now()
 	testHistory := [][]homeassistant.HistoryEntry{
 		{
@@ -417,7 +400,7 @@ func TestHandleGetHistory(t *testing.T) {
 	tests := []struct {
 		name            string
 		args            map[string]any
-		client          *mockEntityClient
+		setupMock       func(*UniversalMockClient)
 		wantError       bool
 		wantContains    []string
 		wantNotContains []string
@@ -425,8 +408,10 @@ func TestHandleGetHistory(t *testing.T) {
 		{
 			name: "success - basic history retrieval",
 			args: map[string]any{"entity_id": "sensor.temperature"},
-			client: &mockEntityClient{
-				history: testHistory,
+			setupMock: func(m *UniversalMockClient) {
+				m.GetHistoryFn = func(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
+					return testHistory, nil
+				}
 			},
 			wantError:    false,
 			wantContains: []string{"21.5", "22.0", "22.5", "Found 3 history entries"},
@@ -434,8 +419,10 @@ func TestHandleGetHistory(t *testing.T) {
 		{
 			name: "success - with hours parameter",
 			args: map[string]any{"entity_id": "sensor.temperature", "hours": float64(6)},
-			client: &mockEntityClient{
-				history: testHistory,
+			setupMock: func(m *UniversalMockClient) {
+				m.GetHistoryFn = func(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
+					return testHistory, nil
+				}
 			},
 			wantError:    false,
 			wantContains: []string{"Found 3 history entries"},
@@ -443,8 +430,10 @@ func TestHandleGetHistory(t *testing.T) {
 		{
 			name: "success - with state filter",
 			args: map[string]any{"entity_id": "sensor.temperature", "state": "22.0"},
-			client: &mockEntityClient{
-				history: testHistory,
+			setupMock: func(m *UniversalMockClient) {
+				m.GetHistoryFn = func(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
+					return testHistory, nil
+				}
 			},
 			wantError:       false,
 			wantContains:    []string{"22.0", "filtered by state='22.0'"},
@@ -453,8 +442,10 @@ func TestHandleGetHistory(t *testing.T) {
 		{
 			name: "success - with limit",
 			args: map[string]any{"entity_id": "sensor.temperature", "limit": float64(2)},
-			client: &mockEntityClient{
-				history: testHistory,
+			setupMock: func(m *UniversalMockClient) {
+				m.GetHistoryFn = func(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
+					return testHistory, nil
+				}
 			},
 			wantError:       false,
 			wantContains:    []string{"Showing 2 of 3", "22.0", "22.5"},
@@ -463,8 +454,10 @@ func TestHandleGetHistory(t *testing.T) {
 		{
 			name: "success - verbose mode",
 			args: map[string]any{"entity_id": "sensor.temperature", "verbose": true},
-			client: &mockEntityClient{
-				history: testHistory,
+			setupMock: func(m *UniversalMockClient) {
+				m.GetHistoryFn = func(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
+					return testHistory, nil
+				}
 			},
 			wantError:    false,
 			wantContains: []string{"21.5", "22.0", "22.5"},
@@ -472,8 +465,10 @@ func TestHandleGetHistory(t *testing.T) {
 		{
 			name: "success - compact mode shows state and timestamp",
 			args: map[string]any{"entity_id": "sensor.temperature"},
-			client: &mockEntityClient{
-				history: testHistory,
+			setupMock: func(m *UniversalMockClient) {
+				m.GetHistoryFn = func(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
+					return testHistory, nil
+				}
 			},
 			wantError:    false,
 			wantContains: []string{`"state"`, `"last_changed"`},
@@ -481,14 +476,14 @@ func TestHandleGetHistory(t *testing.T) {
 		{
 			name:         "error - missing entity_id",
 			args:         map[string]any{},
-			client:       &mockEntityClient{},
+			setupMock:    nil,
 			wantError:    true,
 			wantContains: []string{"entity_id is required"},
 		},
 		{
 			name:         "error - empty entity_id",
 			args:         map[string]any{"entity_id": ""},
-			client:       &mockEntityClient{},
+			setupMock:    nil,
 			wantError:    true,
 			wantContains: []string{"entity_id is required"},
 		},
@@ -498,7 +493,7 @@ func TestHandleGetHistory(t *testing.T) {
 				"entity_id":  "sensor.temperature",
 				"start_time": "not-a-date",
 			},
-			client:       &mockEntityClient{},
+			setupMock:    nil,
 			wantError:    true,
 			wantContains: []string{"invalid start_time format"},
 		},
@@ -508,15 +503,17 @@ func TestHandleGetHistory(t *testing.T) {
 				"entity_id": "sensor.temperature",
 				"end_time":  "not-a-date",
 			},
-			client:       &mockEntityClient{},
+			setupMock:    nil,
 			wantError:    true,
 			wantContains: []string{"invalid end_time format"},
 		},
 		{
 			name: "error - client error",
 			args: map[string]any{"entity_id": "sensor.temperature"},
-			client: &mockEntityClient{
-				historyErr: errors.New("database unavailable"),
+			setupMock: func(m *UniversalMockClient) {
+				m.GetHistoryFn = func(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
+					return nil, errors.New("database unavailable")
+				}
 			},
 			wantError:    true,
 			wantContains: []string{"Error getting history", "database unavailable"},
@@ -527,8 +524,10 @@ func TestHandleGetHistory(t *testing.T) {
 				"entity_id":  "sensor.temperature",
 				"start_time": now.Add(-12 * time.Hour).Format(time.RFC3339),
 			},
-			client: &mockEntityClient{
-				history: testHistory,
+			setupMock: func(m *UniversalMockClient) {
+				m.GetHistoryFn = func(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
+					return testHistory, nil
+				}
 			},
 			wantError:    false,
 			wantContains: []string{"Found 3 history entries"},
@@ -539,8 +538,10 @@ func TestHandleGetHistory(t *testing.T) {
 				"entity_id": "sensor.temperature",
 				"end_time":  now.Format(time.RFC3339),
 			},
-			client: &mockEntityClient{
-				history: testHistory,
+			setupMock: func(m *UniversalMockClient) {
+				m.GetHistoryFn = func(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
+					return testHistory, nil
+				}
 			},
 			wantError:    false,
 			wantContains: []string{"Found 3 history entries"},
@@ -548,8 +549,10 @@ func TestHandleGetHistory(t *testing.T) {
 		{
 			name: "success - empty history",
 			args: map[string]any{"entity_id": "sensor.temperature"},
-			client: &mockEntityClient{
-				history: [][]homeassistant.HistoryEntry{},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetHistoryFn = func(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
+					return [][]homeassistant.HistoryEntry{}, nil
+				}
 			},
 			wantError:    false,
 			wantContains: []string{"Found 0 history entries"},
@@ -561,8 +564,10 @@ func TestHandleGetHistory(t *testing.T) {
 				"hours":      float64(1),
 				"start_time": now.Add(-48 * time.Hour).Format(time.RFC3339), // should be ignored
 			},
-			client: &mockEntityClient{
-				history: testHistory,
+			setupMock: func(m *UniversalMockClient) {
+				m.GetHistoryFn = func(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
+					return testHistory, nil
+				}
 			},
 			wantError:    false,
 			wantContains: []string{"Found 3 history entries"},
@@ -574,8 +579,10 @@ func TestHandleGetHistory(t *testing.T) {
 				"state":     "22.0",
 				"limit":     float64(1),
 			},
-			client: &mockEntityClient{
-				history: testHistory,
+			setupMock: func(m *UniversalMockClient) {
+				m.GetHistoryFn = func(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
+					return testHistory, nil
+				}
 			},
 			wantError:       false,
 			wantContains:    []string{"22.0", "Found 1 history entries"},
@@ -587,8 +594,10 @@ func TestHandleGetHistory(t *testing.T) {
 				"entity_id": "sensor.temperature",
 				"limit":     float64(100),
 			},
-			client: &mockEntityClient{
-				history: testHistory,
+			setupMock: func(m *UniversalMockClient) {
+				m.GetHistoryFn = func(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
+					return testHistory, nil
+				}
 			},
 			wantError:    false,
 			wantContains: []string{"Found 3 history entries", "21.5", "22.0", "22.5"},
@@ -597,9 +606,15 @@ func TestHandleGetHistory(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := &EntityHandlers{}
+			t.Parallel()
 
-			result, err := h.handleGetHistory(context.Background(), tt.client, tt.args)
+			h := &EntityHandlers{}
+			client := &UniversalMockClient{}
+			if tt.setupMock != nil {
+				tt.setupMock(client)
+			}
+
+			result, err := h.handleGetHistory(context.Background(), client, tt.args)
 			if err != nil {
 				t.Fatalf("handleGetHistory() unexpected error = %v", err)
 			}
@@ -613,21 +628,15 @@ func TestHandleGetHistory(t *testing.T) {
 			}
 
 			content := result.Content[0].Text
-			for _, want := range tt.wantContains {
-				if !strings.Contains(content, want) {
-					t.Errorf("Expected content to contain %q, got: %s", want, content)
-				}
-			}
-			for _, notWant := range tt.wantNotContains {
-				if strings.Contains(content, notWant) {
-					t.Errorf("Expected content NOT to contain %q, got: %s", notWant, content)
-				}
-			}
+			assertContainsAll(t, content, tt.wantContains)
+			assertNotContainsAny(t, content, tt.wantNotContains)
 		})
 	}
 }
 
 func TestHandleListDomains(t *testing.T) {
+	t.Parallel()
+
 	testStates := []homeassistant.Entity{
 		{EntityID: "light.living_room", State: "on"},
 		{EntityID: "light.bedroom", State: "off"},
@@ -640,15 +649,17 @@ func TestHandleListDomains(t *testing.T) {
 
 	tests := []struct {
 		name            string
-		client          *mockEntityClient
+		setupMock       func(*UniversalMockClient)
 		wantError       bool
 		wantContains    []string
 		wantNotContains []string
 	}{
 		{
 			name: "success - lists all domains with counts",
-			client: &mockEntityClient{
-				states: testStates,
+			setupMock: func(m *UniversalMockClient) {
+				m.GetStatesFn = func(_ context.Context) ([]homeassistant.Entity, error) {
+					return testStates, nil
+				}
 			},
 			wantError: false,
 			wantContains: []string{
@@ -663,28 +674,34 @@ func TestHandleListDomains(t *testing.T) {
 		},
 		{
 			name: "success - empty state list",
-			client: &mockEntityClient{
-				states: []homeassistant.Entity{},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetStatesFn = func(_ context.Context) ([]homeassistant.Entity, error) {
+					return []homeassistant.Entity{}, nil
+				}
 			},
 			wantError:    false,
 			wantContains: []string{"[]"},
 		},
 		{
 			name: "error - client error",
-			client: &mockEntityClient{
-				statesErr: errors.New("connection timeout"),
+			setupMock: func(m *UniversalMockClient) {
+				m.GetStatesFn = func(_ context.Context) ([]homeassistant.Entity, error) {
+					return nil, errors.New("connection timeout")
+				}
 			},
 			wantError:    true,
 			wantContains: []string{"Error getting states", "connection timeout"},
 		},
 		{
 			name: "handles entity_id without dot gracefully",
-			client: &mockEntityClient{
-				states: []homeassistant.Entity{
-					{EntityID: "light.valid", State: "on"},
-					{EntityID: "invalidnodot", State: "on"},
-					{EntityID: "switch.also_valid", State: "off"},
-				},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetStatesFn = func(_ context.Context) ([]homeassistant.Entity, error) {
+					return []homeassistant.Entity{
+						{EntityID: "light.valid", State: "on"},
+						{EntityID: "invalidnodot", State: "on"},
+						{EntityID: "switch.also_valid", State: "off"},
+					}, nil
+				}
 			},
 			wantError: false,
 			wantContains: []string{
@@ -697,9 +714,15 @@ func TestHandleListDomains(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := &EntityHandlers{}
+			t.Parallel()
 
-			result, err := h.handleListDomains(context.Background(), tt.client, map[string]any{})
+			h := &EntityHandlers{}
+			client := &UniversalMockClient{}
+			if tt.setupMock != nil {
+				tt.setupMock(client)
+			}
+
+			result, err := h.handleListDomains(context.Background(), client, map[string]any{})
 			if err != nil {
 				t.Fatalf("handleListDomains() unexpected error = %v", err)
 			}
@@ -713,21 +736,15 @@ func TestHandleListDomains(t *testing.T) {
 			}
 
 			content := result.Content[0].Text
-			for _, want := range tt.wantContains {
-				if !strings.Contains(content, want) {
-					t.Errorf("Expected content to contain %q, got: %s", want, content)
-				}
-			}
-			for _, notWant := range tt.wantNotContains {
-				if strings.Contains(content, notWant) {
-					t.Errorf("Expected content NOT to contain %q, got: %s", notWant, content)
-				}
-			}
+			assertContainsAll(t, content, tt.wantContains)
+			assertNotContainsAny(t, content, tt.wantNotContains)
 		})
 	}
 }
 
 func TestCompactHistoryEntryFormat(t *testing.T) {
+	t.Parallel()
+
 	entry := compactHistoryEntry{
 		State:       "on",
 		LastChanged: "2024-01-15T10:30:00Z",
@@ -748,6 +765,8 @@ func TestCompactHistoryEntryFormat(t *testing.T) {
 }
 
 func TestNewEntityHandlers(t *testing.T) {
+	t.Parallel()
+
 	h := NewEntityHandlers()
 	if h == nil {
 		t.Fatal("NewEntityHandlers() returned nil")
@@ -755,6 +774,8 @@ func TestNewEntityHandlers(t *testing.T) {
 }
 
 func TestEntityHandlersRegisterTools(t *testing.T) {
+	t.Parallel()
+
 	h := NewEntityHandlers()
 	registry := mcp.NewRegistry()
 
@@ -776,88 +797,66 @@ func TestEntityHandlersRegisterTools(t *testing.T) {
 }
 
 func TestGetStatesTool(t *testing.T) {
+	t.Parallel()
+
 	h := &EntityHandlers{}
 	tool := h.getStatesTool()
 
-	if tool.Name != "get_states" {
-		t.Errorf("Expected tool name 'get_states', got %q", tool.Name)
-	}
-	if tool.Description == "" {
-		t.Error("Expected non-empty description")
-	}
-	if tool.InputSchema.Type != "object" {
-		t.Errorf("Expected input schema type 'object', got %q", tool.InputSchema.Type)
-	}
-
-	// Check expected properties exist
-	expectedProps := []string{"domain", "state", "state_not", "name_contains", "verbose"}
-	for _, prop := range expectedProps {
-		if _, ok := tool.InputSchema.Properties[prop]; !ok {
-			t.Errorf("Expected property %q in input schema", prop)
-		}
-	}
+	verifyToolSchema(t, tool, toolSchemaExpectation{
+		ExpectedName:    "get_states",
+		RequiredParams:  []string{},
+		OptionalParams:  []string{"domain", "state", "state_not", "name_contains", "verbose"},
+		WantDescription: true,
+	})
 }
 
 func TestGetStateTool(t *testing.T) {
+	t.Parallel()
+
 	h := &EntityHandlers{}
 	tool := h.getStateTool()
 
-	if tool.Name != "get_state" {
-		t.Errorf("Expected tool name 'get_state', got %q", tool.Name)
-	}
-	if tool.Description == "" {
-		t.Error("Expected non-empty description")
-	}
-
-	// Check entity_id is required
-	if len(tool.InputSchema.Required) == 0 || tool.InputSchema.Required[0] != configKeyEntityID {
-		t.Errorf("Expected '%s' to be required", configKeyEntityID)
-	}
+	verifyToolSchema(t, tool, toolSchemaExpectation{
+		ExpectedName:    "get_state",
+		RequiredParams:  []string{configKeyEntityID},
+		OptionalParams:  []string{},
+		WantDescription: true,
+	})
 }
 
 func TestGetHistoryTool(t *testing.T) {
+	t.Parallel()
+
 	h := &EntityHandlers{}
 	tool := h.getHistoryTool()
 
-	if tool.Name != "get_history" {
-		t.Errorf("Expected tool name 'get_history', got %q", tool.Name)
-	}
-	if tool.Description == "" {
-		t.Error("Expected non-empty description")
-	}
-
-	// Check expected properties exist
-	expectedProps := []string{configKeyEntityID, "start_time", "end_time", "hours", "state", "limit", "verbose"}
-	for _, prop := range expectedProps {
-		if _, ok := tool.InputSchema.Properties[prop]; !ok {
-			t.Errorf("Expected property %q in input schema", prop)
-		}
-	}
-
-	// Check entity_id is required
-	if len(tool.InputSchema.Required) == 0 || tool.InputSchema.Required[0] != configKeyEntityID {
-		t.Errorf("Expected '%s' to be required", configKeyEntityID)
-	}
+	verifyToolSchema(t, tool, toolSchemaExpectation{
+		ExpectedName:    "get_history",
+		RequiredParams:  []string{configKeyEntityID},
+		OptionalParams:  []string{"start_time", "end_time", "hours", "state", "limit", "verbose"},
+		WantDescription: true,
+	})
 }
 
 func TestListDomainsTool(t *testing.T) {
+	t.Parallel()
+
 	h := &EntityHandlers{}
 	tool := h.listDomainsTool()
 
-	if tool.Name != "list_domains" {
-		t.Errorf("Expected tool name 'list_domains', got %q", tool.Name)
-	}
-	if tool.Description == "" {
-		t.Error("Expected non-empty description")
-	}
-	if tool.InputSchema.Type != "object" {
-		t.Errorf("Expected input schema type 'object', got %q", tool.InputSchema.Type)
-	}
+	verifyToolSchema(t, tool, toolSchemaExpectation{
+		ExpectedName:    "list_domains",
+		RequiredParams:  []string{},
+		OptionalParams:  []string{},
+		WantDescription: true,
+	})
 }
 
 // Tests for extracted history helper functions
 
 func TestParseHistoryParams(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name        string
 		args        map[string]any
@@ -947,6 +946,8 @@ func TestParseHistoryParams(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			params, err := parseHistoryParams(tt.args)
 
 			if tt.wantErr {
@@ -971,6 +972,8 @@ func TestParseHistoryParams(t *testing.T) {
 }
 
 func TestParseTimeRange(t *testing.T) {
+	t.Parallel()
+
 	now := time.Now()
 	validTime := now.Add(-6 * time.Hour).Format(time.RFC3339)
 
@@ -1024,7 +1027,6 @@ func TestParseTimeRange(t *testing.T) {
 			validate: func(t *testing.T, start, end time.Time) {
 				t.Helper()
 				duration := end.Sub(start)
-				// Should be ~2h, not ~6h from start_time
 				if duration < 1*time.Hour || duration > 3*time.Hour {
 					t.Errorf("duration = %v, want ~2h (hours should override start_time)", duration)
 				}
@@ -1070,6 +1072,8 @@ func TestParseTimeRange(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			start, end, err := parseTimeRange(tt.args)
 
 			if tt.wantErr {
@@ -1094,6 +1098,8 @@ func TestParseTimeRange(t *testing.T) {
 }
 
 func TestProcessHistoryEntries(t *testing.T) {
+	t.Parallel()
+
 	baseEntries := [][]homeassistant.HistoryEntry{
 		{
 			{EntityID: "sensor.test", State: "on", LastChanged: 1.0},
@@ -1142,7 +1148,7 @@ func TestProcessHistoryEntries(t *testing.T) {
 			limit:      2,
 			wantCount:  2,
 			wantTotal:  5,
-			wantStates: []string{"off", "on"}, // last 2 entries
+			wantStates: []string{"off", "on"},
 		},
 		{
 			name:        "filter and limit combined",
@@ -1150,7 +1156,7 @@ func TestProcessHistoryEntries(t *testing.T) {
 			stateFilter: "on",
 			limit:       2,
 			wantCount:   2,
-			wantTotal:   3, // 3 "on" entries total
+			wantTotal:   3,
 			wantStates:  []string{"on", "on"},
 		},
 		{
@@ -1191,6 +1197,8 @@ func TestProcessHistoryEntries(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			result := processHistoryEntries(tt.history, tt.stateFilter, tt.limit)
 
 			if len(result.entries) != tt.wantCount {
@@ -1213,6 +1221,8 @@ func TestProcessHistoryEntries(t *testing.T) {
 }
 
 func TestFormatHistoryOutput(t *testing.T) {
+	t.Parallel()
+
 	entries := []homeassistant.HistoryEntry{
 		{
 			EntityID:    "sensor.test",
@@ -1240,7 +1250,7 @@ func TestFormatHistoryOutput(t *testing.T) {
 			name:         "verbose output - includes all fields",
 			entries:      entries,
 			verbose:      true,
-			wantContains: []string{`"s"`, `"entity_id"`, `"brightness"`, "255"}, // "s" is the JSON tag for State
+			wantContains: []string{`"s"`, `"entity_id"`, `"brightness"`, "255"},
 		},
 		{
 			name:         "empty entries - compact",
@@ -1258,29 +1268,23 @@ func TestFormatHistoryOutput(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			output, err := formatHistoryOutput(tt.entries, tt.verbose)
 			if err != nil {
 				t.Fatalf("formatHistoryOutput() error = %v", err)
 			}
 
 			result := string(output)
-
-			for _, want := range tt.wantContains {
-				if !strings.Contains(result, want) {
-					t.Errorf("output missing %q:\n%s", want, result)
-				}
-			}
-
-			for _, missing := range tt.wantMissing {
-				if strings.Contains(result, missing) {
-					t.Errorf("output should not contain %q:\n%s", missing, result)
-				}
-			}
+			assertContainsAll(t, result, tt.wantContains)
+			assertNotContainsAny(t, result, tt.wantMissing)
 		})
 	}
 }
 
 func TestBuildHistorySummary(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name         string
 		entityID     string
@@ -1340,19 +1344,12 @@ func TestBuildHistorySummary(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			summary := buildHistorySummary(tt.entityID, tt.result, tt.stateFilter, tt.verbose)
 
-			for _, want := range tt.wantContains {
-				if !strings.Contains(summary, want) {
-					t.Errorf("summary missing %q:\n%s", want, summary)
-				}
-			}
-
-			for _, missing := range tt.wantMissing {
-				if strings.Contains(summary, missing) {
-					t.Errorf("summary should not contain %q:\n%s", missing, summary)
-				}
-			}
+			assertContainsAll(t, summary, tt.wantContains)
+			assertNotContainsAny(t, summary, tt.wantMissing)
 		})
 	}
 }

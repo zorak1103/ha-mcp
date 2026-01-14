@@ -18,29 +18,22 @@ const (
 	testRequiredAutomationID = "automation_id"
 )
 
-// mockAutomationClient implements homeassistant.Client for automation testing.
+// mockAutomationClient is a thin wrapper for backward compatibility.
+// New tests should use UniversalMockClient directly.
 type mockAutomationClient struct {
 	homeassistant.Client
 
-	// List automations
+	// Convenience fields for common test setups
 	automations    []homeassistant.Automation
 	automationsErr error
 
-	// Get automation - can be a single automation or a map for multiple
 	automation    *homeassistant.Automation
 	automationMap map[string]*homeassistant.Automation
 	automationErr error
 
-	// Create automation
 	createErr error
-
-	// Update automation
 	updateErr error
-
-	// Delete automation
 	deleteErr error
-
-	// Toggle automation
 	toggleErr error
 }
 
@@ -55,7 +48,6 @@ func (m *mockAutomationClient) GetAutomation(_ context.Context, automationID str
 	if m.automationErr != nil {
 		return nil, m.automationErr
 	}
-	// Check automationMap first for multiple automations
 	if m.automationMap != nil {
 		if auto, ok := m.automationMap[automationID]; ok {
 			return auto, nil
