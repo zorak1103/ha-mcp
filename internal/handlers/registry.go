@@ -71,6 +71,118 @@ type compactEntityEntry struct {
 	AreaID   string `json:"area_id,omitempty"`
 }
 
+// entityRegistryFilter encapsulates all filter criteria for entity registry queries.
+type entityRegistryFilter struct {
+	domain          string
+	platform        string
+	deviceID        string
+	areaID          string
+	includeDisabled bool
+	deviceIDsInArea map[string]bool
+}
+
+// newEntityRegistryFilterFromArgs creates a filter from tool arguments.
+func newEntityRegistryFilterFromArgs(args map[string]any) *entityRegistryFilter {
+	domain, _ := args["domain"].(string)
+	platform, _ := args["platform"].(string)
+	deviceID, _ := args["device_id"].(string)
+	areaID, _ := args["area_id"].(string)
+	includeDisabled, _ := args["include_disabled"].(bool)
+
+	return &entityRegistryFilter{
+		domain:          domain,
+		platform:        platform,
+		deviceID:        deviceID,
+		areaID:          areaID,
+		includeDisabled: includeDisabled,
+		deviceIDsInArea: make(map[string]bool),
+	}
+}
+
+// matches returns true if the entry passes all filter criteria.
+func (f *entityRegistryFilter) matches(entry homeassistant.EntityRegistryEntry) bool {
+	if !f.includeDisabled && entry.DisabledBy != "" {
+		return false
+	}
+
+	if f.domain != "" && extractDomain(entry.EntityID) != f.domain {
+		return false
+	}
+
+	if f.platform != "" && entry.Platform != f.platform {
+		return false
+	}
+
+	if f.deviceID != "" && entry.DeviceID != f.deviceID {
+		return false
+	}
+
+	if f.areaID != "" {
+		directMatch := entry.AreaID == f.areaID
+		deviceMatch := entry.DeviceID != "" && f.deviceIDsInArea[entry.DeviceID]
+		if !directMatch && !deviceMatch {
+			return false
+		}
+	}
+
+	return true
+}
+
+// buildDeviceIDsInArea populates the deviceIDsInArea map with devices in the target area.
+func (f *entityRegistryFilter) buildDeviceIDsInArea(ctx context.Context, client homeassistant.Client) {
+	if f.areaID == "" {
+		return
+	}
+
+	devices, err := client.GetDeviceRegistry(ctx)
+	if err != nil {
+		return
+	}
+
+	for _, device := range devices {
+		if device.AreaID == f.areaID {
+			f.deviceIDsInArea[device.ID] = true
+		}
+	}
+}
+
+// filterEntityRegistry applies the filter to a list of entries.
+func (f *entityRegistryFilter) filterEntityRegistry(entries []homeassistant.EntityRegistryEntry) []homeassistant.EntityRegistryEntry {
+	filtered := make([]homeassistant.EntityRegistryEntry, 0, len(entries))
+	for _, entry := range entries {
+		if f.matches(entry) {
+			filtered = append(filtered, entry)
+		}
+	}
+	return filtered
+}
+
+// formatEntityRegistryOutput formats entries as JSON with optional verbosity.
+func formatEntityRegistryOutput(entries []homeassistant.EntityRegistryEntry, verbose bool) (string, error) {
+	var output []byte
+	var err error
+
+	if verbose {
+		output, err = json.MarshalIndent(entries, "", "  ")
+	} else {
+		compact := make([]compactEntityEntry, 0, len(entries))
+		for _, entry := range entries {
+			compact = append(compact, compactEntityEntry{
+				EntityID: entry.EntityID,
+				DeviceID: entry.DeviceID,
+				AreaID:   entry.AreaID,
+			})
+		}
+		output, err = json.MarshalIndent(compact, "", "  ")
+	}
+
+	if err != nil {
+		return "", fmt.Errorf("formatting response: %w", err)
+	}
+
+	return string(output), nil
+}
+
 // handleListEntityRegistry handles requests to list entity registry entries.
 func (h *RegistryHandlers) handleListEntityRegistry(
 	ctx context.Context,
@@ -87,94 +199,21 @@ func (h *RegistryHandlers) handleListEntityRegistry(
 		}, nil
 	}
 
-	// Parse filter parameters
-	domainFilter, _ := args["domain"].(string)
-	platformFilter, _ := args["platform"].(string)
-	deviceIDFilter, _ := args["device_id"].(string)
-	areaIDFilter, _ := args["area_id"].(string)
+	filter := newEntityRegistryFilterFromArgs(args)
+	filter.buildDeviceIDsInArea(ctx, client)
+	filtered := filter.filterEntityRegistry(entries)
+
 	verbose, _ := args["verbose"].(bool)
-	includeDisabled, _ := args["include_disabled"].(bool)
-
-	// Build a set of device IDs in the target area (for area_id filtering)
-	// This allows us to find entities that belong to devices in the area,
-	// even if the entity itself doesn't have an area_id set
-	deviceIDsInArea := make(map[string]bool)
-	if areaIDFilter != "" {
-		devices, devErr := client.GetDeviceRegistry(ctx)
-		if devErr == nil {
-			for _, device := range devices {
-				if device.AreaID == areaIDFilter {
-					deviceIDsInArea[device.ID] = true
-				}
-			}
-		}
-	}
-
-	// Filter entries
-	filtered := make([]homeassistant.EntityRegistryEntry, 0, len(entries))
-	for _, entry := range entries {
-		// Skip disabled entries unless explicitly requested
-		if !includeDisabled && entry.DisabledBy != "" {
-			continue
-		}
-
-		// Apply domain filter
-		if domainFilter != "" {
-			domain := extractDomain(entry.EntityID)
-			if domain != domainFilter {
-				continue
-			}
-		}
-
-		// Apply platform filter
-		if platformFilter != "" && entry.Platform != platformFilter {
-			continue
-		}
-
-		// Apply device_id filter
-		if deviceIDFilter != "" && entry.DeviceID != deviceIDFilter {
-			continue
-		}
-
-		// Apply area_id filter - match entities directly in area OR via device in area
-		if areaIDFilter != "" {
-			directMatch := entry.AreaID == areaIDFilter
-			deviceMatch := entry.DeviceID != "" && deviceIDsInArea[entry.DeviceID]
-			if !directMatch && !deviceMatch {
-				continue
-			}
-		}
-
-		filtered = append(filtered, entry)
-	}
-
-	// Format output based on verbose flag
-	var output []byte
-	if verbose {
-		output, err = json.MarshalIndent(filtered, "", "  ")
-	} else {
-		// Compact output: only entity_id, device_id (if set), area_id (if set)
-		compact := make([]compactEntityEntry, 0, len(filtered))
-		for _, entry := range filtered {
-			compact = append(compact, compactEntityEntry{
-				EntityID: entry.EntityID,
-				DeviceID: entry.DeviceID,
-				AreaID:   entry.AreaID,
-			})
-		}
-		output, err = json.MarshalIndent(compact, "", "  ")
-	}
-
+	output, err := formatEntityRegistryOutput(filtered, verbose)
 	if err != nil {
 		return &mcp.ToolsCallResult{
 			Content: []mcp.ContentBlock{
-				mcp.NewTextContent(fmt.Sprintf("Error formatting response: %v", err)),
+				mcp.NewTextContent(fmt.Sprintf("Error %v", err)),
 			},
 			IsError: true,
 		}, nil
 	}
 
-	// Add summary info
 	summary := fmt.Sprintf("Found %d entities", len(filtered))
 	if !verbose {
 		summary += VerboseHint
@@ -182,7 +221,7 @@ func (h *RegistryHandlers) handleListEntityRegistry(
 
 	return &mcp.ToolsCallResult{
 		Content: []mcp.ContentBlock{
-			mcp.NewTextContent(summary + "\n\n" + string(output)),
+			mcp.NewTextContent(summary + "\n\n" + output),
 		},
 	}, nil
 }
