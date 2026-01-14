@@ -1212,6 +1212,198 @@ func TestGetSlice(t *testing.T) {
 	}
 }
 
+// Tests for new refactored helper functions
+
+func TestParseAutomationFilters(t *testing.T) {
+	tests := []struct {
+		name     string
+		args     map[string]any
+		expected automationFilters
+	}{
+		{name: "empty args", args: map[string]any{}, expected: automationFilters{}},
+		{
+			name:     "all filters set",
+			args:     map[string]any{"state": "on", "alias": "test", "entity_id": "light.living_room"},
+			expected: automationFilters{state: "on", alias: "test", entityID: "light.living_room"},
+		},
+		{name: "partial filters", args: map[string]any{"state": "off"}, expected: automationFilters{state: "off"}},
+		{
+			name:     "non-string values ignored",
+			args:     map[string]any{"state": 123, "alias": "test", "entity_id": true},
+			expected: automationFilters{alias: "test"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := parseAutomationFilters(tt.args)
+			if result != tt.expected {
+				t.Errorf("parseAutomationFilters() = %+v, want %+v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestMatchesStateFilter(t *testing.T) {
+	auto := homeassistant.Automation{State: "on"}
+	tests := []struct {
+		name        string
+		stateFilter string
+		want        bool
+	}{
+		{name: "empty filter matches all", stateFilter: "", want: true},
+		{name: "matching state", stateFilter: "on", want: true},
+		{name: "non-matching state", stateFilter: "off", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := matchesStateFilter(auto, tt.stateFilter); got != tt.want {
+				t.Errorf("matchesStateFilter() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMatchesAliasFilter(t *testing.T) {
+	tests := []struct {
+		name         string
+		friendlyName string
+		aliasFilter  string
+		want         bool
+	}{
+		{name: "empty filter matches all", friendlyName: "Test Auto", aliasFilter: "", want: true},
+		{name: "exact match", friendlyName: "Test", aliasFilter: "Test", want: true},
+		{name: "partial match", friendlyName: "Turn On Lights", aliasFilter: "on", want: true},
+		{name: "case insensitive", friendlyName: "Turn On Lights", aliasFilter: "LIGHTS", want: true},
+		{name: "no match", friendlyName: "Turn On Lights", aliasFilter: "switch", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			auto := homeassistant.Automation{FriendlyName: tt.friendlyName}
+			if got := matchesAliasFilter(auto, tt.aliasFilter); got != tt.want {
+				t.Errorf("matchesAliasFilter() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMatchesEntityIDFilter(t *testing.T) {
+	tests := []struct {
+		name           string
+		config         *homeassistant.AutomationConfig
+		entityIDFilter string
+		want           bool
+	}{
+		{name: "empty filter matches all", config: nil, entityIDFilter: "", want: true},
+		{name: "nil config with filter", config: nil, entityIDFilter: "light.test", want: false},
+		{
+			name:           "entity in triggers",
+			config:         &homeassistant.AutomationConfig{Triggers: []any{map[string]any{"entity_id": "light.test"}}},
+			entityIDFilter: "light.test",
+			want:           true,
+		},
+		{
+			name:           "entity in actions",
+			config:         &homeassistant.AutomationConfig{Actions: []any{map[string]any{"entity_id": "switch.test"}}},
+			entityIDFilter: "switch.test",
+			want:           true,
+		},
+		{
+			name:           "entity in conditions",
+			config:         &homeassistant.AutomationConfig{Conditions: []any{map[string]any{"entity_id": "sensor.test"}}},
+			entityIDFilter: "sensor.test",
+			want:           true,
+		},
+		{
+			name: "entity not found",
+			config: &homeassistant.AutomationConfig{
+				Triggers: []any{map[string]any{"entity_id": "light.bedroom"}},
+				Actions:  []any{map[string]any{"entity_id": "switch.kitchen"}},
+			},
+			entityIDFilter: "sensor.temperature",
+			want:           false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := matchesEntityIDFilter(tt.config, tt.entityIDFilter); got != tt.want {
+				t.Errorf("matchesEntityIDFilter() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAutomationFilters_NeedsConfigForFiltering(t *testing.T) {
+	tests := []struct {
+		name    string
+		filters automationFilters
+		want    bool
+	}{
+		{name: "no entity_id filter", filters: automationFilters{state: "on", alias: "test"}, want: false},
+		{name: "with entity_id filter", filters: automationFilters{entityID: "light.test"}, want: true},
+		{name: "empty filters", filters: automationFilters{}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.filters.needsConfigForFiltering(); got != tt.want {
+				t.Errorf("needsConfigForFiltering() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildCompactAutomationOutput(t *testing.T) {
+	automations := []homeassistant.Automation{
+		{EntityID: "automation.test1", State: "on", FriendlyName: "Test 1", LastTriggered: "2024-01-15T10:00:00Z"},
+		{EntityID: "automation.test2", State: "off", FriendlyName: "Test 2"},
+	}
+	output, err := buildCompactAutomationOutput(automations)
+	if err != nil {
+		t.Fatalf("buildCompactAutomationOutput() error = %v", err)
+	}
+	result := string(output)
+	expectedStrings := []string{"automation.test1", "on", "Test 1", "automation.test2", "off"}
+	for _, expected := range expectedStrings {
+		if !strings.Contains(result, expected) {
+			t.Errorf("Expected output to contain %q", expected)
+		}
+	}
+}
+
+func TestBuildCompactAutomationOutput_Empty(t *testing.T) {
+	output, err := buildCompactAutomationOutput([]homeassistant.Automation{})
+	if err != nil {
+		t.Fatalf("buildCompactAutomationOutput() error = %v", err)
+	}
+	if result := string(output); result != "[]" {
+		t.Errorf("Expected empty array '[]', got: %s", result)
+	}
+}
+
+func TestBuildAutomationSummary(t *testing.T) {
+	tests := []struct {
+		name    string
+		count   int
+		verbose bool
+		want    string
+	}{
+		{name: "compact with zero", count: 0, verbose: false, want: "Found 0 automations"},
+		{name: "compact with count", count: 5, verbose: false, want: "Found 5 automations"},
+		{name: "verbose", count: 3, verbose: true, want: "Found 3 automations"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := buildAutomationSummary(tt.count, tt.verbose)
+			if !strings.Contains(got, tt.want) {
+				t.Errorf("buildAutomationSummary() = %q, want to contain %q", got, tt.want)
+			}
+			if !tt.verbose && !strings.Contains(got, "verbose") {
+				t.Errorf("buildAutomationSummary() compact should contain verbose hint")
+			}
+		})
+	}
+}
+
 func TestGenerateAutomationID(t *testing.T) {
 	tests := []struct {
 		name     string
