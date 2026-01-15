@@ -73,8 +73,5 @@ tmp/
 *.prof
 *.pprof
 
-.clavix/
-.clinerules/
 .claude/
-CLAUDE.md
 AGENTS.md
