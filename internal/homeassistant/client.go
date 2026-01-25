@@ -121,10 +121,13 @@ func getStringAttr(attrs map[string]any, key string) string {
 }
 
 // extractPlatform determines the helper platform type from an entity ID.
-// It checks for input_boolean, input_number, input_text, input_select, and input_datetime prefixes.
+// It checks for all supported helper platform prefixes.
 // Returns an empty string if no matching platform is found.
 func extractPlatform(entityID string) string {
-	platforms := []string{"input_boolean", "input_number", "input_text", "input_select", "input_datetime"}
+	platforms := []string{
+		"input_boolean", "input_number", "input_text", "input_select", "input_datetime", "input_button",
+		"counter", "timer", "schedule", "group",
+	}
 	for _, p := range platforms {
 		if len(entityID) > len(p)+1 && entityID[:len(p)+1] == p+"." {
 			return p

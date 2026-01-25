@@ -20,10 +20,10 @@ func TestAutomationIntegration(t *testing.T) {
 
 func (s *AutomationIntegrationTestSuite) TestAutomationLifecycle() {
 	// Create an input_boolean for the automation to control
-	targetID := GenerateTestID("auto_target")
-	targetEntityID := BuildEntityID("input_boolean", targetID)
-	triggerID := GenerateTestID("auto_trigger")
-	triggerEntityID := BuildEntityID("input_button", triggerID)
+	targetName := GenerateTestID("auto_target")
+	targetEntityID := BuildEntityID("input_boolean", targetName)
+	triggerName := GenerateTestID("auto_trigger")
+	triggerEntityID := BuildEntityID("input_button", triggerName)
 	automationID := GenerateTestID("automation")
 
 	s.RegisterCleanup(func() {
@@ -32,20 +32,18 @@ func (s *AutomationIntegrationTestSuite) TestAutomationLifecycle() {
 		_ = s.Client().DeleteHelper(s.Context(), triggerEntityID)
 	})
 
-	// Create target input_boolean
+	// Create target input_boolean - entity ID is derived from name
 	targetConfig := homeassistant.HelperConfig{
 		Platform: "input_boolean",
-		ID:       targetID,
-		Config:   map[string]any{"name": "Automation Target", "initial": false},
+		Config:   map[string]any{"name": targetName, "initial": false},
 	}
 	err := s.Client().CreateHelper(s.Context(), targetConfig)
 	s.Require().NoError(err, "Failed to create target input_boolean")
 
-	// Create trigger input_button
+	// Create trigger input_button - entity ID is derived from name
 	triggerConfig := homeassistant.HelperConfig{
 		Platform: "input_button",
-		ID:       triggerID,
-		Config:   map[string]any{"name": "Automation Trigger"},
+		Config:   map[string]any{"name": triggerName},
 	}
 	err = s.Client().CreateHelper(s.Context(), triggerConfig)
 	s.Require().NoError(err, "Failed to create trigger input_button")
@@ -136,8 +134,8 @@ func (s *AutomationIntegrationTestSuite) TestAutomationLifecycle() {
 }
 
 func (s *AutomationIntegrationTestSuite) TestAutomationUpdate() {
-	targetID := GenerateTestID("auto_upd_tgt")
-	targetEntityID := BuildEntityID("input_boolean", targetID)
+	targetName := GenerateTestID("auto_upd_tgt")
+	targetEntityID := BuildEntityID("input_boolean", targetName)
 	automationID := GenerateTestID("auto_update")
 
 	s.RegisterCleanup(func() {
@@ -145,11 +143,10 @@ func (s *AutomationIntegrationTestSuite) TestAutomationUpdate() {
 		_ = s.Client().DeleteHelper(s.Context(), targetEntityID)
 	})
 
-	// Create target
+	// Create target - entity ID is derived from name
 	targetConfig := homeassistant.HelperConfig{
 		Platform: "input_boolean",
-		ID:       targetID,
-		Config:   map[string]any{"name": "Update Target"},
+		Config:   map[string]any{"name": targetName},
 	}
 	err := s.Client().CreateHelper(s.Context(), targetConfig)
 	s.Require().NoError(err)
@@ -227,12 +224,12 @@ func (s *AutomationIntegrationTestSuite) TestAutomationUpdate() {
 }
 
 func (s *AutomationIntegrationTestSuite) TestAutomationWithCondition() {
-	targetID := GenerateTestID("auto_cond_tgt")
-	targetEntityID := BuildEntityID("input_boolean", targetID)
-	conditionID := GenerateTestID("auto_cond")
-	conditionEntityID := BuildEntityID("input_boolean", conditionID)
-	triggerID := GenerateTestID("auto_cond_trg")
-	triggerEntityID := BuildEntityID("input_button", triggerID)
+	targetName := GenerateTestID("auto_cond_tgt")
+	targetEntityID := BuildEntityID("input_boolean", targetName)
+	conditionName := GenerateTestID("auto_cond")
+	conditionEntityID := BuildEntityID("input_boolean", conditionName)
+	triggerName := GenerateTestID("auto_cond_trg")
+	triggerEntityID := BuildEntityID("input_button", triggerName)
 	automationID := GenerateTestID("auto_condition")
 
 	s.RegisterCleanup(func() {
@@ -242,11 +239,11 @@ func (s *AutomationIntegrationTestSuite) TestAutomationWithCondition() {
 		_ = s.Client().DeleteHelper(s.Context(), triggerEntityID)
 	})
 
-	// Create helpers
+	// Create helpers - entity IDs are derived from names
 	for _, cfg := range []homeassistant.HelperConfig{
-		{Platform: "input_boolean", ID: targetID, Config: map[string]any{"name": "Condition Target", "initial": false}},
-		{Platform: "input_boolean", ID: conditionID, Config: map[string]any{"name": "Condition Check", "initial": false}},
-		{Platform: "input_button", ID: triggerID, Config: map[string]any{"name": "Condition Trigger"}},
+		{Platform: "input_boolean", Config: map[string]any{"name": targetName, "initial": false}},
+		{Platform: "input_boolean", Config: map[string]any{"name": conditionName, "initial": false}},
+		{Platform: "input_button", Config: map[string]any{"name": triggerName}},
 	} {
 		err := s.Client().CreateHelper(s.Context(), cfg)
 		s.Require().NoError(err)

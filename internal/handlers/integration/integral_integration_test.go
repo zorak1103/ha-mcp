@@ -20,22 +20,21 @@ func TestIntegralIntegration(t *testing.T) {
 
 func (s *IntegralIntegrationTestSuite) TestIntegralLifecycle() {
 	// Create an input_number as source sensor
-	sourceID := GenerateTestID("integ_src")
-	sourceEntityID := BuildEntityID("input_number", sourceID)
-	integralID := GenerateTestID("integral")
-	integralEntityID := BuildEntityID("sensor", integralID)
+	sourceName := GenerateTestID("integ_src")
+	sourceEntityID := BuildEntityID("input_number", sourceName)
+	integralName := GenerateTestID("integral")
+	integralEntityID := BuildEntityID("sensor", integralName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), integralEntityID)
 		_ = s.Client().DeleteHelper(s.Context(), sourceEntityID)
 	})
 
-	// Create source input_number (simulating power sensor)
+	// Create source input_number (simulating power sensor) - entity ID is derived from name
 	sourceConfig := homeassistant.HelperConfig{
 		Platform: "input_number",
-		ID:       sourceID,
 		Config: map[string]any{
-			"name":                "Power Source",
+			"name":                sourceName,
 			"min":                 0.0,
 			"max":                 10000.0,
 			"initial":             100.0,
@@ -49,12 +48,11 @@ func (s *IntegralIntegrationTestSuite) TestIntegralLifecycle() {
 	_, err = s.WaitForEntity(sourceEntityID, 5*time.Second)
 	s.Require().NoError(err, "Source input_number did not appear")
 
-	// Create integral sensor
+	// Create integral sensor - entity ID is derived from name
 	integralConfig := homeassistant.HelperConfig{
 		Platform: "integration",
-		ID:       integralID,
 		Config: map[string]any{
-			"name":        "Energy Consumption",
+			"name":        integralName,
 			"source":      sourceEntityID,
 			"method":      "trapezoidal",
 			"round":       2,
@@ -96,10 +94,10 @@ func (s *IntegralIntegrationTestSuite) TestIntegralLifecycle() {
 }
 
 func (s *IntegralIntegrationTestSuite) TestIntegralWithLeftMethod() {
-	sourceID := GenerateTestID("integ_left_src")
-	sourceEntityID := BuildEntityID("input_number", sourceID)
-	integralID := GenerateTestID("integ_left")
-	integralEntityID := BuildEntityID("sensor", integralID)
+	sourceName := GenerateTestID("integ_left_src")
+	sourceEntityID := BuildEntityID("input_number", sourceName)
+	integralName := GenerateTestID("integ_left")
+	integralEntityID := BuildEntityID("sensor", integralName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), integralEntityID)
@@ -108,9 +106,8 @@ func (s *IntegralIntegrationTestSuite) TestIntegralWithLeftMethod() {
 
 	sourceConfig := homeassistant.HelperConfig{
 		Platform: "input_number",
-		ID:       sourceID,
 		Config: map[string]any{
-			"name":    "Left Method Source",
+			"name":    sourceName,
 			"min":     0.0,
 			"max":     1000.0,
 			"initial": 50.0,
@@ -123,12 +120,11 @@ func (s *IntegralIntegrationTestSuite) TestIntegralWithLeftMethod() {
 	_, err = s.WaitForEntity(sourceEntityID, 5*time.Second)
 	s.Require().NoError(err)
 
-	// Create integral with left method
+	// Create integral with left method - entity ID is derived from name
 	integralConfig := homeassistant.HelperConfig{
 		Platform: "integration",
-		ID:       integralID,
 		Config: map[string]any{
-			"name":   "Left Method Integral",
+			"name":   integralName,
 			"source": sourceEntityID,
 			"method": "left",
 		},
@@ -147,10 +143,10 @@ func (s *IntegralIntegrationTestSuite) TestIntegralWithLeftMethod() {
 }
 
 func (s *IntegralIntegrationTestSuite) TestIntegralWithDifferentTimeUnits() {
-	sourceID := GenerateTestID("integ_time_src")
-	sourceEntityID := BuildEntityID("input_number", sourceID)
-	integralID := GenerateTestID("integ_time")
-	integralEntityID := BuildEntityID("sensor", integralID)
+	sourceName := GenerateTestID("integ_time_src")
+	sourceEntityID := BuildEntityID("input_number", sourceName)
+	integralName := GenerateTestID("integ_time")
+	integralEntityID := BuildEntityID("sensor", integralName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), integralEntityID)
@@ -159,9 +155,8 @@ func (s *IntegralIntegrationTestSuite) TestIntegralWithDifferentTimeUnits() {
 
 	sourceConfig := homeassistant.HelperConfig{
 		Platform: "input_number",
-		ID:       sourceID,
 		Config: map[string]any{
-			"name":    "Time Unit Source",
+			"name":    sourceName,
 			"min":     0.0,
 			"max":     1000.0,
 			"initial": 100.0,
@@ -174,12 +169,11 @@ func (s *IntegralIntegrationTestSuite) TestIntegralWithDifferentTimeUnits() {
 	_, err = s.WaitForEntity(sourceEntityID, 5*time.Second)
 	s.Require().NoError(err)
 
-	// Create integral with minutes as time unit
+	// Create integral with minutes as time unit - entity ID is derived from name
 	integralConfig := homeassistant.HelperConfig{
 		Platform: "integration",
-		ID:       integralID,
 		Config: map[string]any{
-			"name":      "Minutes Integral",
+			"name":      integralName,
 			"source":    sourceEntityID,
 			"method":    "trapezoidal",
 			"unit_time": "min",

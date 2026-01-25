@@ -5,12 +5,14 @@ package integration
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/zorak1103/ha-mcp/internal/homeassistant"
+	"github.com/joho/godotenv"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 )
 
 // TestConfig holds configuration for integration tests.
@@ -21,9 +23,23 @@ type TestConfig struct {
 }
 
 // LoadTestConfig loads test configuration from environment variables.
+// It first attempts to load from .env.integration file in the project root.
 // Returns nil and skips the test if required variables are not set.
 func LoadTestConfig(t *testing.T) *TestConfig {
 	t.Helper()
+
+	// Try to load .env.integration file from various locations
+	envFiles := []string{
+		".env.integration",
+		filepath.Join("..", "..", "..", ".env.integration"), // From integration test dir to project root
+	}
+	for _, envFile := range envFiles {
+		if err := godotenv.Load(envFile); err == nil {
+			t.Logf("Loaded environment from %s", envFile)
+			break
+		}
+	}
+
 	url := os.Getenv("HA_INTEGRATION_TEST_URL")
 	token := os.Getenv("HA_INTEGRATION_TEST_TOKEN")
 
@@ -64,11 +80,8 @@ func (s *IntegrationTestSuite) SetupSuite() {
 
 	s.ctx, s.cancel = context.WithTimeout(context.Background(), s.config.Timeout)
 
-	// Create client using factory - use a connection context
-	connCtx, connCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer connCancel()
-
-	client, err := homeassistant.NewDefaultWSClient(connCtx, s.config.URL, s.config.Token)
+	// Create client using factory - use the suite context so connection lives for the duration of tests
+	client, err := homeassistant.NewDefaultWSClient(s.ctx, s.config.URL, s.config.Token)
 	require.NoError(s.T(), err, "Failed to create Home Assistant client")
 	s.client = client
 

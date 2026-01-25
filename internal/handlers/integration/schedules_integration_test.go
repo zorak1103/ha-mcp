@@ -19,19 +19,18 @@ func TestScheduleIntegration(t *testing.T) {
 }
 
 func (s *ScheduleIntegrationTestSuite) TestScheduleLifecycle() {
-	testID := GenerateTestID("schedule")
-	entityID := BuildEntityID("schedule", testID)
+	testName := GenerateTestID("schedule")
+	entityID := BuildEntityID("schedule", testName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), entityID)
 	})
 
-	// Create schedule with weekday hours
+	// Create schedule with weekday hours - entity ID is derived from name
 	config := homeassistant.HelperConfig{
 		Platform: "schedule",
-		ID:       testID,
 		Config: map[string]any{
-			"name": "Test Schedule",
+			"name": testName,
 			"icon": "mdi:calendar-clock",
 			"monday": []map[string]any{
 				{"from": "09:00:00", "to": "17:00:00"},
@@ -61,10 +60,10 @@ func (s *ScheduleIntegrationTestSuite) TestScheduleLifecycle() {
 	// State will be "on" or "off" depending on current time
 	s.Contains([]string{"on", "off"}, entity.State, "State should be on or off")
 
-	// Verify the schedule has the expected name
+	// Verify the schedule has the expected name (derived from testName)
 	friendlyName, ok := entity.Attributes["friendly_name"].(string)
 	s.True(ok, "friendly_name attribute should exist")
-	s.Equal("Test Schedule", friendlyName)
+	s.Contains(friendlyName, testName, "Friendly name should contain the test name")
 
 	// Test delete
 	err = s.Client().DeleteHelper(s.Context(), entityID)
@@ -75,19 +74,18 @@ func (s *ScheduleIntegrationTestSuite) TestScheduleLifecycle() {
 }
 
 func (s *ScheduleIntegrationTestSuite) TestScheduleMultipleTimeBlocks() {
-	testID := GenerateTestID("schedule_multi")
-	entityID := BuildEntityID("schedule", testID)
+	testName := GenerateTestID("schedule_multi")
+	entityID := BuildEntityID("schedule", testName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), entityID)
 	})
 
-	// Create schedule with multiple time blocks per day
+	// Create schedule with multiple time blocks per day - entity ID is derived from name
 	config := homeassistant.HelperConfig{
 		Platform: "schedule",
-		ID:       testID,
 		Config: map[string]any{
-			"name": "Test Multi Block Schedule",
+			"name": testName,
 			"monday": []map[string]any{
 				{"from": "08:00:00", "to": "12:00:00"}, // Morning
 				{"from": "13:00:00", "to": "17:00:00"}, // Afternoon
@@ -117,19 +115,18 @@ func (s *ScheduleIntegrationTestSuite) TestScheduleMultipleTimeBlocks() {
 }
 
 func (s *ScheduleIntegrationTestSuite) TestScheduleAllDays() {
-	testID := GenerateTestID("schedule_all")
-	entityID := BuildEntityID("schedule", testID)
+	testName := GenerateTestID("schedule_all")
+	entityID := BuildEntityID("schedule", testName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), entityID)
 	})
 
-	// Create schedule for all days
+	// Create schedule for all days - entity ID is derived from name
 	config := homeassistant.HelperConfig{
 		Platform: "schedule",
-		ID:       testID,
 		Config: map[string]any{
-			"name": "Test All Days Schedule",
+			"name": testName,
 			"monday":    []map[string]any{{"from": "00:00:00", "to": "23:59:59"}},
 			"tuesday":   []map[string]any{{"from": "00:00:00", "to": "23:59:59"}},
 			"wednesday": []map[string]any{{"from": "00:00:00", "to": "23:59:59"}},

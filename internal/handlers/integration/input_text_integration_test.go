@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 	"github.com/stretchr/testify/suite"
+	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 )
 
 type InputTextIntegrationTestSuite struct {
@@ -19,19 +19,18 @@ func TestInputTextIntegration(t *testing.T) {
 }
 
 func (s *InputTextIntegrationTestSuite) TestInputTextLifecycle() {
-	testID := GenerateTestID("input_txt")
-	entityID := BuildEntityID("input_text", testID)
+	testName := GenerateTestID("input_txt")
+	entityID := BuildEntityID("input_text", testName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), entityID)
 	})
 
-	// Create input_text
+	// Create input_text - entity ID is derived from name
 	config := homeassistant.HelperConfig{
 		Platform: "input_text",
-		ID:       testID,
 		Config: map[string]any{
-			"name":    "Test Input Text",
+			"name":    testName,
 			"initial": "initial value",
 			"min":     0,
 			"max":     100,
@@ -80,8 +79,8 @@ func (s *InputTextIntegrationTestSuite) TestInputTextLifecycle() {
 }
 
 func (s *InputTextIntegrationTestSuite) TestInputTextPasswordMode() {
-	testID := GenerateTestID("input_txt_pwd")
-	entityID := BuildEntityID("input_text", testID)
+	testName := GenerateTestID("input_txt_pwd")
+	entityID := BuildEntityID("input_text", testName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), entityID)
@@ -90,9 +89,8 @@ func (s *InputTextIntegrationTestSuite) TestInputTextPasswordMode() {
 	// Create input_text in password mode
 	config := homeassistant.HelperConfig{
 		Platform: "input_text",
-		ID:       testID,
 		Config: map[string]any{
-			"name":    "Test Password Field",
+			"name":    testName,
 			"initial": "",
 			"min":     0,
 			"max":     64,
@@ -124,8 +122,8 @@ func (s *InputTextIntegrationTestSuite) TestInputTextPasswordMode() {
 }
 
 func (s *InputTextIntegrationTestSuite) TestInputTextWithPattern() {
-	testID := GenerateTestID("input_txt_pat")
-	entityID := BuildEntityID("input_text", testID)
+	testName := GenerateTestID("input_txt_pat")
+	entityID := BuildEntityID("input_text", testName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), entityID)
@@ -134,9 +132,8 @@ func (s *InputTextIntegrationTestSuite) TestInputTextWithPattern() {
 	// Create input_text with pattern
 	config := homeassistant.HelperConfig{
 		Platform: "input_text",
-		ID:       testID,
 		Config: map[string]any{
-			"name":    "Test Email Field",
+			"name":    testName,
 			"initial": "test@example.com",
 			"min":     5,
 			"max":     100,

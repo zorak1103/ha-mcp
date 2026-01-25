@@ -20,20 +20,21 @@ func TestCounterIntegration(t *testing.T) {
 }
 
 func (s *CounterIntegrationTestSuite) TestCounterLifecycle() {
-	testID := GenerateTestID("counter")
-	entityID := BuildEntityID("counter", testID)
+	// For counters, the entity_id is generated from the name (lowercased, spaces to underscores)
+	// So we use the testID as the name to ensure unique entity IDs
+	testName := GenerateTestID("counter")
+	entityID := BuildEntityID("counter", testName)
 
 	// Register cleanup
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), entityID)
 	})
 
-	// Create counter
+	// Create counter - note: ID field is ignored for counters, entity ID comes from name
 	config := homeassistant.HelperConfig{
 		Platform: "counter",
-		ID:       testID,
 		Config: map[string]any{
-			"name":    "Test Counter",
+			"name":    testName,
 			"initial": 0,
 			"step":    1,
 			"minimum": 0,
@@ -104,8 +105,8 @@ func (s *CounterIntegrationTestSuite) TestCounterLifecycle() {
 }
 
 func (s *CounterIntegrationTestSuite) TestCounterWithStepValue() {
-	testID := GenerateTestID("counter_step")
-	entityID := BuildEntityID("counter", testID)
+	testName := GenerateTestID("counter_step")
+	entityID := BuildEntityID("counter", testName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), entityID)
@@ -114,9 +115,8 @@ func (s *CounterIntegrationTestSuite) TestCounterWithStepValue() {
 	// Create counter with step of 5
 	config := homeassistant.HelperConfig{
 		Platform: "counter",
-		ID:       testID,
 		Config: map[string]any{
-			"name":    "Test Counter with Step",
+			"name":    testName,
 			"initial": 10,
 			"step":    5,
 		},
@@ -146,8 +146,8 @@ func (s *CounterIntegrationTestSuite) TestCounterWithStepValue() {
 }
 
 func (s *CounterIntegrationTestSuite) TestCounterMinMax() {
-	testID := GenerateTestID("counter_minmax")
-	entityID := BuildEntityID("counter", testID)
+	testName := GenerateTestID("counter_minmax")
+	entityID := BuildEntityID("counter", testName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), entityID)
@@ -156,9 +156,8 @@ func (s *CounterIntegrationTestSuite) TestCounterMinMax() {
 	// Create counter with min/max
 	config := homeassistant.HelperConfig{
 		Platform: "counter",
-		ID:       testID,
 		Config: map[string]any{
-			"name":    "Test Counter Min Max",
+			"name":    testName,
 			"initial": 5,
 			"step":    1,
 			"minimum": 0,

@@ -329,16 +329,13 @@ func (c *wsClientImpl) ListHelpers(ctx context.Context) ([]Entity, error) {
 }
 
 // CreateHelper creates a new input helper.
+// Note: Home Assistant generates the entity ID from the "name" field automatically.
+// The HelperConfig.ID field is only used for update/delete operations.
 func (c *wsClientImpl) CreateHelper(ctx context.Context, config HelperConfig) error {
 	cmdType := fmt.Sprintf("%s/create", config.Platform)
 	params := map[string]any{}
 
-	// Add ID if provided
-	if config.ID != "" {
-		params[config.Platform+"_id"] = config.ID
-	}
-
-	// Add config fields
+	// Add config fields - the entity ID is derived from the "name" field by HA
 	if config.Config != nil {
 		for k, v := range config.Config {
 			params[k] = v

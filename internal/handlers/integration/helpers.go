@@ -14,10 +14,12 @@ import (
 
 // TestEntityPrefix is the prefix used for all test entities.
 // This ensures test entities can be identified and cleaned up safely.
-const TestEntityPrefix = "__mcptest_"
+// Note: We use "mcptest_" without leading underscores because Home Assistant
+// removes leading underscores when slugifying names to entity IDs.
+const TestEntityPrefix = "mcptest_"
 
 // GenerateTestID creates a unique test entity ID with the test prefix.
-// Format: __mcptest_<uuid>_<name>
+// Format: mcptest_<uuid>_<name>
 func GenerateTestID(name string) string {
 	b := make([]byte, 4)
 	_, _ = rand.Read(b)

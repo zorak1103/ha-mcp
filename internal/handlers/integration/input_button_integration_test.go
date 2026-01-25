@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 	"github.com/stretchr/testify/suite"
+	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 )
 
 type InputButtonIntegrationTestSuite struct {
@@ -19,19 +19,18 @@ func TestInputButtonIntegration(t *testing.T) {
 }
 
 func (s *InputButtonIntegrationTestSuite) TestInputButtonLifecycle() {
-	testID := GenerateTestID("input_btn")
-	entityID := BuildEntityID("input_button", testID)
+	testName := GenerateTestID("input_btn")
+	entityID := BuildEntityID("input_button", testName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), entityID)
 	})
 
-	// Create input_button
+	// Create input_button - entity ID is derived from name
 	config := homeassistant.HelperConfig{
 		Platform: "input_button",
-		ID:       testID,
 		Config: map[string]any{
-			"name": "Test Input Button",
+			"name": testName,
 			"icon": "mdi:gesture-tap-button",
 		},
 	}
@@ -79,8 +78,8 @@ func (s *InputButtonIntegrationTestSuite) TestInputButtonLifecycle() {
 }
 
 func (s *InputButtonIntegrationTestSuite) TestInputButtonWithIcon() {
-	testID := GenerateTestID("input_btn_icon")
-	entityID := BuildEntityID("input_button", testID)
+	testName := GenerateTestID("input_btn_icon")
+	entityID := BuildEntityID("input_button", testName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), entityID)
@@ -89,9 +88,8 @@ func (s *InputButtonIntegrationTestSuite) TestInputButtonWithIcon() {
 	// Create input_button with custom icon
 	config := homeassistant.HelperConfig{
 		Platform: "input_button",
-		ID:       testID,
 		Config: map[string]any{
-			"name": "Test Button with Icon",
+			"name": testName,
 			"icon": "mdi:bell-ring",
 		},
 	}

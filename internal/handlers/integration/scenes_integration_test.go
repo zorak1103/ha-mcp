@@ -20,10 +20,10 @@ func TestSceneIntegration(t *testing.T) {
 
 func (s *SceneIntegrationTestSuite) TestSceneLifecycle() {
 	// Create input_booleans for the scene to control
-	target1ID := GenerateTestID("scene_t1")
-	target2ID := GenerateTestID("scene_t2")
-	target1EntityID := BuildEntityID("input_boolean", target1ID)
-	target2EntityID := BuildEntityID("input_boolean", target2ID)
+	target1Name := GenerateTestID("scene_t1")
+	target2Name := GenerateTestID("scene_t2")
+	target1EntityID := BuildEntityID("input_boolean", target1Name)
+	target2EntityID := BuildEntityID("input_boolean", target2Name)
 	sceneID := GenerateTestID("scene")
 
 	s.RegisterCleanup(func() {
@@ -32,10 +32,10 @@ func (s *SceneIntegrationTestSuite) TestSceneLifecycle() {
 		_ = s.Client().DeleteHelper(s.Context(), target2EntityID)
 	})
 
-	// Create targets
+	// Create targets - entity IDs are derived from names
 	for _, cfg := range []homeassistant.HelperConfig{
-		{Platform: "input_boolean", ID: target1ID, Config: map[string]any{"name": "Scene Target 1", "initial": false}},
-		{Platform: "input_boolean", ID: target2ID, Config: map[string]any{"name": "Scene Target 2", "initial": true}},
+		{Platform: "input_boolean", Config: map[string]any{"name": target1Name, "initial": false}},
+		{Platform: "input_boolean", Config: map[string]any{"name": target2Name, "initial": true}},
 	} {
 		err := s.Client().CreateHelper(s.Context(), cfg)
 		s.Require().NoError(err)
@@ -106,8 +106,8 @@ func (s *SceneIntegrationTestSuite) TestSceneLifecycle() {
 }
 
 func (s *SceneIntegrationTestSuite) TestSceneUpdate() {
-	targetID := GenerateTestID("scene_upd_tgt")
-	targetEntityID := BuildEntityID("input_boolean", targetID)
+	targetName := GenerateTestID("scene_upd_tgt")
+	targetEntityID := BuildEntityID("input_boolean", targetName)
 	sceneID := GenerateTestID("scene_update")
 
 	s.RegisterCleanup(func() {
@@ -115,11 +115,10 @@ func (s *SceneIntegrationTestSuite) TestSceneUpdate() {
 		_ = s.Client().DeleteHelper(s.Context(), targetEntityID)
 	})
 
-	// Create target
+	// Create target - entity ID is derived from name
 	targetConfig := homeassistant.HelperConfig{
 		Platform: "input_boolean",
-		ID:       targetID,
-		Config:   map[string]any{"name": "Update Scene Target", "initial": false},
+		Config:   map[string]any{"name": targetName, "initial": false},
 	}
 	err := s.Client().CreateHelper(s.Context(), targetConfig)
 	s.Require().NoError(err)
@@ -192,8 +191,8 @@ func (s *SceneIntegrationTestSuite) TestSceneUpdate() {
 }
 
 func (s *SceneIntegrationTestSuite) TestSceneWithInputNumber() {
-	targetID := GenerateTestID("scene_num_tgt")
-	targetEntityID := BuildEntityID("input_number", targetID)
+	targetName := GenerateTestID("scene_num_tgt")
+	targetEntityID := BuildEntityID("input_number", targetName)
 	sceneID := GenerateTestID("scene_number")
 
 	s.RegisterCleanup(func() {
@@ -201,12 +200,11 @@ func (s *SceneIntegrationTestSuite) TestSceneWithInputNumber() {
 		_ = s.Client().DeleteHelper(s.Context(), targetEntityID)
 	})
 
-	// Create target input_number
+	// Create target input_number - entity ID is derived from name
 	targetConfig := homeassistant.HelperConfig{
 		Platform: "input_number",
-		ID:       targetID,
 		Config: map[string]any{
-			"name":    "Scene Number Target",
+			"name":    targetName,
 			"min":     0.0,
 			"max":     100.0,
 			"initial": 50.0,
@@ -258,8 +256,8 @@ func (s *SceneIntegrationTestSuite) TestSceneWithInputNumber() {
 }
 
 func (s *SceneIntegrationTestSuite) TestMultipleScenes() {
-	targetID := GenerateTestID("scene_multi_tgt")
-	targetEntityID := BuildEntityID("input_boolean", targetID)
+	targetName := GenerateTestID("scene_multi_tgt")
+	targetEntityID := BuildEntityID("input_boolean", targetName)
 	scene1ID := GenerateTestID("scene_a")
 	scene2ID := GenerateTestID("scene_b")
 
@@ -269,11 +267,10 @@ func (s *SceneIntegrationTestSuite) TestMultipleScenes() {
 		_ = s.Client().DeleteHelper(s.Context(), targetEntityID)
 	})
 
-	// Create target
+	// Create target - entity ID is derived from name
 	targetConfig := homeassistant.HelperConfig{
 		Platform: "input_boolean",
-		ID:       targetID,
-		Config:   map[string]any{"name": "Multi Scene Target", "initial": false},
+		Config:   map[string]any{"name": targetName, "initial": false},
 	}
 	err := s.Client().CreateHelper(s.Context(), targetConfig)
 	s.Require().NoError(err)

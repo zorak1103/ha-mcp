@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 	"github.com/stretchr/testify/suite"
+	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 )
 
 type InputSelectIntegrationTestSuite struct {
@@ -19,19 +19,18 @@ func TestInputSelectIntegration(t *testing.T) {
 }
 
 func (s *InputSelectIntegrationTestSuite) TestInputSelectLifecycle() {
-	testID := GenerateTestID("input_sel")
-	entityID := BuildEntityID("input_select", testID)
+	testName := GenerateTestID("input_sel")
+	entityID := BuildEntityID("input_select", testName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), entityID)
 	})
 
-	// Create input_select
+	// Create input_select - entity ID is derived from name
 	config := homeassistant.HelperConfig{
 		Platform: "input_select",
-		ID:       testID,
 		Config: map[string]any{
-			"name":    "Test Input Select",
+			"name":    testName,
 			"options": []string{"Option A", "Option B", "Option C"},
 			"initial": "Option A",
 			"icon":    "mdi:format-list-bulleted",
@@ -117,8 +116,8 @@ func (s *InputSelectIntegrationTestSuite) TestInputSelectLifecycle() {
 }
 
 func (s *InputSelectIntegrationTestSuite) TestInputSelectSetOptions() {
-	testID := GenerateTestID("input_sel_opts")
-	entityID := BuildEntityID("input_select", testID)
+	testName := GenerateTestID("input_sel_opts")
+	entityID := BuildEntityID("input_select", testName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), entityID)
@@ -127,9 +126,8 @@ func (s *InputSelectIntegrationTestSuite) TestInputSelectSetOptions() {
 	// Create input_select
 	config := homeassistant.HelperConfig{
 		Platform: "input_select",
-		ID:       testID,
 		Config: map[string]any{
-			"name":    "Test Options Select",
+			"name":    testName,
 			"options": []string{"First", "Second"},
 		},
 	}

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 	"github.com/stretchr/testify/suite"
+	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 )
 
 type InputDatetimeIntegrationTestSuite struct {
@@ -20,19 +20,18 @@ func TestInputDatetimeIntegration(t *testing.T) {
 }
 
 func (s *InputDatetimeIntegrationTestSuite) TestInputDatetimeFull() {
-	testID := GenerateTestID("input_dt")
-	entityID := BuildEntityID("input_datetime", testID)
+	testName := GenerateTestID("input_dt")
+	entityID := BuildEntityID("input_datetime", testName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), entityID)
 	})
 
-	// Create input_datetime with both date and time
+	// Create input_datetime with both date and time - entity ID is derived from name
 	config := homeassistant.HelperConfig{
 		Platform: "input_datetime",
-		ID:       testID,
 		Config: map[string]any{
-			"name":     "Test DateTime",
+			"name":     testName,
 			"has_date": true,
 			"has_time": true,
 		},
@@ -80,8 +79,8 @@ func (s *InputDatetimeIntegrationTestSuite) TestInputDatetimeFull() {
 }
 
 func (s *InputDatetimeIntegrationTestSuite) TestInputDatetimeDateOnly() {
-	testID := GenerateTestID("input_dt_date")
-	entityID := BuildEntityID("input_datetime", testID)
+	testName := GenerateTestID("input_dt_date")
+	entityID := BuildEntityID("input_datetime", testName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), entityID)
@@ -90,9 +89,8 @@ func (s *InputDatetimeIntegrationTestSuite) TestInputDatetimeDateOnly() {
 	// Create input_datetime with date only
 	config := homeassistant.HelperConfig{
 		Platform: "input_datetime",
-		ID:       testID,
 		Config: map[string]any{
-			"name":     "Test Date Only",
+			"name":     testName,
 			"has_date": true,
 			"has_time": false,
 		},
@@ -122,8 +120,8 @@ func (s *InputDatetimeIntegrationTestSuite) TestInputDatetimeDateOnly() {
 }
 
 func (s *InputDatetimeIntegrationTestSuite) TestInputDatetimeTimeOnly() {
-	testID := GenerateTestID("input_dt_time")
-	entityID := BuildEntityID("input_datetime", testID)
+	testName := GenerateTestID("input_dt_time")
+	entityID := BuildEntityID("input_datetime", testName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), entityID)
@@ -132,9 +130,8 @@ func (s *InputDatetimeIntegrationTestSuite) TestInputDatetimeTimeOnly() {
 	// Create input_datetime with time only
 	config := homeassistant.HelperConfig{
 		Platform: "input_datetime",
-		ID:       testID,
 		Config: map[string]any{
-			"name":     "Test Time Only",
+			"name":     testName,
 			"has_date": false,
 			"has_time": true,
 		},

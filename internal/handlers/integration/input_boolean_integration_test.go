@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 	"github.com/stretchr/testify/suite"
+	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 )
 
 type InputBooleanIntegrationTestSuite struct {
@@ -19,19 +19,19 @@ func TestInputBooleanIntegration(t *testing.T) {
 }
 
 func (s *InputBooleanIntegrationTestSuite) TestInputBooleanLifecycle() {
-	testID := GenerateTestID("input_bool")
-	entityID := BuildEntityID("input_boolean", testID)
+	// Entity ID is derived from the name, so we use testName as both
+	testName := GenerateTestID("input_bool")
+	entityID := BuildEntityID("input_boolean", testName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), entityID)
 	})
 
-	// Create input_boolean
+	// Create input_boolean - entity ID is derived from name
 	config := homeassistant.HelperConfig{
 		Platform: "input_boolean",
-		ID:       testID,
 		Config: map[string]any{
-			"name":    "Test Input Boolean",
+			"name":    testName,
 			"initial": false,
 			"icon":    "mdi:lightbulb",
 		},
@@ -87,8 +87,8 @@ func (s *InputBooleanIntegrationTestSuite) TestInputBooleanLifecycle() {
 }
 
 func (s *InputBooleanIntegrationTestSuite) TestInputBooleanWithInitialOn() {
-	testID := GenerateTestID("input_bool_on")
-	entityID := BuildEntityID("input_boolean", testID)
+	testName := GenerateTestID("input_bool_on")
+	entityID := BuildEntityID("input_boolean", testName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), entityID)
@@ -97,9 +97,8 @@ func (s *InputBooleanIntegrationTestSuite) TestInputBooleanWithInitialOn() {
 	// Create input_boolean with initial state on
 	config := homeassistant.HelperConfig{
 		Platform: "input_boolean",
-		ID:       testID,
 		Config: map[string]any{
-			"name":    "Test Input Boolean Initial On",
+			"name":    testName,
 			"initial": true,
 		},
 	}

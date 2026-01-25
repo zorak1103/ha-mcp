@@ -20,8 +20,8 @@ func TestScriptIntegration(t *testing.T) {
 
 func (s *ScriptIntegrationTestSuite) TestScriptLifecycle() {
 	// Create an input_boolean for the script to control
-	targetID := GenerateTestID("script_target")
-	targetEntityID := BuildEntityID("input_boolean", targetID)
+	targetName := GenerateTestID("script_target")
+	targetEntityID := BuildEntityID("input_boolean", targetName)
 	scriptID := GenerateTestID("script")
 
 	s.RegisterCleanup(func() {
@@ -29,11 +29,10 @@ func (s *ScriptIntegrationTestSuite) TestScriptLifecycle() {
 		_ = s.Client().DeleteHelper(s.Context(), targetEntityID)
 	})
 
-	// Create target input_boolean
+	// Create target input_boolean - entity ID is derived from name
 	targetConfig := homeassistant.HelperConfig{
 		Platform: "input_boolean",
-		ID:       targetID,
-		Config:   map[string]any{"name": "Script Target", "initial": false},
+		Config:   map[string]any{"name": targetName, "initial": false},
 	}
 	err := s.Client().CreateHelper(s.Context(), targetConfig)
 	s.Require().NoError(err, "Failed to create target input_boolean")
@@ -97,8 +96,8 @@ func (s *ScriptIntegrationTestSuite) TestScriptLifecycle() {
 
 func (s *ScriptIntegrationTestSuite) TestScriptWithVariables() {
 	// Create an input_number for the script to control
-	targetID := GenerateTestID("script_var_tgt")
-	targetEntityID := BuildEntityID("input_number", targetID)
+	targetName := GenerateTestID("script_var_tgt")
+	targetEntityID := BuildEntityID("input_number", targetName)
 	scriptID := GenerateTestID("script_vars")
 
 	s.RegisterCleanup(func() {
@@ -106,12 +105,11 @@ func (s *ScriptIntegrationTestSuite) TestScriptWithVariables() {
 		_ = s.Client().DeleteHelper(s.Context(), targetEntityID)
 	})
 
-	// Create target input_number
+	// Create target input_number - entity ID is derived from name
 	targetConfig := homeassistant.HelperConfig{
 		Platform: "input_number",
-		ID:       targetID,
 		Config: map[string]any{
-			"name":    "Script Variable Target",
+			"name":    targetName,
 			"min":     0.0,
 			"max":     100.0,
 			"initial": 0.0,
@@ -198,8 +196,8 @@ func (s *ScriptIntegrationTestSuite) TestScriptWithVariables() {
 }
 
 func (s *ScriptIntegrationTestSuite) TestScriptUpdate() {
-	targetID := GenerateTestID("script_upd_tgt")
-	targetEntityID := BuildEntityID("input_boolean", targetID)
+	targetName := GenerateTestID("script_upd_tgt")
+	targetEntityID := BuildEntityID("input_boolean", targetName)
 	scriptID := GenerateTestID("script_update")
 
 	s.RegisterCleanup(func() {
@@ -207,11 +205,10 @@ func (s *ScriptIntegrationTestSuite) TestScriptUpdate() {
 		_ = s.Client().DeleteHelper(s.Context(), targetEntityID)
 	})
 
-	// Create target
+	// Create target - entity ID is derived from name
 	targetConfig := homeassistant.HelperConfig{
 		Platform: "input_boolean",
-		ID:       targetID,
-		Config:   map[string]any{"name": "Update Script Target"},
+		Config:   map[string]any{"name": targetName},
 	}
 	err := s.Client().CreateHelper(s.Context(), targetConfig)
 	s.Require().NoError(err)
@@ -294,10 +291,10 @@ func (s *ScriptIntegrationTestSuite) TestScriptUpdate() {
 }
 
 func (s *ScriptIntegrationTestSuite) TestScriptWithMultipleActions() {
-	target1ID := GenerateTestID("script_m1")
-	target2ID := GenerateTestID("script_m2")
-	target1EntityID := BuildEntityID("input_boolean", target1ID)
-	target2EntityID := BuildEntityID("input_boolean", target2ID)
+	target1Name := GenerateTestID("script_m1")
+	target2Name := GenerateTestID("script_m2")
+	target1EntityID := BuildEntityID("input_boolean", target1Name)
+	target2EntityID := BuildEntityID("input_boolean", target2Name)
 	scriptID := GenerateTestID("script_multi")
 
 	s.RegisterCleanup(func() {
@@ -306,10 +303,10 @@ func (s *ScriptIntegrationTestSuite) TestScriptWithMultipleActions() {
 		_ = s.Client().DeleteHelper(s.Context(), target2EntityID)
 	})
 
-	// Create targets
+	// Create targets - entity IDs are derived from names
 	for _, cfg := range []homeassistant.HelperConfig{
-		{Platform: "input_boolean", ID: target1ID, Config: map[string]any{"name": "Multi Target 1", "initial": false}},
-		{Platform: "input_boolean", ID: target2ID, Config: map[string]any{"name": "Multi Target 2", "initial": false}},
+		{Platform: "input_boolean", Config: map[string]any{"name": target1Name, "initial": false}},
+		{Platform: "input_boolean", Config: map[string]any{"name": target2Name, "initial": false}},
 	} {
 		err := s.Client().CreateHelper(s.Context(), cfg)
 		s.Require().NoError(err)

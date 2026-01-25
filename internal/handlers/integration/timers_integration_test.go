@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 	"github.com/stretchr/testify/suite"
+	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 )
 
 type TimerIntegrationTestSuite struct {
@@ -19,19 +19,18 @@ func TestTimerIntegration(t *testing.T) {
 }
 
 func (s *TimerIntegrationTestSuite) TestTimerLifecycle() {
-	testID := GenerateTestID("timer")
-	entityID := BuildEntityID("timer", testID)
+	testName := GenerateTestID("timer")
+	entityID := BuildEntityID("timer", testName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), entityID)
 	})
 
-	// Create timer
+	// Create timer - entity ID is derived from name
 	config := homeassistant.HelperConfig{
 		Platform: "timer",
-		ID:       testID,
 		Config: map[string]any{
-			"name":     "Test Timer",
+			"name":     testName,
 			"duration": "00:01:00", // 1 minute
 			"icon":     "mdi:timer",
 		},
@@ -98,8 +97,8 @@ func (s *TimerIntegrationTestSuite) TestTimerLifecycle() {
 }
 
 func (s *TimerIntegrationTestSuite) TestTimerFinish() {
-	testID := GenerateTestID("timer_fin")
-	entityID := BuildEntityID("timer", testID)
+	testName := GenerateTestID("timer_fin")
+	entityID := BuildEntityID("timer", testName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), entityID)
@@ -108,9 +107,8 @@ func (s *TimerIntegrationTestSuite) TestTimerFinish() {
 	// Create timer
 	config := homeassistant.HelperConfig{
 		Platform: "timer",
-		ID:       testID,
 		Config: map[string]any{
-			"name":     "Test Timer Finish",
+			"name":     testName,
 			"duration": "00:05:00",
 		},
 	}
@@ -146,8 +144,8 @@ func (s *TimerIntegrationTestSuite) TestTimerFinish() {
 }
 
 func (s *TimerIntegrationTestSuite) TestTimerChange() {
-	testID := GenerateTestID("timer_chg")
-	entityID := BuildEntityID("timer", testID)
+	testName := GenerateTestID("timer_chg")
+	entityID := BuildEntityID("timer", testName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), entityID)
@@ -156,9 +154,8 @@ func (s *TimerIntegrationTestSuite) TestTimerChange() {
 	// Create timer
 	config := homeassistant.HelperConfig{
 		Platform: "timer",
-		ID:       testID,
 		Config: map[string]any{
-			"name":     "Test Timer Change",
+			"name":     testName,
 			"duration": "00:01:00",
 		},
 	}
@@ -200,8 +197,8 @@ func (s *TimerIntegrationTestSuite) TestTimerChange() {
 }
 
 func (s *TimerIntegrationTestSuite) TestTimerWithCustomDuration() {
-	testID := GenerateTestID("timer_dur")
-	entityID := BuildEntityID("timer", testID)
+	testName := GenerateTestID("timer_dur")
+	entityID := BuildEntityID("timer", testName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), entityID)
@@ -210,9 +207,8 @@ func (s *TimerIntegrationTestSuite) TestTimerWithCustomDuration() {
 	// Create timer with default duration
 	config := homeassistant.HelperConfig{
 		Platform: "timer",
-		ID:       testID,
 		Config: map[string]any{
-			"name":     "Test Timer Custom Duration",
+			"name":     testName,
 			"duration": "00:10:00",
 		},
 	}

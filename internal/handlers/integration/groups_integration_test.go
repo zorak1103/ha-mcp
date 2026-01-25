@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 	"github.com/stretchr/testify/suite"
+	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 )
 
 type GroupIntegrationTestSuite struct {
@@ -20,12 +20,12 @@ func TestGroupIntegration(t *testing.T) {
 
 func (s *GroupIntegrationTestSuite) TestGroupLifecycle() {
 	// First, create some input_booleans to group
-	bool1ID := GenerateTestID("grp_bool1")
-	bool2ID := GenerateTestID("grp_bool2")
-	bool1EntityID := BuildEntityID("input_boolean", bool1ID)
-	bool2EntityID := BuildEntityID("input_boolean", bool2ID)
-	groupID := GenerateTestID("group")
-	groupEntityID := BuildEntityID("group", groupID)
+	bool1Name := GenerateTestID("grp_bool1")
+	bool2Name := GenerateTestID("grp_bool2")
+	bool1EntityID := BuildEntityID("input_boolean", bool1Name)
+	bool2EntityID := BuildEntityID("input_boolean", bool2Name)
+	groupName := GenerateTestID("group")
+	groupEntityID := BuildEntityID("group", groupName)
 
 	// Register cleanup for all entities
 	s.RegisterCleanup(func() {
@@ -34,17 +34,15 @@ func (s *GroupIntegrationTestSuite) TestGroupLifecycle() {
 		_ = s.Client().DeleteHelper(s.Context(), bool2EntityID)
 	})
 
-	// Create input_booleans
+	// Create input_booleans - entity ID is derived from name
 	for _, cfg := range []homeassistant.HelperConfig{
 		{
 			Platform: "input_boolean",
-			ID:       bool1ID,
-			Config:   map[string]any{"name": "Group Bool 1", "initial": false},
+			Config:   map[string]any{"name": bool1Name, "initial": false},
 		},
 		{
 			Platform: "input_boolean",
-			ID:       bool2ID,
-			Config:   map[string]any{"name": "Group Bool 2", "initial": false},
+			Config:   map[string]any{"name": bool2Name, "initial": false},
 		},
 	} {
 		err := s.Client().CreateHelper(s.Context(), cfg)
@@ -56,12 +54,11 @@ func (s *GroupIntegrationTestSuite) TestGroupLifecycle() {
 	_, err = s.WaitForEntity(bool2EntityID, 5*time.Second)
 	s.Require().NoError(err)
 
-	// Create group
+	// Create group - entity ID is derived from name
 	groupConfig := homeassistant.HelperConfig{
 		Platform: "group",
-		ID:       groupID,
 		Config: map[string]any{
-			"name":     "Test Group",
+			"name":     groupName,
 			"entities": []string{bool1EntityID, bool2EntityID},
 			"all":      false, // Group is on if ANY member is on
 		},
@@ -110,12 +107,12 @@ func (s *GroupIntegrationTestSuite) TestGroupLifecycle() {
 
 func (s *GroupIntegrationTestSuite) TestGroupWithAllMode() {
 	// Create input_booleans to group
-	bool1ID := GenerateTestID("grpall_b1")
-	bool2ID := GenerateTestID("grpall_b2")
-	bool1EntityID := BuildEntityID("input_boolean", bool1ID)
-	bool2EntityID := BuildEntityID("input_boolean", bool2ID)
-	groupID := GenerateTestID("group_all")
-	groupEntityID := BuildEntityID("group", groupID)
+	bool1Name := GenerateTestID("grpall_b1")
+	bool2Name := GenerateTestID("grpall_b2")
+	bool1EntityID := BuildEntityID("input_boolean", bool1Name)
+	bool2EntityID := BuildEntityID("input_boolean", bool2Name)
+	groupName := GenerateTestID("group_all")
+	groupEntityID := BuildEntityID("group", groupName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), groupEntityID)
@@ -127,13 +124,11 @@ func (s *GroupIntegrationTestSuite) TestGroupWithAllMode() {
 	for _, cfg := range []homeassistant.HelperConfig{
 		{
 			Platform: "input_boolean",
-			ID:       bool1ID,
-			Config:   map[string]any{"name": "All Group Bool 1", "initial": false},
+			Config:   map[string]any{"name": bool1Name, "initial": false},
 		},
 		{
 			Platform: "input_boolean",
-			ID:       bool2ID,
-			Config:   map[string]any{"name": "All Group Bool 2", "initial": false},
+			Config:   map[string]any{"name": bool2Name, "initial": false},
 		},
 	} {
 		err := s.Client().CreateHelper(s.Context(), cfg)
@@ -146,9 +141,8 @@ func (s *GroupIntegrationTestSuite) TestGroupWithAllMode() {
 	// Create group with all=true (group is on only when ALL members are on)
 	groupConfig := homeassistant.HelperConfig{
 		Platform: "group",
-		ID:       groupID,
 		Config: map[string]any{
-			"name":     "Test All Group",
+			"name":     groupName,
 			"entities": []string{bool1EntityID, bool2EntityID},
 			"all":      true,
 		},
@@ -191,14 +185,14 @@ func (s *GroupIntegrationTestSuite) TestGroupWithAllMode() {
 
 func (s *GroupIntegrationTestSuite) TestGroupSetEntities() {
 	// Create input_booleans
-	bool1ID := GenerateTestID("grpset_b1")
-	bool2ID := GenerateTestID("grpset_b2")
-	bool3ID := GenerateTestID("grpset_b3")
-	bool1EntityID := BuildEntityID("input_boolean", bool1ID)
-	bool2EntityID := BuildEntityID("input_boolean", bool2ID)
-	bool3EntityID := BuildEntityID("input_boolean", bool3ID)
-	groupID := GenerateTestID("group_set")
-	groupEntityID := BuildEntityID("group", groupID)
+	bool1Name := GenerateTestID("grpset_b1")
+	bool2Name := GenerateTestID("grpset_b2")
+	bool3Name := GenerateTestID("grpset_b3")
+	bool1EntityID := BuildEntityID("input_boolean", bool1Name)
+	bool2EntityID := BuildEntityID("input_boolean", bool2Name)
+	bool3EntityID := BuildEntityID("input_boolean", bool3Name)
+	groupName := GenerateTestID("group_set")
+	groupEntityID := BuildEntityID("group", groupName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), groupEntityID)
@@ -209,9 +203,9 @@ func (s *GroupIntegrationTestSuite) TestGroupSetEntities() {
 
 	// Create input_booleans
 	for _, cfg := range []homeassistant.HelperConfig{
-		{Platform: "input_boolean", ID: bool1ID, Config: map[string]any{"name": "Set Bool 1"}},
-		{Platform: "input_boolean", ID: bool2ID, Config: map[string]any{"name": "Set Bool 2"}},
-		{Platform: "input_boolean", ID: bool3ID, Config: map[string]any{"name": "Set Bool 3"}},
+		{Platform: "input_boolean", Config: map[string]any{"name": bool1Name}},
+		{Platform: "input_boolean", Config: map[string]any{"name": bool2Name}},
+		{Platform: "input_boolean", Config: map[string]any{"name": bool3Name}},
 	} {
 		err := s.Client().CreateHelper(s.Context(), cfg)
 		s.Require().NoError(err)
@@ -224,9 +218,8 @@ func (s *GroupIntegrationTestSuite) TestGroupSetEntities() {
 	// Create group with first two members
 	groupConfig := homeassistant.HelperConfig{
 		Platform: "group",
-		ID:       groupID,
 		Config: map[string]any{
-			"name":     "Test Set Group",
+			"name":     groupName,
 			"entities": []string{bool1EntityID, bool2EntityID},
 		},
 	}
@@ -244,7 +237,7 @@ func (s *GroupIntegrationTestSuite) TestGroupSetEntities() {
 
 	// Test set (add entity)
 	_, err = s.Client().CallService(s.Context(), "group", "set", map[string]any{
-		"object_id":   groupID,
+		"object_id":    groupName,
 		"add_entities": []string{bool3EntityID},
 	})
 	s.Require().NoError(err, "Failed to add entity to group")
@@ -259,7 +252,7 @@ func (s *GroupIntegrationTestSuite) TestGroupSetEntities() {
 
 	// Test set (remove entity)
 	_, err = s.Client().CallService(s.Context(), "group", "set", map[string]any{
-		"object_id":      groupID,
+		"object_id":       groupName,
 		"remove_entities": []string{bool1EntityID},
 	})
 	s.Require().NoError(err, "Failed to remove entity from group")

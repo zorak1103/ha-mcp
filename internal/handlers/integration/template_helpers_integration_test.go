@@ -20,22 +20,21 @@ func TestTemplateHelperIntegration(t *testing.T) {
 
 func (s *TemplateHelperIntegrationTestSuite) TestTemplateSensorLifecycle() {
 	// Create an input_number to use in template
-	sourceID := GenerateTestID("tmpl_src")
-	sourceEntityID := BuildEntityID("input_number", sourceID)
-	templateID := GenerateTestID("tmpl_sensor")
-	templateEntityID := BuildEntityID("sensor", templateID)
+	sourceName := GenerateTestID("tmpl_src")
+	sourceEntityID := BuildEntityID("input_number", sourceName)
+	templateName := GenerateTestID("tmpl_sensor")
+	templateEntityID := BuildEntityID("sensor", templateName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), templateEntityID)
 		_ = s.Client().DeleteHelper(s.Context(), sourceEntityID)
 	})
 
-	// Create source input_number
+	// Create source input_number - entity ID is derived from name
 	sourceConfig := homeassistant.HelperConfig{
 		Platform: "input_number",
-		ID:       sourceID,
 		Config: map[string]any{
-			"name":                "Template Source",
+			"name":                sourceName,
 			"min":                 0.0,
 			"max":                 100.0,
 			"initial":             20.0,
@@ -49,12 +48,11 @@ func (s *TemplateHelperIntegrationTestSuite) TestTemplateSensorLifecycle() {
 	_, err = s.WaitForEntity(sourceEntityID, 5*time.Second)
 	s.Require().NoError(err, "Source input_number did not appear")
 
-	// Create template sensor that converts Celsius to Fahrenheit
+	// Create template sensor that converts Celsius to Fahrenheit - entity ID is derived from name
 	templateConfig := homeassistant.HelperConfig{
 		Platform: "template",
-		ID:       templateID,
 		Config: map[string]any{
-			"name":                "Temperature in Fahrenheit",
+			"name":                templateName,
 			"state":               "{{ (states('" + sourceEntityID + "') | float * 9/5 + 32) | round(1) }}",
 			"unit_of_measurement": "°F",
 			"device_class":        "temperature",
@@ -95,22 +93,21 @@ func (s *TemplateHelperIntegrationTestSuite) TestTemplateSensorLifecycle() {
 
 func (s *TemplateHelperIntegrationTestSuite) TestTemplateBinarySensorLifecycle() {
 	// Create an input_number to use in template
-	sourceID := GenerateTestID("tmpl_bin_src")
-	sourceEntityID := BuildEntityID("input_number", sourceID)
-	templateID := GenerateTestID("tmpl_binary")
-	templateEntityID := BuildEntityID("binary_sensor", templateID)
+	sourceName := GenerateTestID("tmpl_bin_src")
+	sourceEntityID := BuildEntityID("input_number", sourceName)
+	templateName := GenerateTestID("tmpl_binary")
+	templateEntityID := BuildEntityID("binary_sensor", templateName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), templateEntityID)
 		_ = s.Client().DeleteHelper(s.Context(), sourceEntityID)
 	})
 
-	// Create source input_number
+	// Create source input_number - entity ID is derived from name
 	sourceConfig := homeassistant.HelperConfig{
 		Platform: "input_number",
-		ID:       sourceID,
 		Config: map[string]any{
-			"name":    "Binary Template Source",
+			"name":    sourceName,
 			"min":     0.0,
 			"max":     100.0,
 			"initial": 30.0,
@@ -123,12 +120,11 @@ func (s *TemplateHelperIntegrationTestSuite) TestTemplateBinarySensorLifecycle()
 	_, err = s.WaitForEntity(sourceEntityID, 5*time.Second)
 	s.Require().NoError(err, "Source input_number did not appear")
 
-	// Create template binary sensor (on when source > 50)
+	// Create template binary sensor (on when source > 50) - entity ID is derived from name
 	templateConfig := homeassistant.HelperConfig{
 		Platform: "template",
-		ID:       templateID,
 		Config: map[string]any{
-			"name":         "High Value Indicator",
+			"name":         templateName,
 			"state":        "{{ states('" + sourceEntityID + "') | float > 50 }}",
 			"device_class": "problem",
 			"type":         "binary_sensor",
@@ -178,10 +174,10 @@ func (s *TemplateHelperIntegrationTestSuite) TestTemplateBinarySensorLifecycle()
 }
 
 func (s *TemplateHelperIntegrationTestSuite) TestTemplateSensorWithStateClass() {
-	sourceID := GenerateTestID("tmpl_sc_src")
-	sourceEntityID := BuildEntityID("input_number", sourceID)
-	templateID := GenerateTestID("tmpl_state_cls")
-	templateEntityID := BuildEntityID("sensor", templateID)
+	sourceName := GenerateTestID("tmpl_sc_src")
+	sourceEntityID := BuildEntityID("input_number", sourceName)
+	templateName := GenerateTestID("tmpl_state_cls")
+	templateEntityID := BuildEntityID("sensor", templateName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), templateEntityID)
@@ -190,9 +186,8 @@ func (s *TemplateHelperIntegrationTestSuite) TestTemplateSensorWithStateClass() 
 
 	sourceConfig := homeassistant.HelperConfig{
 		Platform: "input_number",
-		ID:       sourceID,
 		Config: map[string]any{
-			"name":    "State Class Source",
+			"name":    sourceName,
 			"min":     0.0,
 			"max":     1000.0,
 			"initial": 100.0,
@@ -205,12 +200,11 @@ func (s *TemplateHelperIntegrationTestSuite) TestTemplateSensorWithStateClass() 
 	_, err = s.WaitForEntity(sourceEntityID, 5*time.Second)
 	s.Require().NoError(err)
 
-	// Create template sensor with state_class for long-term statistics
+	// Create template sensor with state_class for long-term statistics - entity ID is derived from name
 	templateConfig := homeassistant.HelperConfig{
 		Platform: "template",
-		ID:       templateID,
 		Config: map[string]any{
-			"name":                "Power Consumption",
+			"name":                templateName,
 			"state":               "{{ states('" + sourceEntityID + "') | float }}",
 			"unit_of_measurement": "kWh",
 			"device_class":        "energy",
@@ -236,10 +230,10 @@ func (s *TemplateHelperIntegrationTestSuite) TestTemplateSensorWithStateClass() 
 }
 
 func (s *TemplateHelperIntegrationTestSuite) TestTemplateBinarySensorWithDelay() {
-	sourceID := GenerateTestID("tmpl_dly_src")
-	sourceEntityID := BuildEntityID("input_boolean", sourceID)
-	templateID := GenerateTestID("tmpl_delay")
-	templateEntityID := BuildEntityID("binary_sensor", templateID)
+	sourceName := GenerateTestID("tmpl_dly_src")
+	sourceEntityID := BuildEntityID("input_boolean", sourceName)
+	templateName := GenerateTestID("tmpl_delay")
+	templateEntityID := BuildEntityID("binary_sensor", templateName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), templateEntityID)
@@ -248,9 +242,8 @@ func (s *TemplateHelperIntegrationTestSuite) TestTemplateBinarySensorWithDelay()
 
 	sourceConfig := homeassistant.HelperConfig{
 		Platform: "input_boolean",
-		ID:       sourceID,
 		Config: map[string]any{
-			"name":    "Delay Source",
+			"name":    sourceName,
 			"initial": false,
 		},
 	}
@@ -261,12 +254,11 @@ func (s *TemplateHelperIntegrationTestSuite) TestTemplateBinarySensorWithDelay()
 	_, err = s.WaitForEntity(sourceEntityID, 5*time.Second)
 	s.Require().NoError(err)
 
-	// Create template binary sensor with delay_on
+	// Create template binary sensor with delay_on - entity ID is derived from name
 	templateConfig := homeassistant.HelperConfig{
 		Platform: "template",
-		ID:       templateID,
 		Config: map[string]any{
-			"name":     "Delayed Sensor",
+			"name":     templateName,
 			"state":    "{{ is_state('" + sourceEntityID + "', 'on') }}",
 			"delay_on": "00:00:01", // 1 second delay
 			"type":     "binary_sensor",

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 	"github.com/stretchr/testify/suite"
+	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 )
 
 type InputNumberIntegrationTestSuite struct {
@@ -19,19 +19,18 @@ func TestInputNumberIntegration(t *testing.T) {
 }
 
 func (s *InputNumberIntegrationTestSuite) TestInputNumberLifecycle() {
-	testID := GenerateTestID("input_num")
-	entityID := BuildEntityID("input_number", testID)
+	testName := GenerateTestID("input_num")
+	entityID := BuildEntityID("input_number", testName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), entityID)
 	})
 
-	// Create input_number
+	// Create input_number - entity ID is derived from name
 	config := homeassistant.HelperConfig{
 		Platform: "input_number",
-		ID:       testID,
 		Config: map[string]any{
-			"name":    "Test Input Number",
+			"name":    testName,
 			"min":     0.0,
 			"max":     100.0,
 			"step":    1.0,
@@ -91,8 +90,8 @@ func (s *InputNumberIntegrationTestSuite) TestInputNumberLifecycle() {
 }
 
 func (s *InputNumberIntegrationTestSuite) TestInputNumberWithUnit() {
-	testID := GenerateTestID("input_num_unit")
-	entityID := BuildEntityID("input_number", testID)
+	testName := GenerateTestID("input_num_unit")
+	entityID := BuildEntityID("input_number", testName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), entityID)
@@ -101,9 +100,8 @@ func (s *InputNumberIntegrationTestSuite) TestInputNumberWithUnit() {
 	// Create input_number with unit
 	config := homeassistant.HelperConfig{
 		Platform: "input_number",
-		ID:       testID,
 		Config: map[string]any{
-			"name":                "Test Temperature",
+			"name":                testName,
 			"min":                 0.0,
 			"max":                 50.0,
 			"step":                0.5,

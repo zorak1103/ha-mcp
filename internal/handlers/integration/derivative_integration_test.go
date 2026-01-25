@@ -20,22 +20,21 @@ func TestDerivativeIntegration(t *testing.T) {
 
 func (s *DerivativeIntegrationTestSuite) TestDerivativeLifecycle() {
 	// Create an input_number as source sensor
-	sourceID := GenerateTestID("deriv_src")
-	sourceEntityID := BuildEntityID("input_number", sourceID)
-	derivativeID := GenerateTestID("derivative")
-	derivativeEntityID := BuildEntityID("sensor", derivativeID)
+	sourceName := GenerateTestID("deriv_src")
+	sourceEntityID := BuildEntityID("input_number", sourceName)
+	derivativeName := GenerateTestID("derivative")
+	derivativeEntityID := BuildEntityID("sensor", derivativeName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), derivativeEntityID)
 		_ = s.Client().DeleteHelper(s.Context(), sourceEntityID)
 	})
 
-	// Create source input_number
+	// Create source input_number - entity ID is derived from name
 	sourceConfig := homeassistant.HelperConfig{
 		Platform: "input_number",
-		ID:       sourceID,
 		Config: map[string]any{
-			"name":                "Derivative Source",
+			"name":                sourceName,
 			"min":                 0.0,
 			"max":                 1000.0,
 			"initial":             100.0,
@@ -49,12 +48,11 @@ func (s *DerivativeIntegrationTestSuite) TestDerivativeLifecycle() {
 	_, err = s.WaitForEntity(sourceEntityID, 5*time.Second)
 	s.Require().NoError(err, "Source input_number did not appear")
 
-	// Create derivative sensor (rate of change)
+	// Create derivative sensor (rate of change) - entity ID is derived from name
 	derivativeConfig := homeassistant.HelperConfig{
 		Platform: "derivative",
-		ID:       derivativeID,
 		Config: map[string]any{
-			"name":        "Flow Rate",
+			"name":        derivativeName,
 			"source":      sourceEntityID,
 			"round":       2,
 			"unit_time":   "min",
@@ -104,10 +102,10 @@ func (s *DerivativeIntegrationTestSuite) TestDerivativeLifecycle() {
 }
 
 func (s *DerivativeIntegrationTestSuite) TestDerivativeWithTimeWindow() {
-	sourceID := GenerateTestID("deriv_win_src")
-	sourceEntityID := BuildEntityID("input_number", sourceID)
-	derivativeID := GenerateTestID("deriv_win")
-	derivativeEntityID := BuildEntityID("sensor", derivativeID)
+	sourceName := GenerateTestID("deriv_win_src")
+	sourceEntityID := BuildEntityID("input_number", sourceName)
+	derivativeName := GenerateTestID("deriv_win")
+	derivativeEntityID := BuildEntityID("sensor", derivativeName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), derivativeEntityID)
@@ -116,9 +114,8 @@ func (s *DerivativeIntegrationTestSuite) TestDerivativeWithTimeWindow() {
 
 	sourceConfig := homeassistant.HelperConfig{
 		Platform: "input_number",
-		ID:       sourceID,
 		Config: map[string]any{
-			"name":    "Window Source",
+			"name":    sourceName,
 			"min":     0.0,
 			"max":     1000.0,
 			"initial": 50.0,
@@ -131,12 +128,11 @@ func (s *DerivativeIntegrationTestSuite) TestDerivativeWithTimeWindow() {
 	_, err = s.WaitForEntity(sourceEntityID, 5*time.Second)
 	s.Require().NoError(err)
 
-	// Create derivative with 5 minute time window
+	// Create derivative with 5 minute time window - entity ID is derived from name
 	derivativeConfig := homeassistant.HelperConfig{
 		Platform: "derivative",
-		ID:       derivativeID,
 		Config: map[string]any{
-			"name":        "Windowed Derivative",
+			"name":        derivativeName,
 			"source":      sourceEntityID,
 			"time_window": "00:05:00",
 			"unit_time":   "h",
@@ -156,10 +152,10 @@ func (s *DerivativeIntegrationTestSuite) TestDerivativeWithTimeWindow() {
 }
 
 func (s *DerivativeIntegrationTestSuite) TestDerivativeWithUnitPrefix() {
-	sourceID := GenerateTestID("deriv_pref_src")
-	sourceEntityID := BuildEntityID("input_number", sourceID)
-	derivativeID := GenerateTestID("deriv_pref")
-	derivativeEntityID := BuildEntityID("sensor", derivativeID)
+	sourceName := GenerateTestID("deriv_pref_src")
+	sourceEntityID := BuildEntityID("input_number", sourceName)
+	derivativeName := GenerateTestID("deriv_pref")
+	derivativeEntityID := BuildEntityID("sensor", derivativeName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), derivativeEntityID)
@@ -168,9 +164,8 @@ func (s *DerivativeIntegrationTestSuite) TestDerivativeWithUnitPrefix() {
 
 	sourceConfig := homeassistant.HelperConfig{
 		Platform: "input_number",
-		ID:       sourceID,
 		Config: map[string]any{
-			"name":                "Prefix Source",
+			"name":                sourceName,
 			"min":                 0.0,
 			"max":                 1000000.0,
 			"initial":             1000.0,
@@ -184,12 +179,11 @@ func (s *DerivativeIntegrationTestSuite) TestDerivativeWithUnitPrefix() {
 	_, err = s.WaitForEntity(sourceEntityID, 5*time.Second)
 	s.Require().NoError(err)
 
-	// Create derivative with kilo prefix
+	// Create derivative with kilo prefix - entity ID is derived from name
 	derivativeConfig := homeassistant.HelperConfig{
 		Platform: "derivative",
-		ID:       derivativeID,
 		Config: map[string]any{
-			"name":        "Power Rate",
+			"name":        derivativeName,
 			"source":      sourceEntityID,
 			"unit_prefix": "k",
 			"unit_time":   "h",

@@ -20,22 +20,21 @@ func TestThresholdIntegration(t *testing.T) {
 
 func (s *ThresholdIntegrationTestSuite) TestThresholdLifecycle() {
 	// First create an input_number to use as source
-	sourceID := GenerateTestID("thresh_src")
-	sourceEntityID := BuildEntityID("input_number", sourceID)
-	thresholdID := GenerateTestID("threshold")
-	thresholdEntityID := BuildEntityID("binary_sensor", thresholdID)
+	sourceName := GenerateTestID("thresh_src")
+	sourceEntityID := BuildEntityID("input_number", sourceName)
+	thresholdName := GenerateTestID("threshold")
+	thresholdEntityID := BuildEntityID("binary_sensor", thresholdName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), thresholdEntityID)
 		_ = s.Client().DeleteHelper(s.Context(), sourceEntityID)
 	})
 
-	// Create source input_number
+	// Create source input_number - entity ID is derived from name
 	sourceConfig := homeassistant.HelperConfig{
 		Platform: "input_number",
-		ID:       sourceID,
 		Config: map[string]any{
-			"name":    "Threshold Source",
+			"name":    sourceName,
 			"min":     0.0,
 			"max":     100.0,
 			"initial": 25.0,
@@ -48,12 +47,11 @@ func (s *ThresholdIntegrationTestSuite) TestThresholdLifecycle() {
 	_, err = s.WaitForEntity(sourceEntityID, 5*time.Second)
 	s.Require().NoError(err, "Source input_number did not appear")
 
-	// Create threshold sensor (turns on when source is above 50)
+	// Create threshold sensor (turns on when source is above 50) - entity ID is derived from name
 	thresholdConfig := homeassistant.HelperConfig{
 		Platform: "threshold",
-		ID:       thresholdID,
 		Config: map[string]any{
-			"name":       "Test Threshold",
+			"name":       thresholdName,
 			"entity_id":  sourceEntityID,
 			"upper":      50.0,
 			"hysteresis": 0.0,
@@ -104,10 +102,10 @@ func (s *ThresholdIntegrationTestSuite) TestThresholdLifecycle() {
 
 func (s *ThresholdIntegrationTestSuite) TestThresholdLower() {
 	// Create source input_number
-	sourceID := GenerateTestID("thresh_low_src")
-	sourceEntityID := BuildEntityID("input_number", sourceID)
-	thresholdID := GenerateTestID("thresh_low")
-	thresholdEntityID := BuildEntityID("binary_sensor", thresholdID)
+	sourceName := GenerateTestID("thresh_low_src")
+	sourceEntityID := BuildEntityID("input_number", sourceName)
+	thresholdName := GenerateTestID("thresh_low")
+	thresholdEntityID := BuildEntityID("binary_sensor", thresholdName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), thresholdEntityID)
@@ -116,9 +114,8 @@ func (s *ThresholdIntegrationTestSuite) TestThresholdLower() {
 
 	sourceConfig := homeassistant.HelperConfig{
 		Platform: "input_number",
-		ID:       sourceID,
 		Config: map[string]any{
-			"name":    "Lower Threshold Source",
+			"name":    sourceName,
 			"min":     0.0,
 			"max":     100.0,
 			"initial": 50.0,
@@ -131,12 +128,11 @@ func (s *ThresholdIntegrationTestSuite) TestThresholdLower() {
 	_, err = s.WaitForEntity(sourceEntityID, 5*time.Second)
 	s.Require().NoError(err)
 
-	// Create threshold sensor (turns on when source is below 30)
+	// Create threshold sensor (turns on when source is below 30) - entity ID is derived from name
 	thresholdConfig := homeassistant.HelperConfig{
 		Platform: "threshold",
-		ID:       thresholdID,
 		Config: map[string]any{
-			"name":      "Test Lower Threshold",
+			"name":      thresholdName,
 			"entity_id": sourceEntityID,
 			"lower":     30.0,
 		},
@@ -167,10 +163,10 @@ func (s *ThresholdIntegrationTestSuite) TestThresholdLower() {
 }
 
 func (s *ThresholdIntegrationTestSuite) TestThresholdWithHysteresis() {
-	sourceID := GenerateTestID("thresh_hyst_src")
-	sourceEntityID := BuildEntityID("input_number", sourceID)
-	thresholdID := GenerateTestID("thresh_hyst")
-	thresholdEntityID := BuildEntityID("binary_sensor", thresholdID)
+	sourceName := GenerateTestID("thresh_hyst_src")
+	sourceEntityID := BuildEntityID("input_number", sourceName)
+	thresholdName := GenerateTestID("thresh_hyst")
+	thresholdEntityID := BuildEntityID("binary_sensor", thresholdName)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), thresholdEntityID)
@@ -179,9 +175,8 @@ func (s *ThresholdIntegrationTestSuite) TestThresholdWithHysteresis() {
 
 	sourceConfig := homeassistant.HelperConfig{
 		Platform: "input_number",
-		ID:       sourceID,
 		Config: map[string]any{
-			"name":    "Hysteresis Source",
+			"name":    sourceName,
 			"min":     0.0,
 			"max":     100.0,
 			"initial": 45.0,
@@ -198,9 +193,8 @@ func (s *ThresholdIntegrationTestSuite) TestThresholdWithHysteresis() {
 	// Upper threshold at 50, turns on at 50, turns off at 45 (50-5)
 	thresholdConfig := homeassistant.HelperConfig{
 		Platform: "threshold",
-		ID:       thresholdID,
 		Config: map[string]any{
-			"name":       "Test Hysteresis Threshold",
+			"name":       thresholdName,
 			"entity_id":  sourceEntityID,
 			"upper":      50.0,
 			"hysteresis": 5.0,
