@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 	"github.com/stretchr/testify/suite"
+	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 )
 
 type ScheduleIntegrationTestSuite struct {
@@ -126,7 +126,7 @@ func (s *ScheduleIntegrationTestSuite) TestScheduleAllDays() {
 	config := homeassistant.HelperConfig{
 		Platform: "schedule",
 		Config: map[string]any{
-			"name": testName,
+			"name":      testName,
 			"monday":    []map[string]any{{"from": "00:00:00", "to": "23:59:59"}},
 			"tuesday":   []map[string]any{{"from": "00:00:00", "to": "23:59:59"}},
 			"wednesday": []map[string]any{{"from": "00:00:00", "to": "23:59:59"}},

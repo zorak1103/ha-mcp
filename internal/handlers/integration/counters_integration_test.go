@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 	"github.com/stretchr/testify/suite"
+	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 )
 
 type CounterIntegrationTestSuite struct {

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 	"github.com/stretchr/testify/suite"
+	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 )
 
 type ScriptIntegrationTestSuite struct {
@@ -161,7 +161,7 @@ func (s *ScriptIntegrationTestSuite) TestScriptWithVariables() {
 
 	// Execute script with variable via service call
 	_, err = s.Client().CallService(s.Context(), "script", "turn_on", map[string]any{
-		"entity_id":    scriptEntityID,
+		"entity_id": scriptEntityID,
 		"variables": map[string]any{
 			"target_value": 42.0,
 		},
