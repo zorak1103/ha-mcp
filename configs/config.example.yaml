@@ -3,18 +3,26 @@
 
 # Home Assistant connection settings
 homeassistant:
-  # URL of your Home Assistant instance
+  # URL of your Home Assistant instance (required)
   # Examples:
   #   - http://homeassistant.local:8123
   #   - http://192.168.1.100:8123
   #   - https://your-ha-domain.duckdns.org
   url: "http://homeassistant.local:8123"
-  
-  # Long-Lived Access Token
+
+  # Long-Lived Access Token (OPTIONAL)
   # Generate at: Home Assistant → Profile → Long-Lived Access Tokens
-  # Keep this secret! Do not commit to version control.
-  token: "your-long-lived-access-token"
-  
+  #
+  # Authentication options:
+  # 1. Per-request (recommended): MCP clients send token via Authorization header
+  #    No token needed here - each client provides their own token.
+  #
+  # 2. Default token (development): Configure token here for backwards compatibility.
+  #    Requests without Authorization header will use this token.
+  #
+  # If set, keep this secret! Do not commit to version control.
+  # token: "your-long-lived-access-token"
+
   # Request timeout in seconds (optional, default: 30)
   timeout: 30
 
@@ -22,7 +30,7 @@ homeassistant:
 server:
   # Port for the MCP HTTP server
   port: 8080
-  
+
   # Host to bind to (optional, default: localhost)
   # Use "0.0.0.0" to listen on all interfaces
   host: "localhost"
@@ -36,3 +44,34 @@ logging:
   # WARN:  Warnings only
   # ERROR: Errors only
   level: "info"
+
+# Authentication
+# -------------
+# MCP clients should send the Home Assistant token in the Authorization header:
+#
+#   Authorization: Bearer <your-ha-access-token>
+#
+# Example MCP client configuration (Claude Desktop):
+#   {
+#     "mcpServers": {
+#       "homeassistant": {
+#         "type": "http",
+#         "url": "http://localhost:8080",
+#         "headers": {
+#           "Authorization": "Bearer ${HA_TOKEN}"
+#         }
+#       }
+#     }
+#   }
+#
+# Example MCP client configuration (Cline):
+#   {
+#     "servers": {
+#       "ha-mcp": {
+#         "url": "http://localhost:8080",
+#         "headers": {
+#           "Authorization": "Bearer your-ha-access-token"
+#         }
+#       }
+#     }
+#   }

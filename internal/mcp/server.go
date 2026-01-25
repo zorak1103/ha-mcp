@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -34,25 +35,35 @@ const (
 
 // Server represents the MCP server.
 type Server struct {
-	haClient    homeassistant.Client
-	registry    *Registry
-	httpServer  *http.Server
-	port        int
-	logger      *logging.Logger
-	mu          sync.RWMutex
-	initialized bool
+	clientPool    *homeassistant.ClientPool // Pool of HA clients per token
+	defaultClient homeassistant.Client      // Optional default client from --ha-token
+	registry      *Registry
+	httpServer    *http.Server
+	port          int
+	logger        *logging.Logger
+	mu            sync.RWMutex
+	initialized   bool
 }
 
 // NewServer creates a new MCP server instance.
-func NewServer(haClient homeassistant.Client, registry *Registry, port int, logger *logging.Logger) *Server {
+// clientPool is required for per-request token authentication.
+// defaultClient is optional - used when no Authorization header is provided.
+func NewServer(
+	clientPool *homeassistant.ClientPool,
+	defaultClient homeassistant.Client,
+	registry *Registry,
+	port int,
+	logger *logging.Logger,
+) *Server {
 	if logger == nil {
 		logger = logging.New(logging.LevelInfo)
 	}
 	return &Server{
-		haClient: haClient,
-		registry: registry,
-		port:     port,
-		logger:   logger,
+		clientPool:    clientPool,
+		defaultClient: defaultClient,
+		registry:      registry,
+		port:          port,
+		logger:        logger,
 	}
 }
 
@@ -133,7 +144,7 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 	// DEBUG: Log method and summary
 	s.logger.Debug("Request", "method", req.Method, "id", formatID(req.ID))
 
-	resp := s.handleRequest(r.Context(), &req)
+	resp := s.handleRequest(r.Context(), &req, r)
 
 	duration := time.Since(startTime)
 	s.logResponse(&req, resp, duration)
@@ -186,7 +197,7 @@ func formatID(id json.RawMessage) string {
 }
 
 // handleRequest routes the request to the appropriate handler.
-func (s *Server) handleRequest(ctx context.Context, req *Request) *Response {
+func (s *Server) handleRequest(ctx context.Context, req *Request, r *http.Request) *Response {
 	switch req.Method {
 	case MethodInitialize:
 		return s.handleInitialize(req)
@@ -197,11 +208,11 @@ func (s *Server) handleRequest(ctx context.Context, req *Request) *Response {
 	case MethodToolsList:
 		return s.handleToolsList(req)
 	case MethodToolsCall:
-		return s.handleToolsCall(ctx, req)
+		return s.handleToolsCall(ctx, req, r)
 	case MethodResourcesList:
 		return s.handleResourcesList(req)
 	case MethodResourcesRead:
-		return s.handleResourcesRead(ctx, req)
+		return s.handleResourcesRead(ctx, req, r)
 	default:
 		s.logger.Warn("Unknown method requested", "method", req.Method)
 		return NewErrorResponse(req.ID, MethodNotFound, fmt.Sprintf("method not found: %s", req.Method), nil)
@@ -286,13 +297,20 @@ func (s *Server) handleToolsList(req *Request) *Response {
 }
 
 // handleToolsCall handles tools/call requests.
-func (s *Server) handleToolsCall(ctx context.Context, req *Request) *Response {
+func (s *Server) handleToolsCall(ctx context.Context, req *Request, r *http.Request) *Response {
 	var params ToolsCallParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return NewErrorResponse(req.ID, InvalidParams, "invalid tools/call params", err.Error())
 	}
 
 	s.logger.Info("Tool call", "tool", params.Name)
+
+	// Get HA client for this request
+	client, err := s.getClientForRequest(ctx, r)
+	if err != nil {
+		s.logger.Error("Failed to get HA client", "tool", params.Name, "error", err)
+		return NewErrorResponse(req.ID, Unauthorized, err.Error(), nil)
+	}
 
 	// DEBUG: Log tool arguments summary
 	if s.logger.IsDebugEnabled() {
@@ -302,8 +320,8 @@ func (s *Server) handleToolsCall(ctx context.Context, req *Request) *Response {
 
 	// TRACE: Log full arguments
 	if s.logger.IsTraceEnabled() {
-		argsJSON, err := json.MarshalIndent(params.Arguments, "", "  ")
-		if err == nil {
+		argsJSON, marshalErr := json.MarshalIndent(params.Arguments, "", "  ")
+		if marshalErr == nil {
 			s.logger.Trace("Tool call arguments", "arguments", string(argsJSON))
 		}
 	}
@@ -314,7 +332,7 @@ func (s *Server) handleToolsCall(ctx context.Context, req *Request) *Response {
 		return NewErrorResponse(req.ID, ToolNotFound, fmt.Sprintf("tool not found: %s", params.Name), nil)
 	}
 
-	result, err := handler(ctx, s.haClient, params.Arguments)
+	result, err := handler(ctx, client, params.Arguments)
 	if err != nil {
 		s.logger.Error("Tool execution failed", "tool", params.Name, "error", err)
 		return NewErrorResponse(req.ID, ToolExecutionErr, fmt.Sprintf("tool execution failed: %s", err.Error()), nil)
@@ -352,7 +370,7 @@ func (s *Server) handleResourcesList(req *Request) *Response {
 }
 
 // handleResourcesRead handles resources/read requests.
-func (s *Server) handleResourcesRead(ctx context.Context, req *Request) *Response {
+func (s *Server) handleResourcesRead(ctx context.Context, req *Request, r *http.Request) *Response {
 	var params ResourcesReadParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return NewErrorResponse(req.ID, InvalidParams, "invalid resources/read params", err.Error())
@@ -360,13 +378,20 @@ func (s *Server) handleResourcesRead(ctx context.Context, req *Request) *Respons
 
 	s.logger.Info("Resource read", "uri", params.URI)
 
+	// Get HA client for this request
+	client, err := s.getClientForRequest(ctx, r)
+	if err != nil {
+		s.logger.Error("Failed to get HA client", "uri", params.URI, "error", err)
+		return NewErrorResponse(req.ID, Unauthorized, err.Error(), nil)
+	}
+
 	handler, exists := s.registry.GetResourceHandler(params.URI)
 	if !exists {
 		s.logger.Warn("Resource not found", "uri", params.URI)
 		return NewErrorResponse(req.ID, ResourceNotFound, fmt.Sprintf("resource not found: %s", params.URI), nil)
 	}
 
-	result, err := handler(ctx, s.haClient, params.URI)
+	result, err := handler(ctx, client, params.URI)
 	if err != nil {
 		s.logger.Error("Resource read failed", "uri", params.URI, "error", err)
 		return NewErrorResponse(req.ID, InternalError, fmt.Sprintf("resource read failed: %s", err.Error()), nil)
@@ -410,7 +435,59 @@ func (s *Server) IsInitialized() bool {
 	return s.initialized
 }
 
-// HAClient returns the Home Assistant client for use by handlers.
-func (s *Server) HAClient() homeassistant.Client {
-	return s.haClient
+// extractBearerToken extracts the token from an Authorization: Bearer header.
+func extractBearerToken(r *http.Request) string {
+	auth := r.Header.Get("Authorization")
+	if strings.HasPrefix(auth, "Bearer ") {
+		return strings.TrimPrefix(auth, "Bearer ")
+	}
+	return ""
+}
+
+// getClientForRequest returns the appropriate HA client for the request.
+// It uses the token from the Authorization header if present, otherwise falls back to defaultClient.
+func (s *Server) getClientForRequest(ctx context.Context, r *http.Request) (homeassistant.Client, error) {
+	token := extractBearerToken(r)
+
+	if token != "" {
+		// Use token from header
+		client, err := s.clientPool.GetOrCreate(ctx, token)
+		if err != nil {
+			return nil, fmt.Errorf("failed to connect to Home Assistant: %w", err)
+		}
+		return client, nil
+	}
+
+	// Fall back to default client if configured
+	if s.defaultClient != nil {
+		// Check if client needs to wait for reconnection
+		if err := waitForClientConnection(ctx, s.defaultClient); err != nil {
+			return nil, fmt.Errorf("home assistant connection failed: %w", err)
+		}
+		return s.defaultClient, nil
+	}
+
+	return nil, errors.New("authorization header with Bearer token required")
+}
+
+// waitForClientConnection waits for the client to be connected if it supports connection waiting.
+// This is used to handle cases where the client is reconnecting after a disconnect.
+func waitForClientConnection(ctx context.Context, client homeassistant.Client) error {
+	type connectionWaiter interface {
+		IsConnected() bool
+		WaitForConnection(ctx context.Context) error
+	}
+
+	if waiter, ok := client.(connectionWaiter); ok {
+		if !waiter.IsConnected() {
+			return waiter.WaitForConnection(ctx)
+		}
+	}
+	return nil
+}
+
+// DefaultClient returns the default Home Assistant client (from --ha-token).
+// Returns nil if no default client is configured.
+func (s *Server) DefaultClient() homeassistant.Client {
+	return s.defaultClient
 }

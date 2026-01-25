@@ -35,13 +35,12 @@ func TestLoad(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:       "missing token",
+			name:       "missing token is now allowed",
 			configFile: "",
 			envVars: map[string]string{
 				"HA_URL": "http://test.local:8123",
 			},
-			wantErr:    true,
-			errContain: "homeassistant.token is required",
+			wantErr: false, // Token is now optional - provided via Authorization header
 		},
 		{
 			name:       "missing URL uses default",
@@ -233,13 +232,12 @@ func TestLoadWithViper(t *testing.T) {
 			wantErr:    false,
 		},
 		{
-			name: "missing token in viper",
+			name: "missing token in viper is now allowed",
 			setupViper: func(v *viper.Viper) {
 				v.Set("homeassistant.url", "http://viper-test.local:8123")
 			},
 			configFile: "",
-			wantErr:    true,
-			errContain: "homeassistant.token is required",
+			wantErr:    false, // Token is now optional - provided via Authorization header
 		},
 	}
 
@@ -564,17 +562,16 @@ func TestValidate(t *testing.T) {
 			errContain: "homeassistant.url is required",
 		},
 		{
-			name: "empty token",
+			name: "empty token is now allowed",
 			config: Config{
 				HomeAssistant: HomeAssistantConfig{
 					URL:   "http://test.local:8123",
-					Token: "",
+					Token: "", // Token is now optional - provided via Authorization header
 				},
 				Server:  ServerConfig{Port: 8080},
 				Logging: LoggingConfig{Level: "info"},
 			},
-			wantErr:    true,
-			errContain: "homeassistant.token is required",
+			wantErr: false,
 		},
 		{
 			name: "port 0",

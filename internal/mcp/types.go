@@ -48,6 +48,7 @@ const (
 	ResourceNotFound ErrorCode = -32001
 	ToolNotFound     ErrorCode = -32002
 	ToolExecutionErr ErrorCode = -32003
+	Unauthorized     ErrorCode = -32004 // Authentication required
 )
 
 // MCP Protocol Methods.

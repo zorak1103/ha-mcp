@@ -216,9 +216,8 @@ func (c *Config) validate() error {
 	if c.HomeAssistant.URL == "" {
 		return fmt.Errorf("homeassistant.url is required")
 	}
-	if c.HomeAssistant.Token == "" {
-		return fmt.Errorf("homeassistant.token is required (set via HA_TOKEN env var, --ha-token flag, or config file)")
-	}
+	// Token is optional - can come from request header via Authorization: Bearer <token>
+	// When not configured, clients must provide token in each request
 	if c.Server.Port <= 0 || c.Server.Port > 65535 {
 		return fmt.Errorf("server.port must be between 1 and 65535")
 	}

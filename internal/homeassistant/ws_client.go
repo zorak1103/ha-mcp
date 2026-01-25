@@ -641,6 +641,47 @@ func (c *WSClient) IsConnected() bool {
 	return c.connected.Load()
 }
 
+// IsReconnecting returns true if the client is currently attempting to reconnect.
+func (c *WSClient) IsReconnecting() bool {
+	return c.reconnecting.Load()
+}
+
+// WaitForConnection waits until the client is connected or the context is canceled.
+// This is useful when a reconnection is in progress and the caller wants to wait for it.
+// Returns nil if connected, context error if canceled, or ErrMaxReconnectAttempts if
+// reconnection failed.
+func (c *WSClient) WaitForConnection(ctx context.Context) error {
+	// Already connected, return immediately
+	if c.connected.Load() {
+		return nil
+	}
+
+	// Poll for connection with exponential backoff
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	maxWait := 10 * time.Second
+	deadline := time.Now().Add(maxWait)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			if c.connected.Load() {
+				return nil
+			}
+			// If not reconnecting and not connected, reconnection has failed
+			if !c.reconnecting.Load() && !c.connected.Load() {
+				// Check if we should give up
+				if time.Now().After(deadline) {
+					return ErrMaxReconnectAttempts
+				}
+			}
+		}
+	}
+}
+
 // IsHealthy returns true if the connection is connected and has received
 // a recent pong response (within PingInterval + PingTimeout).
 func (c *WSClient) IsHealthy() bool {

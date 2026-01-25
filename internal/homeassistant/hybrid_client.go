@@ -285,6 +285,16 @@ func (c *HybridClientCloser) Close() error {
 	return c.wsClient.Close()
 }
 
+// IsConnected returns true if the underlying WebSocket client is connected.
+func (c *HybridClientCloser) IsConnected() bool {
+	return c.wsClient.IsConnected()
+}
+
+// WaitForConnection waits until the underlying WebSocket client is connected.
+func (c *HybridClientCloser) WaitForConnection(ctx context.Context) error {
+	return c.wsClient.WaitForConnection(ctx)
+}
+
 // Ensure HybridClientCloser implements both Client and ClientCloser.
 var (
 	_ Client       = (*HybridClientCloser)(nil)

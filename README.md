@@ -58,7 +58,14 @@ go build -o ha-mcp ./cmd/ha-mcp
 # Build Docker image locally
 docker build -t ha-mcp:latest .
 
-# Run container
+# Run container (token provided by clients via Authorization header)
+docker run -d \
+  --name ha-mcp \
+  -p 8080:8080 \
+  -e HA_URL=http://homeassistant.local:8123 \
+  ha-mcp:latest
+
+# Or with default token for development (optional)
 docker run -d \
   --name ha-mcp \
   -p 8080:8080 \
@@ -284,6 +291,9 @@ Add to your Cline MCP configuration (`~/.config/cline/mcp.json`):
   "servers": {
     "ha-mcp": {
       "url": "http://localhost:8080",
+      "headers": {
+        "Authorization": "Bearer your-ha-access-token"
+      },
       "description": "Home Assistant MCP Server"
     }
   }
@@ -298,7 +308,11 @@ Add to Claude Desktop's MCP configuration:
 {
   "mcpServers": {
     "homeassistant": {
-      "url": "http://localhost:8080"
+      "type": "http",
+      "url": "http://localhost:8080",
+      "headers": {
+        "Authorization": "Bearer ${HA_TOKEN}"
+      }
     }
   }
 }
@@ -313,6 +327,8 @@ mcp:
   servers:
     - name: homeassistant
       url: http://localhost:8080
+      headers:
+        Authorization: "Bearer your-ha-access-token"
 ```
 
 ## API Reference
@@ -324,6 +340,7 @@ All MCP requests are sent to:
 ```
 POST http://localhost:8080/
 Content-Type: application/json
+Authorization: Bearer <your-ha-access-token>
 ```
 
 ### Available Tools
@@ -672,9 +689,64 @@ ha-mcp provides comprehensive support for all 14 Home Assistant helper types. Ea
 }
 ```
 
+## Authentication
+
+ha-mcp supports flexible authentication via HTTP Bearer tokens. The Home Assistant access token can be provided either per-request via HTTP header or as a server default.
+
+### Token via HTTP Header (Recommended)
+
+MCP clients send the Home Assistant token in the `Authorization` header with every request:
+
+```
+Authorization: Bearer <your-long-lived-access-token>
+```
+
+This approach is recommended because:
+- Each client can use their own Home Assistant token
+- Tokens are not stored on the server
+- Tokens can have different permissions for different clients
+
+**Example with curl:**
+
+```bash
+curl -X POST http://localhost:8080/ \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGc..." \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+### Development Mode (Optional)
+
+For local development or testing, you can configure a default token on the server:
+
+```bash
+ha-mcp --ha-url http://homeassistant.local:8123 --ha-token your-token
+```
+
+When a default token is configured:
+- Requests **with** an `Authorization` header use the header token
+- Requests **without** an `Authorization` header use the default token
+
+This allows backwards-compatible operation while supporting per-request authentication.
+
+### Authentication Errors
+
+When no token is provided and no default is configured:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "error": {
+    "code": -32004,
+    "message": "authorization header with Bearer token required"
+  }
+}
+```
+
 ## Health Check
 
-The server provides a health check endpoint:
+The server provides a health check endpoint (no authentication required):
 
 ```bash
 curl http://localhost:8080/health

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -212,13 +213,30 @@ func (a *App) run(_ *cobra.Command, _ []string) error {
 	ctx, cancel := a.setupGracefulShutdown(logger)
 	defer cancel()
 
-	haClient, err := a.initHomeAssistantClient(ctx, cfg, logger)
-	if err != nil {
-		return err
-	}
-	defer a.closeHomeAssistantClient(haClient, logger)
+	// Create client pool (always required for per-request auth)
+	clientPool := homeassistant.NewClientPool(cfg.HomeAssistant.URL, 30*time.Minute)
+	defer func() {
+		logger.Info("Closing client pool...")
+		if closeErr := clientPool.Close(); closeErr != nil {
+			logger.Error("Error closing client pool", "error", closeErr)
+		}
+	}()
 
-	mcpServer := a.initMCPServer(haClient, cfg.Server.Port, logger)
+	// Create default client only if token is configured (optional, for backwards compatibility)
+	var defaultClient homeassistant.Client
+	if cfg.HomeAssistant.Token != "" {
+		logger.Info("Creating default HA client from configured token...")
+		defaultClient, err = a.initHomeAssistantClient(ctx, cfg, logger)
+		if err != nil {
+			logger.Warn("Could not create default HA client, per-request auth only", "error", err)
+		} else {
+			defer a.closeHomeAssistantClient(defaultClient, logger)
+		}
+	} else {
+		logger.Info("No default token configured - clients must provide Authorization header")
+	}
+
+	mcpServer := a.initMCPServer(clientPool, defaultClient, cfg.Server.Port, logger)
 	a.startMCPServer(mcpServer, logger, cancel)
 
 	<-ctx.Done()
@@ -290,7 +308,8 @@ func (a *App) closeHomeAssistantClient(client homeassistant.Client, logger *logg
 
 // initMCPServer creates and configures the MCP server with all registered tools.
 func (a *App) initMCPServer(
-	haClient homeassistant.Client,
+	clientPool *homeassistant.ClientPool,
+	defaultClient homeassistant.Client,
 	port int,
 	logger *logging.Logger,
 ) *mcp.Server {
@@ -300,7 +319,7 @@ func (a *App) initMCPServer(
 	logger.Info("Registered MCP tools", "count", registry.ToolCount())
 	registry.LogRegisteredTools(logger)
 
-	return mcp.NewServer(haClient, registry, port, logger)
+	return mcp.NewServer(clientPool, defaultClient, registry, port, logger)
 }
 
 // startMCPServer starts the MCP server in a goroutine.
