@@ -1835,7 +1835,7 @@ func TestWSClientImplWithSender_UpdateScript(t *testing.T) {
 	t.Parallel()
 
 	mock := &mockWSClientSender{
-		sendCommandFunc: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
+		sendCommandFunc: func(_ context.Context, cmdType string, _ map[string]any) (*WSResultMessage, error) {
 			if cmdType != "config/script/update" {
 				t.Errorf("unexpected command: %s", cmdType)
 			}

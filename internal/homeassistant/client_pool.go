@@ -57,13 +57,6 @@ func NewClientPoolWithConfig(baseURL string, maxIdle time.Duration, restConfig *
 	return p
 }
 
-// NewClientPoolWithLogger creates a new client pool with a custom logger.
-//
-// Deprecated: Use NewClientPoolWithConfig for full configuration control.
-func NewClientPoolWithLogger(baseURL string, maxIdle time.Duration, logger *logging.Logger) *ClientPool {
-	return NewClientPoolWithConfig(baseURL, maxIdle, nil, logger)
-}
-
 // GetOrCreate returns an existing client for the token or creates a new one.
 // The client is connected before being returned.
 func (p *ClientPool) GetOrCreate(ctx context.Context, token string) (Client, error) {

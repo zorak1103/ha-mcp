@@ -65,14 +65,6 @@ func NewConnectedClient(ctx context.Context, baseURL, token string, wsConfig *WS
 	return NewHybridClientCloser(wsClient, restClient), nil
 }
 
-// NewConnectedWSClient creates a new WebSocket client and establishes a connection.
-// This function is kept for backward compatibility.
-//
-// Deprecated: Use NewConnectedClient for full configuration control.
-func NewConnectedWSClient(ctx context.Context, baseURL, token string, wsConfig *WSClientConfig) (Client, error) {
-	return NewConnectedClient(ctx, baseURL, token, wsConfig, nil)
-}
-
 // NewDefaultWSClient creates a connected WebSocket client using default configuration.
 // This is the recommended factory function for most use cases.
 func NewDefaultWSClient(ctx context.Context, baseURL, token string) (Client, error) {

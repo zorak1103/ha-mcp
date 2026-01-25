@@ -428,7 +428,7 @@ func (c *WSClient) reconnect() error {
 		// Wait for backoff duration
 		if err := c.reconnectMgr.WaitForReconnect(c.ctx); err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				c.logger.Debug("Reconnection cancelled", "error", err)
+				c.logger.Debug("Reconnection canceled", "error", err)
 				return err
 			}
 			if errors.Is(err, ErrMaxReconnectAttempts) {

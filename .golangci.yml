@@ -34,6 +34,8 @@ linters:
           - gocognit
           - govet
           - goconst
+          - nilnil     # Mock implementations often return nil, nil
+          - tparallel  # Not all test structures benefit from t.Parallel
       
       # Exclude deprecation warnings in tests
       - path: '(.+)_test\.go'
