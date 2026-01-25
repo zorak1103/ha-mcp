@@ -102,3 +102,381 @@ func TestIsClientConnected_WithoutIsConnectedMethod(t *testing.T) {
 		t.Error("Expected noConnectionChecker to NOT implement IsConnected interface")
 	}
 }
+
+// mockClient implements Client interface for testing.
+type mockClientForPool struct {
+	connected bool
+	closed    bool
+}
+
+func (m *mockClientForPool) IsConnected() bool {
+	return m.connected
+}
+
+func (m *mockClientForPool) Close() error {
+	m.closed = true
+	return nil
+}
+
+// Client interface methods (required for interface compliance).
+func (m *mockClientForPool) GetStates(_ context.Context) ([]Entity, error)         { return nil, nil }
+func (m *mockClientForPool) GetState(_ context.Context, _ string) (*Entity, error) { return nil, nil }
+func (m *mockClientForPool) SetState(_ context.Context, _ string, _ StateUpdate) (*Entity, error) {
+	return nil, nil
+}
+func (m *mockClientForPool) GetHistory(_ context.Context, _ string, _, _ time.Time) ([][]HistoryEntry, error) {
+	return nil, nil
+}
+func (m *mockClientForPool) CallService(_ context.Context, _, _ string, _ map[string]any) ([]Entity, error) {
+	return nil, nil
+}
+func (m *mockClientForPool) ListAutomations(_ context.Context) ([]Automation, error) { return nil, nil }
+func (m *mockClientForPool) GetAutomation(_ context.Context, _ string) (*Automation, error) {
+	return nil, nil
+}
+func (m *mockClientForPool) CreateAutomation(_ context.Context, _ AutomationConfig) error { return nil }
+func (m *mockClientForPool) UpdateAutomation(_ context.Context, _ string, _ AutomationConfig) error {
+	return nil
+}
+func (m *mockClientForPool) DeleteAutomation(_ context.Context, _ string) error { return nil }
+func (m *mockClientForPool) ToggleAutomation(_ context.Context, _ string, _ bool) error {
+	return nil
+}
+func (m *mockClientForPool) ListHelpers(_ context.Context) ([]Entity, error) { return nil, nil }
+func (m *mockClientForPool) CreateHelper(_ context.Context, _ HelperConfig) error {
+	return nil
+}
+func (m *mockClientForPool) UpdateHelper(_ context.Context, _ string, _ HelperConfig) error {
+	return nil
+}
+func (m *mockClientForPool) DeleteHelper(_ context.Context, _ string) error { return nil }
+func (m *mockClientForPool) SetHelperValue(_ context.Context, _ string, _ any) error {
+	return nil
+}
+func (m *mockClientForPool) ListScripts(_ context.Context) ([]Entity, error) { return nil, nil }
+func (m *mockClientForPool) GetScript(_ context.Context, _ string) (*Script, error) {
+	return nil, nil
+}
+func (m *mockClientForPool) CreateScript(_ context.Context, _ string, _ ScriptConfig) error {
+	return nil
+}
+func (m *mockClientForPool) UpdateScript(_ context.Context, _ string, _ ScriptConfig) error {
+	return nil
+}
+func (m *mockClientForPool) DeleteScript(_ context.Context, _ string) error { return nil }
+func (m *mockClientForPool) ListScenes(_ context.Context) ([]Entity, error) { return nil, nil }
+func (m *mockClientForPool) CreateScene(_ context.Context, _ string, _ SceneConfig) error {
+	return nil
+}
+func (m *mockClientForPool) UpdateScene(_ context.Context, _ string, _ SceneConfig) error {
+	return nil
+}
+func (m *mockClientForPool) DeleteScene(_ context.Context, _ string) error { return nil }
+func (m *mockClientForPool) GetEntityRegistry(_ context.Context) ([]EntityRegistryEntry, error) {
+	return nil, nil
+}
+func (m *mockClientForPool) GetDeviceRegistry(_ context.Context) ([]DeviceRegistryEntry, error) {
+	return nil, nil
+}
+func (m *mockClientForPool) GetAreaRegistry(_ context.Context) ([]AreaRegistryEntry, error) {
+	return nil, nil
+}
+func (m *mockClientForPool) SignPath(_ context.Context, _ string, _ int) (string, error) {
+	return "", nil
+}
+func (m *mockClientForPool) GetCameraStream(_ context.Context, _ string) (*StreamInfo, error) {
+	return nil, nil
+}
+func (m *mockClientForPool) BrowseMedia(_ context.Context, _ string) (*MediaBrowseResult, error) {
+	return nil, nil
+}
+func (m *mockClientForPool) GetLovelaceConfig(_ context.Context) (map[string]any, error) {
+	return nil, nil
+}
+func (m *mockClientForPool) GetStatistics(_ context.Context, _ []string, _ string) ([]StatisticsResult, error) {
+	return nil, nil
+}
+func (m *mockClientForPool) GetTriggersForTarget(_ context.Context, _ Target, _ *bool) ([]string, error) {
+	return nil, nil
+}
+func (m *mockClientForPool) GetConditionsForTarget(_ context.Context, _ Target, _ *bool) ([]string, error) {
+	return nil, nil
+}
+func (m *mockClientForPool) GetServicesForTarget(_ context.Context, _ Target, _ *bool) ([]string, error) {
+	return nil, nil
+}
+func (m *mockClientForPool) ExtractFromTarget(_ context.Context, _ Target, _ *bool) (*ExtractFromTargetResult, error) {
+	return nil, nil
+}
+func (m *mockClientForPool) GetScheduleConfig(_ context.Context, _ string) (map[string]any, error) {
+	return nil, nil
+}
+func (m *mockClientForPool) GetServices(_ context.Context) ([]Service, error) { return nil, nil }
+func (m *mockClientForPool) GetConfig(_ context.Context) (*Config, error)     { return nil, nil }
+func (m *mockClientForPool) RenderTemplate(_ context.Context, _ string) (string, error) {
+	return "", nil
+}
+func (m *mockClientForPool) GetLogbook(_ context.Context, _, _, _ string) ([]LogbookEntry, error) {
+	return nil, nil
+}
+func (m *mockClientForPool) CheckConfig(_ context.Context) (*ConfigCheckResult, error) {
+	return nil, nil
+}
+
+// Ensure mockClientForPool implements Client and ClientCloser.
+var (
+	_ Client       = (*mockClientForPool)(nil)
+	_ ClientCloser = (*mockClientForPool)(nil)
+)
+
+func TestIsClientConnected_Function(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		client    Client
+		wantValue bool
+	}{
+		{
+			name:      "connected client",
+			client:    &mockClientForPool{connected: true},
+			wantValue: true,
+		},
+		{
+			name:      "disconnected client",
+			client:    &mockClientForPool{connected: false},
+			wantValue: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := isClientConnected(tt.client)
+			if result != tt.wantValue {
+				t.Errorf("isClientConnected() = %v, want %v", result, tt.wantValue)
+			}
+		})
+	}
+}
+
+func TestClientPool_CleanupIdleClients(t *testing.T) {
+	t.Parallel()
+
+	// Create pool with very short idle timeout
+	pool := NewClientPool("http://localhost:8123", 50*time.Millisecond)
+	defer pool.Close()
+
+	// Manually add mock clients to the pool
+	pool.mu.Lock()
+	pool.clients["token1"] = &pooledClient{
+		client:   &mockClientForPool{connected: true},
+		lastUsed: time.Now().Add(-100 * time.Millisecond), // Already idle
+	}
+	pool.clients["token2"] = &pooledClient{
+		client:   &mockClientForPool{connected: true},
+		lastUsed: time.Now(), // Recently used
+	}
+	pool.mu.Unlock()
+
+	// Verify initial state
+	if pool.Size() != 2 {
+		t.Fatalf("Expected 2 clients, got %d", pool.Size())
+	}
+
+	// Manually trigger cleanup
+	pool.cleanupIdleClients()
+
+	// Only token2 should remain (token1 was idle)
+	if pool.Size() != 1 {
+		t.Errorf("Expected 1 client after cleanup, got %d", pool.Size())
+	}
+
+	pool.mu.RLock()
+	_, token1Exists := pool.clients["token1"]
+	_, token2Exists := pool.clients["token2"]
+	pool.mu.RUnlock()
+
+	if token1Exists {
+		t.Error("token1 should have been cleaned up")
+	}
+	if !token2Exists {
+		t.Error("token2 should still exist")
+	}
+}
+
+func TestClientPool_CleanupLoop_Stops(t *testing.T) {
+	t.Parallel()
+
+	// Create pool with short idle timeout for faster test
+	pool := NewClientPool("http://localhost:8123", 100*time.Millisecond)
+
+	// Close the pool and verify cleanup loop stops
+	err := pool.Close()
+	if err != nil {
+		t.Errorf("Close returned error: %v", err)
+	}
+
+	// Closing again should be safe (channel already closed)
+	// This tests that the cleanup loop has stopped
+	// The wg.Wait() in Close() ensures the goroutine has finished
+}
+
+func TestClientPool_Close_ClosesAllClients(t *testing.T) {
+	t.Parallel()
+
+	pool := NewClientPool("http://localhost:8123", 30*time.Minute)
+
+	// Manually add mock clients
+	mockClient1 := &mockClientForPool{connected: true}
+	mockClient2 := &mockClientForPool{connected: true}
+
+	pool.mu.Lock()
+	pool.clients["token1"] = &pooledClient{
+		client:   mockClient1,
+		lastUsed: time.Now(),
+	}
+	pool.clients["token2"] = &pooledClient{
+		client:   mockClient2,
+		lastUsed: time.Now(),
+	}
+	pool.mu.Unlock()
+
+	if pool.Size() != 2 {
+		t.Fatalf("Expected 2 clients, got %d", pool.Size())
+	}
+
+	err := pool.Close()
+	if err != nil {
+		t.Errorf("Close returned error: %v", err)
+	}
+
+	// Pool should be empty
+	if pool.Size() != 0 {
+		t.Errorf("Expected 0 clients after close, got %d", pool.Size())
+	}
+
+	// Both clients should have been closed
+	if !mockClient1.closed {
+		t.Error("mockClient1 was not closed")
+	}
+	if !mockClient2.closed {
+		t.Error("mockClient2 was not closed")
+	}
+}
+
+func TestClientPool_GetOrCreate_ReuseExistingClient(t *testing.T) {
+	t.Parallel()
+
+	pool := NewClientPool("http://localhost:8123", 30*time.Minute)
+	defer pool.Close()
+
+	// Manually add a mock client
+	mockClient := &mockClientForPool{connected: true}
+	pool.mu.Lock()
+	pool.clients["existing-token"] = &pooledClient{
+		client:   mockClient,
+		lastUsed: time.Now().Add(-5 * time.Minute), // Used 5 minutes ago
+	}
+	pool.mu.Unlock()
+
+	ctx := context.Background()
+	client, err := pool.GetOrCreate(ctx, "existing-token")
+
+	if err != nil {
+		t.Fatalf("GetOrCreate returned error: %v", err)
+	}
+
+	// Should return the existing client
+	if client != mockClient {
+		t.Error("Expected existing client to be returned")
+	}
+
+	// lastUsed should be updated
+	pool.mu.RLock()
+	pc := pool.clients["existing-token"]
+	pool.mu.RUnlock()
+
+	if time.Since(pc.lastUsed) > time.Second {
+		t.Error("lastUsed was not updated")
+	}
+}
+
+func TestClientPool_GetOrCreate_RemovesDisconnectedClient(t *testing.T) {
+	t.Parallel()
+
+	pool := NewClientPool("http://localhost:8123", 30*time.Minute)
+	defer pool.Close()
+
+	// Add a disconnected client
+	disconnectedClient := &mockClientForPool{connected: false}
+	pool.mu.Lock()
+	pool.clients["test-token"] = &pooledClient{
+		client:   disconnectedClient,
+		lastUsed: time.Now(),
+	}
+	pool.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	// This should detect the disconnected client and try to create a new one
+	// (which will fail due to invalid URL, but the disconnected client should be removed)
+	_, _ = pool.GetOrCreate(ctx, "test-token")
+
+	// The disconnected client should have been closed
+	if !disconnectedClient.closed {
+		t.Error("Disconnected client should have been closed")
+	}
+}
+
+func TestClientPool_CleanupIdleClients_AllIdle(t *testing.T) {
+	t.Parallel()
+
+	pool := NewClientPool("http://localhost:8123", 10*time.Millisecond)
+	defer pool.Close()
+
+	// Add all idle clients
+	pool.mu.Lock()
+	pool.clients["token1"] = &pooledClient{
+		client:   &mockClientForPool{connected: true},
+		lastUsed: time.Now().Add(-100 * time.Millisecond),
+	}
+	pool.clients["token2"] = &pooledClient{
+		client:   &mockClientForPool{connected: true},
+		lastUsed: time.Now().Add(-100 * time.Millisecond),
+	}
+	pool.mu.Unlock()
+
+	pool.cleanupIdleClients()
+
+	if pool.Size() != 0 {
+		t.Errorf("Expected 0 clients after cleanup, got %d", pool.Size())
+	}
+}
+
+func TestClientPool_CleanupIdleClients_NoneIdle(t *testing.T) {
+	t.Parallel()
+
+	pool := NewClientPool("http://localhost:8123", 1*time.Hour)
+	defer pool.Close()
+
+	// Add recently used clients
+	pool.mu.Lock()
+	pool.clients["token1"] = &pooledClient{
+		client:   &mockClientForPool{connected: true},
+		lastUsed: time.Now(),
+	}
+	pool.clients["token2"] = &pooledClient{
+		client:   &mockClientForPool{connected: true},
+		lastUsed: time.Now(),
+	}
+	pool.mu.Unlock()
+
+	pool.cleanupIdleClients()
+
+	if pool.Size() != 2 {
+		t.Errorf("Expected 2 clients after cleanup (none idle), got %d", pool.Size())
+	}
+}

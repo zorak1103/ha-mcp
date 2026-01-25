@@ -81,17 +81,19 @@ func CloseClient(c Client) error {
 // This allows proper cleanup of WebSocket connections.
 type wsClientImplCloser struct {
 	*wsClientImpl
+	wsClient *WSClient // Keep reference to concrete WSClient for Close()
 }
 
 // Close closes the underlying WebSocket connection.
 func (c *wsClientImplCloser) Close() error {
-	return c.ws.Close()
+	return c.wsClient.Close()
 }
 
 // NewWSClientImplWithCloser creates a WebSocket Client that also implements ClientCloser.
 func NewWSClientImplWithCloser(ws *WSClient) Client {
 	return &wsClientImplCloser{
 		wsClientImpl: &wsClientImpl{ws: ws},
+		wsClient:     ws,
 	}
 }
 

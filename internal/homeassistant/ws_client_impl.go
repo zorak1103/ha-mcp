@@ -16,15 +16,27 @@ const (
 	scenePrefix      = "scene."
 )
 
+// CommandSender is an interface for sending WebSocket commands.
+// This interface allows mocking the WebSocket client for testing.
+type CommandSender interface {
+	SendCommand(ctx context.Context, cmdType string, params map[string]any) (*WSResultMessage, error)
+}
+
 // wsClientImpl implements the Client interface using WebSocket commands.
-// It wraps the WSClient for low-level WebSocket communication.
+// It wraps a CommandSender for low-level WebSocket communication.
 type wsClientImpl struct {
-	ws *WSClient
+	ws CommandSender
 }
 
 // NewWSClientImpl creates a new WebSocket-based Client implementation.
 func NewWSClientImpl(ws *WSClient) Client {
 	return &wsClientImpl{ws: ws}
+}
+
+// NewWSClientImplWithSender creates a new WebSocket-based Client implementation
+// with a custom CommandSender. This is useful for testing.
+func NewWSClientImplWithSender(sender CommandSender) Client {
+	return &wsClientImpl{ws: sender}
 }
 
 // Ensure wsClientImpl implements Client interface at compile time.

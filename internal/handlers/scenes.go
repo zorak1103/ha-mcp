@@ -525,11 +525,3 @@ func (h *SceneHandlers) HandleActivateScene(ctx context.Context, client homeassi
 		Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Scene '%s' activated successfully", sceneID))},
 	}, nil
 }
-
-// RegisterSceneTools registers all scene-related tools with the registry.
-//
-// Deprecated: Use NewSceneHandlers().Register(registry) instead.
-func RegisterSceneTools(registry *mcp.Registry) {
-	h := NewSceneHandlers()
-	h.Register(registry)
-}

@@ -131,6 +131,18 @@ func (h *InputNumberHandlers) handleCreateInputNumber(ctx context.Context, clien
 		}, nil
 	}
 
+	// Validate min/max relationship if both are specified
+	minVal, hasMin := GetOptionalFloat64(args, "min")
+	maxVal, hasMax := GetOptionalFloat64(args, "max")
+	if hasMin && hasMax {
+		if err := ValidateRange(minVal, maxVal, "input_number"); err != nil {
+			return &mcp.ToolsCallResult{
+				Content: []mcp.ContentBlock{mcp.NewTextContent(err.Error())},
+				IsError: true,
+			}, nil
+		}
+	}
+
 	config := buildInputNumberHelperConfig(name, args)
 
 	helper := homeassistant.HelperConfig{

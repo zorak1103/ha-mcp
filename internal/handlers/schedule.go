@@ -226,10 +226,16 @@ func buildScheduleDetails(state *homeassistant.Entity, timeBlocks map[string][]T
 }
 
 func (h *ScheduleHandlers) handleGetScheduleDetails(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	entityID, _ := args["entity_id"].(string)
-	if err := validateScheduleEntityID(entityID); err != nil {
+	entityID, err := GetRequiredString(args, "entity_id")
+	if err != nil {
 		return &mcp.ToolsCallResult{
 			Content: []mcp.ContentBlock{mcp.NewTextContent(err.Error())},
+			IsError: true,
+		}, nil
+	}
+	if validateErr := validateScheduleEntityID(entityID); validateErr != nil {
+		return &mcp.ToolsCallResult{
+			Content: []mcp.ContentBlock{mcp.NewTextContent(validateErr.Error())},
 			IsError: true,
 		}, nil
 	}

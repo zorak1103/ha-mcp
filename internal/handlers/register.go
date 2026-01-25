@@ -168,8 +168,8 @@ func RegisterAllTools(registry *mcp.Registry) {
 	// Core entity and automation handlers
 	RegisterEntityTools(registry)
 	RegisterAutomationTools(registry)
-	RegisterScriptTools(registry)
-	RegisterSceneTools(registry)
+	NewScriptHandlers().Register(registry)
+	NewSceneHandlers().Register(registry)
 
 	// Helper tools (generic list_helpers)
 	RegisterHelperTools(registry)

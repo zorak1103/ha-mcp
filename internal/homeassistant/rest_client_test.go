@@ -650,3 +650,442 @@ func TestRESTClient_GetConfig_ContextCancellation(t *testing.T) {
 		t.Error("expected error for canceled context, got nil")
 	}
 }
+
+func TestRESTClient_RenderTemplate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		template       string
+		serverResponse func(w http.ResponseWriter, r *http.Request)
+		wantResult     string
+		wantErr        bool
+		wantErrMsg     string
+	}{
+		{
+			name:     "successful template render",
+			template: "{{ states('sensor.temperature') }}",
+			serverResponse: func(w http.ResponseWriter, r *http.Request) {
+				// Verify request method and path
+				if r.Method != http.MethodPost {
+					t.Errorf("method = %q, want POST", r.Method)
+				}
+				if r.URL.Path != "/api/template" {
+					t.Errorf("path = %q, want /api/template", r.URL.Path)
+				}
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte("22.5"))
+			},
+			wantResult: "22.5",
+			wantErr:    false,
+		},
+		{
+			name:     "template with state attributes",
+			template: "{{ state_attr('sensor.temperature', 'unit_of_measurement') }}",
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte("°C"))
+			},
+			wantResult: "°C",
+			wantErr:    false,
+		},
+		{
+			name:     "empty template result",
+			template: "{{ '' }}",
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(""))
+			},
+			wantResult: "",
+			wantErr:    false,
+		},
+		{
+			name:     "template error - invalid syntax",
+			template: "{{ invalid syntax }}",
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte("TemplateSyntaxError: unexpected end of template"))
+			},
+			wantErr:    true,
+			wantErrMsg: "failed to render template",
+		},
+		{
+			name:     "unauthorized",
+			template: "{{ states('sensor.temperature') }}",
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte("unauthorized"))
+			},
+			wantErr:    true,
+			wantErrMsg: "failed to render template",
+		},
+		{
+			name:     "server error",
+			template: "{{ states('sensor.temperature') }}",
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte("internal error"))
+			},
+			wantErr:    true,
+			wantErrMsg: "failed to render template",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var capturedRequest *http.Request
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				capturedRequest = r
+				tt.serverResponse(w, r)
+			}))
+			defer server.Close()
+
+			client := NewRESTClient(server.URL, "test-token")
+			result, err := client.RenderTemplate(context.Background(), tt.template)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("RenderTemplate() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			// Verify request
+			if capturedRequest != nil {
+				if auth := capturedRequest.Header.Get("Authorization"); auth != "Bearer test-token" {
+					t.Errorf("Authorization = %q, want %q", auth, "Bearer test-token")
+				}
+				if ct := capturedRequest.Header.Get("Content-Type"); ct != "application/json" {
+					t.Errorf("Content-Type = %q, want %q", ct, "application/json")
+				}
+			}
+
+			if tt.wantErr {
+				return
+			}
+
+			if result != tt.wantResult {
+				t.Errorf("result = %q, want %q", result, tt.wantResult)
+			}
+		})
+	}
+}
+
+func TestRESTClient_RenderTemplate_ContextCancellation(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := NewRESTClient(server.URL, "test-token")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := client.RenderTemplate(ctx, "{{ states('sensor.test') }}")
+	if err == nil {
+		t.Error("expected error for canceled context, got nil")
+	}
+}
+
+func TestRESTClient_GetLogbook(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		startTime      string
+		endTime        string
+		entityID       string
+		serverResponse func(w http.ResponseWriter, r *http.Request)
+		wantCount      int
+		wantErr        bool
+		wantErrMsg     string
+	}{
+		{
+			name:      "successful logbook retrieval",
+			startTime: "2024-01-01T00:00:00Z",
+			endTime:   "2024-01-01T23:59:59Z",
+			entityID:  "light.living_room",
+			serverResponse: func(w http.ResponseWriter, r *http.Request) {
+				// Verify path contains start_time
+				if r.URL.Path != "/api/logbook/2024-01-01T00:00:00Z" {
+					t.Errorf("path = %q, want /api/logbook/2024-01-01T00:00:00Z", r.URL.Path)
+				}
+				// Verify query parameters
+				if r.URL.Query().Get("end_time") != "2024-01-01T23:59:59Z" {
+					t.Errorf("end_time = %q, want 2024-01-01T23:59:59Z", r.URL.Query().Get("end_time"))
+				}
+				if r.URL.Query().Get("entity") != "light.living_room" {
+					t.Errorf("entity = %q, want light.living_room", r.URL.Query().Get("entity"))
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`[
+					{"name": "Living Room Light", "message": "turned on", "entity_id": "light.living_room", "when": "2024-01-01T08:00:00Z"},
+					{"name": "Living Room Light", "message": "turned off", "entity_id": "light.living_room", "when": "2024-01-01T22:00:00Z"}
+				]`))
+			},
+			wantCount: 2,
+			wantErr:   false,
+		},
+		{
+			name:      "logbook without entity filter",
+			startTime: "2024-01-01T00:00:00Z",
+			endTime:   "",
+			entityID:  "",
+			serverResponse: func(w http.ResponseWriter, r *http.Request) {
+				// Verify no query parameters
+				if r.URL.Query().Get("entity") != "" {
+					t.Errorf("entity should be empty, got %q", r.URL.Query().Get("entity"))
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`[{"name": "Test", "message": "test"}]`))
+			},
+			wantCount: 1,
+			wantErr:   false,
+		},
+		{
+			name:      "empty logbook",
+			startTime: "2024-01-01T00:00:00Z",
+			endTime:   "2024-01-01T01:00:00Z",
+			entityID:  "sensor.nonexistent",
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`[]`))
+			},
+			wantCount: 0,
+			wantErr:   false,
+		},
+		{
+			name:      "unauthorized",
+			startTime: "2024-01-01T00:00:00Z",
+			endTime:   "",
+			entityID:  "",
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte("unauthorized"))
+			},
+			wantErr:    true,
+			wantErrMsg: "failed to get logbook",
+		},
+		{
+			name:      "server error",
+			startTime: "2024-01-01T00:00:00Z",
+			endTime:   "",
+			entityID:  "",
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusInternalServerError)
+			},
+			wantErr:    true,
+			wantErrMsg: "failed to get logbook",
+		},
+		{
+			name:      "invalid JSON response",
+			startTime: "2024-01-01T00:00:00Z",
+			endTime:   "",
+			entityID:  "",
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte("not valid json"))
+			},
+			wantErr:    true,
+			wantErrMsg: "parsing logbook response",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var capturedRequest *http.Request
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				capturedRequest = r
+				tt.serverResponse(w, r)
+			}))
+			defer server.Close()
+
+			client := NewRESTClient(server.URL, "test-token")
+			entries, err := client.GetLogbook(context.Background(), tt.startTime, tt.endTime, tt.entityID)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("GetLogbook() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			// Verify request
+			if capturedRequest != nil {
+				if capturedRequest.Method != http.MethodGet {
+					t.Errorf("method = %q, want GET", capturedRequest.Method)
+				}
+				if auth := capturedRequest.Header.Get("Authorization"); auth != "Bearer test-token" {
+					t.Errorf("Authorization = %q, want %q", auth, "Bearer test-token")
+				}
+			}
+
+			if tt.wantErr {
+				return
+			}
+
+			if len(entries) != tt.wantCount {
+				t.Errorf("got %d entries, want %d", len(entries), tt.wantCount)
+			}
+		})
+	}
+}
+
+func TestRESTClient_GetLogbook_ContextCancellation(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := NewRESTClient(server.URL, "test-token")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := client.GetLogbook(ctx, "2024-01-01T00:00:00Z", "", "")
+	if err == nil {
+		t.Error("expected error for canceled context, got nil")
+	}
+}
+
+func TestRESTClient_CheckConfig(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		serverResponse func(w http.ResponseWriter, r *http.Request)
+		wantResult     string
+		wantErr        bool
+		wantErrMsg     string
+	}{
+		{
+			name: "config valid",
+			serverResponse: func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost {
+					t.Errorf("method = %q, want POST", r.Method)
+				}
+				if r.URL.Path != "/api/config/core/check_config" {
+					t.Errorf("path = %q, want /api/config/core/check_config", r.URL.Path)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"result": "valid", "errors": null}`))
+			},
+			wantResult: "valid",
+			wantErr:    false,
+		},
+		{
+			name: "config invalid with errors",
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"result": "invalid", "errors": "Invalid config for [automation]: required key not provided"}`))
+			},
+			wantResult: "invalid",
+			wantErr:    false,
+		},
+		{
+			name: "unauthorized",
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte("unauthorized"))
+			},
+			wantErr:    true,
+			wantErrMsg: "failed to check config",
+		},
+		{
+			name: "forbidden",
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte("forbidden"))
+			},
+			wantErr:    true,
+			wantErrMsg: "failed to check config",
+		},
+		{
+			name: "server error",
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusInternalServerError)
+			},
+			wantErr:    true,
+			wantErrMsg: "failed to check config",
+		},
+		{
+			name: "invalid JSON response",
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte("invalid json"))
+			},
+			wantErr:    true,
+			wantErrMsg: "parsing check config response",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var capturedRequest *http.Request
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				capturedRequest = r
+				tt.serverResponse(w, r)
+			}))
+			defer server.Close()
+
+			client := NewRESTClient(server.URL, "test-token")
+			result, err := client.CheckConfig(context.Background())
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("CheckConfig() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			// Verify request
+			if capturedRequest != nil {
+				if auth := capturedRequest.Header.Get("Authorization"); auth != "Bearer test-token" {
+					t.Errorf("Authorization = %q, want %q", auth, "Bearer test-token")
+				}
+			}
+
+			if tt.wantErr {
+				return
+			}
+
+			if result.Result != tt.wantResult {
+				t.Errorf("result = %q, want %q", result.Result, tt.wantResult)
+			}
+		})
+	}
+}
+
+func TestRESTClient_CheckConfig_ContextCancellation(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := NewRESTClient(server.URL, "test-token")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := client.CheckConfig(ctx)
+	if err == nil {
+		t.Error("expected error for canceled context, got nil")
+	}
+}

@@ -320,3 +320,105 @@ var (
 	_ Client       = (*mockCloserClient)(nil)
 	_ ClientCloser = (*mockCloserClient)(nil)
 )
+
+func TestNewWSClientImplWithCloser(t *testing.T) {
+	t.Parallel()
+
+	// Create a WSClient (won't connect)
+	wsClient := NewWSClient("ws://localhost:8123", "test-token")
+
+	// Create wsClientImplCloser
+	client := NewWSClientImplWithCloser(wsClient)
+
+	// Verify it's not nil
+	if client == nil {
+		t.Fatal("NewWSClientImplWithCloser returned nil")
+	}
+
+	// Verify it implements Client
+	if _, ok := client.(Client); !ok {
+		t.Error("NewWSClientImplWithCloser does not implement Client")
+	}
+
+	// Verify it implements ClientCloser
+	if _, ok := client.(ClientCloser); !ok {
+		t.Error("NewWSClientImplWithCloser does not implement ClientCloser")
+	}
+}
+
+func TestWSClientImplCloser_Close(t *testing.T) {
+	t.Parallel()
+
+	// Create a WSClient (won't connect)
+	wsClient := NewWSClient("ws://localhost:8123", "test-token")
+
+	// Create wsClientImplCloser
+	client := NewWSClientImplWithCloser(wsClient)
+
+	// Close should not panic
+	closer, ok := client.(ClientCloser)
+	if !ok {
+		t.Fatal("client does not implement ClientCloser")
+	}
+
+	// Close() may return error since there's no connection, but should not panic
+	_ = closer.Close()
+}
+
+func TestNewClientWithOptions_InvalidURL(t *testing.T) {
+	t.Parallel()
+
+	opts := DefaultClientOptions()
+
+	// Try to connect with invalid URL - should fail
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	_, err := NewClientWithOptions(ctx, "ws://invalid-host:9999", "test-token", opts)
+	if err == nil {
+		t.Error("NewClientWithOptions with invalid URL should return error")
+	}
+}
+
+func TestNewConnectedWSClient_WithNilConfig(t *testing.T) {
+	t.Parallel()
+
+	// Try to connect with nil config - should use defaults and fail due to invalid host
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	_, err := NewConnectedWSClient(ctx, "ws://invalid-host:9999", "test-token", nil)
+	if err == nil {
+		t.Error("NewConnectedWSClient with invalid URL should return error")
+	}
+}
+
+func TestNewConnectedWSClient_WithConfig(t *testing.T) {
+	t.Parallel()
+
+	config := &WSClientConfig{
+		AutoReconnect: false,
+		PingInterval:  10 * time.Second,
+	}
+
+	// Try to connect with config - should fail due to invalid host
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	_, err := NewConnectedWSClient(ctx, "ws://invalid-host:9999", "test-token", config)
+	if err == nil {
+		t.Error("NewConnectedWSClient with invalid URL should return error")
+	}
+}
+
+func TestNewDefaultWSClient_InvalidURL(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	_, err := NewDefaultWSClient(ctx, "ws://invalid-host:9999", "test-token")
+	if err == nil {
+		t.Error("NewDefaultWSClient with invalid URL should return error")
+	}
+}

@@ -529,11 +529,3 @@ func (h *ScriptHandlers) HandleCallService(ctx context.Context, client homeassis
 		Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Service called successfully, affected %d entities", len(entities)))},
 	}, nil
 }
-
-// RegisterScriptTools registers all script-related tools with the registry.
-//
-// Deprecated: Use NewScriptHandlers().Register(registry) instead.
-func RegisterScriptTools(registry *mcp.Registry) {
-	h := NewScriptHandlers()
-	h.Register(registry)
-}

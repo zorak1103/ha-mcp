@@ -6,18 +6,81 @@ import (
 	"time"
 )
 
+// WSOperations is an interface for WebSocket client operations.
+// It matches the subset of Client methods that are delegated to WebSocket.
+// This allows mocking the WebSocket client for testing.
+type WSOperations interface {
+	GetStates(ctx context.Context) ([]Entity, error)
+	GetState(ctx context.Context, entityID string) (*Entity, error)
+	SetState(ctx context.Context, entityID string, state StateUpdate) (*Entity, error)
+	GetHistory(ctx context.Context, entityID string, start, end time.Time) ([][]HistoryEntry, error)
+	CallService(ctx context.Context, domain, service string, data map[string]any) ([]Entity, error)
+	ListAutomations(ctx context.Context) ([]Automation, error)
+	GetAutomation(ctx context.Context, automationID string) (*Automation, error)
+	CreateAutomation(ctx context.Context, config AutomationConfig) error
+	UpdateAutomation(ctx context.Context, automationID string, config AutomationConfig) error
+	ToggleAutomation(ctx context.Context, entityID string, enabled bool) error
+	ListHelpers(ctx context.Context) ([]Entity, error)
+	CreateHelper(ctx context.Context, config HelperConfig) error
+	UpdateHelper(ctx context.Context, helperID string, config HelperConfig) error
+	DeleteHelper(ctx context.Context, helperID string) error
+	SetHelperValue(ctx context.Context, entityID string, value any) error
+	ListScripts(ctx context.Context) ([]Entity, error)
+	GetScript(ctx context.Context, scriptID string) (*Script, error)
+	CreateScript(ctx context.Context, scriptID string, config ScriptConfig) error
+	UpdateScript(ctx context.Context, scriptID string, config ScriptConfig) error
+	ListScenes(ctx context.Context) ([]Entity, error)
+	CreateScene(ctx context.Context, sceneID string, config SceneConfig) error
+	UpdateScene(ctx context.Context, sceneID string, config SceneConfig) error
+	GetEntityRegistry(ctx context.Context) ([]EntityRegistryEntry, error)
+	GetDeviceRegistry(ctx context.Context) ([]DeviceRegistryEntry, error)
+	GetAreaRegistry(ctx context.Context) ([]AreaRegistryEntry, error)
+	SignPath(ctx context.Context, path string, expires int) (string, error)
+	GetCameraStream(ctx context.Context, entityID string) (*StreamInfo, error)
+	BrowseMedia(ctx context.Context, mediaContentID string) (*MediaBrowseResult, error)
+	GetLovelaceConfig(ctx context.Context) (map[string]any, error)
+	GetStatistics(ctx context.Context, statIDs []string, period string) ([]StatisticsResult, error)
+	GetTriggersForTarget(ctx context.Context, target Target, expandGroup *bool) ([]string, error)
+	GetConditionsForTarget(ctx context.Context, target Target, expandGroup *bool) ([]string, error)
+	GetServicesForTarget(ctx context.Context, target Target, expandGroup *bool) ([]string, error)
+	ExtractFromTarget(ctx context.Context, target Target, expandGroup *bool) (*ExtractFromTargetResult, error)
+	GetScheduleConfig(ctx context.Context, scheduleID string) (map[string]any, error)
+}
+
+// RESTOperations is an interface for REST client operations.
+// This allows mocking the REST client for testing.
+type RESTOperations interface {
+	DeleteAutomation(ctx context.Context, automationID string) error
+	DeleteScript(ctx context.Context, scriptID string) error
+	DeleteScene(ctx context.Context, sceneID string) error
+	GetServices(ctx context.Context) ([]Service, error)
+	GetConfig(ctx context.Context) (*Config, error)
+	RenderTemplate(ctx context.Context, template string) (string, error)
+	GetLogbook(ctx context.Context, startTime, endTime, entityID string) ([]LogbookEntry, error)
+	CheckConfig(ctx context.Context) (*ConfigCheckResult, error)
+}
+
 // HybridClient combines WebSocket and REST API clients for Home Assistant.
 // It uses WebSocket for most operations but falls back to REST for operations
 // that are not supported via WebSocket (e.g., deleting automations/scripts/scenes).
 type HybridClient struct {
-	ws   *wsClientImpl // WebSocket client for most operations
-	rest *RESTClient   // REST client for delete operations
+	ws   WSOperations   // WebSocket client for most operations
+	rest RESTOperations // REST client for delete operations
 }
 
 // NewHybridClient creates a new hybrid client with the given WebSocket and REST clients.
 func NewHybridClient(ws *WSClient, rest *RESTClient) *HybridClient {
 	return &HybridClient{
 		ws:   &wsClientImpl{ws: ws},
+		rest: rest,
+	}
+}
+
+// NewHybridClientWithInterfaces creates a new hybrid client with custom interfaces.
+// This is useful for testing with mock implementations.
+func NewHybridClientWithInterfaces(ws WSOperations, rest RESTOperations) *HybridClient {
+	return &HybridClient{
+		ws:   ws,
 		rest: rest,
 	}
 }

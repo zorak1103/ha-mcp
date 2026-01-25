@@ -106,8 +106,8 @@ func (h *ThresholdHandlers) handleCreateThreshold(ctx context.Context, client ho
 		}, nil
 	}
 
-	sourceEntityID, _ := args["entity_id"].(string)
-	if sourceEntityID == "" {
+	sourceEntityID, ok := args["entity_id"].(string)
+	if !ok || sourceEntityID == "" {
 		return &mcp.ToolsCallResult{
 			Content: []mcp.ContentBlock{mcp.NewTextContent("entity_id (source sensor) is required")},
 			IsError: true,

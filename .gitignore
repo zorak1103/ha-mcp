@@ -75,3 +75,4 @@ tmp/
 
 .claude/
 AGENTS.md
+.mcp.json

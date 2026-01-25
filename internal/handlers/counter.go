@@ -182,6 +182,18 @@ func (h *CounterHandlers) handleCreateCounter(ctx context.Context, client homeas
 		}, nil
 	}
 
+	// Validate minimum/maximum relationship if both are specified
+	minVal, hasMin := GetOptionalInt(args, "minimum")
+	maxVal, hasMax := GetOptionalInt(args, "maximum")
+	if hasMin && hasMax {
+		if err := ValidateRange(float64(minVal), float64(maxVal), "counter"); err != nil {
+			return &mcp.ToolsCallResult{
+				Content: []mcp.ContentBlock{mcp.NewTextContent(err.Error())},
+				IsError: true,
+			}, nil
+		}
+	}
+
 	config := buildCounterHelperConfig(name, args)
 
 	helper := homeassistant.HelperConfig{
