@@ -373,11 +373,13 @@ type ServiceTarget struct {
 }
 
 // TargetSelector represents entity/device selection criteria.
+// Note: Domain, Integration, and DeviceClass use FlexibleString because
+// Home Assistant can return these as either a string or an array of strings.
 type TargetSelector struct {
-	Domain            string `json:"domain,omitempty"`
-	Integration       string `json:"integration,omitempty"`
-	DeviceClass       string `json:"device_class,omitempty"`
-	SupportedFeatures []int  `json:"supported_features,omitempty"`
+	Domain            FlexibleString `json:"domain,omitempty"`
+	Integration       FlexibleString `json:"integration,omitempty"`
+	DeviceClass       FlexibleString `json:"device_class,omitempty"`
+	SupportedFeatures []int          `json:"supported_features,omitempty"`
 }
 
 // Config represents Home Assistant system configuration.
