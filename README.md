@@ -23,6 +23,7 @@ A Model Context Protocol (MCP) server that provides AI assistants with access to
 - **Media Browser**: Browse media sources and get camera streams
 - **Lovelace Config**: Access dashboard configurations
 - **Auto-Reconnect**: Automatic reconnection with exponential backoff
+- **Request Retries**: Automatic retries with exponential backoff for transient failures (5xx, 429, network errors)
 
 ## Installation
 
@@ -212,6 +213,13 @@ homeassistant:
   rest:
     rate_limit: 10  # Requests per second (0 = unlimited)
     rate_burst: 5   # Maximum burst size
+    max_retries: 3  # Retry attempts for transient failures
+    retry_initial_delay_ms: 100  # Initial delay between retries
+    retry_max_delay_ms: 5000     # Maximum delay between retries
+  websocket:
+    max_retries: 3  # Retry attempts for transient failures
+    retry_initial_delay_ms: 100
+    retry_max_delay_ms: 5000
 
 server:
   port: 8080
@@ -228,9 +236,17 @@ export HA_TOKEN=your-long-lived-access-token
 export HA_MCP_PORT=8080
 export HA_MCP_LOG_LEVEL=info
 
-# REST API rate limiting (optional)
+# REST API settings (optional)
 export HA_REST_RATE_LIMIT=10   # Requests per second (0 = unlimited, default: 10)
 export HA_REST_RATE_BURST=5    # Maximum burst size (default: 5)
+export HA_REST_MAX_RETRIES=3   # Max retry attempts (default: 3)
+export HA_REST_RETRY_INITIAL_DELAY_MS=100  # Initial retry delay in ms (default: 100)
+export HA_REST_RETRY_MAX_DELAY_MS=5000     # Max retry delay in ms (default: 5000)
+
+# WebSocket settings (optional)
+export HA_WS_MAX_RETRIES=3     # Max retry attempts (default: 3)
+export HA_WS_RETRY_INITIAL_DELAY_MS=100    # Initial retry delay in ms (default: 100)
+export HA_WS_RETRY_MAX_DELAY_MS=5000       # Max retry delay in ms (default: 5000)
 ```
 
 ### Command-Line Flags
@@ -870,6 +886,7 @@ ha-mcp/
 │   │   ├── factory.go           # Client factory (creates HybridClient)
 │   │   ├── hybrid_client.go     # Hybrid client combining WS + REST
 │   │   ├── rest_client.go       # REST client for delete operations
+│   │   ├── retry.go             # Retry logic with exponential backoff
 │   │   ├── ws_client.go         # WebSocket connection management
 │   │   ├── ws_client_impl.go    # WebSocket Client implementation
 │   │   ├── ws_messages.go       # WebSocket message types

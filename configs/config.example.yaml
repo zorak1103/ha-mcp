@@ -32,6 +32,23 @@ homeassistant:
     rate_limit: 10
     # Burst size: maximum burst of requests allowed (default: 5)
     rate_burst: 5
+    # Retry settings for transient failures (5xx, 429, network errors)
+    # Max retry attempts (0 = no retries, default: 3)
+    max_retries: 3
+    # Initial delay between retries in milliseconds (default: 100)
+    retry_initial_delay_ms: 100
+    # Maximum delay between retries in milliseconds (default: 5000)
+    retry_max_delay_ms: 5000
+
+  # WebSocket client settings (used for most operations)
+  websocket:
+    # Retry settings for transient command failures
+    # Max retry attempts (0 = no retries, default: 3)
+    max_retries: 3
+    # Initial delay between retries in milliseconds (default: 100)
+    retry_initial_delay_ms: 100
+    # Maximum delay between retries in milliseconds (default: 5000)
+    retry_max_delay_ms: 5000
 
 # MCP Server settings
 server:

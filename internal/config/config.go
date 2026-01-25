@@ -51,9 +51,10 @@ type LoggingConfig struct {
 
 // HomeAssistantConfig holds Home Assistant connection settings.
 type HomeAssistantConfig struct {
-	URL   string     `mapstructure:"url"`
-	Token string     `mapstructure:"token"`
-	REST  RESTConfig `mapstructure:"rest"`
+	URL       string          `mapstructure:"url"`
+	Token     string          `mapstructure:"token"`
+	REST      RESTConfig      `mapstructure:"rest"`
+	WebSocket WebSocketConfig `mapstructure:"websocket"`
 }
 
 // RESTConfig holds REST API client settings.
@@ -62,6 +63,22 @@ type RESTConfig struct {
 	RateLimit float64 `mapstructure:"rate_limit"`
 	// RateBurst is the maximum burst size for rate limiting (default: 5)
 	RateBurst int `mapstructure:"rate_burst"`
+	// MaxRetries is the maximum number of retry attempts (default: 3)
+	MaxRetries int `mapstructure:"max_retries"`
+	// RetryInitialDelayMs is the initial delay between retries in milliseconds (default: 100)
+	RetryInitialDelayMs int `mapstructure:"retry_initial_delay_ms"`
+	// RetryMaxDelayMs is the maximum delay between retries in milliseconds (default: 5000)
+	RetryMaxDelayMs int `mapstructure:"retry_max_delay_ms"`
+}
+
+// WebSocketConfig holds WebSocket client settings.
+type WebSocketConfig struct {
+	// MaxRetries is the maximum number of retry attempts (default: 3)
+	MaxRetries int `mapstructure:"max_retries"`
+	// RetryInitialDelayMs is the initial delay between retries in milliseconds (default: 100)
+	RetryInitialDelayMs int `mapstructure:"retry_initial_delay_ms"`
+	// RetryMaxDelayMs is the maximum delay between retries in milliseconds (default: 5000)
+	RetryMaxDelayMs int `mapstructure:"retry_max_delay_ms"`
 }
 
 // ServerConfig holds MCP server settings.
@@ -81,6 +98,12 @@ func setupViper(configFile string) (*viper.Viper, error) {
 	v.SetDefault("homeassistant.token", "")
 	v.SetDefault("homeassistant.rest.rate_limit", 10.0)
 	v.SetDefault("homeassistant.rest.rate_burst", 5)
+	v.SetDefault("homeassistant.rest.max_retries", 3)
+	v.SetDefault("homeassistant.rest.retry_initial_delay_ms", 100)
+	v.SetDefault("homeassistant.rest.retry_max_delay_ms", 5000)
+	v.SetDefault("homeassistant.websocket.max_retries", 3)
+	v.SetDefault("homeassistant.websocket.retry_initial_delay_ms", 100)
+	v.SetDefault("homeassistant.websocket.retry_max_delay_ms", 5000)
 	v.SetDefault("server.port", 8080)
 	v.SetDefault("logging.level", "INFO")
 
@@ -102,6 +125,12 @@ func setupViper(configFile string) (*viper.Viper, error) {
 	mustBindEnv(v, "homeassistant.token", "HA_TOKEN")
 	mustBindEnv(v, "homeassistant.rest.rate_limit", "HA_REST_RATE_LIMIT")
 	mustBindEnv(v, "homeassistant.rest.rate_burst", "HA_REST_RATE_BURST")
+	mustBindEnv(v, "homeassistant.rest.max_retries", "HA_REST_MAX_RETRIES")
+	mustBindEnv(v, "homeassistant.rest.retry_initial_delay_ms", "HA_REST_RETRY_INITIAL_DELAY_MS")
+	mustBindEnv(v, "homeassistant.rest.retry_max_delay_ms", "HA_REST_RETRY_MAX_DELAY_MS")
+	mustBindEnv(v, "homeassistant.websocket.max_retries", "HA_WS_MAX_RETRIES")
+	mustBindEnv(v, "homeassistant.websocket.retry_initial_delay_ms", "HA_WS_RETRY_INITIAL_DELAY_MS")
+	mustBindEnv(v, "homeassistant.websocket.retry_max_delay_ms", "HA_WS_RETRY_MAX_DELAY_MS")
 	mustBindEnv(v, "server.port", "HA_MCP_PORT")
 	mustBindEnv(v, "logging.level", "HA_MCP_LOG_LEVEL")
 
@@ -155,6 +184,12 @@ func LoadWithViper(v *viper.Viper, configFile string) (*Config, error) {
 	v.SetDefault("homeassistant.token", "")
 	v.SetDefault("homeassistant.rest.rate_limit", 10.0)
 	v.SetDefault("homeassistant.rest.rate_burst", 5)
+	v.SetDefault("homeassistant.rest.max_retries", 3)
+	v.SetDefault("homeassistant.rest.retry_initial_delay_ms", 100)
+	v.SetDefault("homeassistant.rest.retry_max_delay_ms", 5000)
+	v.SetDefault("homeassistant.websocket.max_retries", 3)
+	v.SetDefault("homeassistant.websocket.retry_initial_delay_ms", 100)
+	v.SetDefault("homeassistant.websocket.retry_max_delay_ms", 5000)
 	v.SetDefault("server.port", 8080)
 	v.SetDefault("logging.level", "INFO")
 
@@ -176,6 +211,12 @@ func LoadWithViper(v *viper.Viper, configFile string) (*Config, error) {
 	mustBindEnv(v, "homeassistant.token", "HA_TOKEN")
 	mustBindEnv(v, "homeassistant.rest.rate_limit", "HA_REST_RATE_LIMIT")
 	mustBindEnv(v, "homeassistant.rest.rate_burst", "HA_REST_RATE_BURST")
+	mustBindEnv(v, "homeassistant.rest.max_retries", "HA_REST_MAX_RETRIES")
+	mustBindEnv(v, "homeassistant.rest.retry_initial_delay_ms", "HA_REST_RETRY_INITIAL_DELAY_MS")
+	mustBindEnv(v, "homeassistant.rest.retry_max_delay_ms", "HA_REST_RETRY_MAX_DELAY_MS")
+	mustBindEnv(v, "homeassistant.websocket.max_retries", "HA_WS_MAX_RETRIES")
+	mustBindEnv(v, "homeassistant.websocket.retry_initial_delay_ms", "HA_WS_RETRY_INITIAL_DELAY_MS")
+	mustBindEnv(v, "homeassistant.websocket.retry_max_delay_ms", "HA_WS_RETRY_MAX_DELAY_MS")
 	mustBindEnv(v, "server.port", "HA_MCP_PORT")
 	mustBindEnv(v, "logging.level", "HA_MCP_LOG_LEVEL")
 

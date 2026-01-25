@@ -4,6 +4,7 @@ package homeassistant
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 // ClientOptions configures client creation.
@@ -111,3 +112,21 @@ var (
 	_ Client       = (*wsClientImplCloser)(nil)
 	_ ClientCloser = (*wsClientImplCloser)(nil)
 )
+
+// RetryConfigFromSettings creates a RetryConfig from max retries, initial delay (ms), and max delay (ms).
+// This is a helper function for building retry configuration from application config settings.
+func RetryConfigFromSettings(maxRetries, initialDelayMs, maxDelayMs int) RetryConfig {
+	config := DefaultRetryConfig()
+
+	if maxRetries >= 0 {
+		config.MaxRetries = maxRetries
+	}
+	if initialDelayMs > 0 {
+		config.InitialDelay = time.Duration(initialDelayMs) * time.Millisecond
+	}
+	if maxDelayMs > 0 {
+		config.MaxDelay = time.Duration(maxDelayMs) * time.Millisecond
+	}
+
+	return config
+}

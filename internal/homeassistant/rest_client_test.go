@@ -174,7 +174,7 @@ func TestRESTClient_DeleteAutomation(t *testing.T) {
 			},
 			wantErr:     true,
 			wantErrType: "*homeassistant.APIError",
-			wantErrMsg:  "unexpected status 500: internal error",
+			wantErrMsg:  "internal error", // After retry exhaustion, message is just the body
 		},
 	}
 
@@ -389,9 +389,10 @@ func TestDefaultRESTClientConfig(t *testing.T) {
 	config := DefaultRESTClientConfig()
 
 	want := RESTClientConfig{
-		Timeout:   30 * time.Second,
-		RateLimit: 10, // 10 requests per second
-		RateBurst: 5,  // Allow burst of 5 requests
+		Timeout:     30 * time.Second,
+		RateLimit:   10, // 10 requests per second
+		RateBurst:   5,  // Allow burst of 5 requests
+		RetryConfig: DefaultRetryConfig(),
 	}
 
 	if diff := cmp.Diff(want, config); diff != "" {

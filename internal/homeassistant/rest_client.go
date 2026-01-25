@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zorak1103/ha-mcp/internal/logging"
 	"golang.org/x/time/rate"
 )
 
@@ -21,10 +22,11 @@ const noResponseBody = "no response body"
 // This client is used for operations that are not supported via WebSocket API,
 // such as deleting automations.
 type RESTClient struct {
-	baseURL    string
-	token      string
-	httpClient *http.Client
-	limiter    *rate.Limiter
+	baseURL      string
+	token        string
+	httpClient   *http.Client
+	limiter      *rate.Limiter
+	retryManager *RetryManager
 }
 
 // RESTClientConfig configures the REST client.
@@ -35,14 +37,19 @@ type RESTClientConfig struct {
 	RateLimit float64
 	// RateBurst is the maximum burst size for rate limiting (default: 5)
 	RateBurst int
+	// RetryConfig configures retry behavior for transient failures
+	RetryConfig RetryConfig
+	// Logger for structured logging. If nil, a default logger is used.
+	Logger *logging.Logger
 }
 
 // DefaultRESTClientConfig returns the default REST client configuration.
 func DefaultRESTClientConfig() RESTClientConfig {
 	return RESTClientConfig{
-		Timeout:   30 * time.Second,
-		RateLimit: 10, // 10 requests per second
-		RateBurst: 5,  // Allow burst of 5 requests
+		Timeout:     30 * time.Second,
+		RateLimit:   10, // 10 requests per second
+		RateBurst:   5,  // Allow burst of 5 requests
+		RetryConfig: DefaultRetryConfig(),
 	}
 }
 
@@ -72,27 +79,67 @@ func NewRESTClientWithConfig(baseURL, token string, config RESTClientConfig) *RE
 		limiter = rate.NewLimiter(rate.Limit(config.RateLimit), burst)
 	}
 
+	// Initialize retry manager
+	retryManager := NewRetryManager(config.RetryConfig, config.Logger)
+
 	return &RESTClient{
 		baseURL: baseURL,
 		token:   token,
 		httpClient: &http.Client{
 			Timeout: timeout,
 		},
-		limiter: limiter,
+		limiter:      limiter,
+		retryManager: retryManager,
 	}
 }
 
-// doRequest executes an HTTP request with rate limiting.
+// doRequest executes an HTTP request with rate limiting and retry logic.
 // If a rate limiter is configured, it waits for permission before executing.
+// Retries are performed for transient failures (5xx, 429, network errors).
 func (c *RESTClient) doRequest(ctx context.Context, req *http.Request) (*http.Response, error) {
-	// Wait for rate limiter if configured
-	if c.limiter != nil {
-		if err := c.limiter.Wait(ctx); err != nil {
-			return nil, fmt.Errorf("rate limiter: %w", err)
+	var resp *http.Response
+
+	err := c.retryManager.Retry(ctx, func() error {
+		// Wait for rate limiter if configured
+		if c.limiter != nil {
+			if err := c.limiter.Wait(ctx); err != nil {
+				return fmt.Errorf("rate limiter: %w", err)
+			}
 		}
+
+		// Execute the request
+		var reqErr error
+		resp, reqErr = c.httpClient.Do(req) //nolint:bodyclose // Body is closed in all error paths below
+		if reqErr != nil {
+			// Close response body if it exists
+			if resp != nil && resp.Body != nil {
+				_, _ = io.Copy(io.Discard, resp.Body)
+				_ = resp.Body.Close()
+				resp = nil
+			}
+			return reqErr
+		}
+
+		// Check for retryable status codes
+		if IsRetryableHTTPStatus(resp.StatusCode) {
+			statusCode := resp.StatusCode
+			body, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			resp = nil // Clear response so caller doesn't use stale data
+			return &APIError{StatusCode: statusCode, Message: string(body)}
+		}
+
+		return nil
+	})
+
+	if err != nil && resp != nil {
+		// Ensure response body is closed on error
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+		return nil, err
 	}
 
-	return c.httpClient.Do(req)
+	return resp, err
 }
 
 // DeleteAutomation deletes an automation using the REST API.

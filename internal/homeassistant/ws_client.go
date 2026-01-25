@@ -27,6 +27,8 @@ const defaultRequestTimeout = 30 * time.Second
 type WSClientConfig struct {
 	// ReconnectConfig configures automatic reconnection behavior.
 	ReconnectConfig ReconnectConfig
+	// RetryConfig configures retry behavior for transient command failures.
+	RetryConfig RetryConfig
 	// OnReconnect is called after a successful reconnection.
 	OnReconnect OnReconnectFunc
 	// OnDisconnect is called when a disconnect is detected.
@@ -50,6 +52,7 @@ type WSClientConfig struct {
 func DefaultWSClientConfig() WSClientConfig {
 	return WSClientConfig{
 		ReconnectConfig: DefaultReconnectConfig(),
+		RetryConfig:     DefaultRetryConfig(),
 		AutoReconnect:   true,
 		PingInterval:    30 * time.Second,
 		PingTimeout:     10 * time.Second,
@@ -75,6 +78,9 @@ type WSClient struct {
 	reconnectMgr *ReconnectManager
 	reconnectMu  sync.Mutex
 	reconnecting atomic.Bool
+
+	// Retry manager for transient failures
+	retryManager *RetryManager
 
 	// Health monitoring fields
 	pingCancel context.CancelFunc
@@ -103,6 +109,7 @@ func NewWSClientWithConfig(baseURL, token string, config WSClientConfig) *WSClie
 		pending:      make(map[int64]chan *WSResultMessage),
 		config:       config,
 		reconnectMgr: NewReconnectManager(config.ReconnectConfig),
+		retryManager: NewRetryManager(config.RetryConfig, logger),
 		logger:       logger,
 	}
 }
@@ -567,22 +574,41 @@ func (p *pendingRequest) cleanup(c *WSClient) {
 }
 
 // SendCommand sends a command to Home Assistant and waits for a response.
+// It retries on transient failures like connection issues, waiting for reconnection if needed.
 func (c *WSClient) SendCommand(ctx context.Context, msgType string, payload map[string]any) (*WSResultMessage, error) {
-	if !c.connected.Load() {
-		return nil, errors.New("not connected")
-	}
+	var result *WSResultMessage
 
-	req := c.registerPendingRequest()
-	defer func() {
-		req.timer.Stop()
-		req.cleanup(c)
-	}()
+	err := c.retryManager.Retry(ctx, func() error {
+		// Wait for connection if reconnecting
+		if !c.connected.Load() {
+			if c.config.AutoReconnect && c.reconnecting.Load() {
+				if waitErr := c.WaitForConnection(ctx); waitErr != nil {
+					return waitErr
+				}
+			} else {
+				return errors.New("not connected")
+			}
+		}
 
-	if err := c.sendWSCommand(ctx, req.id, msgType, payload); err != nil {
-		return nil, err
-	}
+		// Register pending request for this attempt
+		req := c.registerPendingRequest()
+		defer func() {
+			req.timer.Stop()
+			req.cleanup(c)
+		}()
 
-	return c.waitForResponse(ctx, req.responseChan)
+		// Send the command
+		if err := c.sendWSCommand(ctx, req.id, msgType, payload); err != nil {
+			return err
+		}
+
+		// Wait for response
+		var waitErr error
+		result, waitErr = c.waitForResponse(ctx, req.responseChan)
+		return waitErr
+	})
+
+	return result, err
 }
 
 // registerPendingRequest creates a new pending request with timeout cleanup.
