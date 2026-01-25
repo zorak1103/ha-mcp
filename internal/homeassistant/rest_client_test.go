@@ -460,6 +460,54 @@ func TestRESTClient_GetServices(t *testing.T) {
 			wantErr:    true,
 			wantErrMsg: "parsing services response",
 		},
+		{
+			name: "service with array domain in target selector",
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				// Home Assistant can return domain as an array of strings in target selectors
+				_, _ = w.Write([]byte(`[
+					{
+						"domain": "homeassistant",
+						"services": {
+							"turn_on": {
+								"name": "Turn on",
+								"target": {
+									"entity": [{"domain": ["light", "switch", "fan"]}]
+								}
+							}
+						}
+					}
+				]`))
+			},
+			wantErr:     false,
+			wantDomains: []string{"homeassistant"},
+		},
+		{
+			name: "service with mixed string and array fields in target",
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`[
+					{
+						"domain": "light",
+						"services": {
+							"turn_on": {
+								"name": "Turn on",
+								"target": {
+									"entity": [
+										{"domain": "light"},
+										{"domain": ["switch", "fan"], "integration": ["hue", "mqtt"]}
+									]
+								}
+							}
+						}
+					}
+				]`))
+			},
+			wantErr:     false,
+			wantDomains: []string{"light"},
+		},
 	}
 
 	for _, tt := range tests {
