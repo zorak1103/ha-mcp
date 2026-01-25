@@ -281,6 +281,33 @@ func (c *HybridClient) GetConfig(ctx context.Context) (*Config, error) {
 }
 
 // =============================================================================
+// Template Operations (delegated to REST)
+// =============================================================================
+
+// RenderTemplate renders a Jinja2 template using Home Assistant state.
+func (c *HybridClient) RenderTemplate(ctx context.Context, template string) (string, error) {
+	return c.rest.RenderTemplate(ctx, template)
+}
+
+// =============================================================================
+// Logbook Operations (delegated to REST)
+// =============================================================================
+
+// GetLogbook retrieves logbook entries from Home Assistant.
+func (c *HybridClient) GetLogbook(ctx context.Context, startTime, endTime, entityID string) ([]LogbookEntry, error) {
+	return c.rest.GetLogbook(ctx, startTime, endTime, entityID)
+}
+
+// =============================================================================
+// Configuration Validation Operations (delegated to REST)
+// =============================================================================
+
+// CheckConfig validates the Home Assistant configuration.
+func (c *HybridClient) CheckConfig(ctx context.Context) (*ConfigCheckResult, error) {
+	return c.rest.CheckConfig(ctx)
+}
+
+// =============================================================================
 // HybridClientCloser - implements ClientCloser for proper cleanup
 // =============================================================================
 

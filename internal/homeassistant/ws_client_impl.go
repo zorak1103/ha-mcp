@@ -955,3 +955,33 @@ func (c *wsClientImpl) GetServices(_ context.Context) ([]Service, error) {
 func (c *wsClientImpl) GetConfig(_ context.Context) (*Config, error) {
 	return nil, fmt.Errorf("GetConfig not supported via WebSocket API, use REST API or HybridClient")
 }
+
+// =============================================================================
+// Template Operations (REST API only - stubs for interface compliance)
+// =============================================================================
+
+// RenderTemplate renders a Jinja2 template.
+// Note: This operation is only available via REST API. Use HybridClient for full functionality.
+func (c *wsClientImpl) RenderTemplate(_ context.Context, _ string) (string, error) {
+	return "", fmt.Errorf("RenderTemplate not supported via WebSocket API, use REST API or HybridClient")
+}
+
+// =============================================================================
+// Logbook Operations (REST API only - stubs for interface compliance)
+// =============================================================================
+
+// GetLogbook retrieves logbook entries.
+// Note: This operation is only available via REST API. Use HybridClient for full functionality.
+func (c *wsClientImpl) GetLogbook(_ context.Context, _, _, _ string) ([]LogbookEntry, error) {
+	return nil, fmt.Errorf("GetLogbook not supported via WebSocket API, use REST API or HybridClient")
+}
+
+// =============================================================================
+// Configuration Validation Operations (REST API only - stubs for interface compliance)
+// =============================================================================
+
+// CheckConfig validates the Home Assistant configuration.
+// Note: This operation is only available via REST API. Use HybridClient for full functionality.
+func (c *wsClientImpl) CheckConfig(_ context.Context) (*ConfigCheckResult, error) {
+	return nil, fmt.Errorf("CheckConfig not supported via WebSocket API, use REST API or HybridClient")
+}

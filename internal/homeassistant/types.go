@@ -414,3 +414,25 @@ type UnitSystem struct {
 	Volume            string `json:"volume"`
 	WindSpeed         string `json:"wind_speed"`
 }
+
+// TemplateRequest represents a request to render a Jinja2 template.
+type TemplateRequest struct {
+	Template string `json:"template"`
+}
+
+// LogbookEntry represents a single entry in the Home Assistant logbook.
+type LogbookEntry struct {
+	When          string  `json:"when"`
+	Name          string  `json:"name"`
+	Message       string  `json:"message,omitempty"`
+	EntityID      string  `json:"entity_id,omitempty"`
+	Domain        string  `json:"domain,omitempty"`
+	State         string  `json:"state,omitempty"`
+	ContextUserID *string `json:"context_user_id,omitempty"`
+}
+
+// ConfigCheckResult represents the result of a configuration validation check.
+type ConfigCheckResult struct {
+	Result string  `json:"result"` // "valid" or "invalid"
+	Errors *string `json:"errors"` // null if valid, error message if invalid
+}

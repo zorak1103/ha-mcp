@@ -323,3 +323,144 @@ func (c *RESTClient) GetConfig(ctx context.Context) (*Config, error) {
 
 	return &config, nil
 }
+
+// RenderTemplate renders a Jinja2 template using Home Assistant state.
+// Endpoint: POST /api/template
+func (c *RESTClient) RenderTemplate(ctx context.Context, template string) (string, error) {
+	url := fmt.Sprintf("%s/api/template", c.baseURL)
+
+	reqBody := TemplateRequest{Template: template}
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("marshaling template request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(string(bodyBytes)))
+	if err != nil {
+		return "", fmt.Errorf("creating template request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("executing template request: %w", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("reading template response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", &APIError{
+			StatusCode: resp.StatusCode,
+			Message:    fmt.Sprintf("failed to render template: %s", string(body)),
+		}
+	}
+
+	return string(body), nil
+}
+
+// GetLogbook retrieves logbook entries from Home Assistant.
+// Endpoint: GET /api/logbook/<timestamp>
+// Query params: entity=<entity_id>, end_time=<timestamp>
+func (c *RESTClient) GetLogbook(ctx context.Context, startTime, endTime, entityID string) ([]LogbookEntry, error) {
+	// Build URL with start_time in path
+	url := fmt.Sprintf("%s/api/logbook/%s", c.baseURL, startTime)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
+	if err != nil {
+		return nil, fmt.Errorf("creating logbook request: %w", err)
+	}
+
+	// Add query parameters
+	query := req.URL.Query()
+	if endTime != "" {
+		query.Set("end_time", endTime)
+	}
+	if entityID != "" {
+		query.Set("entity", entityID)
+	}
+	req.URL.RawQuery = query.Encode()
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("executing logbook request: %w", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, &APIError{
+			StatusCode: resp.StatusCode,
+			Message:    fmt.Sprintf("failed to get logbook: %s", string(body)),
+		}
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading logbook response: %w", err)
+	}
+
+	var entries []LogbookEntry
+	if err := json.Unmarshal(body, &entries); err != nil {
+		return nil, fmt.Errorf("parsing logbook response: %w", err)
+	}
+
+	return entries, nil
+}
+
+// CheckConfig validates the Home Assistant configuration.
+// Endpoint: POST /api/config/core/check_config
+func (c *RESTClient) CheckConfig(ctx context.Context) (*ConfigCheckResult, error) {
+	url := fmt.Sprintf("%s/api/config/core/check_config", c.baseURL)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, http.NoBody)
+	if err != nil {
+		return nil, fmt.Errorf("creating check config request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("executing check config request: %w", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, &APIError{
+			StatusCode: resp.StatusCode,
+			Message:    fmt.Sprintf("failed to check config: %s", string(body)),
+		}
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading check config response: %w", err)
+	}
+
+	var result ConfigCheckResult
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("parsing check config response: %w", err)
+	}
+
+	return &result, nil
+}

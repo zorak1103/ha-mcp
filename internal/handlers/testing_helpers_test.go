@@ -86,6 +86,15 @@ type UniversalMockClient struct {
 
 	// System configuration operations
 	GetConfigFn func(ctx context.Context) (*homeassistant.Config, error)
+
+	// Template operations
+	RenderTemplateFn func(ctx context.Context, template string) (string, error)
+
+	// Logbook operations
+	GetLogbookFn func(ctx context.Context, startTime, endTime, entityID string) ([]homeassistant.LogbookEntry, error)
+
+	// Configuration validation operations
+	CheckConfigFn func(ctx context.Context) (*homeassistant.ConfigCheckResult, error)
 }
 
 // Entity operations implementation
@@ -400,6 +409,36 @@ func (m *UniversalMockClient) GetConfig(ctx context.Context) (*homeassistant.Con
 		State:        "RUNNING",
 		LocationName: "Home",
 		TimeZone:     "UTC",
+	}, nil
+}
+
+// Template operations implementation
+
+func (m *UniversalMockClient) RenderTemplate(ctx context.Context, template string) (string, error) {
+	if m.RenderTemplateFn != nil {
+		return m.RenderTemplateFn(ctx, template)
+	}
+	return "rendered: " + template, nil
+}
+
+// Logbook operations implementation
+
+func (m *UniversalMockClient) GetLogbook(ctx context.Context, startTime, endTime, entityID string) ([]homeassistant.LogbookEntry, error) {
+	if m.GetLogbookFn != nil {
+		return m.GetLogbookFn(ctx, startTime, endTime, entityID)
+	}
+	return []homeassistant.LogbookEntry{}, nil
+}
+
+// Configuration validation operations implementation
+
+func (m *UniversalMockClient) CheckConfig(ctx context.Context) (*homeassistant.ConfigCheckResult, error) {
+	if m.CheckConfigFn != nil {
+		return m.CheckConfigFn(ctx)
+	}
+	return &homeassistant.ConfigCheckResult{
+		Result: "valid",
+		Errors: nil,
 	}, nil
 }
 

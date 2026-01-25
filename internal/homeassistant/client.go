@@ -86,6 +86,15 @@ type Client interface {
 
 	// System configuration operations
 	GetConfig(ctx context.Context) (*Config, error)
+
+	// Template operations
+	RenderTemplate(ctx context.Context, template string) (string, error)
+
+	// Logbook operations
+	GetLogbook(ctx context.Context, startTime, endTime, entityID string) ([]LogbookEntry, error)
+
+	// Configuration validation operations
+	CheckConfig(ctx context.Context) (*ConfigCheckResult, error)
 }
 
 // APIError represents an error response from the Home Assistant API.
