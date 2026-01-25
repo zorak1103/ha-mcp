@@ -620,9 +620,13 @@ func TestReconnectManager_ResetDuringWait(t *testing.T) {
 
 	mgr := NewReconnectManager(config)
 
-	// Start a wait in a goroutine
+	// Start a wait in a goroutine with timeout context
+	done := make(chan struct{})
 	go func() {
-		_ = mgr.WaitForReconnect(context.Background())
+		defer close(done)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = mgr.WaitForReconnect(ctx)
 	}()
 
 	// Give time for the wait to start
@@ -630,6 +634,17 @@ func TestReconnectManager_ResetDuringWait(t *testing.T) {
 
 	// Reset should work without deadlock
 	mgr.Reset()
+
+	// Wait for goroutine to finish
+	select {
+	case <-done:
+		// OK
+	case <-time.After(1 * time.Second):
+		t.Error("Goroutine did not exit after Reset")
+	}
+
+	// Cleanup
+	mgr.Stop()
 
 	// Verify reset worked
 	if mgr.GetAttempts() != 0 {

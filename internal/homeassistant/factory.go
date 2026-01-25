@@ -10,23 +10,27 @@ import (
 type ClientOptions struct {
 	// WSConfig provides WebSocket-specific configuration.
 	WSConfig *WSClientConfig
+	// RESTConfig provides REST API-specific configuration.
+	RESTConfig *RESTClientConfig
 }
 
 // DefaultClientOptions returns the default client options.
 func DefaultClientOptions() ClientOptions {
 	defaultWSConfig := DefaultWSClientConfig()
+	defaultRESTConfig := DefaultRESTClientConfig()
 	return ClientOptions{
-		WSConfig: &defaultWSConfig,
+		WSConfig:   &defaultWSConfig,
+		RESTConfig: &defaultRESTConfig,
 	}
 }
 
 // NewClientWithOptions creates and connects a Home Assistant WebSocket client with custom options.
 // The connection is established before returning; use CloseClient() for cleanup.
 func NewClientWithOptions(ctx context.Context, baseURL, token string, opts ClientOptions) (Client, error) {
-	return NewConnectedWSClient(ctx, baseURL, token, opts.WSConfig)
+	return NewConnectedClient(ctx, baseURL, token, opts.WSConfig, opts.RESTConfig)
 }
 
-// NewConnectedWSClient creates a new WebSocket client and establishes a connection.
+// NewConnectedClient creates a new hybrid client with both WebSocket and REST capabilities.
 // This is the recommended way to create a client for production use.
 //
 // The returned Client is a HybridClient that uses WebSocket for most operations
@@ -35,11 +39,11 @@ func NewClientWithOptions(ctx context.Context, baseURL, token string, opts Clien
 //
 // The provided context is used for the initial connection. For the client's
 // lifecycle, use the CloseClient() function to disconnect.
-func NewConnectedWSClient(ctx context.Context, baseURL, token string, config *WSClientConfig) (Client, error) {
+func NewConnectedClient(ctx context.Context, baseURL, token string, wsConfig *WSClientConfig, restConfig *RESTClientConfig) (Client, error) {
 	var wsClient *WSClient
 
-	if config != nil {
-		wsClient = NewWSClientWithConfig(baseURL, token, *config)
+	if wsConfig != nil {
+		wsClient = NewWSClientWithConfig(baseURL, token, *wsConfig)
 	} else {
 		wsClient = NewWSClient(baseURL, token)
 	}
@@ -50,16 +54,29 @@ func NewConnectedWSClient(ctx context.Context, baseURL, token string, config *WS
 	}
 
 	// Create REST client for operations not supported via WebSocket
-	restClient := NewRESTClient(baseURL, token)
+	var restClient *RESTClient
+	if restConfig != nil {
+		restClient = NewRESTClientWithConfig(baseURL, token, *restConfig)
+	} else {
+		restClient = NewRESTClient(baseURL, token)
+	}
 
 	// Return hybrid client that combines both
 	return NewHybridClientCloser(wsClient, restClient), nil
 }
 
+// NewConnectedWSClient creates a new WebSocket client and establishes a connection.
+// This function is kept for backward compatibility.
+//
+// Deprecated: Use NewConnectedClient for full configuration control.
+func NewConnectedWSClient(ctx context.Context, baseURL, token string, wsConfig *WSClientConfig) (Client, error) {
+	return NewConnectedClient(ctx, baseURL, token, wsConfig, nil)
+}
+
 // NewDefaultWSClient creates a connected WebSocket client using default configuration.
 // This is the recommended factory function for most use cases.
 func NewDefaultWSClient(ctx context.Context, baseURL, token string) (Client, error) {
-	return NewConnectedWSClient(ctx, baseURL, token, nil)
+	return NewConnectedClient(ctx, baseURL, token, nil, nil)
 }
 
 // ClientCloser provides a way to close clients that support it.

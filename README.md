@@ -209,6 +209,9 @@ Create a config file at one of these locations:
 homeassistant:
   url: "http://homeassistant.local:8123"  # WebSocket URL derived automatically
   token: "your-long-lived-access-token"
+  rest:
+    rate_limit: 10  # Requests per second (0 = unlimited)
+    rate_burst: 5   # Maximum burst size
 
 server:
   port: 8080
@@ -224,6 +227,10 @@ export HA_URL=http://homeassistant.local:8123
 export HA_TOKEN=your-long-lived-access-token
 export HA_MCP_PORT=8080
 export HA_MCP_LOG_LEVEL=info
+
+# REST API rate limiting (optional)
+export HA_REST_RATE_LIMIT=10   # Requests per second (0 = unlimited, default: 10)
+export HA_REST_RATE_BURST=5    # Maximum burst size (default: 5)
 ```
 
 ### Command-Line Flags

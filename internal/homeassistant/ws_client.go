@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/zorak1103/ha-mcp/internal/logging"
 )
 
 // maxWSMessageSize is the maximum WebSocket message size (16MB).
@@ -41,6 +42,8 @@ type WSClientConfig struct {
 	// RequestTimeout is the timeout for pending requests. Requests not receiving
 	// a response within this time are cleaned up to prevent memory leaks.
 	RequestTimeout time.Duration
+	// Logger for structured logging. If nil, a default logger is used.
+	Logger *logging.Logger
 }
 
 // DefaultWSClientConfig returns the default WSClient configuration.
@@ -77,6 +80,9 @@ type WSClient struct {
 	pingCancel context.CancelFunc
 	pingWg     sync.WaitGroup // Tracks active health monitor goroutine
 	lastPong   atomic.Value   // time.Time
+
+	// Logging
+	logger *logging.Logger
 }
 
 // NewWSClient creates a new WebSocket client for Home Assistant.
@@ -86,12 +92,18 @@ func NewWSClient(baseURL, token string) *WSClient {
 
 // NewWSClientWithConfig creates a new WebSocket client with custom configuration.
 func NewWSClientWithConfig(baseURL, token string, config WSClientConfig) *WSClient {
+	logger := config.Logger
+	if logger == nil {
+		logger = logging.New(logging.LevelInfo)
+	}
+
 	return &WSClient{
 		baseURL:      baseURL,
 		token:        token,
 		pending:      make(map[int64]chan *WSResultMessage),
 		config:       config,
 		reconnectMgr: NewReconnectManager(config.ReconnectConfig),
+		logger:       logger,
 	}
 }
 
@@ -103,6 +115,8 @@ func (c *WSClient) Connect(ctx context.Context) error {
 		return fmt.Errorf("building WebSocket URL: %w", err)
 	}
 
+	c.logger.Debug("Connecting to WebSocket", "url", sanitizeURL(wsURL))
+
 	// Create context for connection lifecycle
 	c.ctx, c.cancel = context.WithCancel(ctx)
 
@@ -112,6 +126,7 @@ func (c *WSClient) Connect(ctx context.Context) error {
 		_ = resp.Body.Close()
 	}
 	if err != nil {
+		c.logger.Error("WebSocket dial failed", "error", err)
 		return fmt.Errorf("dialing WebSocket: %w", err)
 	}
 	c.conn = conn
@@ -119,7 +134,9 @@ func (c *WSClient) Connect(ctx context.Context) error {
 	c.conn.SetReadLimit(maxWSMessageSize)
 
 	// Perform authentication
+	c.logger.Debug("Starting WebSocket authentication")
 	if err := c.authenticate(); err != nil {
+		c.logger.Error("WebSocket authentication failed", "error", err)
 		_ = c.conn.Close(websocket.StatusProtocolError, "auth failed")
 		return fmt.Errorf("authentication: %w", err)
 	}
@@ -135,8 +152,10 @@ func (c *WSClient) Connect(ctx context.Context) error {
 	// Start health monitoring if enabled
 	if c.config.PingInterval > 0 {
 		c.startHealthMonitor()
+		c.logger.Debug("Health monitoring started", "interval", c.config.PingInterval)
 	}
 
+	c.logger.Info("WebSocket connected successfully")
 	return nil
 }
 
@@ -167,12 +186,14 @@ func (c *WSClient) stopHealthMonitor() {
 func (c *WSClient) healthLoop(ctx context.Context) {
 	defer c.pingWg.Done()
 
+	c.logger.Trace("Health monitor loop started")
 	ticker := time.NewTicker(c.config.PingInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
+			c.logger.Debug("Health monitor stopped")
 			return
 		case <-ticker.C:
 			if shouldExit := c.performHealthCheck(ctx); shouldExit {
@@ -190,6 +211,8 @@ func (c *WSClient) performHealthCheck(ctx context.Context) bool {
 	}
 
 	if c.isPongTimeout() {
+		lastPong, _ := c.lastPong.Load().(time.Time)
+		c.logger.Warn("Ping timeout detected", "lastPong", time.Since(lastPong))
 		c.handleConnectionFailure(errors.New("ping timeout"))
 		return true
 	}
@@ -198,10 +221,12 @@ func (c *WSClient) performHealthCheck(ctx context.Context) bool {
 		if ctx.Err() != nil {
 			return true // Context canceled, clean shutdown
 		}
+		c.logger.Error("Ping failed", "error", err)
 		c.handleConnectionFailure(fmt.Errorf("ping failed: %w", err))
 		return true
 	}
 
+	c.logger.Trace("Ping successful")
 	c.lastPong.Store(time.Now())
 	return false
 }
@@ -224,10 +249,13 @@ func (c *WSClient) sendPing(ctx context.Context) error {
 
 // handleConnectionFailure notifies disconnect callback and triggers reconnection.
 func (c *WSClient) handleConnectionFailure(err error) {
+	c.logger.Error("Connection failure detected", "error", err)
 	if c.config.OnDisconnect != nil {
+		c.logger.Debug("Invoking disconnect callback")
 		c.config.OnDisconnect(err)
 	}
 	if c.config.AutoReconnect {
+		c.logger.Info("Triggering automatic reconnection")
 		go func() {
 			_ = c.reconnect()
 		}()
@@ -383,6 +411,7 @@ func (c *WSClient) reconnect() error {
 	c.reconnectMu.Lock()
 	defer c.reconnectMu.Unlock()
 
+	c.logger.Warn("Connection lost, initiating reconnection")
 	c.connected.Store(false)
 
 	// Close existing connection if still open
@@ -392,12 +421,18 @@ func (c *WSClient) reconnect() error {
 	}
 
 	for c.reconnectMgr.ShouldReconnect() {
+		attempt := c.reconnectMgr.GetAttempts() + 1
+		delay := c.reconnectMgr.GetCurrentDelay()
+		c.logger.Debug("Waiting for reconnect backoff", "attempt", attempt, "delay", delay)
+
 		// Wait for backoff duration
 		if err := c.reconnectMgr.WaitForReconnect(c.ctx); err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				c.logger.Debug("Reconnection cancelled", "error", err)
 				return err
 			}
 			if errors.Is(err, ErrMaxReconnectAttempts) {
+				c.logger.Error("Max reconnection attempts reached")
 				return err
 			}
 			// Other errors, continue trying
@@ -405,7 +440,9 @@ func (c *WSClient) reconnect() error {
 		}
 
 		// Attempt to reconnect
+		c.logger.Debug("Attempting reconnection", "attempt", attempt)
 		if err := c.connectInternal(); err != nil {
+			c.logger.Warn("Reconnection attempt failed", "attempt", attempt, "error", err)
 			// Connection failed, will retry
 			continue
 		}
@@ -419,6 +456,8 @@ func (c *WSClient) reconnect() error {
 			c.startHealthMonitor()
 		}
 
+		c.logger.Info("Successfully reconnected", "totalAttempts", attempts)
+
 		// Notify reconnect callback
 		if c.config.OnReconnect != nil {
 			c.config.OnReconnect(attempts)
@@ -427,6 +466,7 @@ func (c *WSClient) reconnect() error {
 		return nil
 	}
 
+	c.logger.Error("Max reconnection attempts reached, giving up")
 	return ErrMaxReconnectAttempts
 }
 
@@ -439,12 +479,15 @@ func (c *WSClient) connectInternal() error {
 		return fmt.Errorf("building WebSocket URL: %w", err)
 	}
 
+	c.logger.Debug("Dialing WebSocket during reconnect")
+
 	// Dial WebSocket
 	conn, resp, err := websocket.Dial(c.ctx, wsURL, nil)
 	if resp != nil && resp.Body != nil {
 		_ = resp.Body.Close()
 	}
 	if err != nil {
+		c.logger.Warn("WebSocket dial failed during reconnect", "error", err)
 		return fmt.Errorf("dialing WebSocket: %w", err)
 	}
 	c.conn = conn
@@ -453,6 +496,7 @@ func (c *WSClient) connectInternal() error {
 
 	// Perform authentication
 	if err := c.authenticate(); err != nil {
+		c.logger.Error("Authentication failed during reconnect", "error", err)
 		_ = c.conn.Close(websocket.StatusProtocolError, "auth failed")
 		c.conn = nil
 		return fmt.Errorf("authentication: %w", err)
@@ -606,10 +650,14 @@ func (c *WSClient) SendSimpleCommand(ctx context.Context, msgType string) (*WSRe
 
 // Close closes the WebSocket connection and stops reconnection attempts.
 func (c *WSClient) Close() error {
+	c.logger.Info("Closing WebSocket connection")
+
 	// Stop health monitoring and wait for the goroutine to exit
+	c.logger.Debug("Stopping health monitor")
 	c.stopHealthMonitor()
 
 	// Stop reconnection attempts
+	c.logger.Debug("Stopping reconnection manager")
 	c.reconnectMgr.Stop()
 
 	if c.cancel != nil {
@@ -714,4 +762,17 @@ func (c *WSClient) GetLastPongTime() time.Time {
 // Set to 0 to disable health monitoring.
 func (c *WSClient) SetPingInterval(interval time.Duration) {
 	c.config.PingInterval = interval
+}
+
+// sanitizeURL removes sensitive information from URLs for logging.
+// It replaces the token parameter and path segments that look like tokens.
+func sanitizeURL(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "<invalid-url>"
+	}
+	// Remove any query parameters that might contain tokens
+	u.RawQuery = ""
+	// Return just scheme + host + path
+	return u.Scheme + "://" + u.Host + u.Path
 }

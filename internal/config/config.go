@@ -51,8 +51,17 @@ type LoggingConfig struct {
 
 // HomeAssistantConfig holds Home Assistant connection settings.
 type HomeAssistantConfig struct {
-	URL   string `mapstructure:"url"`
-	Token string `mapstructure:"token"`
+	URL   string     `mapstructure:"url"`
+	Token string     `mapstructure:"token"`
+	REST  RESTConfig `mapstructure:"rest"`
+}
+
+// RESTConfig holds REST API client settings.
+type RESTConfig struct {
+	// RateLimit is the number of requests per second (0 = unlimited, default: 10)
+	RateLimit float64 `mapstructure:"rate_limit"`
+	// RateBurst is the maximum burst size for rate limiting (default: 5)
+	RateBurst int `mapstructure:"rate_burst"`
 }
 
 // ServerConfig holds MCP server settings.
@@ -70,6 +79,8 @@ func setupViper(configFile string) (*viper.Viper, error) {
 	// Set defaults
 	v.SetDefault("homeassistant.url", "http://homeassistant.local:8123")
 	v.SetDefault("homeassistant.token", "")
+	v.SetDefault("homeassistant.rest.rate_limit", 10.0)
+	v.SetDefault("homeassistant.rest.rate_burst", 5)
 	v.SetDefault("server.port", 8080)
 	v.SetDefault("logging.level", "INFO")
 
@@ -89,6 +100,8 @@ func setupViper(configFile string) (*viper.Viper, error) {
 	// Bind specific env vars to config keys
 	mustBindEnv(v, "homeassistant.url", "HA_URL")
 	mustBindEnv(v, "homeassistant.token", "HA_TOKEN")
+	mustBindEnv(v, "homeassistant.rest.rate_limit", "HA_REST_RATE_LIMIT")
+	mustBindEnv(v, "homeassistant.rest.rate_burst", "HA_REST_RATE_BURST")
 	mustBindEnv(v, "server.port", "HA_MCP_PORT")
 	mustBindEnv(v, "logging.level", "HA_MCP_LOG_LEVEL")
 
@@ -140,6 +153,8 @@ func LoadWithViper(v *viper.Viper, configFile string) (*Config, error) {
 	// Set defaults
 	v.SetDefault("homeassistant.url", "http://homeassistant.local:8123")
 	v.SetDefault("homeassistant.token", "")
+	v.SetDefault("homeassistant.rest.rate_limit", 10.0)
+	v.SetDefault("homeassistant.rest.rate_burst", 5)
 	v.SetDefault("server.port", 8080)
 	v.SetDefault("logging.level", "INFO")
 
@@ -159,6 +174,8 @@ func LoadWithViper(v *viper.Viper, configFile string) (*Config, error) {
 	// Bind specific env vars to config keys
 	mustBindEnv(v, "homeassistant.url", "HA_URL")
 	mustBindEnv(v, "homeassistant.token", "HA_TOKEN")
+	mustBindEnv(v, "homeassistant.rest.rate_limit", "HA_REST_RATE_LIMIT")
+	mustBindEnv(v, "homeassistant.rest.rate_burst", "HA_REST_RATE_BURST")
 	mustBindEnv(v, "server.port", "HA_MCP_PORT")
 	mustBindEnv(v, "logging.level", "HA_MCP_LOG_LEVEL")
 

@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
 // noResponseBody is the default message when server returns empty response.
@@ -22,18 +24,25 @@ type RESTClient struct {
 	baseURL    string
 	token      string
 	httpClient *http.Client
+	limiter    *rate.Limiter
 }
 
 // RESTClientConfig configures the REST client.
 type RESTClientConfig struct {
 	// Timeout for HTTP requests (default: 30 seconds)
 	Timeout time.Duration
+	// RateLimit is the number of requests per second (0 = unlimited, default: 10)
+	RateLimit float64
+	// RateBurst is the maximum burst size for rate limiting (default: 5)
+	RateBurst int
 }
 
 // DefaultRESTClientConfig returns the default REST client configuration.
 func DefaultRESTClientConfig() RESTClientConfig {
 	return RESTClientConfig{
-		Timeout: 30 * time.Second,
+		Timeout:   30 * time.Second,
+		RateLimit: 10, // 10 requests per second
+		RateBurst: 5,  // Allow burst of 5 requests
 	}
 }
 
@@ -53,13 +62,37 @@ func NewRESTClientWithConfig(baseURL, token string, config RESTClientConfig) *RE
 		timeout = 30 * time.Second
 	}
 
+	// Initialize rate limiter
+	var limiter *rate.Limiter
+	if config.RateLimit > 0 {
+		burst := config.RateBurst
+		if burst <= 0 {
+			burst = 1
+		}
+		limiter = rate.NewLimiter(rate.Limit(config.RateLimit), burst)
+	}
+
 	return &RESTClient{
 		baseURL: baseURL,
 		token:   token,
 		httpClient: &http.Client{
 			Timeout: timeout,
 		},
+		limiter: limiter,
 	}
+}
+
+// doRequest executes an HTTP request with rate limiting.
+// If a rate limiter is configured, it waits for permission before executing.
+func (c *RESTClient) doRequest(ctx context.Context, req *http.Request) (*http.Response, error) {
+	// Wait for rate limiter if configured
+	if c.limiter != nil {
+		if err := c.limiter.Wait(ctx); err != nil {
+			return nil, fmt.Errorf("rate limiter: %w", err)
+		}
+	}
+
+	return c.httpClient.Do(req)
 }
 
 // DeleteAutomation deletes an automation using the REST API.
@@ -80,7 +113,7 @@ func (c *RESTClient) DeleteAutomation(ctx context.Context, automationID string) 
 	req.Header.Set("Content-Type", "application/json")
 
 	// Execute the request
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequest(ctx, req)
 	if err != nil {
 		return fmt.Errorf("executing delete request: %w", err)
 	}
@@ -139,7 +172,7 @@ func (c *RESTClient) DeleteScript(ctx context.Context, scriptID string) error {
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequest(ctx, req)
 	if err != nil {
 		return fmt.Errorf("executing delete request: %w", err)
 	}
@@ -195,7 +228,7 @@ func (c *RESTClient) DeleteScene(ctx context.Context, sceneID string) error {
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequest(ctx, req)
 	if err != nil {
 		return fmt.Errorf("executing delete request: %w", err)
 	}
@@ -251,7 +284,7 @@ func (c *RESTClient) GetServices(ctx context.Context) ([]Service, error) {
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequest(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("executing get services request: %w", err)
 	}
@@ -294,7 +327,7 @@ func (c *RESTClient) GetConfig(ctx context.Context) (*Config, error) {
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequest(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("executing get config request: %w", err)
 	}
@@ -343,7 +376,7 @@ func (c *RESTClient) RenderTemplate(ctx context.Context, template string) (strin
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequest(ctx, req)
 	if err != nil {
 		return "", fmt.Errorf("executing template request: %w", err)
 	}
@@ -392,7 +425,7 @@ func (c *RESTClient) GetLogbook(ctx context.Context, startTime, endTime, entityI
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequest(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("executing logbook request: %w", err)
 	}
@@ -435,7 +468,7 @@ func (c *RESTClient) CheckConfig(ctx context.Context) (*ConfigCheckResult, error
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequest(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("executing check config request: %w", err)
 	}

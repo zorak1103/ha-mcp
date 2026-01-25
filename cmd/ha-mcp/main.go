@@ -170,14 +170,18 @@ func (a *App) runConfig(_ *cobra.Command, _ []string) error {
 	fmt.Println("=======================")
 	fmt.Println()
 	fmt.Println("Home Assistant:")
-	fmt.Printf("  URL:   %s\n", masked.HomeAssistant.URL)
-	fmt.Printf("  Token: %s\n", masked.HomeAssistant.Token)
+	fmt.Printf("  URL:        %s\n", masked.HomeAssistant.URL)
+	fmt.Printf("  Token:      %s\n", masked.HomeAssistant.Token)
+	fmt.Println()
+	fmt.Println("  REST API:")
+	fmt.Printf("    Rate Limit: %.1f req/s\n", masked.HomeAssistant.REST.RateLimit)
+	fmt.Printf("    Rate Burst: %d\n", masked.HomeAssistant.REST.RateBurst)
 	fmt.Println()
 	fmt.Println("Server:")
-	fmt.Printf("  Port:  %d\n", masked.Server.Port)
+	fmt.Printf("  Port:       %d\n", masked.Server.Port)
 	fmt.Println()
 	fmt.Println("Logging:")
-	fmt.Printf("  Level: %s\n", masked.Logging.Level)
+	fmt.Printf("  Level:      %s\n", masked.Logging.Level)
 
 	return nil
 }
@@ -214,7 +218,11 @@ func (a *App) run(_ *cobra.Command, _ []string) error {
 	defer cancel()
 
 	// Create client pool (always required for per-request auth)
-	clientPool := homeassistant.NewClientPool(cfg.HomeAssistant.URL, 30*time.Minute)
+	restConfig := &homeassistant.RESTClientConfig{
+		RateLimit: cfg.HomeAssistant.REST.RateLimit,
+		RateBurst: cfg.HomeAssistant.REST.RateBurst,
+	}
+	clientPool := homeassistant.NewClientPoolWithConfig(cfg.HomeAssistant.URL, 30*time.Minute, restConfig, logger)
 	defer func() {
 		logger.Info("Closing client pool...")
 		if closeErr := clientPool.Close(); closeErr != nil {
@@ -287,7 +295,11 @@ func (a *App) initHomeAssistantClient(
 ) (homeassistant.Client, error) {
 	logger.Info("Connecting to Home Assistant WebSocket API...")
 
-	haClient, err := homeassistant.NewDefaultWSClient(ctx, cfg.HomeAssistant.URL, cfg.HomeAssistant.Token)
+	restConfig := &homeassistant.RESTClientConfig{
+		RateLimit: cfg.HomeAssistant.REST.RateLimit,
+		RateBurst: cfg.HomeAssistant.REST.RateBurst,
+	}
+	haClient, err := homeassistant.NewConnectedClient(ctx, cfg.HomeAssistant.URL, cfg.HomeAssistant.Token, nil, restConfig)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to Home Assistant: %w", err)
 	}

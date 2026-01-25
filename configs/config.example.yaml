@@ -26,6 +26,13 @@ homeassistant:
   # Request timeout in seconds (optional, default: 30)
   timeout: 30
 
+  # REST API client settings (used for delete operations and some queries)
+  rest:
+    # Rate limit: requests per second (0 = unlimited, default: 10)
+    rate_limit: 10
+    # Burst size: maximum burst of requests allowed (default: 5)
+    rate_burst: 5
+
 # MCP Server settings
 server:
   # Port for the MCP HTTP server

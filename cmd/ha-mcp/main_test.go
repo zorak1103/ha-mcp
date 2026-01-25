@@ -2,8 +2,11 @@
 package main
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -436,6 +439,76 @@ logging:
 
 	if err != nil {
 		t.Errorf("runConfig() error = %v", err)
+	}
+}
+
+func TestRunConfig_WithRESTConfig(t *testing.T) {
+	// Save current directory and change to temp dir
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get current directory: %v", err)
+	}
+
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to change to temp directory: %v", err)
+	}
+	defer func() {
+		if err := os.Chdir(origDir); err != nil {
+			t.Errorf("failed to restore directory: %v", err)
+		}
+	}()
+
+	// Create config file with REST rate limiting settings
+	configContent := `homeassistant:
+  url: "http://test.local:8123"
+  token: "test-token-12345"
+  rest:
+    rate_limit: 20.0
+    rate_burst: 10
+server:
+  port: 8080
+logging:
+  level: info
+`
+	configFile := filepath.Join(tmpDir, "config.yaml")
+	if err := os.WriteFile(configFile, []byte(configContent), 0600); err != nil {
+		t.Fatalf("failed to create config.yaml: %v", err)
+	}
+
+	// Capture stdout
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	app := &App{cfgFile: configFile}
+	err = app.runConfig(nil, nil)
+
+	// Restore stdout and read captured output
+	if closeErr := w.Close(); closeErr != nil {
+		t.Errorf("failed to close pipe writer: %v", closeErr)
+	}
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	if _, copyErr := io.Copy(&buf, r); copyErr != nil {
+		t.Errorf("failed to copy output: %v", copyErr)
+	}
+	output := buf.String()
+
+	if err != nil {
+		t.Errorf("runConfig() error = %v", err)
+	}
+
+	// Verify REST rate limiting values are in output
+	if !strings.Contains(output, "REST API:") {
+		t.Error("output should contain 'REST API:' section")
+	}
+	if !strings.Contains(output, "Rate Limit: 20.0 req/s") {
+		t.Errorf("output should contain 'Rate Limit: 20.0 req/s', got: %s", output)
+	}
+	if !strings.Contains(output, "Rate Burst: 10") {
+		t.Errorf("output should contain 'Rate Burst: 10', got: %s", output)
 	}
 }
 

@@ -5,17 +5,21 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/zorak1103/ha-mcp/internal/logging"
 )
 
 // ClientPool manages a pool of Home Assistant clients, one per token.
 // It provides thread-safe access to clients and automatic cleanup of idle connections.
 type ClientPool struct {
-	baseURL string
-	clients map[string]*pooledClient
-	mu      sync.RWMutex
-	maxIdle time.Duration
-	stopCh  chan struct{}
-	wg      sync.WaitGroup
+	baseURL    string
+	restConfig *RESTClientConfig
+	clients    map[string]*pooledClient
+	mu         sync.RWMutex
+	maxIdle    time.Duration
+	stopCh     chan struct{}
+	wg         sync.WaitGroup
+	logger     *logging.Logger
 }
 
 // pooledClient wraps a Client with last-used timestamp for idle cleanup.
@@ -27,29 +31,51 @@ type pooledClient struct {
 // NewClientPool creates a new client pool for the given Home Assistant URL.
 // maxIdle specifies how long an idle connection is kept before cleanup.
 func NewClientPool(baseURL string, maxIdle time.Duration) *ClientPool {
+	return NewClientPoolWithConfig(baseURL, maxIdle, nil, nil)
+}
+
+// NewClientPoolWithConfig creates a new client pool with REST configuration.
+func NewClientPoolWithConfig(baseURL string, maxIdle time.Duration, restConfig *RESTClientConfig, logger *logging.Logger) *ClientPool {
+	if logger == nil {
+		logger = logging.New(logging.LevelInfo)
+	}
+
 	p := &ClientPool{
-		baseURL: baseURL,
-		clients: make(map[string]*pooledClient),
-		maxIdle: maxIdle,
-		stopCh:  make(chan struct{}),
+		baseURL:    baseURL,
+		restConfig: restConfig,
+		clients:    make(map[string]*pooledClient),
+		maxIdle:    maxIdle,
+		stopCh:     make(chan struct{}),
+		logger:     logger,
 	}
 
 	// Start idle cleanup goroutine
 	p.wg.Add(1)
 	go p.cleanupLoop()
 
+	logger.Debug("Client pool created", "baseURL", baseURL, "maxIdle", maxIdle)
 	return p
+}
+
+// NewClientPoolWithLogger creates a new client pool with a custom logger.
+//
+// Deprecated: Use NewClientPoolWithConfig for full configuration control.
+func NewClientPoolWithLogger(baseURL string, maxIdle time.Duration, logger *logging.Logger) *ClientPool {
+	return NewClientPoolWithConfig(baseURL, maxIdle, nil, logger)
 }
 
 // GetOrCreate returns an existing client for the token or creates a new one.
 // The client is connected before being returned.
 func (p *ClientPool) GetOrCreate(ctx context.Context, token string) (Client, error) {
+	tokenHash := hashToken(token)
+
 	// Use write lock to safely check and potentially modify lastUsed or remove disconnected clients
 	p.mu.Lock()
 	if pc, exists := p.clients[token]; exists {
 		// Check if client is still connected
 		if !isClientConnected(pc.client) {
 			// Client disconnected, remove from pool and create new one
+			p.logger.Debug("Removing disconnected client from pool", "tokenHash", tokenHash)
 			_ = CloseClient(pc.client)
 			delete(p.clients, token)
 			p.mu.Unlock()
@@ -58,6 +84,7 @@ func (p *ClientPool) GetOrCreate(ctx context.Context, token string) (Client, err
 			pc.lastUsed = time.Now()
 			client := pc.client
 			p.mu.Unlock()
+			p.logger.Trace("Returning cached client", "tokenHash", tokenHash)
 			return client, nil
 		}
 	} else {
@@ -82,8 +109,10 @@ func (p *ClientPool) GetOrCreate(ctx context.Context, token string) (Client, err
 	}
 
 	// Create new client
-	client, err := NewDefaultWSClient(ctx, p.baseURL, token)
+	p.logger.Info("Creating new client for pool", "tokenHash", tokenHash)
+	client, err := NewConnectedClient(ctx, p.baseURL, token, nil, p.restConfig)
 	if err != nil {
+		p.logger.Error("Failed to create client", "tokenHash", tokenHash, "error", err)
 		return nil, err
 	}
 
@@ -92,11 +121,13 @@ func (p *ClientPool) GetOrCreate(ctx context.Context, token string) (Client, err
 		lastUsed: time.Now(),
 	}
 
+	p.logger.Debug("Client added to pool", "tokenHash", tokenHash, "poolSize", len(p.clients))
 	return client, nil
 }
 
 // Close closes all pooled clients and stops the cleanup goroutine.
 func (p *ClientPool) Close() error {
+	p.logger.Info("Closing client pool", "clientCount", len(p.clients))
 	close(p.stopCh)
 	p.wg.Wait()
 
@@ -105,12 +136,15 @@ func (p *ClientPool) Close() error {
 
 	var lastErr error
 	for token, pc := range p.clients {
+		p.logger.Debug("Closing pooled client", "tokenHash", hashToken(token))
 		if err := CloseClient(pc.client); err != nil {
+			p.logger.Warn("Error closing client", "tokenHash", hashToken(token), "error", err)
 			lastErr = err
 		}
 		delete(p.clients, token)
 	}
 
+	p.logger.Debug("Client pool closed")
 	return lastErr
 }
 
@@ -137,11 +171,17 @@ func (p *ClientPool) cleanupIdleClients() {
 	defer p.mu.Unlock()
 
 	now := time.Now()
+	removedCount := 0
 	for token, pc := range p.clients {
 		if now.Sub(pc.lastUsed) > p.maxIdle {
+			p.logger.Debug("Removing idle client", "tokenHash", hashToken(token), "idleFor", now.Sub(pc.lastUsed))
 			_ = CloseClient(pc.client)
 			delete(p.clients, token)
+			removedCount++
 		}
+	}
+	if removedCount > 0 {
+		p.logger.Info("Idle cleanup completed", "removed", removedCount, "remaining", len(p.clients))
 	}
 }
 
@@ -160,4 +200,14 @@ func isClientConnected(client Client) bool {
 	}
 	// If no connection check available, assume connected (optimistic)
 	return true
+}
+
+// hashToken creates a short hash of the token for safe logging.
+// Never logs the actual token to prevent security issues.
+func hashToken(token string) string {
+	if len(token) < 8 {
+		return "***"
+	}
+	// Use first 4 and last 4 characters as identifier
+	return token[:4] + "..." + token[len(token)-4:]
 }

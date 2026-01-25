@@ -389,7 +389,9 @@ func TestDefaultRESTClientConfig(t *testing.T) {
 	config := DefaultRESTClientConfig()
 
 	want := RESTClientConfig{
-		Timeout: 30 * time.Second,
+		Timeout:   30 * time.Second,
+		RateLimit: 10, // 10 requests per second
+		RateBurst: 5,  // Allow burst of 5 requests
 	}
 
 	if diff := cmp.Diff(want, config); diff != "" {
