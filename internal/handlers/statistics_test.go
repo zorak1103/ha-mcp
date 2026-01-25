@@ -139,23 +139,26 @@ func TestStatisticsHandlers_handleGetStatistics(t *testing.T) {
 			wantError:     false,
 		},
 		{
-			name:      "missing statistic_ids",
-			args:      map[string]any{},
-			wantError: true,
+			name:         "missing statistic_ids",
+			args:         map[string]any{},
+			wantError:    true,
+			wantContains: "statistic_ids is required",
 		},
 		{
 			name: "statistic_ids not array",
 			args: map[string]any{
 				"statistic_ids": "sensor.energy",
 			},
-			wantError: true,
+			wantError:    true,
+			wantContains: "statistic_ids must be an array",
 		},
 		{
 			name: "empty statistic_ids array",
 			args: map[string]any{
 				"statistic_ids": []any{},
 			},
-			wantError: true,
+			wantError:    true,
+			wantContains: "at least one statistic_id is required",
 		},
 		{
 			name: "client error",
@@ -184,20 +187,13 @@ func TestStatisticsHandlers_handleGetStatistics(t *testing.T) {
 			h := NewStatisticsHandlers()
 			result, err := h.handleGetStatistics(context.Background(), client, tt.args)
 
-			// For some validation errors, the handler returns an error directly
+			// Handler should never return an error directly - all errors use IsError in result
 			if err != nil {
-				if !tt.wantError {
-					t.Errorf("handleGetStatistics() returned unexpected error: %v", err)
-				}
-				return
+				t.Fatalf("handleGetStatistics() returned unexpected error: %v", err)
 			}
 
 			if result == nil {
-				if tt.wantError {
-					return // Expected error path with nil result
-				}
-				t.Error("handleGetStatistics() returned nil result")
-				return
+				t.Fatal("handleGetStatistics() returned nil result")
 			}
 
 			if result.IsError != tt.wantError {

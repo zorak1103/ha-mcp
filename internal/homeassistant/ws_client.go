@@ -18,6 +18,10 @@ import (
 // Large responses like get_states with many entities require this limit.
 const maxWSMessageSize = 16 * 1024 * 1024
 
+// defaultRequestTimeout is the default timeout for pending requests.
+// Requests not receiving a response within this time are cleaned up.
+const defaultRequestTimeout = 30 * time.Second
+
 // WSClientConfig holds configuration options for WSClient.
 type WSClientConfig struct {
 	// ReconnectConfig configures automatic reconnection behavior.
@@ -34,6 +38,9 @@ type WSClientConfig struct {
 	PingTimeout time.Duration
 	// WriteTimeout is the timeout for write operations.
 	WriteTimeout time.Duration
+	// RequestTimeout is the timeout for pending requests. Requests not receiving
+	// a response within this time are cleaned up to prevent memory leaks.
+	RequestTimeout time.Duration
 }
 
 // DefaultWSClientConfig returns the default WSClient configuration.
@@ -44,6 +51,7 @@ func DefaultWSClientConfig() WSClientConfig {
 		PingInterval:    30 * time.Second,
 		PingTimeout:     10 * time.Second,
 		WriteTimeout:    10 * time.Second,
+		RequestTimeout:  defaultRequestTimeout,
 	}
 }
 
@@ -67,7 +75,8 @@ type WSClient struct {
 
 	// Health monitoring fields
 	pingCancel context.CancelFunc
-	lastPong   atomic.Value // time.Time
+	pingWg     sync.WaitGroup // Tracks active health monitor goroutine
+	lastPong   atomic.Value   // time.Time
 }
 
 // NewWSClient creates a new WebSocket client for Home Assistant.
@@ -132,16 +141,32 @@ func (c *WSClient) Connect(ctx context.Context) error {
 }
 
 // startHealthMonitor starts the periodic ping goroutine.
+// It ensures any previous health monitor is stopped before starting a new one.
 func (c *WSClient) startHealthMonitor() {
+	// Stop any existing health monitor to prevent goroutine leaks
+	c.stopHealthMonitor()
+
 	ctx, cancel := context.WithCancel(c.ctx)
 	c.pingCancel = cancel
 	c.lastPong.Store(time.Now())
 
+	c.pingWg.Add(1)
 	go c.healthLoop(ctx)
+}
+
+// stopHealthMonitor stops the health monitor goroutine and waits for it to exit.
+func (c *WSClient) stopHealthMonitor() {
+	if c.pingCancel != nil {
+		c.pingCancel()
+		c.pingCancel = nil
+	}
+	c.pingWg.Wait()
 }
 
 // healthLoop periodically sends pings to check connection health.
 func (c *WSClient) healthLoop(ctx context.Context) {
+	defer c.pingWg.Done()
+
 	ticker := time.NewTicker(c.config.PingInterval)
 	defer ticker.Stop()
 
@@ -475,51 +500,95 @@ func (c *WSClient) closePendingChannels() {
 	}
 }
 
+// ErrRequestTimeout is returned when a request times out waiting for a response.
+var ErrRequestTimeout = errors.New("request timeout: no response received")
+
+// pendingRequest tracks a pending command awaiting response.
+type pendingRequest struct {
+	id           int64
+	responseChan chan *WSResultMessage
+	timer        *time.Timer
+	cleaned      bool
+}
+
+// cleanup removes the pending request from the map.
+func (p *pendingRequest) cleanup(c *WSClient) {
+	if p.cleaned {
+		return
+	}
+	p.cleaned = true
+	c.pendingMu.Lock()
+	delete(c.pending, p.id)
+	c.pendingMu.Unlock()
+}
+
 // SendCommand sends a command to Home Assistant and waits for a response.
 func (c *WSClient) SendCommand(ctx context.Context, msgType string, payload map[string]any) (*WSResultMessage, error) {
 	if !c.connected.Load() {
 		return nil, errors.New("not connected")
 	}
 
-	// Generate new message ID
-	id := c.msgID.Add(1)
+	req := c.registerPendingRequest()
+	defer func() {
+		req.timer.Stop()
+		req.cleanup(c)
+	}()
 
-	// Create response channel
+	if err := c.sendWSCommand(ctx, req.id, msgType, payload); err != nil {
+		return nil, err
+	}
+
+	return c.waitForResponse(ctx, req.responseChan)
+}
+
+// registerPendingRequest creates a new pending request with timeout cleanup.
+func (c *WSClient) registerPendingRequest() *pendingRequest {
+	id := c.msgID.Add(1)
 	responseChan := make(chan *WSResultMessage, 1)
 
-	// Register pending request
 	c.pendingMu.Lock()
 	c.pending[id] = responseChan
 	c.pendingMu.Unlock()
 
-	// Ensure cleanup
-	defer func() {
-		c.pendingMu.Lock()
-		delete(c.pending, id)
-		c.pendingMu.Unlock()
-	}()
-
-	// Build and send command
-	cmd := &WSCommandWithPayload{
-		ID:      id,
-		Type:    msgType,
-		Payload: payload,
+	timeout := c.config.RequestTimeout
+	if timeout == 0 {
+		timeout = defaultRequestTimeout
 	}
 
+	timer := time.AfterFunc(timeout, func() {
+		c.pendingMu.Lock()
+		if ch, ok := c.pending[id]; ok {
+			delete(c.pending, id)
+			close(ch)
+		}
+		c.pendingMu.Unlock()
+	})
+
+	return &pendingRequest{id: id, responseChan: responseChan, timer: timer}
+}
+
+// sendWSCommand marshals and sends a WebSocket command.
+func (c *WSClient) sendWSCommand(ctx context.Context, id int64, msgType string, payload map[string]any) error {
+	cmd := &WSCommandWithPayload{ID: id, Type: msgType, Payload: payload}
 	data, err := json.Marshal(cmd)
 	if err != nil {
-		return nil, fmt.Errorf("marshaling command: %w", err)
+		return fmt.Errorf("marshaling command: %w", err)
 	}
-
 	if err := c.conn.Write(ctx, websocket.MessageText, data); err != nil {
-		return nil, fmt.Errorf("sending command: %w", err)
+		return fmt.Errorf("sending command: %w", err)
 	}
+	return nil
+}
 
-	// Wait for response with timeout
+// waitForResponse waits for a response on the channel or context cancellation.
+func (c *WSClient) waitForResponse(ctx context.Context, responseChan chan *WSResultMessage) (*WSResultMessage, error) {
 	select {
 	case result, ok := <-responseChan:
 		if !ok {
-			return nil, errors.New("connection closed while waiting for response")
+			if !c.connected.Load() {
+				return nil, errors.New("connection closed while waiting for response")
+			}
+			return nil, ErrRequestTimeout
 		}
 		if !result.Success && result.Error != nil {
 			return nil, fmt.Errorf("command failed: %s - %s", result.Error.Code, result.Error.Message)
@@ -537,10 +606,8 @@ func (c *WSClient) SendSimpleCommand(ctx context.Context, msgType string) (*WSRe
 
 // Close closes the WebSocket connection and stops reconnection attempts.
 func (c *WSClient) Close() error {
-	// Stop health monitoring
-	if c.pingCancel != nil {
-		c.pingCancel()
-	}
+	// Stop health monitoring and wait for the goroutine to exit
+	c.stopHealthMonitor()
 
 	// Stop reconnection attempts
 	c.reconnectMgr.Stop()

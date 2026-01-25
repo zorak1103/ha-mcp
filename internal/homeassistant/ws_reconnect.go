@@ -41,7 +41,7 @@ type ReconnectManager struct {
 	currentWait time.Duration
 	mu          sync.Mutex
 	timer       *time.Timer
-	cancelFunc  context.CancelFunc
+	done        chan struct{} // Signal channel to cancel waiting
 }
 
 // NewReconnectManager creates a new ReconnectManager with the given configuration.
@@ -69,9 +69,16 @@ func (r *ReconnectManager) stopTimerLocked() {
 		r.timer.Stop()
 		r.timer = nil
 	}
-	if r.cancelFunc != nil {
-		r.cancelFunc()
-		r.cancelFunc = nil
+	if r.done != nil {
+		// Signal any waiting goroutine to exit.
+		// Use select to handle case where channel is already closed.
+		select {
+		case <-r.done:
+			// Already closed, do nothing
+		default:
+			close(r.done)
+		}
+		r.done = nil
 	}
 }
 
@@ -131,24 +138,31 @@ func (r *ReconnectManager) WaitForReconnect(ctx context.Context) error {
 	}
 	r.currentWait = nextWait
 
-	// Create timer and cancellation context
-	waitCtx, cancel := context.WithCancel(ctx)
-	r.cancelFunc = cancel
+	// Clean up any previous wait state before creating new one
+	r.stopTimerLocked()
+
+	// Create timer and done channel for safe cancellation
 	timer := time.NewTimer(waitDuration)
 	r.timer = timer
+	done := make(chan struct{})
+	r.done = done
 
-	// Capture channel before unlocking to avoid race condition
+	// Capture channels before unlocking to use in select.
+	// The done channel provides a safe way to cancel from Stop().
 	timerChan := timer.C
 
 	r.mu.Unlock()
 
-	// Wait for timer or cancellation
+	// Wait for timer, context cancellation, or explicit stop
 	select {
 	case <-timerChan:
 		return nil
-	case <-waitCtx.Done():
+	case <-done:
+		// Stopped via Stop() or Reset()
+		return context.Canceled
+	case <-ctx.Done():
 		r.Stop()
-		return waitCtx.Err()
+		return ctx.Err()
 	}
 }
 

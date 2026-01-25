@@ -636,3 +636,108 @@ func TestReconnectManager_ResetDuringWait(t *testing.T) {
 		t.Errorf("GetAttempts() after Reset = %v, want 0", mgr.GetAttempts())
 	}
 }
+
+func TestReconnectManager_ConcurrentStopDuringWait(t *testing.T) {
+	t.Parallel()
+
+	config := ReconnectConfig{
+		InitialDelay:  500 * time.Millisecond,
+		MaxDelay:      1 * time.Second,
+		BackoffFactor: 2.0,
+		MaxAttempts:   0,
+	}
+
+	mgr := NewReconnectManager(config)
+
+	// Track results from multiple concurrent waits
+	results := make(chan error, 10)
+
+	// Start multiple waits concurrently
+	for i := 0; i < 5; i++ {
+		go func() {
+			results <- mgr.WaitForReconnect(context.Background())
+		}()
+	}
+
+	// Give time for waits to start
+	time.Sleep(50 * time.Millisecond)
+
+	// Stop from multiple goroutines concurrently
+	for i := 0; i < 5; i++ {
+		go func() {
+			mgr.Stop()
+		}()
+	}
+
+	// Collect all results - should not hang or panic
+	for i := 0; i < 5; i++ {
+		select {
+		case <-results:
+			// Result received, could be nil (timer fired) or context.Canceled (stopped)
+		case <-time.After(2 * time.Second):
+			t.Error("WaitForReconnect did not return in time")
+		}
+	}
+}
+
+func TestReconnectManager_MultipleStopsAreSafe(t *testing.T) {
+	t.Parallel()
+
+	config := ReconnectConfig{
+		InitialDelay:  100 * time.Millisecond,
+		MaxDelay:      1 * time.Second,
+		BackoffFactor: 2.0,
+		MaxAttempts:   0,
+	}
+
+	mgr := NewReconnectManager(config)
+
+	// Multiple stops should not panic
+	for i := 0; i < 10; i++ {
+		mgr.Stop()
+	}
+
+	// Multiple resets should not panic
+	for i := 0; i < 10; i++ {
+		mgr.Reset()
+	}
+
+	// Stop followed by Reset should not panic
+	mgr.Stop()
+	mgr.Reset()
+	mgr.Stop()
+}
+
+func TestReconnectManager_StopReturnsCanceledError(t *testing.T) {
+	t.Parallel()
+
+	config := ReconnectConfig{
+		InitialDelay:  1 * time.Second,
+		MaxDelay:      10 * time.Second,
+		BackoffFactor: 2.0,
+		MaxAttempts:   0,
+	}
+
+	mgr := NewReconnectManager(config)
+
+	done := make(chan error, 1)
+	go func() {
+		done <- mgr.WaitForReconnect(context.Background())
+	}()
+
+	// Give time for wait to start
+	time.Sleep(50 * time.Millisecond)
+
+	// Stop the manager
+	mgr.Stop()
+
+	// Should return context.Canceled
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("WaitForReconnect() error = %v, want context.Canceled", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Error("WaitForReconnect() did not return after Stop()")
+	}
+}

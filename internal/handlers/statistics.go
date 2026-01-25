@@ -54,12 +54,18 @@ func (h *StatisticsHandlers) handleGetStatistics(
 	// Extract statistic_ids (required)
 	statIDsRaw, ok := args["statistic_ids"]
 	if !ok {
-		return nil, fmt.Errorf("statistic_ids is required")
+		return &mcp.ToolsCallResult{
+			Content: []mcp.ContentBlock{mcp.NewTextContent("statistic_ids is required")},
+			IsError: true,
+		}, nil
 	}
 
 	statIDsSlice, ok := statIDsRaw.([]any)
 	if !ok {
-		return nil, fmt.Errorf("statistic_ids must be an array")
+		return &mcp.ToolsCallResult{
+			Content: []mcp.ContentBlock{mcp.NewTextContent("statistic_ids must be an array")},
+			IsError: true,
+		}, nil
 	}
 
 	statIDs := make([]string, 0, len(statIDsSlice))
@@ -70,7 +76,10 @@ func (h *StatisticsHandlers) handleGetStatistics(
 	}
 
 	if len(statIDs) == 0 {
-		return nil, fmt.Errorf("at least one statistic_id is required")
+		return &mcp.ToolsCallResult{
+			Content: []mcp.ContentBlock{mcp.NewTextContent("at least one statistic_id is required")},
+			IsError: true,
+		}, nil
 	}
 
 	// Extract period (optional, default to "hour")
@@ -83,10 +92,7 @@ func (h *StatisticsHandlers) handleGetStatistics(
 	statistics, err := client.GetStatistics(ctx, statIDs, period)
 	if err != nil {
 		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{{
-				Type: "text",
-				Text: fmt.Sprintf("Failed to get statistics: %v", err),
-			}},
+			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Failed to get statistics: %v", err))},
 			IsError: true,
 		}, nil
 	}
@@ -94,13 +100,13 @@ func (h *StatisticsHandlers) handleGetStatistics(
 	// Format response
 	result, err := json.MarshalIndent(statistics, "", "  ")
 	if err != nil {
-		return nil, fmt.Errorf("marshaling statistics result: %w", err)
+		return &mcp.ToolsCallResult{
+			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Failed to marshal statistics result: %v", err))},
+			IsError: true,
+		}, nil
 	}
 
 	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{{
-			Type: "text",
-			Text: string(result),
-		}},
+		Content: []mcp.ContentBlock{mcp.NewTextContent(string(result))},
 	}, nil
 }

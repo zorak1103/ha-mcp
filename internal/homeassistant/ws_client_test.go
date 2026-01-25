@@ -1,6 +1,7 @@
 package homeassistant
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -474,5 +475,543 @@ func TestWSClient_ConcurrentMsgIDIncrement(t *testing.T) {
 	// Verify final count
 	if client.msgID.Load() != 100 {
 		t.Errorf("final msgID = %d, want 100", client.msgID.Load())
+	}
+}
+
+func TestWSClient_RequestTimeoutConfig(t *testing.T) {
+	t.Parallel()
+
+	// Default config should have request timeout
+	config := DefaultWSClientConfig()
+	if config.RequestTimeout != defaultRequestTimeout {
+		t.Errorf("Default RequestTimeout = %v, want %v", config.RequestTimeout, defaultRequestTimeout)
+	}
+
+	// Custom config
+	customConfig := WSClientConfig{
+		RequestTimeout: 60 * time.Second,
+	}
+	client := NewWSClientWithConfig("http://example.com", "token", customConfig)
+	if client.config.RequestTimeout != 60*time.Second {
+		t.Errorf("Custom RequestTimeout = %v, want 60s", client.config.RequestTimeout)
+	}
+}
+
+func TestDefaultRequestTimeout(t *testing.T) {
+	t.Parallel()
+
+	// Verify the constant is set to 30 seconds
+	expected := 30 * time.Second
+	if defaultRequestTimeout != expected {
+		t.Errorf("defaultRequestTimeout = %v, want %v", defaultRequestTimeout, expected)
+	}
+}
+
+func TestErrRequestTimeout(t *testing.T) {
+	t.Parallel()
+
+	// Verify the error is defined and has expected message
+	if ErrRequestTimeout == nil {
+		t.Fatal("ErrRequestTimeout is nil")
+	}
+
+	expected := "request timeout: no response received"
+	if ErrRequestTimeout.Error() != expected {
+		t.Errorf("ErrRequestTimeout.Error() = %q, want %q", ErrRequestTimeout.Error(), expected)
+	}
+}
+
+func TestWSClient_PendingMapCleanup(t *testing.T) {
+	t.Parallel()
+
+	client := NewWSClient("http://example.com", "token")
+
+	// Verify pending map starts empty
+	client.pendingMu.RLock()
+	initialLen := len(client.pending)
+	client.pendingMu.RUnlock()
+
+	if initialLen != 0 {
+		t.Errorf("pending map should start empty, has %d entries", initialLen)
+	}
+
+	// Add an entry and verify it's there
+	client.pendingMu.Lock()
+	client.pending[1] = make(chan *WSResultMessage, 1)
+	client.pendingMu.Unlock()
+
+	client.pendingMu.RLock()
+	if len(client.pending) != 1 {
+		t.Errorf("pending map should have 1 entry, has %d", len(client.pending))
+	}
+	client.pendingMu.RUnlock()
+
+	// Simulate cleanup
+	client.pendingMu.Lock()
+	delete(client.pending, 1)
+	client.pendingMu.Unlock()
+
+	client.pendingMu.RLock()
+	if len(client.pending) != 0 {
+		t.Errorf("pending map should be empty after cleanup, has %d entries", len(client.pending))
+	}
+	client.pendingMu.RUnlock()
+}
+
+func TestWSClient_ClosePendingChannels(t *testing.T) {
+	t.Parallel()
+
+	client := NewWSClient("http://example.com", "token")
+
+	// Add several pending entries
+	channels := make([]chan *WSResultMessage, 5)
+	for i := 0; i < 5; i++ {
+		ch := make(chan *WSResultMessage, 1)
+		channels[i] = ch
+		client.pendingMu.Lock()
+		client.pending[int64(i+1)] = ch
+		client.pendingMu.Unlock()
+	}
+
+	// Verify all entries are present
+	client.pendingMu.RLock()
+	if len(client.pending) != 5 {
+		t.Errorf("pending map should have 5 entries, has %d", len(client.pending))
+	}
+	client.pendingMu.RUnlock()
+
+	// Call closePendingChannels
+	client.closePendingChannels()
+
+	// Verify map is empty
+	client.pendingMu.RLock()
+	if len(client.pending) != 0 {
+		t.Errorf("pending map should be empty, has %d entries", len(client.pending))
+	}
+	client.pendingMu.RUnlock()
+
+	// Verify channels are closed
+	for i, ch := range channels {
+		select {
+		case _, ok := <-ch:
+			if ok {
+				t.Errorf("channel %d should be closed", i)
+			}
+		default:
+			t.Errorf("channel %d should be closed and readable", i)
+		}
+	}
+}
+
+func TestWSClient_StopHealthMonitor_Safe(t *testing.T) {
+	t.Parallel()
+
+	client := NewWSClient("http://example.com", "token")
+
+	// Calling stopHealthMonitor on client without active monitor should not panic
+	client.stopHealthMonitor()
+	client.stopHealthMonitor() // Multiple calls should be safe
+}
+
+func TestWSClient_StartHealthMonitor_StopsPrevious(t *testing.T) {
+	t.Parallel()
+
+	config := WSClientConfig{
+		PingInterval: 50 * time.Millisecond,
+		PingTimeout:  10 * time.Millisecond,
+	}
+	client := NewWSClientWithConfig("http://example.com", "token", config)
+
+	// Create a mock connection context
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client.ctx = ctx
+
+	// Track exits to verify goroutines are stopped
+	exitCh := make(chan struct{}, 10)
+
+	// Manually start and stop health monitors multiple times
+	for i := 0; i < 3; i++ {
+		// Stop any existing one
+		client.stopHealthMonitor()
+
+		// Create a new cancellable context for this "health monitor"
+		monitorCtx, monitorCancel := context.WithCancel(ctx)
+		client.pingCancel = monitorCancel
+		client.pingWg.Add(1)
+		go func() {
+			defer client.pingWg.Done()
+			<-monitorCtx.Done()
+			exitCh <- struct{}{}
+		}()
+	}
+
+	// Final stop should clean up the last one
+	client.stopHealthMonitor()
+
+	// Verify all 3 goroutines exited
+	for i := 0; i < 3; i++ {
+		select {
+		case <-exitCh:
+			// OK
+		case <-time.After(500 * time.Millisecond):
+			t.Errorf("Goroutine %d did not exit in time", i)
+		}
+	}
+}
+
+func TestWSClient_HealthMonitorCleanupOnClose(t *testing.T) {
+	t.Parallel()
+
+	config := WSClientConfig{
+		PingInterval: 100 * time.Millisecond,
+		PingTimeout:  50 * time.Millisecond,
+	}
+	client := NewWSClientWithConfig("http://example.com", "token", config)
+
+	// Create a context for the "connection"
+	ctx, cancel := context.WithCancel(context.Background())
+	client.ctx = ctx
+	client.cancel = cancel
+
+	// Simulate starting health monitor
+	client.pingWg.Add(1)
+	pingCtx, pingCancel := context.WithCancel(ctx)
+	client.pingCancel = pingCancel
+	healthDone := make(chan struct{})
+	go func() {
+		defer client.pingWg.Done()
+		defer close(healthDone)
+		<-pingCtx.Done()
+	}()
+
+	// Close should stop health monitor and wait for it
+	done := make(chan error, 1)
+	go func() {
+		done <- client.Close()
+	}()
+
+	// Should complete without hanging
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("Close() did not complete in time - possible goroutine leak")
+	}
+
+	// Health loop should have exited
+	select {
+	case <-healthDone:
+		// Success
+	case <-time.After(100 * time.Millisecond):
+		t.Error("Health loop did not exit after Close()")
+	}
+}
+
+func TestPendingRequest_Cleanup(t *testing.T) {
+	t.Parallel()
+
+	client := NewWSClient("http://example.com", "token")
+
+	// Add a pending request
+	responseChan := make(chan *WSResultMessage, 1)
+	client.pendingMu.Lock()
+	client.pending[42] = responseChan
+	client.pendingMu.Unlock()
+
+	// Create pendingRequest
+	req := &pendingRequest{
+		id:           42,
+		responseChan: responseChan,
+		timer:        time.NewTimer(1 * time.Hour), // Long timer to avoid firing
+		cleaned:      false,
+	}
+
+	// Verify entry exists
+	client.pendingMu.RLock()
+	if _, ok := client.pending[42]; !ok {
+		t.Fatal("pending entry should exist before cleanup")
+	}
+	client.pendingMu.RUnlock()
+
+	// Run cleanup
+	req.cleanup(client)
+
+	// Verify entry was removed
+	client.pendingMu.RLock()
+	if _, ok := client.pending[42]; ok {
+		t.Error("pending entry should be removed after cleanup")
+	}
+	client.pendingMu.RUnlock()
+
+	// Verify cleaned flag is set
+	if !req.cleaned {
+		t.Error("cleaned flag should be true after cleanup")
+	}
+
+	// Second cleanup should be idempotent
+	req.cleanup(client)
+	if !req.cleaned {
+		t.Error("cleaned flag should remain true after second cleanup")
+	}
+}
+
+func TestPendingRequest_CleanupIdempotent(t *testing.T) {
+	t.Parallel()
+
+	client := NewWSClient("http://example.com", "token")
+
+	// Create pendingRequest already marked as cleaned
+	req := &pendingRequest{
+		id:           99,
+		responseChan: make(chan *WSResultMessage, 1),
+		timer:        time.NewTimer(1 * time.Hour),
+		cleaned:      true, // Already cleaned
+	}
+
+	// Add an entry to verify cleanup doesn't run
+	client.pendingMu.Lock()
+	client.pending[99] = req.responseChan
+	client.pendingMu.Unlock()
+
+	// Run cleanup on already-cleaned request
+	req.cleanup(client)
+
+	// Verify entry was NOT removed (because cleanup was already done)
+	client.pendingMu.RLock()
+	if _, ok := client.pending[99]; !ok {
+		t.Error("pending entry should NOT be removed when already cleaned")
+	}
+	client.pendingMu.RUnlock()
+}
+
+func TestWSClient_WaitForResponse_Success(t *testing.T) {
+	t.Parallel()
+
+	client := NewWSClient("http://example.com", "token")
+	client.connected.Store(true)
+
+	responseChan := make(chan *WSResultMessage, 1)
+
+	// Send a successful response
+	responseChan <- &WSResultMessage{
+		Success: true,
+		Result:  []byte(`{"test": "data"}`),
+	}
+
+	ctx := context.Background()
+	result, err := client.waitForResponse(ctx, responseChan)
+
+	if err != nil {
+		t.Errorf("waitForResponse() error = %v, want nil", err)
+	}
+	if result == nil {
+		t.Fatal("waitForResponse() result is nil")
+	}
+	if !result.Success {
+		t.Error("waitForResponse() result.Success = false, want true")
+	}
+}
+
+func TestWSClient_WaitForResponse_Error(t *testing.T) {
+	t.Parallel()
+
+	client := NewWSClient("http://example.com", "token")
+	client.connected.Store(true)
+
+	responseChan := make(chan *WSResultMessage, 1)
+
+	// Send an error response
+	responseChan <- &WSResultMessage{
+		Success: false,
+		Error: &WSError{
+			Code:    "test_error",
+			Message: "test error message",
+		},
+	}
+
+	ctx := context.Background()
+	result, err := client.waitForResponse(ctx, responseChan)
+
+	if err == nil {
+		t.Fatal("waitForResponse() error is nil, want error")
+	}
+	if result != nil {
+		t.Error("waitForResponse() result should be nil on error")
+	}
+	expectedErr := "command failed: test_error - test error message"
+	if err.Error() != expectedErr {
+		t.Errorf("waitForResponse() error = %q, want %q", err.Error(), expectedErr)
+	}
+}
+
+func TestWSClient_WaitForResponse_ChannelClosed_Connected(t *testing.T) {
+	t.Parallel()
+
+	client := NewWSClient("http://example.com", "token")
+	client.connected.Store(true)
+
+	responseChan := make(chan *WSResultMessage, 1)
+	close(responseChan) // Simulate timeout cleanup
+
+	ctx := context.Background()
+	result, err := client.waitForResponse(ctx, responseChan)
+
+	if err == nil {
+		t.Fatal("waitForResponse() error is nil, want error")
+	}
+	if result != nil {
+		t.Error("waitForResponse() result should be nil on closed channel")
+	}
+	if !errors.Is(err, ErrRequestTimeout) {
+		t.Errorf("waitForResponse() error = %v, want ErrRequestTimeout", err)
+	}
+}
+
+func TestWSClient_WaitForResponse_ChannelClosed_Disconnected(t *testing.T) {
+	t.Parallel()
+
+	client := NewWSClient("http://example.com", "token")
+	client.connected.Store(false) // Not connected
+
+	responseChan := make(chan *WSResultMessage, 1)
+	close(responseChan) // Simulate disconnect
+
+	ctx := context.Background()
+	result, err := client.waitForResponse(ctx, responseChan)
+
+	if err == nil {
+		t.Fatal("waitForResponse() error is nil, want error")
+	}
+	if result != nil {
+		t.Error("waitForResponse() result should be nil on closed channel")
+	}
+	expectedErr := "connection closed while waiting for response"
+	if err.Error() != expectedErr {
+		t.Errorf("waitForResponse() error = %q, want %q", err.Error(), expectedErr)
+	}
+}
+
+func TestWSClient_WaitForResponse_ContextCanceled(t *testing.T) {
+	t.Parallel()
+
+	client := NewWSClient("http://example.com", "token")
+	client.connected.Store(true)
+
+	responseChan := make(chan *WSResultMessage, 1)
+	// Don't send anything - context will be canceled
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	result, err := client.waitForResponse(ctx, responseChan)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("waitForResponse() error = %v, want context.Canceled", err)
+	}
+	if result != nil {
+		t.Error("waitForResponse() result should be nil on context cancel")
+	}
+}
+
+func TestWSClient_RegisterPendingRequest(t *testing.T) {
+	t.Parallel()
+
+	config := DefaultWSClientConfig()
+	config.RequestTimeout = 50 * time.Millisecond // Short timeout for testing
+	client := NewWSClientWithConfig("http://example.com", "token", config)
+
+	// Register a request
+	req := client.registerPendingRequest()
+
+	if req == nil {
+		t.Fatal("registerPendingRequest() returned nil")
+	}
+
+	if req.id != 1 {
+		t.Errorf("registerPendingRequest() id = %d, want 1", req.id)
+	}
+
+	if req.responseChan == nil {
+		t.Error("registerPendingRequest() responseChan is nil")
+	}
+
+	if req.timer == nil {
+		t.Error("registerPendingRequest() timer is nil")
+	}
+
+	if req.cleaned {
+		t.Error("registerPendingRequest() cleaned should be false initially")
+	}
+
+	// Verify it was added to pending map
+	client.pendingMu.RLock()
+	if _, ok := client.pending[req.id]; !ok {
+		t.Error("pending map should contain the request")
+	}
+	client.pendingMu.RUnlock()
+
+	// Stop timer to avoid affecting other tests
+	req.timer.Stop()
+}
+
+func TestWSClient_RegisterPendingRequest_TimeoutCleanup(t *testing.T) {
+	t.Parallel()
+
+	config := DefaultWSClientConfig()
+	config.RequestTimeout = 20 * time.Millisecond // Very short timeout
+	client := NewWSClientWithConfig("http://example.com", "token", config)
+
+	// Register a request
+	req := client.registerPendingRequest()
+
+	// Verify it's in the pending map
+	client.pendingMu.RLock()
+	if _, ok := client.pending[req.id]; !ok {
+		t.Fatal("pending map should contain the request initially")
+	}
+	client.pendingMu.RUnlock()
+
+	// Wait for timeout to trigger cleanup
+	time.Sleep(50 * time.Millisecond)
+
+	// Verify it was removed from pending map by timeout
+	client.pendingMu.RLock()
+	if _, ok := client.pending[req.id]; ok {
+		t.Error("pending map should NOT contain the request after timeout")
+	}
+	client.pendingMu.RUnlock()
+
+	// Channel should be closed
+	select {
+	case _, ok := <-req.responseChan:
+		if ok {
+			t.Error("response channel should be closed after timeout")
+		}
+	default:
+		t.Error("response channel should be readable (closed) after timeout")
+	}
+}
+
+func TestWSClient_SendCommand_NotConnected(t *testing.T) {
+	t.Parallel()
+
+	client := NewWSClient("http://example.com", "token")
+	// Don't connect - connected will be false
+
+	ctx := context.Background()
+	result, err := client.SendCommand(ctx, "test", nil)
+
+	if err == nil {
+		t.Fatal("SendCommand() error is nil, want error")
+	}
+	if result != nil {
+		t.Error("SendCommand() result should be nil when not connected")
+	}
+	expectedErr := "not connected"
+	if err.Error() != expectedErr {
+		t.Errorf("SendCommand() error = %q, want %q", err.Error(), expectedErr)
 	}
 }
