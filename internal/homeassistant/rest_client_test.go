@@ -396,3 +396,257 @@ func TestDefaultRESTClientConfig(t *testing.T) {
 		t.Errorf("DefaultRESTClientConfig() mismatch (-want +got):\n%s", diff)
 	}
 }
+
+func TestRESTClient_GetServices(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		serverResponse func(w http.ResponseWriter, r *http.Request)
+		wantErr        bool
+		wantErrMsg     string
+		wantDomains    []string
+	}{
+		{
+			name: "successful response",
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`[
+					{"domain": "light", "services": {"turn_on": {"name": "Turn on"}, "turn_off": {"name": "Turn off"}}},
+					{"domain": "switch", "services": {"toggle": {"name": "Toggle"}}}
+				]`))
+			},
+			wantErr:     false,
+			wantDomains: []string{"light", "switch"},
+		},
+		{
+			name: "empty services",
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`[]`))
+			},
+			wantErr:     false,
+			wantDomains: []string{},
+		},
+		{
+			name: "unauthorized",
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"message": "invalid token"}`))
+			},
+			wantErr:    true,
+			wantErrMsg: "failed to get services",
+		},
+		{
+			name: "server error",
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusInternalServerError)
+			},
+			wantErr:    true,
+			wantErrMsg: "failed to get services",
+		},
+		{
+			name: "invalid JSON",
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`invalid json`))
+			},
+			wantErr:    true,
+			wantErrMsg: "parsing services response",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var capturedRequest *http.Request
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				capturedRequest = r
+				tt.serverResponse(w, r)
+			}))
+			defer server.Close()
+
+			client := NewRESTClient(server.URL, "test-token")
+			services, err := client.GetServices(context.Background())
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("GetServices() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			// Verify request
+			if capturedRequest != nil {
+				if capturedRequest.Method != http.MethodGet {
+					t.Errorf("method = %q, want %q", capturedRequest.Method, http.MethodGet)
+				}
+				if capturedRequest.URL.Path != "/api/services" {
+					t.Errorf("path = %q, want %q", capturedRequest.URL.Path, "/api/services")
+				}
+				if auth := capturedRequest.Header.Get("Authorization"); auth != "Bearer test-token" {
+					t.Errorf("Authorization = %q, want %q", auth, "Bearer test-token")
+				}
+			}
+
+			if tt.wantErr {
+				return
+			}
+
+			// Check returned domains
+			gotDomains := make([]string, len(services))
+			for i, svc := range services {
+				gotDomains[i] = svc.Domain
+			}
+			if diff := cmp.Diff(tt.wantDomains, gotDomains); diff != "" {
+				t.Errorf("domains mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestRESTClient_GetConfig(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		serverResponse func(w http.ResponseWriter, r *http.Request)
+		wantErr        bool
+		wantErrMsg     string
+		wantVersion    string
+	}{
+		{
+			name: "successful response",
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{
+					"version": "2024.1.0",
+					"state": "RUNNING",
+					"location_name": "Home",
+					"time_zone": "Europe/Berlin",
+					"latitude": 52.52,
+					"longitude": 13.405,
+					"elevation": 34,
+					"unit_system": {
+						"length": "km",
+						"temperature": "°C"
+					},
+					"components": ["light", "switch"]
+				}`))
+			},
+			wantErr:     false,
+			wantVersion: "2024.1.0",
+		},
+		{
+			name: "unauthorized",
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusUnauthorized)
+			},
+			wantErr:    true,
+			wantErrMsg: "failed to get config",
+		},
+		{
+			name: "server error",
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusInternalServerError)
+			},
+			wantErr:    true,
+			wantErrMsg: "failed to get config",
+		},
+		{
+			name: "invalid JSON",
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`not json`))
+			},
+			wantErr:    true,
+			wantErrMsg: "parsing config response",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var capturedRequest *http.Request
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				capturedRequest = r
+				tt.serverResponse(w, r)
+			}))
+			defer server.Close()
+
+			client := NewRESTClient(server.URL, "test-token")
+			config, err := client.GetConfig(context.Background())
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("GetConfig() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			// Verify request
+			if capturedRequest != nil {
+				if capturedRequest.Method != http.MethodGet {
+					t.Errorf("method = %q, want %q", capturedRequest.Method, http.MethodGet)
+				}
+				if capturedRequest.URL.Path != "/api/config" {
+					t.Errorf("path = %q, want %q", capturedRequest.URL.Path, "/api/config")
+				}
+				if auth := capturedRequest.Header.Get("Authorization"); auth != "Bearer test-token" {
+					t.Errorf("Authorization = %q, want %q", auth, "Bearer test-token")
+				}
+			}
+
+			if tt.wantErr {
+				return
+			}
+
+			if config.Version != tt.wantVersion {
+				t.Errorf("version = %q, want %q", config.Version, tt.wantVersion)
+			}
+		})
+	}
+}
+
+func TestRESTClient_GetServices_ContextCancellation(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := NewRESTClient(server.URL, "test-token")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := client.GetServices(ctx)
+	if err == nil {
+		t.Error("expected error for canceled context, got nil")
+	}
+}
+
+func TestRESTClient_GetConfig_ContextCancellation(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := NewRESTClient(server.URL, "test-token")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := client.GetConfig(ctx)
+	if err == nil {
+		t.Error("expected error for canceled context, got nil")
+	}
+}

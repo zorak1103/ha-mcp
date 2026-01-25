@@ -33,6 +33,7 @@ linters:
           - funlen
           - gocognit
           - govet
+          - goconst
       
       # Exclude deprecation warnings in tests
       - path: '(.+)_test\.go'

@@ -80,6 +80,12 @@ type Client interface {
 
 	// Config operations - get full configuration for helpers
 	GetScheduleConfig(ctx context.Context, scheduleID string) (map[string]any, error)
+
+	// Service discovery operations
+	GetServices(ctx context.Context) ([]Service, error)
+
+	// System configuration operations
+	GetConfig(ctx context.Context) (*Config, error)
 }
 
 // APIError represents an error response from the Home Assistant API.

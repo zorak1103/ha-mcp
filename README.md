@@ -558,6 +558,13 @@ ha-mcp provides comprehensive support for all 14 Home Assistant helper types. Ea
 | Tool | Description |
 |------|-------------|
 | `call_service` | Call any Home Assistant service |
+| `list_services` | List all available services with descriptions (optional domain filter) |
+
+#### System Tools
+
+| Tool | Description |
+|------|-------------|
+| `get_system_info` | Get Home Assistant system configuration (version, timezone, units, etc.) |
 
 ### Example Requests
 
@@ -858,6 +865,8 @@ ha-mcp/
 │   │   ├── statistics.go        # Statistics tool handler
 │   │   ├── lovelace.go          # Lovelace tool handler
 │   │   ├── targets.go           # Target tool handlers
+│   │   ├── services.go          # Service discovery handler
+│   │   ├── system.go            # System info handler
 │   │   └── register.go          # Handler registration
 │   └── logging/
 │       └── logger.go            # Structured logging

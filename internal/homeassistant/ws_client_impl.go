@@ -935,3 +935,23 @@ func (c *wsClientImpl) ExtractFromTarget(ctx context.Context, target Target, exp
 
 	return &extractResult, nil
 }
+
+// =============================================================================
+// Service Discovery Operations (REST API only - stubs for interface compliance)
+// =============================================================================
+
+// GetServices retrieves all available services.
+// Note: This operation is only available via REST API. Use HybridClient for full functionality.
+func (c *wsClientImpl) GetServices(_ context.Context) ([]Service, error) {
+	return nil, fmt.Errorf("GetServices not supported via WebSocket API, use REST API or HybridClient")
+}
+
+// =============================================================================
+// System Configuration Operations (REST API only - stubs for interface compliance)
+// =============================================================================
+
+// GetConfig retrieves the Home Assistant system configuration.
+// Note: This operation is only available via REST API. Use HybridClient for full functionality.
+func (c *wsClientImpl) GetConfig(_ context.Context) (*Config, error) {
+	return nil, fmt.Errorf("GetConfig not supported via WebSocket API, use REST API or HybridClient")
+}

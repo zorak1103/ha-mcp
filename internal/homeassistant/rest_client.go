@@ -4,6 +4,7 @@ package homeassistant
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -235,4 +236,90 @@ func (c *RESTClient) DeleteScene(ctx context.Context, sceneID string) error {
 			Message:    fmt.Sprintf("unexpected status %d: %s", resp.StatusCode, bodyStr),
 		}
 	}
+}
+
+// GetServices retrieves all available services from Home Assistant.
+// Endpoint: GET /api/services
+func (c *RESTClient) GetServices(ctx context.Context) ([]Service, error) {
+	url := fmt.Sprintf("%s/api/services", c.baseURL)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
+	if err != nil {
+		return nil, fmt.Errorf("creating get services request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("executing get services request: %w", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, &APIError{
+			StatusCode: resp.StatusCode,
+			Message:    fmt.Sprintf("failed to get services: %s", string(body)),
+		}
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading services response: %w", err)
+	}
+
+	var services []Service
+	if err := json.Unmarshal(body, &services); err != nil {
+		return nil, fmt.Errorf("parsing services response: %w", err)
+	}
+
+	return services, nil
+}
+
+// GetConfig retrieves the Home Assistant system configuration.
+// Endpoint: GET /api/config
+func (c *RESTClient) GetConfig(ctx context.Context) (*Config, error) {
+	url := fmt.Sprintf("%s/api/config", c.baseURL)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
+	if err != nil {
+		return nil, fmt.Errorf("creating get config request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("executing get config request: %w", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, &APIError{
+			StatusCode: resp.StatusCode,
+			Message:    fmt.Sprintf("failed to get config: %s", string(body)),
+		}
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading config response: %w", err)
+	}
+
+	var config Config
+	if err := json.Unmarshal(body, &config); err != nil {
+		return nil, fmt.Errorf("parsing config response: %w", err)
+	}
+
+	return &config, nil
 }

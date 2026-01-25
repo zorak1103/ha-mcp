@@ -132,6 +132,18 @@ func RegisterLovelaceTools(registry *mcp.Registry) {
 
 // RegisterAnalysisTools is defined in analysis.go
 
+// RegisterServiceTools registers all service discovery tools with the registry.
+func RegisterServiceTools(registry *mcp.Registry) {
+	h := NewServiceHandlers()
+	h.RegisterTools(registry)
+}
+
+// RegisterSystemTools registers all system information tools with the registry.
+func RegisterSystemTools(registry *mcp.Registry) {
+	h := NewSystemHandlers()
+	h.RegisterTools(registry)
+}
+
 // RegisterAllTools registers all available tool handlers with the registry.
 // All handlers use the WebSocket API for communication with Home Assistant.
 func RegisterAllTools(registry *mcp.Registry) {
@@ -175,4 +187,8 @@ func RegisterAllTools(registry *mcp.Registry) {
 
 	// Analysis tools for entity dependency tracking
 	RegisterAnalysisTools(registry)
+
+	// Service discovery and system information
+	RegisterServiceTools(registry)
+	RegisterSystemTools(registry)
 }

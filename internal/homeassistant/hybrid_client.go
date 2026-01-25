@@ -263,6 +263,24 @@ func (c *HybridClient) GetScheduleConfig(ctx context.Context, scheduleID string)
 }
 
 // =============================================================================
+// Service Discovery Operations (delegated to REST)
+// =============================================================================
+
+// GetServices retrieves all available services from Home Assistant.
+func (c *HybridClient) GetServices(ctx context.Context) ([]Service, error) {
+	return c.rest.GetServices(ctx)
+}
+
+// =============================================================================
+// System Configuration Operations (delegated to REST)
+// =============================================================================
+
+// GetConfig retrieves the Home Assistant system configuration.
+func (c *HybridClient) GetConfig(ctx context.Context) (*Config, error) {
+	return c.rest.GetConfig(ctx)
+}
+
+// =============================================================================
 // HybridClientCloser - implements ClientCloser for proper cleanup
 // =============================================================================
 

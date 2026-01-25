@@ -341,3 +341,76 @@ type ExtractFromTargetResult struct {
 	MissingFloors      []string `json:"missing_floors"`
 	MissingLabels      []string `json:"missing_labels"`
 }
+
+// Service represents a Home Assistant service domain with its services.
+type Service struct {
+	Domain   string                       `json:"domain"`
+	Services map[string]ServiceDefinition `json:"services"`
+}
+
+// ServiceDefinition represents a single service definition.
+type ServiceDefinition struct {
+	Name        string                  `json:"name,omitempty"`
+	Description string                  `json:"description,omitempty"`
+	Fields      map[string]ServiceField `json:"fields,omitempty"`
+	Target      *ServiceTarget          `json:"target,omitempty"`
+}
+
+// ServiceField represents a field in a service definition.
+type ServiceField struct {
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
+	Required    bool   `json:"required,omitempty"`
+	Example     any    `json:"example,omitempty"`
+	Selector    any    `json:"selector,omitempty"`
+}
+
+// ServiceTarget represents the target selector for a service.
+type ServiceTarget struct {
+	Entity []TargetSelector `json:"entity,omitempty"`
+	Device []TargetSelector `json:"device,omitempty"`
+	Area   bool             `json:"area,omitempty"`
+}
+
+// TargetSelector represents entity/device selection criteria.
+type TargetSelector struct {
+	Domain            string `json:"domain,omitempty"`
+	Integration       string `json:"integration,omitempty"`
+	DeviceClass       string `json:"device_class,omitempty"`
+	SupportedFeatures []int  `json:"supported_features,omitempty"`
+}
+
+// Config represents Home Assistant system configuration.
+type Config struct {
+	Components       []string   `json:"components"`
+	ConfigDir        string     `json:"config_dir"`
+	ConfigSource     string     `json:"config_source"`
+	Elevation        int        `json:"elevation"`
+	Latitude         float64    `json:"latitude"`
+	Longitude        float64    `json:"longitude"`
+	LocationName     string     `json:"location_name"`
+	TimeZone         string     `json:"time_zone"`
+	UnitSystem       UnitSystem `json:"unit_system"`
+	Version          string     `json:"version"`
+	WhitelistExtDirs []string   `json:"whitelist_external_dirs"`
+	AllowlistExtDirs []string   `json:"allowlist_external_dirs"`
+	AllowlistExtURLs []string   `json:"allowlist_external_urls"`
+	Currency         string     `json:"currency"`
+	Country          string     `json:"country,omitempty"`
+	Language         string     `json:"language,omitempty"`
+	SafeMode         bool       `json:"safe_mode"`
+	State            string     `json:"state"`
+	InternalURL      string     `json:"internal_url,omitempty"`
+	ExternalURL      string     `json:"external_url,omitempty"`
+}
+
+// UnitSystem represents the configured unit system.
+type UnitSystem struct {
+	Length            string `json:"length"`
+	AccumulatedPrecip string `json:"accumulated_precipitation"`
+	Mass              string `json:"mass"`
+	Pressure          string `json:"pressure"`
+	Temperature       string `json:"temperature"`
+	Volume            string `json:"volume"`
+	WindSpeed         string `json:"wind_speed"`
+}
