@@ -268,14 +268,14 @@ func TestExtractPlatform(t *testing.T) {
 			want:     "",
 		},
 		{
-			name:     "counter helper (not in list)",
+			name:     "counter helper",
 			entityID: "counter.my_counter",
-			want:     "",
+			want:     "counter",
 		},
 		{
-			name:     "timer helper (not in list)",
+			name:     "timer helper",
 			entityID: "timer.my_timer",
-			want:     "",
+			want:     "timer",
 		},
 	}
 

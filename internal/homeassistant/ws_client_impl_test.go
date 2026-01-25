@@ -1561,8 +1561,9 @@ func TestWSClientImplWithSender_CreateHelper(t *testing.T) {
 			if cmdType != "input_boolean/create" {
 				t.Errorf("unexpected command: %s", cmdType)
 			}
-			if params["input_boolean_id"] != "test_helper" {
-				t.Errorf("id mismatch: %v", params["input_boolean_id"])
+			// CreateHelper no longer sends platform_id for create - HA derives entity ID from name
+			if _, hasID := params["input_boolean_id"]; hasID {
+				t.Errorf("unexpected input_boolean_id in create params")
 			}
 			if params["name"] != "Test Helper" {
 				t.Errorf("name mismatch: %v", params["name"])
@@ -1574,7 +1575,6 @@ func TestWSClientImplWithSender_CreateHelper(t *testing.T) {
 	client := NewWSClientImplWithSender(mock)
 	err := client.CreateHelper(context.Background(), HelperConfig{
 		Platform: "input_boolean",
-		ID:       "test_helper",
 		Config:   map[string]any{"name": "Test Helper"},
 	})
 
@@ -3605,8 +3605,8 @@ func TestWSClientImplWithSender_SetHelperValue_UnsupportedPlatform(t *testing.T)
 	client := NewWSClientImplWithSender(&mockWSClientSender{})
 	err := client.SetHelperValue(context.Background(), "schedule.test", "value")
 
-	if err == nil || !containsStr(err.Error(), "unable to determine platform") {
-		t.Errorf("expected unable to determine platform error, got: %v", err)
+	if err == nil || !containsStr(err.Error(), "unsupported helper platform") {
+		t.Errorf("expected unsupported helper platform error, got: %v", err)
 	}
 }
 
