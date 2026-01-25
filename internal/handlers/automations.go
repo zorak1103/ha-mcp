@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"unicode"
 
@@ -33,7 +34,7 @@ func (h *AutomationHandlers) RegisterTools(registry *mcp.Registry) {
 func (h *AutomationHandlers) listAutomationsTool() mcp.Tool {
 	return mcp.Tool{
 		Name:        "list_automations",
-		Description: "List all automations in Home Assistant. By default returns a compact list. Use filters to narrow down results and 'verbose' for full details including configuration.",
+		Description: "List all automations in Home Assistant. By default returns a compact list. Use filters to narrow down results and 'verbose' for full details including configuration. Supports pagination via 'limit' and 'cursor' parameters.",
 		InputSchema: mcp.JSONSchema{
 			Type:        "object",
 			Description: "Filter and output options for automations list",
@@ -53,6 +54,14 @@ func (h *AutomationHandlers) listAutomationsTool() mcp.Tool {
 				"verbose": {
 					Type:        "boolean",
 					Description: "If true, return full details including configuration. Default: false (compact output with entity_id, state, alias, last_triggered)",
+				},
+				"limit": {
+					Type:        "integer",
+					Description: "Maximum number of automations to return (max 1000, default: no limit). Use with 'cursor' for pagination.",
+				},
+				"cursor": {
+					Type:        "string",
+					Description: "Pagination cursor from previous response to get next page of results",
 				},
 			},
 		},
@@ -398,12 +407,32 @@ func (h *AutomationHandlers) handleListAutomations(ctx context.Context, client h
 	// Apply filters
 	result := applyAutomationFilters(ctx, client, automations, filters)
 
+	// Sort by entity_id for stable pagination
+	sort.Slice(result.automations, func(i, j int) bool {
+		return result.automations[i].EntityID < result.automations[j].EntityID
+	})
+
+	// Build filters map for pagination hash
+	filtersMap := buildAutomationFiltersMap(filters)
+
+	// Parse pagination params
+	paginationParams, err := ParsePaginationParams(args, filtersMap)
+	if err != nil {
+		return &mcp.ToolsCallResult{
+			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error: %v", err))},
+			IsError: true,
+		}, nil
+	}
+
+	// Apply pagination
+	paginated := ApplyPagination(result.automations, paginationParams)
+
 	// Format output
 	var output []byte
 	if verbose {
-		output, err = buildVerboseAutomationOutput(ctx, client, result.automations, result.configs)
+		output, err = buildVerboseAutomationOutput(ctx, client, paginated.Items, result.configs)
 	} else {
-		output, err = buildCompactAutomationOutput(result.automations)
+		output, err = buildCompactAutomationOutput(paginated.Items)
 	}
 
 	if err != nil {
@@ -413,11 +442,53 @@ func (h *AutomationHandlers) handleListAutomations(ctx context.Context, client h
 		}, nil
 	}
 
-	summary := buildAutomationSummary(len(result.automations), verbose)
+	summary := BuildPaginationSummary(paginated.Pagination, "automations")
+	if !verbose {
+		summary += VerboseHint
+	}
+
+	// Build response with pagination metadata
+	response := buildPaginatedAutomationResponse(paginated, output)
 
 	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{mcp.NewTextContent(summary + "\n\n" + string(output))},
+		Content: []mcp.ContentBlock{mcp.NewTextContent(summary + "\n\n" + string(response))},
 	}, nil
+}
+
+// buildAutomationFiltersMap creates a map of filter values for pagination hash.
+func buildAutomationFiltersMap(filters automationFilters) map[string]any {
+	filtersMap := make(map[string]any)
+	if filters.state != "" {
+		filtersMap["state"] = filters.state
+	}
+	if filters.alias != "" {
+		filtersMap["alias"] = filters.alias
+	}
+	if filters.entityID != "" {
+		filtersMap["entity_id"] = filters.entityID
+	}
+	return filtersMap
+}
+
+// paginatedAutomationResponse wraps automation output with pagination metadata.
+type paginatedAutomationResponse struct {
+	Items      json.RawMessage    `json:"items"`
+	Pagination PaginationMetadata `json:"pagination"`
+}
+
+// buildPaginatedAutomationResponse creates the final response JSON.
+func buildPaginatedAutomationResponse(paginated PaginatedResponse[homeassistant.Automation], itemsOutput []byte) []byte {
+	// If no pagination was applied (limit=0), return items directly for backwards compatibility
+	if paginated.Pagination.Limit == 0 {
+		return itemsOutput
+	}
+
+	response := paginatedAutomationResponse{
+		Items:      itemsOutput,
+		Pagination: paginated.Pagination,
+	}
+	result, _ := json.MarshalIndent(response, "", "  ")
+	return result
 }
 
 func (h *AutomationHandlers) handleGetAutomation(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {

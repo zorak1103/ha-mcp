@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -35,7 +36,7 @@ func (h *EntityHandlers) RegisterTools(registry *mcp.Registry) {
 func (h *EntityHandlers) getStatesTool() mcp.Tool {
 	return mcp.Tool{
 		Name:        "get_states",
-		Description: "Get all entity states from Home Assistant. By default returns a compact list with entity_id, state, and friendly_name. Use 'verbose' for full details including all attributes.",
+		Description: "Get all entity states from Home Assistant. By default returns a compact list with entity_id, state, and friendly_name. Use 'verbose' for full details including all attributes. Supports pagination via 'limit' and 'cursor' parameters.",
 		InputSchema: mcp.JSONSchema{
 			Type:        "object",
 			Description: "Optional filters for entity states",
@@ -59,6 +60,14 @@ func (h *EntityHandlers) getStatesTool() mcp.Tool {
 				"verbose": {
 					Type:        "boolean",
 					Description: "If true, return full details (all attributes, timestamps, context). Default: false (compact output with entity_id, state, friendly_name only)",
+				},
+				"limit": {
+					Type:        "integer",
+					Description: "Maximum number of entities to return (max 1000, default: no limit). Use with 'cursor' for pagination.",
+				},
+				"cursor": {
+					Type:        "string",
+					Description: "Pagination cursor from previous response to get next page of results",
 				},
 			},
 		},
@@ -266,10 +275,30 @@ func (h *EntityHandlers) handleGetStates(ctx context.Context, client homeassista
 		}, nil
 	}
 
-	params := parseStateFilterParams(args)
-	states = filterStates(states, params)
+	filterParams := parseStateFilterParams(args)
+	states = filterStates(states, filterParams)
 
-	output, err := formatStatesOutput(states, params.verbose)
+	// Sort by entity_id for stable pagination
+	sort.Slice(states, func(i, j int) bool {
+		return states[i].EntityID < states[j].EntityID
+	})
+
+	// Build filters map for pagination hash
+	filtersMap := buildStateFiltersMap(filterParams)
+
+	// Parse pagination params
+	paginationParams, err := ParsePaginationParams(args, filtersMap)
+	if err != nil {
+		return &mcp.ToolsCallResult{
+			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error: %v", err))},
+			IsError: true,
+		}, nil
+	}
+
+	// Apply pagination
+	paginated := ApplyPagination(states, paginationParams)
+
+	output, err := formatStatesOutput(paginated.Items, filterParams.verbose)
 	if err != nil {
 		return &mcp.ToolsCallResult{
 			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error formatting states: %v", err))},
@@ -277,14 +306,56 @@ func (h *EntityHandlers) handleGetStates(ctx context.Context, client homeassista
 		}, nil
 	}
 
-	summary := fmt.Sprintf("Found %d entities", len(states))
-	if !params.verbose {
+	summary := BuildPaginationSummary(paginated.Pagination, "entities")
+	if !filterParams.verbose {
 		summary += VerboseHint
 	}
 
+	// Build response with pagination metadata
+	response := buildPaginatedStatesResponse(paginated, output)
+
 	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{mcp.NewTextContent(summary + "\n\n" + string(output))},
+		Content: []mcp.ContentBlock{mcp.NewTextContent(summary + "\n\n" + string(response))},
 	}, nil
+}
+
+// buildStateFiltersMap creates a map of filter values for pagination hash.
+func buildStateFiltersMap(params stateFilterParams) map[string]any {
+	filters := make(map[string]any)
+	if params.domain != "" {
+		filters["domain"] = params.domain
+	}
+	if params.stateFilter != "" {
+		filters["state"] = params.stateFilter
+	}
+	if params.stateNotFilter != "" {
+		filters["state_not"] = params.stateNotFilter
+	}
+	if params.nameContains != "" {
+		filters["name_contains"] = params.nameContains
+	}
+	return filters
+}
+
+// paginatedStatesResponse wraps state output with pagination metadata.
+type paginatedStatesResponse struct {
+	Items      json.RawMessage    `json:"items"`
+	Pagination PaginationMetadata `json:"pagination"`
+}
+
+// buildPaginatedStatesResponse creates the final response JSON.
+func buildPaginatedStatesResponse(paginated PaginatedResponse[homeassistant.Entity], itemsOutput []byte) []byte {
+	// If no pagination was applied (limit=0), return items directly for backwards compatibility
+	if paginated.Pagination.Limit == 0 {
+		return itemsOutput
+	}
+
+	response := paginatedStatesResponse{
+		Items:      itemsOutput,
+		Pagination: paginated.Pagination,
+	}
+	result, _ := json.MarshalIndent(response, "", "  ")
+	return result
 }
 
 func (h *EntityHandlers) handleGetState(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {

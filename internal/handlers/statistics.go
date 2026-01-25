@@ -27,7 +27,7 @@ func (h *StatisticsHandlers) RegisterTools(registry *mcp.Registry) {
 func (h *StatisticsHandlers) getStatisticsTool() mcp.Tool {
 	return mcp.Tool{
 		Name:        "get_statistics",
-		Description: "Get historical statistics for entities (long-term data like energy consumption, temperature averages)",
+		Description: "Get historical statistics for entities (long-term data like energy consumption, temperature averages). Supports pagination via 'limit' and 'cursor' parameters.",
 		InputSchema: mcp.JSONSchema{
 			Type: "object",
 			Properties: map[string]mcp.JSONSchema{
@@ -39,33 +39,30 @@ func (h *StatisticsHandlers) getStatisticsTool() mcp.Tool {
 					Type:        "string",
 					Description: "Statistics period granularity: 5minute, hour, day, week, or month (default: hour)",
 				},
+				"limit": {
+					Type:        "integer",
+					Description: "Maximum number of statistics results to return (max 1000, default: no limit). Use with 'cursor' for pagination.",
+				},
+				"cursor": {
+					Type:        "string",
+					Description: "Pagination cursor from previous response to get next page of results",
+				},
 			},
 			Required: []string{"statistic_ids"},
 		},
 	}
 }
 
-// handleGetStatistics retrieves historical statistics for specified entities.
-func (h *StatisticsHandlers) handleGetStatistics(
-	ctx context.Context,
-	client homeassistant.Client,
-	args map[string]any,
-) (*mcp.ToolsCallResult, error) {
-	// Extract statistic_ids (required)
+// parseStatisticIDs extracts and validates statistic_ids from args.
+func parseStatisticIDs(args map[string]any) ([]string, error) {
 	statIDsRaw, ok := args["statistic_ids"]
 	if !ok {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent("statistic_ids is required")},
-			IsError: true,
-		}, nil
+		return nil, fmt.Errorf("statistic_ids is required")
 	}
 
 	statIDsSlice, ok := statIDsRaw.([]any)
 	if !ok {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent("statistic_ids must be an array")},
-			IsError: true,
-		}, nil
+		return nil, fmt.Errorf("statistic_ids must be an array")
 	}
 
 	statIDs := make([]string, 0, len(statIDsSlice))
@@ -76,19 +73,31 @@ func (h *StatisticsHandlers) handleGetStatistics(
 	}
 
 	if len(statIDs) == 0 {
+		return nil, fmt.Errorf("at least one statistic_id is required")
+	}
+
+	return statIDs, nil
+}
+
+// handleGetStatistics retrieves historical statistics for specified entities.
+func (h *StatisticsHandlers) handleGetStatistics(
+	ctx context.Context,
+	client homeassistant.Client,
+	args map[string]any,
+) (*mcp.ToolsCallResult, error) {
+	statIDs, err := parseStatisticIDs(args)
+	if err != nil {
 		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent("at least one statistic_id is required")},
+			Content: []mcp.ContentBlock{mcp.NewTextContent(err.Error())},
 			IsError: true,
 		}, nil
 	}
 
-	// Extract period (optional, default to "hour")
 	period := "hour"
 	if p, ok := args["period"].(string); ok && p != "" {
 		period = p
 	}
 
-	// Call the client method
 	statistics, err := client.GetStatistics(ctx, statIDs, period)
 	if err != nil {
 		return &mcp.ToolsCallResult{
@@ -97,8 +106,18 @@ func (h *StatisticsHandlers) handleGetStatistics(
 		}, nil
 	}
 
-	// Format response
-	result, err := json.MarshalIndent(statistics, "", "  ")
+	filtersMap := buildStatisticsFiltersMap(statIDs, period)
+	paginationParams, err := ParsePaginationParams(args, filtersMap)
+	if err != nil {
+		return &mcp.ToolsCallResult{
+			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error: %v", err))},
+			IsError: true,
+		}, nil
+	}
+
+	paginated := ApplyPagination(statistics, paginationParams)
+
+	result, err := json.MarshalIndent(paginated.Items, "", "  ")
 	if err != nil {
 		return &mcp.ToolsCallResult{
 			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Failed to marshal statistics result: %v", err))},
@@ -106,7 +125,39 @@ func (h *StatisticsHandlers) handleGetStatistics(
 		}, nil
 	}
 
+	summary := BuildPaginationSummary(paginated.Pagination, "statistics results")
+	response := buildPaginatedStatisticsResponse(paginated, result)
+
 	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{mcp.NewTextContent(string(result))},
+		Content: []mcp.ContentBlock{mcp.NewTextContent(summary + "\n\n" + string(response))},
 	}, nil
+}
+
+// buildStatisticsFiltersMap creates a map of filter values for pagination hash.
+func buildStatisticsFiltersMap(statIDs []string, period string) map[string]any {
+	filters := make(map[string]any)
+	filters["statistic_ids"] = statIDs
+	filters["period"] = period
+	return filters
+}
+
+// paginatedStatisticsResponse wraps statistics output with pagination metadata.
+type paginatedStatisticsResponse struct {
+	Items      json.RawMessage    `json:"items"`
+	Pagination PaginationMetadata `json:"pagination"`
+}
+
+// buildPaginatedStatisticsResponse creates the final response JSON.
+func buildPaginatedStatisticsResponse(paginated PaginatedResponse[homeassistant.StatisticsResult], itemsOutput []byte) []byte {
+	// If no pagination was applied (limit=0), return items directly for backwards compatibility
+	if paginated.Pagination.Limit == 0 {
+		return itemsOutput
+	}
+
+	response := paginatedStatisticsResponse{
+		Items:      itemsOutput,
+		Pagination: paginated.Pagination,
+	}
+	result, _ := json.MarshalIndent(response, "", "  ")
+	return result
 }

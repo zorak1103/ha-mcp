@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
@@ -30,7 +31,7 @@ func (h *RegistryHandlers) RegisterTools(registry *mcp.Registry) {
 func (h *RegistryHandlers) listEntityRegistryTool() mcp.Tool {
 	return mcp.Tool{
 		Name:        "list_entity_registry",
-		Description: "List entries in the Home Assistant entity registry. By default returns a compact list with only entity_id. Use filters to narrow down results and 'verbose' for full details. Note: Most entity info can also be obtained via get_states.",
+		Description: "List entries in the Home Assistant entity registry. By default returns a compact list with only entity_id. Use filters to narrow down results and 'verbose' for full details. Supports pagination via 'limit' and 'cursor' parameters.",
 		InputSchema: mcp.JSONSchema{
 			Type:        "object",
 			Description: "Filter and output options for entity registry",
@@ -58,6 +59,14 @@ func (h *RegistryHandlers) listEntityRegistryTool() mcp.Tool {
 				"include_disabled": {
 					Type:        "boolean",
 					Description: "If true, include disabled entities. Default: false",
+				},
+				"limit": {
+					Type:        "integer",
+					Description: "Maximum number of entities to return (max 1000, default: no limit). Use with 'cursor' for pagination.",
+				},
+				"cursor": {
+					Type:        "string",
+					Description: "Pagination cursor from previous response to get next page of results",
 				},
 			},
 		},
@@ -203,8 +212,30 @@ func (h *RegistryHandlers) handleListEntityRegistry(
 	filter.buildDeviceIDsInArea(ctx, client)
 	filtered := filter.filterEntityRegistry(entries)
 
+	// Sort by entity_id for stable pagination
+	sort.Slice(filtered, func(i, j int) bool {
+		return filtered[i].EntityID < filtered[j].EntityID
+	})
+
+	// Build filters map for pagination hash
+	filtersMap := buildEntityRegistryFiltersMap(filter)
+
+	// Parse pagination params
+	paginationParams, err := ParsePaginationParams(args, filtersMap)
+	if err != nil {
+		return &mcp.ToolsCallResult{
+			Content: []mcp.ContentBlock{
+				mcp.NewTextContent(fmt.Sprintf("Error: %v", err)),
+			},
+			IsError: true,
+		}, nil
+	}
+
+	// Apply pagination
+	paginated := ApplyPagination(filtered, paginationParams)
+
 	verbose, _ := args["verbose"].(bool)
-	output, err := formatEntityRegistryOutput(filtered, verbose)
+	output, err := formatEntityRegistryOutput(paginated.Items, verbose)
 	if err != nil {
 		return &mcp.ToolsCallResult{
 			Content: []mcp.ContentBlock{
@@ -214,16 +245,61 @@ func (h *RegistryHandlers) handleListEntityRegistry(
 		}, nil
 	}
 
-	summary := fmt.Sprintf("Found %d entities", len(filtered))
+	summary := BuildPaginationSummary(paginated.Pagination, "entities")
 	if !verbose {
 		summary += VerboseHint
 	}
 
+	// Build response with pagination metadata
+	response := buildPaginatedEntityRegistryResponse(paginated, output)
+
 	return &mcp.ToolsCallResult{
 		Content: []mcp.ContentBlock{
-			mcp.NewTextContent(summary + "\n\n" + output),
+			mcp.NewTextContent(summary + "\n\n" + response),
 		},
 	}, nil
+}
+
+// buildEntityRegistryFiltersMap creates a map of filter values for pagination hash.
+func buildEntityRegistryFiltersMap(filter *entityRegistryFilter) map[string]any {
+	filters := make(map[string]any)
+	if filter.domain != "" {
+		filters["domain"] = filter.domain
+	}
+	if filter.platform != "" {
+		filters["platform"] = filter.platform
+	}
+	if filter.deviceID != "" {
+		filters["device_id"] = filter.deviceID
+	}
+	if filter.areaID != "" {
+		filters["area_id"] = filter.areaID
+	}
+	if filter.includeDisabled {
+		filters["include_disabled"] = true
+	}
+	return filters
+}
+
+// paginatedEntityRegistryResponse wraps entity registry output with pagination metadata.
+type paginatedEntityRegistryResponse struct {
+	Items      json.RawMessage    `json:"items"`
+	Pagination PaginationMetadata `json:"pagination"`
+}
+
+// buildPaginatedEntityRegistryResponse creates the final response JSON.
+func buildPaginatedEntityRegistryResponse(paginated PaginatedResponse[homeassistant.EntityRegistryEntry], itemsOutput string) string {
+	// If no pagination was applied (limit=0), return items directly for backwards compatibility
+	if paginated.Pagination.Limit == 0 {
+		return itemsOutput
+	}
+
+	response := paginatedEntityRegistryResponse{
+		Items:      json.RawMessage(itemsOutput),
+		Pagination: paginated.Pagination,
+	}
+	result, _ := json.MarshalIndent(response, "", "  ")
+	return string(result)
 }
 
 // extractDomain extracts the domain from an entity_id (e.g., "light" from "light.living_room").
@@ -240,7 +316,7 @@ func extractDomain(entityID string) string {
 func (h *RegistryHandlers) listDeviceRegistryTool() mcp.Tool {
 	return mcp.Tool{
 		Name:        "list_device_registry",
-		Description: "List entries in the Home Assistant device registry. By default returns a compact list with id, name, manufacturer, model, and area_id. Use filters to narrow down results and 'verbose' for full details.",
+		Description: "List entries in the Home Assistant device registry. By default returns a compact list with id, name, manufacturer, model, and area_id. Use filters to narrow down results and 'verbose' for full details. Supports pagination via 'limit' and 'cursor' parameters.",
 		InputSchema: mcp.JSONSchema{
 			Type:        "object",
 			Description: "Filter and output options for device registry",
@@ -264,6 +340,14 @@ func (h *RegistryHandlers) listDeviceRegistryTool() mcp.Tool {
 				"include_disabled": {
 					Type:        "boolean",
 					Description: "If true, include disabled devices. Default: false",
+				},
+				"limit": {
+					Type:        "integer",
+					Description: "Maximum number of devices to return (max 1000, default: no limit). Use with 'cursor' for pagination.",
+				},
+				"cursor": {
+					Type:        "string",
+					Description: "Pagination cursor from previous response to get next page of results",
 				},
 			},
 		},
@@ -364,8 +448,28 @@ func (h *RegistryHandlers) handleListDeviceRegistry(
 	filter := parseDeviceRegistryFilter(args)
 	filtered := filterDeviceRegistry(entries, filter)
 
+	// Sort by device ID for stable pagination
+	sort.Slice(filtered, func(i, j int) bool {
+		return filtered[i].ID < filtered[j].ID
+	})
+
+	// Build filters map for pagination hash
+	filtersMap := buildDeviceRegistryFiltersMap(filter)
+
+	// Parse pagination params
+	paginationParams, err := ParsePaginationParams(args, filtersMap)
+	if err != nil {
+		return &mcp.ToolsCallResult{
+			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error: %v", err))},
+			IsError: true,
+		}, nil
+	}
+
+	// Apply pagination
+	paginated := ApplyPagination(filtered, paginationParams)
+
 	verbose, _ := args["verbose"].(bool)
-	output, err := formatDeviceRegistryOutput(filtered, verbose)
+	output, err := formatDeviceRegistryOutput(paginated.Items, verbose)
 	if err != nil {
 		return &mcp.ToolsCallResult{
 			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error formatting response: %v", err))},
@@ -373,14 +477,56 @@ func (h *RegistryHandlers) handleListDeviceRegistry(
 		}, nil
 	}
 
-	summary := fmt.Sprintf("Found %d devices", len(filtered))
+	summary := BuildPaginationSummary(paginated.Pagination, "devices")
 	if !verbose {
 		summary += VerboseHint
 	}
 
+	// Build response with pagination metadata
+	response := buildPaginatedDeviceRegistryResponse(paginated, output)
+
 	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{mcp.NewTextContent(summary + "\n\n" + string(output))},
+		Content: []mcp.ContentBlock{mcp.NewTextContent(summary + "\n\n" + string(response))},
 	}, nil
+}
+
+// buildDeviceRegistryFiltersMap creates a map of filter values for pagination hash.
+func buildDeviceRegistryFiltersMap(filter deviceRegistryFilter) map[string]any {
+	filters := make(map[string]any)
+	if filter.areaID != "" {
+		filters["area_id"] = filter.areaID
+	}
+	if filter.manufacturer != "" {
+		filters["manufacturer"] = filter.manufacturer
+	}
+	if filter.model != "" {
+		filters["model"] = filter.model
+	}
+	if filter.includeDisabled {
+		filters["include_disabled"] = true
+	}
+	return filters
+}
+
+// paginatedDeviceRegistryResponse wraps device registry output with pagination metadata.
+type paginatedDeviceRegistryResponse struct {
+	Items      json.RawMessage    `json:"items"`
+	Pagination PaginationMetadata `json:"pagination"`
+}
+
+// buildPaginatedDeviceRegistryResponse creates the final response JSON.
+func buildPaginatedDeviceRegistryResponse(paginated PaginatedResponse[homeassistant.DeviceRegistryEntry], itemsOutput []byte) []byte {
+	// If no pagination was applied (limit=0), return items directly for backwards compatibility
+	if paginated.Pagination.Limit == 0 {
+		return itemsOutput
+	}
+
+	response := paginatedDeviceRegistryResponse{
+		Items:      itemsOutput,
+		Pagination: paginated.Pagination,
+	}
+	result, _ := json.MarshalIndent(response, "", "  ")
+	return result
 }
 
 // listAreaRegistryTool returns the tool definition for listing area registry entries.
