@@ -855,7 +855,7 @@ Debug logs show:
 ### Prerequisites
 
 - Go 1.25+
-- golangci-lint
+- golangci-lint v2
 - Docker (for container builds)
 
 ### Building
@@ -864,12 +864,44 @@ Debug logs show:
 # Build binary
 go build -o ha-mcp ./cmd/ha-mcp
 
-# Run tests
+# Run unit tests
 go test ./...
 
 # Run linter
 golangci-lint run ./...
 ```
+
+### Integration Tests
+
+Integration tests verify the MCP server against a real Home Assistant instance. They are isolated using a unique `__mcptest_` prefix for all created entities.
+
+**Prerequisites:**
+- Running Home Assistant instance (version 2023.1+)
+- Long-lived access token with full API access
+
+**Configuration:**
+```bash
+export HA_INTEGRATION_TEST_URL=http://homeassistant.local:8123
+export HA_INTEGRATION_TEST_TOKEN=<your-long-lived-access-token>
+export HA_INTEGRATION_TEST_TIMEOUT=5m  # optional
+```
+
+**Running integration tests:**
+```bash
+# Run all integration tests
+go test -tags=integration -v ./internal/handlers/integration/...
+
+# Run specific test suite
+go test -tags=integration -v ./internal/handlers/integration/... -run TestCounterIntegration
+```
+
+**Safety guarantees:**
+- All test entities use `__mcptest_` prefix to avoid conflicts
+- Pre-test cleanup removes leftover entities from previous runs
+- Post-test verification ensures no test data remains
+- Tests are skipped automatically if environment variables are not set
+
+See [docs/integration-tests.md](docs/integration-tests.md) for detailed documentation.
 
 ### Project Structure
 
@@ -897,6 +929,11 @@ ha-mcp/
 │   │   ├── registry.go          # Tool registry
 │   │   └── types.go             # MCP protocol types
 │   ├── handlers/
+│   │   ├── integration/         # Integration tests (build tag: integration)
+│   │   │   ├── helpers.go       # Test ID generation, validation
+│   │   │   ├── cleanup.go       # Cleanup utilities
+│   │   │   ├── suite_test.go    # Base test suite
+│   │   │   └── *_integration_test.go  # Domain-specific tests
 │   │   ├── entities.go          # Entity tool handlers
 │   │   ├── automations.go       # Automation tool handlers
 │   │   ├── helpers.go           # Helper tool handlers
@@ -918,6 +955,8 @@ ha-mcp/
 ├── configs/
 │   ├── config.example.yaml      # Example configuration
 │   └── .env.example             # Example environment file
+├── docs/
+│   └── integration-tests.md     # Integration test documentation
 ├── Dockerfile                   # Container build
 ├── .golangci.yml               # Linter configuration
 └── README.md                   # This file

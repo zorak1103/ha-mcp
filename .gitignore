@@ -43,6 +43,7 @@ configs/config.yml
 .env
 .env.local
 .env.*.local
+.env.integration
 
 # Log files
 *.log
