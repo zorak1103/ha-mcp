@@ -1140,3 +1140,545 @@ func TestRESTClient_CheckConfig_ContextCancellation(t *testing.T) {
 		t.Error("expected error for canceled context, got nil")
 	}
 }
+
+func TestRESTClient_CreateAutomation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		config         AutomationConfig
+		serverResponse func(w http.ResponseWriter, r *http.Request)
+		wantErr        bool
+		wantErrMsg     string
+	}{
+		{
+			name: "successful creation",
+			config: AutomationConfig{
+				ID:    "test_automation",
+				Alias: "Test Automation",
+				Mode:  "single",
+			},
+			serverResponse: func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost {
+					t.Errorf("method = %q, want POST", r.Method)
+				}
+				if r.URL.Path != "/api/config/automation/config/test_automation" {
+					t.Errorf("path = %q, want /api/config/automation/config/test_automation", r.URL.Path)
+				}
+				w.WriteHeader(http.StatusOK)
+			},
+			wantErr: false,
+		},
+		{
+			name: "creation with 201 status",
+			config: AutomationConfig{
+				ID:    "new_automation",
+				Alias: "New Automation",
+			},
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusCreated)
+			},
+			wantErr: false,
+		},
+		{
+			name: "missing automation ID",
+			config: AutomationConfig{
+				Alias: "No ID Automation",
+			},
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			},
+			wantErr:    true,
+			wantErrMsg: "automation ID is required",
+		},
+		{
+			name: "bad request",
+			config: AutomationConfig{
+				ID:    "invalid_automation",
+				Alias: "Invalid",
+			},
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte("invalid config"))
+			},
+			wantErr:    true,
+			wantErrMsg: "invalid automation config",
+		},
+		{
+			name: "unauthorized",
+			config: AutomationConfig{
+				ID:    "test",
+				Alias: "Test",
+			},
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusUnauthorized)
+			},
+			wantErr:    true,
+			wantErrMsg: "unauthorized: invalid or expired token",
+		},
+		{
+			name: "forbidden",
+			config: AutomationConfig{
+				ID:    "test",
+				Alias: "Test",
+			},
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusForbidden)
+			},
+			wantErr:    true,
+			wantErrMsg: "forbidden: insufficient permissions to create automation",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				tt.serverResponse(w, r)
+			}))
+			defer server.Close()
+
+			client := NewRESTClient(server.URL, "test-token")
+			err := client.CreateAutomation(context.Background(), tt.config)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("CreateAutomation() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if tt.wantErr && err != nil && tt.wantErrMsg != "" {
+				if !errors.Is(err, err) {
+					errStr := err.Error()
+					if !containsString(errStr, tt.wantErrMsg) {
+						t.Errorf("error message = %q, want to contain %q", errStr, tt.wantErrMsg)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestRESTClient_UpdateAutomation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		automationID   string
+		config         AutomationConfig
+		serverResponse func(w http.ResponseWriter, r *http.Request)
+		wantErr        bool
+		wantErrMsg     string
+	}{
+		{
+			name:         "successful update",
+			automationID: "test_automation",
+			config: AutomationConfig{
+				Alias: "Updated Automation",
+				Mode:  "restart",
+			},
+			serverResponse: func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost {
+					t.Errorf("method = %q, want POST", r.Method)
+				}
+				if r.URL.Path != "/api/config/automation/config/test_automation" {
+					t.Errorf("path = %q, want /api/config/automation/config/test_automation", r.URL.Path)
+				}
+				w.WriteHeader(http.StatusOK)
+			},
+			wantErr: false,
+		},
+		{
+			name:         "automation not found",
+			automationID: "nonexistent",
+			config: AutomationConfig{
+				Alias: "Test",
+			},
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusNotFound)
+			},
+			wantErr:    true,
+			wantErrMsg: "automation not found: nonexistent",
+		},
+		{
+			name:         "bad request",
+			automationID: "invalid",
+			config: AutomationConfig{
+				Alias: "Invalid",
+			},
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte("invalid config"))
+			},
+			wantErr:    true,
+			wantErrMsg: "invalid automation config: invalid config",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				tt.serverResponse(w, r)
+			}))
+			defer server.Close()
+
+			client := NewRESTClient(server.URL, "test-token")
+			err := client.UpdateAutomation(context.Background(), tt.automationID, tt.config)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("UpdateAutomation() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if tt.wantErr && err != nil {
+				var apiErr *APIError
+				if errors.As(err, &apiErr) && tt.wantErrMsg != "" {
+					if apiErr.Message != tt.wantErrMsg {
+						t.Errorf("error message = %q, want %q", apiErr.Message, tt.wantErrMsg)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestRESTClient_CreateScript(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		scriptID       string
+		config         ScriptConfig
+		serverResponse func(w http.ResponseWriter, r *http.Request)
+		wantErr        bool
+		wantErrMsg     string
+	}{
+		{
+			name:     "successful creation",
+			scriptID: "test_script",
+			config: ScriptConfig{
+				Alias:    "Test Script",
+				Mode:     "single",
+				Sequence: []any{},
+			},
+			serverResponse: func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost {
+					t.Errorf("method = %q, want POST", r.Method)
+				}
+				if r.URL.Path != "/api/config/script/config/test_script" {
+					t.Errorf("path = %q, want /api/config/script/config/test_script", r.URL.Path)
+				}
+				w.WriteHeader(http.StatusOK)
+			},
+			wantErr: false,
+		},
+		{
+			name:     "bad request",
+			scriptID: "invalid_script",
+			config: ScriptConfig{
+				Alias: "Invalid",
+			},
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte("invalid config"))
+			},
+			wantErr:    true,
+			wantErrMsg: "invalid script config: invalid config",
+		},
+		{
+			name:     "unauthorized",
+			scriptID: "test",
+			config: ScriptConfig{
+				Alias: "Test",
+			},
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusUnauthorized)
+			},
+			wantErr:    true,
+			wantErrMsg: "unauthorized: invalid or expired token",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				tt.serverResponse(w, r)
+			}))
+			defer server.Close()
+
+			client := NewRESTClient(server.URL, "test-token")
+			err := client.CreateScript(context.Background(), tt.scriptID, tt.config)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("CreateScript() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if tt.wantErr && err != nil {
+				var apiErr *APIError
+				if errors.As(err, &apiErr) && tt.wantErrMsg != "" {
+					if apiErr.Message != tt.wantErrMsg {
+						t.Errorf("error message = %q, want %q", apiErr.Message, tt.wantErrMsg)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestRESTClient_UpdateScript(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		scriptID       string
+		config         ScriptConfig
+		serverResponse func(w http.ResponseWriter, r *http.Request)
+		wantErr        bool
+		wantErrMsg     string
+	}{
+		{
+			name:     "successful update",
+			scriptID: "test_script",
+			config: ScriptConfig{
+				Alias: "Updated Script",
+				Mode:  "restart",
+			},
+			serverResponse: func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost {
+					t.Errorf("method = %q, want POST", r.Method)
+				}
+				w.WriteHeader(http.StatusOK)
+			},
+			wantErr: false,
+		},
+		{
+			name:     "script not found",
+			scriptID: "nonexistent",
+			config: ScriptConfig{
+				Alias: "Test",
+			},
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusNotFound)
+			},
+			wantErr:    true,
+			wantErrMsg: "script not found: nonexistent",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				tt.serverResponse(w, r)
+			}))
+			defer server.Close()
+
+			client := NewRESTClient(server.URL, "test-token")
+			err := client.UpdateScript(context.Background(), tt.scriptID, tt.config)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("UpdateScript() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if tt.wantErr && err != nil {
+				var apiErr *APIError
+				if errors.As(err, &apiErr) && tt.wantErrMsg != "" {
+					if apiErr.Message != tt.wantErrMsg {
+						t.Errorf("error message = %q, want %q", apiErr.Message, tt.wantErrMsg)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestRESTClient_CreateScene(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		sceneID        string
+		config         SceneConfig
+		serverResponse func(w http.ResponseWriter, r *http.Request)
+		wantErr        bool
+		wantErrMsg     string
+	}{
+		{
+			name:    "successful creation",
+			sceneID: "test_scene",
+			config: SceneConfig{
+				Name: "Test Scene",
+				Entities: map[string]SceneState{
+					"light.living_room": {State: "on"},
+				},
+			},
+			serverResponse: func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost {
+					t.Errorf("method = %q, want POST", r.Method)
+				}
+				if r.URL.Path != "/api/config/scene/config/test_scene" {
+					t.Errorf("path = %q, want /api/config/scene/config/test_scene", r.URL.Path)
+				}
+				w.WriteHeader(http.StatusOK)
+			},
+			wantErr: false,
+		},
+		{
+			name:    "scene with icon",
+			sceneID: "icon_scene",
+			config: SceneConfig{
+				Name: "Scene with Icon",
+				Icon: "mdi:home",
+			},
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusCreated)
+			},
+			wantErr: false,
+		},
+		{
+			name:    "bad request",
+			sceneID: "invalid_scene",
+			config: SceneConfig{
+				Name: "Invalid",
+			},
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte("invalid config"))
+			},
+			wantErr:    true,
+			wantErrMsg: "invalid scene config: invalid config",
+		},
+		{
+			name:    "unauthorized",
+			sceneID: "test",
+			config: SceneConfig{
+				Name: "Test",
+			},
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusUnauthorized)
+			},
+			wantErr:    true,
+			wantErrMsg: "unauthorized: invalid or expired token",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				tt.serverResponse(w, r)
+			}))
+			defer server.Close()
+
+			client := NewRESTClient(server.URL, "test-token")
+			err := client.CreateScene(context.Background(), tt.sceneID, tt.config)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("CreateScene() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if tt.wantErr && err != nil {
+				var apiErr *APIError
+				if errors.As(err, &apiErr) && tt.wantErrMsg != "" {
+					if apiErr.Message != tt.wantErrMsg {
+						t.Errorf("error message = %q, want %q", apiErr.Message, tt.wantErrMsg)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestRESTClient_UpdateScene(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		sceneID        string
+		config         SceneConfig
+		serverResponse func(w http.ResponseWriter, r *http.Request)
+		wantErr        bool
+		wantErrMsg     string
+	}{
+		{
+			name:    "successful update",
+			sceneID: "test_scene",
+			config: SceneConfig{
+				Name: "Updated Scene",
+				Entities: map[string]SceneState{
+					"light.living_room": {State: "off"},
+				},
+			},
+			serverResponse: func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost {
+					t.Errorf("method = %q, want POST", r.Method)
+				}
+				w.WriteHeader(http.StatusOK)
+			},
+			wantErr: false,
+		},
+		{
+			name:    "scene not found",
+			sceneID: "nonexistent",
+			config: SceneConfig{
+				Name: "Test",
+			},
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusNotFound)
+			},
+			wantErr:    true,
+			wantErrMsg: "scene not found: nonexistent",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				tt.serverResponse(w, r)
+			}))
+			defer server.Close()
+
+			client := NewRESTClient(server.URL, "test-token")
+			err := client.UpdateScene(context.Background(), tt.sceneID, tt.config)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("UpdateScene() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if tt.wantErr && err != nil {
+				var apiErr *APIError
+				if errors.As(err, &apiErr) && tt.wantErrMsg != "" {
+					if apiErr.Message != tt.wantErrMsg {
+						t.Errorf("error message = %q, want %q", apiErr.Message, tt.wantErrMsg)
+					}
+				}
+			}
+		})
+	}
+}
+
+// Helper function to check if a string contains a substring
+func containsString(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstring(s, substr))
+}
+
+func containsSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}

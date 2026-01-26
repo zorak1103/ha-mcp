@@ -705,15 +705,36 @@ func (m *mockWSOperations) GetScheduleConfig(ctx context.Context, scheduleID str
 }
 
 // mockRESTOperations implements RESTOperations for testing.
+// mockRESTOperations implements RESTOperations for testing.
 type mockRESTOperations struct {
+	createAutomationFunc func(ctx context.Context, config AutomationConfig) error
+	updateAutomationFunc func(ctx context.Context, automationID string, config AutomationConfig) error
 	deleteAutomationFunc func(ctx context.Context, automationID string) error
+	createScriptFunc     func(ctx context.Context, scriptID string, config ScriptConfig) error
+	updateScriptFunc     func(ctx context.Context, scriptID string, config ScriptConfig) error
 	deleteScriptFunc     func(ctx context.Context, scriptID string) error
+	createSceneFunc      func(ctx context.Context, sceneID string, config SceneConfig) error
+	updateSceneFunc      func(ctx context.Context, sceneID string, config SceneConfig) error
 	deleteSceneFunc      func(ctx context.Context, sceneID string) error
 	getServicesFunc      func(ctx context.Context) ([]Service, error)
 	getConfigFunc        func(ctx context.Context) (*Config, error)
 	renderTemplateFunc   func(ctx context.Context, template string) (string, error)
 	getLogbookFunc       func(ctx context.Context, startTime, endTime, entityID string) ([]LogbookEntry, error)
 	checkConfigFunc      func(ctx context.Context) (*ConfigCheckResult, error)
+}
+
+func (m *mockRESTOperations) CreateAutomation(ctx context.Context, config AutomationConfig) error {
+	if m.createAutomationFunc != nil {
+		return m.createAutomationFunc(ctx, config)
+	}
+	return nil
+}
+
+func (m *mockRESTOperations) UpdateAutomation(ctx context.Context, automationID string, config AutomationConfig) error {
+	if m.updateAutomationFunc != nil {
+		return m.updateAutomationFunc(ctx, automationID, config)
+	}
+	return nil
 }
 
 func (m *mockRESTOperations) DeleteAutomation(ctx context.Context, automationID string) error {
@@ -723,9 +744,37 @@ func (m *mockRESTOperations) DeleteAutomation(ctx context.Context, automationID 
 	return nil
 }
 
+func (m *mockRESTOperations) CreateScript(ctx context.Context, scriptID string, config ScriptConfig) error {
+	if m.createScriptFunc != nil {
+		return m.createScriptFunc(ctx, scriptID, config)
+	}
+	return nil
+}
+
+func (m *mockRESTOperations) UpdateScript(ctx context.Context, scriptID string, config ScriptConfig) error {
+	if m.updateScriptFunc != nil {
+		return m.updateScriptFunc(ctx, scriptID, config)
+	}
+	return nil
+}
+
 func (m *mockRESTOperations) DeleteScript(ctx context.Context, scriptID string) error {
 	if m.deleteScriptFunc != nil {
 		return m.deleteScriptFunc(ctx, scriptID)
+	}
+	return nil
+}
+
+func (m *mockRESTOperations) CreateScene(ctx context.Context, sceneID string, config SceneConfig) error {
+	if m.createSceneFunc != nil {
+		return m.createSceneFunc(ctx, sceneID, config)
+	}
+	return nil
+}
+
+func (m *mockRESTOperations) UpdateScene(ctx context.Context, sceneID string, config SceneConfig) error {
+	if m.updateSceneFunc != nil {
+		return m.updateSceneFunc(ctx, sceneID, config)
 	}
 	return nil
 }
@@ -898,11 +947,11 @@ func TestHybridClient_WSOperations_GetAutomation(t *testing.T) {
 	}
 }
 
-func TestHybridClient_WSOperations_CreateAutomation(t *testing.T) {
+func TestHybridClient_RESTOperations_CreateAutomation(t *testing.T) {
 	t.Parallel()
 
 	called := false
-	mockWS := &mockWSOperations{
+	mockREST := &mockRESTOperations{
 		createAutomationFunc: func(_ context.Context, config AutomationConfig) error {
 			called = true
 			if config.Alias != "Test Automation" {
@@ -912,22 +961,22 @@ func TestHybridClient_WSOperations_CreateAutomation(t *testing.T) {
 		},
 	}
 
-	client := NewHybridClientWithInterfaces(mockWS, &mockRESTOperations{})
+	client := NewHybridClientWithInterfaces(&mockWSOperations{}, mockREST)
 	err := client.CreateAutomation(context.Background(), AutomationConfig{Alias: "Test Automation"})
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !called {
-		t.Error("CreateAutomation was not called")
+		t.Error("REST CreateAutomation was not called")
 	}
 }
 
-func TestHybridClient_WSOperations_UpdateAutomation(t *testing.T) {
+func TestHybridClient_RESTOperations_UpdateAutomation(t *testing.T) {
 	t.Parallel()
 
 	called := false
-	mockWS := &mockWSOperations{
+	mockREST := &mockRESTOperations{
 		updateAutomationFunc: func(_ context.Context, automationID string, _ AutomationConfig) error {
 			called = true
 			if automationID != "test_automation" {
@@ -937,14 +986,14 @@ func TestHybridClient_WSOperations_UpdateAutomation(t *testing.T) {
 		},
 	}
 
-	client := NewHybridClientWithInterfaces(mockWS, &mockRESTOperations{})
+	client := NewHybridClientWithInterfaces(&mockWSOperations{}, mockREST)
 	err := client.UpdateAutomation(context.Background(), "test_automation", AutomationConfig{})
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !called {
-		t.Error("UpdateAutomation was not called")
+		t.Error("REST UpdateAutomation was not called")
 	}
 }
 
@@ -1133,11 +1182,11 @@ func TestHybridClient_WSOperations_GetScript(t *testing.T) {
 	}
 }
 
-func TestHybridClient_WSOperations_CreateScript(t *testing.T) {
+func TestHybridClient_RESTOperations_CreateScript(t *testing.T) {
 	t.Parallel()
 
 	called := false
-	mockWS := &mockWSOperations{
+	mockREST := &mockRESTOperations{
 		createScriptFunc: func(_ context.Context, scriptID string, _ ScriptConfig) error {
 			called = true
 			if scriptID != "new_script" {
@@ -1147,22 +1196,22 @@ func TestHybridClient_WSOperations_CreateScript(t *testing.T) {
 		},
 	}
 
-	client := NewHybridClientWithInterfaces(mockWS, &mockRESTOperations{})
+	client := NewHybridClientWithInterfaces(&mockWSOperations{}, mockREST)
 	err := client.CreateScript(context.Background(), "new_script", ScriptConfig{})
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !called {
-		t.Error("CreateScript was not called")
+		t.Error("REST CreateScript was not called")
 	}
 }
 
-func TestHybridClient_WSOperations_UpdateScript(t *testing.T) {
+func TestHybridClient_RESTOperations_UpdateScript(t *testing.T) {
 	t.Parallel()
 
 	called := false
-	mockWS := &mockWSOperations{
+	mockREST := &mockRESTOperations{
 		updateScriptFunc: func(_ context.Context, scriptID string, _ ScriptConfig) error {
 			called = true
 			if scriptID != "test_script" {
@@ -1172,14 +1221,14 @@ func TestHybridClient_WSOperations_UpdateScript(t *testing.T) {
 		},
 	}
 
-	client := NewHybridClientWithInterfaces(mockWS, &mockRESTOperations{})
+	client := NewHybridClientWithInterfaces(&mockWSOperations{}, mockREST)
 	err := client.UpdateScript(context.Background(), "test_script", ScriptConfig{})
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !called {
-		t.Error("UpdateScript was not called")
+		t.Error("REST UpdateScript was not called")
 	}
 }
 
@@ -1203,11 +1252,11 @@ func TestHybridClient_WSOperations_ListScenes(t *testing.T) {
 	}
 }
 
-func TestHybridClient_WSOperations_CreateScene(t *testing.T) {
+func TestHybridClient_RESTOperations_CreateScene(t *testing.T) {
 	t.Parallel()
 
 	called := false
-	mockWS := &mockWSOperations{
+	mockREST := &mockRESTOperations{
 		createSceneFunc: func(_ context.Context, sceneID string, _ SceneConfig) error {
 			called = true
 			if sceneID != "new_scene" {
@@ -1217,22 +1266,22 @@ func TestHybridClient_WSOperations_CreateScene(t *testing.T) {
 		},
 	}
 
-	client := NewHybridClientWithInterfaces(mockWS, &mockRESTOperations{})
+	client := NewHybridClientWithInterfaces(&mockWSOperations{}, mockREST)
 	err := client.CreateScene(context.Background(), "new_scene", SceneConfig{})
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !called {
-		t.Error("CreateScene was not called")
+		t.Error("REST CreateScene was not called")
 	}
 }
 
-func TestHybridClient_WSOperations_UpdateScene(t *testing.T) {
+func TestHybridClient_RESTOperations_UpdateScene(t *testing.T) {
 	t.Parallel()
 
 	called := false
-	mockWS := &mockWSOperations{
+	mockREST := &mockRESTOperations{
 		updateSceneFunc: func(_ context.Context, sceneID string, _ SceneConfig) error {
 			called = true
 			if sceneID != "test_scene" {
@@ -1242,14 +1291,14 @@ func TestHybridClient_WSOperations_UpdateScene(t *testing.T) {
 		},
 	}
 
-	client := NewHybridClientWithInterfaces(mockWS, &mockRESTOperations{})
+	client := NewHybridClientWithInterfaces(&mockWSOperations{}, mockREST)
 	err := client.UpdateScene(context.Background(), "test_scene", SceneConfig{})
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !called {
-		t.Error("UpdateScene was not called")
+		t.Error("REST UpdateScene was not called")
 	}
 }
 

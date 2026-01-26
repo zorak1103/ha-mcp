@@ -37,7 +37,7 @@ func (s *ScriptIntegrationTestSuite) TestScriptLifecycle() {
 	err := s.Client().CreateHelper(s.Context(), targetConfig)
 	s.Require().NoError(err, "Failed to create target input_boolean")
 
-	_, err = s.WaitForEntity(targetEntityID, 5*time.Second)
+	_, err = s.WaitForEntity(targetEntityID, 10*time.Second)
 	s.Require().NoError(err)
 
 	// Create script
@@ -60,7 +60,7 @@ func (s *ScriptIntegrationTestSuite) TestScriptLifecycle() {
 
 	// Wait for script to appear
 	scriptEntityID := BuildEntityID("script", scriptID)
-	entity, err := s.WaitForEntity(scriptEntityID, 5*time.Second)
+	entity, err := s.WaitForEntity(scriptEntityID, 10*time.Second)
 	s.Require().NoError(err, "Script did not appear")
 	s.Equal("off", entity.State, "Script should be idle (off)")
 
@@ -87,7 +87,7 @@ func (s *ScriptIntegrationTestSuite) TestScriptLifecycle() {
 	err = s.Client().DeleteScript(s.Context(), scriptID)
 	s.Require().NoError(err, "Failed to delete script")
 
-	err = s.WaitForEntityGone(scriptEntityID, 5*time.Second)
+	err = s.WaitForEntityGone(scriptEntityID, 10*time.Second)
 	s.Require().NoError(err, "Script should be deleted")
 
 	// Cleanup helper
@@ -118,7 +118,7 @@ func (s *ScriptIntegrationTestSuite) TestScriptWithVariables() {
 	err := s.Client().CreateHelper(s.Context(), targetConfig)
 	s.Require().NoError(err)
 
-	_, err = s.WaitForEntity(targetEntityID, 5*time.Second)
+	_, err = s.WaitForEntity(targetEntityID, 10*time.Second)
 	s.Require().NoError(err)
 
 	// Create script with variables/fields
@@ -156,7 +156,7 @@ func (s *ScriptIntegrationTestSuite) TestScriptWithVariables() {
 	s.Require().NoError(err, "Failed to create script")
 
 	scriptEntityID := BuildEntityID("script", scriptID)
-	_, err = s.WaitForEntity(scriptEntityID, 5*time.Second)
+	_, err = s.WaitForEntity(scriptEntityID, 10*time.Second)
 	s.Require().NoError(err)
 
 	// Execute script with variable via service call
@@ -213,7 +213,7 @@ func (s *ScriptIntegrationTestSuite) TestScriptUpdate() {
 	err := s.Client().CreateHelper(s.Context(), targetConfig)
 	s.Require().NoError(err)
 
-	_, err = s.WaitForEntity(targetEntityID, 5*time.Second)
+	_, err = s.WaitForEntity(targetEntityID, 10*time.Second)
 	s.Require().NoError(err)
 
 	// Create script that turns on
@@ -235,7 +235,7 @@ func (s *ScriptIntegrationTestSuite) TestScriptUpdate() {
 	s.Require().NoError(err)
 
 	scriptEntityID := BuildEntityID("script", scriptID)
-	entity, err := s.WaitForEntity(scriptEntityID, 5*time.Second)
+	entity, err := s.WaitForEntity(scriptEntityID, 10*time.Second)
 	s.Require().NoError(err)
 
 	friendlyName, _ := entity.Attributes["friendly_name"].(string)
@@ -259,7 +259,10 @@ func (s *ScriptIntegrationTestSuite) TestScriptUpdate() {
 	err = s.Client().UpdateScript(s.Context(), scriptID, updatedConfig)
 	s.Require().NoError(err, "Failed to update script")
 
-	time.Sleep(300 * time.Millisecond)
+	// Script updates via REST API may require reload to take effect
+	_, _ = s.Client().CallService(s.Context(), "script", "reload", nil)
+	time.Sleep(2 * time.Second)
+
 	entity, err = s.Client().GetState(s.Context(), scriptEntityID)
 	s.Require().NoError(err)
 
@@ -312,8 +315,8 @@ func (s *ScriptIntegrationTestSuite) TestScriptWithMultipleActions() {
 		s.Require().NoError(err)
 	}
 
-	_, _ = s.WaitForEntity(target1EntityID, 5*time.Second)
-	_, _ = s.WaitForEntity(target2EntityID, 5*time.Second)
+	_, _ = s.WaitForEntity(target1EntityID, 10*time.Second)
+	_, _ = s.WaitForEntity(target2EntityID, 10*time.Second)
 
 	// Create script with multiple actions
 	scriptConfig := homeassistant.ScriptConfig{
@@ -344,7 +347,7 @@ func (s *ScriptIntegrationTestSuite) TestScriptWithMultipleActions() {
 	s.Require().NoError(err, "Failed to create script")
 
 	scriptEntityID := BuildEntityID("script", scriptID)
-	_, err = s.WaitForEntity(scriptEntityID, 5*time.Second)
+	_, err = s.WaitForEntity(scriptEntityID, 10*time.Second)
 	s.Require().NoError(err)
 
 	// Execute script

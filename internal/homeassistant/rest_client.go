@@ -18,6 +18,49 @@ import (
 // noResponseBody is the default message when server returns empty response.
 const noResponseBody = "no response body"
 
+// configErrorInfo describes error handling for a specific config type.
+type configErrorInfo struct {
+	typeName   string // e.g., "automation", "script", "scene"
+	entityID   string // e.g., the automation ID for not found errors
+	actionName string // e.g., "create", "update"
+}
+
+// handleConfigError maps HTTP status codes to appropriate APIErrors.
+func handleConfigError(statusCode int, body []byte, info configErrorInfo) error {
+	bodyStr := string(body)
+	if bodyStr == "" {
+		bodyStr = noResponseBody
+	}
+
+	switch statusCode {
+	case http.StatusBadRequest:
+		return &APIError{
+			StatusCode: statusCode,
+			Message:    fmt.Sprintf("invalid %s config: %s", info.typeName, bodyStr),
+		}
+	case http.StatusNotFound:
+		return &APIError{
+			StatusCode: statusCode,
+			Message:    fmt.Sprintf("%s not found: %s", info.typeName, info.entityID),
+		}
+	case http.StatusUnauthorized:
+		return &APIError{
+			StatusCode: statusCode,
+			Message:    "unauthorized: invalid or expired token",
+		}
+	case http.StatusForbidden:
+		return &APIError{
+			StatusCode: statusCode,
+			Message:    fmt.Sprintf("forbidden: insufficient permissions to %s %s", info.actionName, info.typeName),
+		}
+	default:
+		return &APIError{
+			StatusCode: statusCode,
+			Message:    fmt.Sprintf("unexpected status %d: %s", statusCode, bodyStr),
+		}
+	}
+}
+
 // RESTClient provides REST API operations for Home Assistant.
 // This client is used for operations that are not supported via WebSocket API,
 // such as deleting automations.
@@ -142,6 +185,91 @@ func (c *RESTClient) doRequest(ctx context.Context, req *http.Request) (*http.Re
 	return resp, err
 }
 
+// CreateAutomation creates a new automation using the REST API.
+// The WebSocket API does not support automation creation reliably.
+// Endpoint: POST /api/config/automation/config/{automation_id}
+func (c *RESTClient) CreateAutomation(ctx context.Context, config AutomationConfig) error {
+	if config.ID == "" {
+		return fmt.Errorf("automation ID is required")
+	}
+
+	url := fmt.Sprintf("%s/api/config/automation/config/%s", c.baseURL, config.ID)
+
+	bodyBytes, err := json.Marshal(config)
+	if err != nil {
+		return fmt.Errorf("marshaling automation config: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(string(bodyBytes)))
+	if err != nil {
+		return fmt.Errorf("creating create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.doRequest(ctx, req)
+	if err != nil {
+		return fmt.Errorf("executing create request: %w", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
+		return nil
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	return handleConfigError(resp.StatusCode, body, configErrorInfo{
+		typeName:   "automation",
+		entityID:   config.ID,
+		actionName: "create",
+	})
+}
+
+// UpdateAutomation updates an existing automation using the REST API.
+// The WebSocket API does not support automation updates reliably.
+// Endpoint: POST /api/config/automation/config/{automation_id}
+func (c *RESTClient) UpdateAutomation(ctx context.Context, automationID string, config AutomationConfig) error {
+	config.ID = automationID
+	url := fmt.Sprintf("%s/api/config/automation/config/%s", c.baseURL, automationID)
+
+	bodyBytes, err := json.Marshal(config)
+	if err != nil {
+		return fmt.Errorf("marshaling automation config: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(string(bodyBytes)))
+	if err != nil {
+		return fmt.Errorf("creating update request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.doRequest(ctx, req)
+	if err != nil {
+		return fmt.Errorf("executing update request: %w", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
+		return nil
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	return handleConfigError(resp.StatusCode, body, configErrorInfo{
+		typeName:   "automation",
+		entityID:   automationID,
+		actionName: "update",
+	})
+}
+
 // DeleteAutomation deletes an automation using the REST API.
 // The WebSocket API does not support automation deletion, so we use REST.
 // Endpoint: DELETE /api/config/automation/config/{automation_id}
@@ -206,6 +334,86 @@ func (c *RESTClient) DeleteAutomation(ctx context.Context, automationID string) 
 	}
 }
 
+// CreateScript creates a new script using the REST API.
+// The WebSocket API does not support script creation reliably.
+// Endpoint: POST /api/config/script/config/{script_id}
+func (c *RESTClient) CreateScript(ctx context.Context, scriptID string, config ScriptConfig) error {
+	url := fmt.Sprintf("%s/api/config/script/config/%s", c.baseURL, scriptID)
+
+	bodyBytes, err := json.Marshal(config)
+	if err != nil {
+		return fmt.Errorf("marshaling script config: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(string(bodyBytes)))
+	if err != nil {
+		return fmt.Errorf("creating create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.doRequest(ctx, req)
+	if err != nil {
+		return fmt.Errorf("executing create request: %w", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
+		return nil
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	return handleConfigError(resp.StatusCode, body, configErrorInfo{
+		typeName:   "script",
+		entityID:   scriptID,
+		actionName: "create",
+	})
+}
+
+// UpdateScript updates an existing script using the REST API.
+// The WebSocket API does not support script updates reliably.
+// Endpoint: POST /api/config/script/config/{script_id}
+func (c *RESTClient) UpdateScript(ctx context.Context, scriptID string, config ScriptConfig) error {
+	url := fmt.Sprintf("%s/api/config/script/config/%s", c.baseURL, scriptID)
+
+	bodyBytes, err := json.Marshal(config)
+	if err != nil {
+		return fmt.Errorf("marshaling script config: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(string(bodyBytes)))
+	if err != nil {
+		return fmt.Errorf("creating update request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.doRequest(ctx, req)
+	if err != nil {
+		return fmt.Errorf("executing update request: %w", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
+		return nil
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	return handleConfigError(resp.StatusCode, body, configErrorInfo{
+		typeName:   "script",
+		entityID:   scriptID,
+		actionName: "update",
+	})
+}
+
 // DeleteScript deletes a script using the REST API.
 // Endpoint: DELETE /api/config/script/config/{script_id}
 func (c *RESTClient) DeleteScript(ctx context.Context, scriptID string) error {
@@ -260,6 +468,111 @@ func (c *RESTClient) DeleteScript(ctx context.Context, scriptID string) error {
 			Message:    fmt.Sprintf("unexpected status %d: %s", resp.StatusCode, bodyStr),
 		}
 	}
+}
+
+// buildSceneData transforms SceneConfig to the format expected by HA REST API.
+func buildSceneData(sceneID string, config SceneConfig) map[string]any {
+	sceneData := map[string]any{"id": sceneID, "name": config.Name}
+	if config.Icon != "" {
+		sceneData["icon"] = config.Icon
+	}
+	if config.Entities != nil {
+		entities := make(map[string]any)
+		for entityID, state := range config.Entities {
+			entityData := make(map[string]any)
+			if state.State != "" {
+				entityData["state"] = state.State
+			}
+			for k, v := range state.Attributes {
+				entityData[k] = v
+			}
+			entities[entityID] = entityData
+		}
+		sceneData["entities"] = entities
+	}
+	return sceneData
+}
+
+// CreateScene creates a new scene using the REST API.
+// The WebSocket API does not support scene creation reliably.
+// Endpoint: POST /api/config/scene/config/{scene_id}
+func (c *RESTClient) CreateScene(ctx context.Context, sceneID string, config SceneConfig) error {
+	url := fmt.Sprintf("%s/api/config/scene/config/%s", c.baseURL, sceneID)
+	sceneData := buildSceneData(sceneID, config)
+
+	bodyBytes, err := json.Marshal(sceneData)
+	if err != nil {
+		return fmt.Errorf("marshaling scene config: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(string(bodyBytes)))
+	if err != nil {
+		return fmt.Errorf("creating create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.doRequest(ctx, req)
+	if err != nil {
+		return fmt.Errorf("executing create request: %w", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
+		return nil
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	return handleConfigError(resp.StatusCode, body, configErrorInfo{
+		typeName:   "scene",
+		entityID:   sceneID,
+		actionName: "create",
+	})
+}
+
+// UpdateScene updates an existing scene using the REST API.
+// The WebSocket API does not support scene updates reliably.
+// Endpoint: POST /api/config/scene/config/{scene_id}
+func (c *RESTClient) UpdateScene(ctx context.Context, sceneID string, config SceneConfig) error {
+	url := fmt.Sprintf("%s/api/config/scene/config/%s", c.baseURL, sceneID)
+	sceneData := buildSceneData(sceneID, config)
+
+	bodyBytes, err := json.Marshal(sceneData)
+	if err != nil {
+		return fmt.Errorf("marshaling scene config: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(string(bodyBytes)))
+	if err != nil {
+		return fmt.Errorf("creating update request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.doRequest(ctx, req)
+	if err != nil {
+		return fmt.Errorf("executing update request: %w", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
+		return nil
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	return handleConfigError(resp.StatusCode, body, configErrorInfo{
+		typeName:   "scene",
+		entityID:   sceneID,
+		actionName: "update",
+	})
 }
 
 // DeleteScene deletes a scene using the REST API.

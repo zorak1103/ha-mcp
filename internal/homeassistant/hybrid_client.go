@@ -50,13 +50,34 @@ type WSOperations interface {
 // RESTOperations is an interface for REST client operations.
 // This allows mocking the REST client for testing.
 type RESTOperations interface {
+	// Automation operations (REST-only for create/update/delete)
+	CreateAutomation(ctx context.Context, config AutomationConfig) error
+	UpdateAutomation(ctx context.Context, automationID string, config AutomationConfig) error
 	DeleteAutomation(ctx context.Context, automationID string) error
+
+	// Script operations (REST-only for create/update/delete)
+	CreateScript(ctx context.Context, scriptID string, config ScriptConfig) error
+	UpdateScript(ctx context.Context, scriptID string, config ScriptConfig) error
 	DeleteScript(ctx context.Context, scriptID string) error
+
+	// Scene operations (REST-only for create/update/delete)
+	CreateScene(ctx context.Context, sceneID string, config SceneConfig) error
+	UpdateScene(ctx context.Context, sceneID string, config SceneConfig) error
 	DeleteScene(ctx context.Context, sceneID string) error
+
+	// Service discovery
 	GetServices(ctx context.Context) ([]Service, error)
+
+	// System configuration
 	GetConfig(ctx context.Context) (*Config, error)
+
+	// Template rendering
 	RenderTemplate(ctx context.Context, template string) (string, error)
+
+	// Logbook
 	GetLogbook(ctx context.Context, startTime, endTime, entityID string) ([]LogbookEntry, error)
+
+	// Configuration validation
 	CheckConfig(ctx context.Context) (*ConfigCheckResult, error)
 }
 
@@ -131,14 +152,19 @@ func (c *HybridClient) GetAutomation(ctx context.Context, automationID string) (
 	return c.ws.GetAutomation(ctx, automationID)
 }
 
-// CreateAutomation creates a new automation.
+// CreateAutomation creates a new automation using the REST API.
+// Note: The REST API stores the config but the entity may not appear until
+// Home Assistant is restarted or automation.reload is called. The WebSocket
+// config/automation/create command is not available in all HA versions.
 func (c *HybridClient) CreateAutomation(ctx context.Context, config AutomationConfig) error {
-	return c.ws.CreateAutomation(ctx, config)
+	return c.rest.CreateAutomation(ctx, config)
 }
 
-// UpdateAutomation updates an existing automation.
+// UpdateAutomation updates an existing automation using the REST API.
+// Note: The REST API stores the config but changes may not appear until
+// Home Assistant is restarted or automation.reload is called.
 func (c *HybridClient) UpdateAutomation(ctx context.Context, automationID string, config AutomationConfig) error {
-	return c.ws.UpdateAutomation(ctx, automationID, config)
+	return c.rest.UpdateAutomation(ctx, automationID, config)
 }
 
 // DeleteAutomation deletes an automation using the REST API.
@@ -195,14 +221,16 @@ func (c *HybridClient) GetScript(ctx context.Context, scriptID string) (*Script,
 	return c.ws.GetScript(ctx, scriptID)
 }
 
-// CreateScript creates a new script.
+// CreateScript creates a new script using the REST API.
+// The WebSocket API does not support script creation reliably.
 func (c *HybridClient) CreateScript(ctx context.Context, scriptID string, config ScriptConfig) error {
-	return c.ws.CreateScript(ctx, scriptID, config)
+	return c.rest.CreateScript(ctx, scriptID, config)
 }
 
-// UpdateScript updates an existing script.
+// UpdateScript updates an existing script using the REST API.
+// The WebSocket API does not support script updates reliably.
 func (c *HybridClient) UpdateScript(ctx context.Context, scriptID string, config ScriptConfig) error {
-	return c.ws.UpdateScript(ctx, scriptID, config)
+	return c.rest.UpdateScript(ctx, scriptID, config)
 }
 
 // DeleteScript deletes a script using the REST API.
@@ -220,14 +248,19 @@ func (c *HybridClient) ListScenes(ctx context.Context) ([]Entity, error) {
 	return c.ws.ListScenes(ctx)
 }
 
-// CreateScene creates a new scene.
+// CreateScene creates a new scene using the REST API.
+// Note: The REST API stores the config but the entity may not appear until
+// Home Assistant is restarted or scene.reload is called. The WebSocket
+// config/scene/create command is not available in all HA versions.
 func (c *HybridClient) CreateScene(ctx context.Context, sceneID string, config SceneConfig) error {
-	return c.ws.CreateScene(ctx, sceneID, config)
+	return c.rest.CreateScene(ctx, sceneID, config)
 }
 
-// UpdateScene updates an existing scene.
+// UpdateScene updates an existing scene using the REST API.
+// Note: The REST API stores the config but changes may not appear until
+// Home Assistant is restarted or scene.reload is called.
 func (c *HybridClient) UpdateScene(ctx context.Context, sceneID string, config SceneConfig) error {
-	return c.ws.UpdateScene(ctx, sceneID, config)
+	return c.rest.UpdateScene(ctx, sceneID, config)
 }
 
 // DeleteScene deletes a scene using the REST API.
