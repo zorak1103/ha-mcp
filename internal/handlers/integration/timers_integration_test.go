@@ -174,10 +174,10 @@ func (s *TimerIntegrationTestSuite) TestTimerChange() {
 
 	time.Sleep(200 * time.Millisecond)
 
-	// Test change (add time)
+	// Test change (subtract time - HA doesn't allow adding beyond original duration)
 	_, err = s.Client().CallService(s.Context(), "timer", "change", map[string]any{
 		"entity_id": entityID,
-		"duration":  "00:00:30", // Add 30 seconds
+		"duration":  "-00:00:10", // Subtract 10 seconds
 	})
 	s.Require().NoError(err, "Failed to change timer")
 
