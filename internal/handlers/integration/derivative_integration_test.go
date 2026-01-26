@@ -10,8 +10,8 @@ import (
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 )
 
-var _ = time.Second          // silence unused import
-var _ homeassistant.Client   // silence unused import
+var _ = time.Second        // silence unused import
+var _ homeassistant.Client // silence unused import
 
 type DerivativeIntegrationTestSuite struct {
 	HelperTestSuite
