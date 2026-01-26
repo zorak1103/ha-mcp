@@ -18,7 +18,6 @@ type IntegralIntegrationTestSuite struct {
 }
 
 func TestIntegralIntegration(t *testing.T) {
-	t.Skip("Integral helpers require HTTP Config Entry Flow - no simple WebSocket API support")
 	suite.Run(t, new(IntegralIntegrationTestSuite))
 }
 

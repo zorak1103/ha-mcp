@@ -18,7 +18,6 @@ type DerivativeIntegrationTestSuite struct {
 }
 
 func TestDerivativeIntegration(t *testing.T) {
-	t.Skip("Derivative helpers require HTTP Config Entry Flow - no simple WebSocket API support")
 	suite.Run(t, new(DerivativeIntegrationTestSuite))
 }
 
@@ -191,6 +190,7 @@ func (s *DerivativeIntegrationTestSuite) TestDerivativeWithUnitPrefix() {
 			"source":      sourceEntityID,
 			"unit_prefix": "k",
 			"unit_time":   "h",
+			"time_window": "00:05:00", // Required by Config Entry Flow
 		},
 	}
 

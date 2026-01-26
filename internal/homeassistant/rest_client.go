@@ -857,3 +857,162 @@ func (c *RESTClient) CheckConfig(ctx context.Context) (*ConfigCheckResult, error
 
 	return &result, nil
 }
+
+// =============================================================================
+// Config Entry Flow Operations
+// Used for creating helpers that require the HTTP Config Entry Flow mechanism
+// (threshold, derivative, integration, group, template helpers)
+// =============================================================================
+
+// InitConfigEntryFlow initializes a config entry flow for the given handler.
+// Endpoint: POST /api/config/config_entries/flow
+// Returns the flow result with flow_id for subsequent steps.
+func (c *RESTClient) InitConfigEntryFlow(ctx context.Context, handler string) (*ConfigEntryFlowResult, error) {
+	url := fmt.Sprintf("%s/api/config/config_entries/flow", c.baseURL)
+
+	reqBody := map[string]string{"handler": handler}
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling init flow request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(string(bodyBytes)))
+	if err != nil {
+		return nil, fmt.Errorf("creating init flow request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.doRequest(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("executing init flow request: %w", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading init flow response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return nil, &APIError{
+			StatusCode: resp.StatusCode,
+			Message:    fmt.Sprintf("failed to init config entry flow for %s: %s", handler, string(body)),
+		}
+	}
+
+	var result ConfigEntryFlowResult
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("parsing init flow response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// SubmitConfigEntryFlowStep submits data for a config entry flow step.
+// Endpoint: POST /api/config/config_entries/flow/{flow_id}
+// Returns the flow result which may be another form step or create_entry on success.
+func (c *RESTClient) SubmitConfigEntryFlowStep(ctx context.Context, flowID string, data map[string]any) (*ConfigEntryFlowResult, error) {
+	url := fmt.Sprintf("%s/api/config/config_entries/flow/%s", c.baseURL, flowID)
+
+	bodyBytes, err := json.Marshal(data)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling flow step data: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(string(bodyBytes)))
+	if err != nil {
+		return nil, fmt.Errorf("creating flow step request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.doRequest(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("executing flow step request: %w", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading flow step response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return nil, &APIError{
+			StatusCode: resp.StatusCode,
+			Message:    fmt.Sprintf("failed to submit config entry flow step: %s", string(body)),
+		}
+	}
+
+	var result ConfigEntryFlowResult
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("parsing flow step response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// DeleteConfigEntry deletes a config entry by its entry ID.
+// Endpoint: DELETE /api/config/config_entries/entry/{entry_id}
+func (c *RESTClient) DeleteConfigEntry(ctx context.Context, entryID string) error {
+	url := fmt.Sprintf("%s/api/config/config_entries/entry/%s", c.baseURL, entryID)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, http.NoBody)
+	if err != nil {
+		return fmt.Errorf("creating delete config entry request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.doRequest(ctx, req)
+	if err != nil {
+		return fmt.Errorf("executing delete config entry request: %w", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNoContent {
+		return nil
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	bodyStr := string(body)
+	if bodyStr == "" {
+		bodyStr = noResponseBody
+	}
+
+	switch resp.StatusCode {
+	case http.StatusNotFound:
+		return &APIError{
+			StatusCode: resp.StatusCode,
+			Message:    fmt.Sprintf("config entry not found: %s", entryID),
+		}
+	case http.StatusUnauthorized:
+		return &APIError{
+			StatusCode: resp.StatusCode,
+			Message:    "unauthorized: invalid or expired token",
+		}
+	case http.StatusForbidden:
+		return &APIError{
+			StatusCode: resp.StatusCode,
+			Message:    "forbidden: insufficient permissions to delete config entry",
+		}
+	default:
+		return &APIError{
+			StatusCode: resp.StatusCode,
+			Message:    fmt.Sprintf("unexpected status %d: %s", resp.StatusCode, bodyStr),
+		}
+	}
+}

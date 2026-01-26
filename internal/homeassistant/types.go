@@ -438,3 +438,23 @@ type ConfigCheckResult struct {
 	Result string  `json:"result"` // "valid" or "invalid"
 	Errors *string `json:"errors"` // null if valid, error message if invalid
 }
+
+// ConfigEntryFlowResult represents a config entry flow step response.
+// Config Entry Flow is Home Assistant's HTTP-based mechanism for creating
+// certain helper types (threshold, derivative, integration, group, template).
+type ConfigEntryFlowResult struct {
+	FlowID      string            `json:"flow_id"`
+	Type        string            `json:"type"` // "form", "create_entry", "abort"
+	StepID      string            `json:"step_id,omitempty"`
+	Handler     string            `json:"handler"`
+	Errors      map[string]string `json:"errors,omitempty"`
+	Result      *ConfigEntry      `json:"result,omitempty"`
+	Description string            `json:"description,omitempty"`
+}
+
+// ConfigEntry represents a created config entry from the Config Entry Flow.
+type ConfigEntry struct {
+	EntryID string `json:"entry_id"`
+	Domain  string `json:"domain"`
+	Title   string `json:"title"`
+}

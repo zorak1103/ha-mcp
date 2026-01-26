@@ -705,22 +705,24 @@ func (m *mockWSOperations) GetScheduleConfig(ctx context.Context, scheduleID str
 }
 
 // mockRESTOperations implements RESTOperations for testing.
-// mockRESTOperations implements RESTOperations for testing.
 type mockRESTOperations struct {
-	createAutomationFunc func(ctx context.Context, config AutomationConfig) error
-	updateAutomationFunc func(ctx context.Context, automationID string, config AutomationConfig) error
-	deleteAutomationFunc func(ctx context.Context, automationID string) error
-	createScriptFunc     func(ctx context.Context, scriptID string, config ScriptConfig) error
-	updateScriptFunc     func(ctx context.Context, scriptID string, config ScriptConfig) error
-	deleteScriptFunc     func(ctx context.Context, scriptID string) error
-	createSceneFunc      func(ctx context.Context, sceneID string, config SceneConfig) error
-	updateSceneFunc      func(ctx context.Context, sceneID string, config SceneConfig) error
-	deleteSceneFunc      func(ctx context.Context, sceneID string) error
-	getServicesFunc      func(ctx context.Context) ([]Service, error)
-	getConfigFunc        func(ctx context.Context) (*Config, error)
-	renderTemplateFunc   func(ctx context.Context, template string) (string, error)
-	getLogbookFunc       func(ctx context.Context, startTime, endTime, entityID string) ([]LogbookEntry, error)
-	checkConfigFunc      func(ctx context.Context) (*ConfigCheckResult, error)
+	createAutomationFunc          func(ctx context.Context, config AutomationConfig) error
+	updateAutomationFunc          func(ctx context.Context, automationID string, config AutomationConfig) error
+	deleteAutomationFunc          func(ctx context.Context, automationID string) error
+	createScriptFunc              func(ctx context.Context, scriptID string, config ScriptConfig) error
+	updateScriptFunc              func(ctx context.Context, scriptID string, config ScriptConfig) error
+	deleteScriptFunc              func(ctx context.Context, scriptID string) error
+	createSceneFunc               func(ctx context.Context, sceneID string, config SceneConfig) error
+	updateSceneFunc               func(ctx context.Context, sceneID string, config SceneConfig) error
+	deleteSceneFunc               func(ctx context.Context, sceneID string) error
+	initConfigEntryFlowFunc       func(ctx context.Context, handler string) (*ConfigEntryFlowResult, error)
+	submitConfigEntryFlowStepFunc func(ctx context.Context, flowID string, data map[string]any) (*ConfigEntryFlowResult, error)
+	deleteConfigEntryFunc         func(ctx context.Context, entryID string) error
+	getServicesFunc               func(ctx context.Context) ([]Service, error)
+	getConfigFunc                 func(ctx context.Context) (*Config, error)
+	renderTemplateFunc            func(ctx context.Context, template string) (string, error)
+	getLogbookFunc                func(ctx context.Context, startTime, endTime, entityID string) ([]LogbookEntry, error)
+	checkConfigFunc               func(ctx context.Context) (*ConfigCheckResult, error)
 }
 
 func (m *mockRESTOperations) CreateAutomation(ctx context.Context, config AutomationConfig) error {
@@ -782,6 +784,27 @@ func (m *mockRESTOperations) UpdateScene(ctx context.Context, sceneID string, co
 func (m *mockRESTOperations) DeleteScene(ctx context.Context, sceneID string) error {
 	if m.deleteSceneFunc != nil {
 		return m.deleteSceneFunc(ctx, sceneID)
+	}
+	return nil
+}
+
+func (m *mockRESTOperations) InitConfigEntryFlow(ctx context.Context, handler string) (*ConfigEntryFlowResult, error) {
+	if m.initConfigEntryFlowFunc != nil {
+		return m.initConfigEntryFlowFunc(ctx, handler)
+	}
+	return nil, nil
+}
+
+func (m *mockRESTOperations) SubmitConfigEntryFlowStep(ctx context.Context, flowID string, data map[string]any) (*ConfigEntryFlowResult, error) {
+	if m.submitConfigEntryFlowStepFunc != nil {
+		return m.submitConfigEntryFlowStepFunc(ctx, flowID, data)
+	}
+	return nil, nil
+}
+
+func (m *mockRESTOperations) DeleteConfigEntry(ctx context.Context, entryID string) error {
+	if m.deleteConfigEntryFunc != nil {
+		return m.deleteConfigEntryFunc(ctx, entryID)
 	}
 	return nil
 }
