@@ -187,9 +187,20 @@ func (h *AnalysisHandlers) handleAnalyzeEntity(ctx context.Context, client homea
 }
 
 func (h *AnalysisHandlers) buildEntityAnalysis(ctx context.Context, client homeassistant.Client, entityID string, includeHistory bool) (*EntityAnalysis, error) {
-	state, err := client.GetState(ctx, entityID)
-	if err != nil {
-		return nil, fmt.Errorf("error getting entity state: %w", err)
+	// Create snapshot of all required data in parallel for better performance
+	snapshot := CreateAnalysisSnapshot(ctx, client)
+
+	// Get entity state - try snapshot first, fallback to direct API call
+	var state *homeassistant.Entity
+	var err error
+	if entity := snapshot.FindEntityByID(entityID); entity != nil {
+		state = entity
+	} else {
+		// Entity not in snapshot, fetch directly
+		state, err = client.GetState(ctx, entityID)
+		if err != nil {
+			return nil, fmt.Errorf("error getting entity state: %w", err)
+		}
 	}
 
 	parts := strings.SplitN(entityID, ".", 2)
@@ -217,10 +228,10 @@ func (h *AnalysisHandlers) buildEntityAnalysis(ctx context.Context, client homea
 	h.findAutomationReferences(ctx, client, entityID, analysis.References)
 	h.findScriptReferences(ctx, client, entityID, analysis.References)
 	h.findSceneReferences(ctx, client, entityID, analysis.References)
-	h.findGroupReferences(ctx, client, entityID, analysis.References)
+	h.findGroupReferencesWithSnapshot(snapshot, entityID, analysis.References)
 
-	// Find area-based references (entity controlled via area_id in automations/scripts)
-	h.findAreaReferences(ctx, client, entityID, analysis.References)
+	// Find area-based references using snapshot (entity controlled via area_id in automations/scripts)
+	h.findAreaReferencesWithSnapshot(ctx, client, snapshot, entityID, analysis.References)
 
 	// Calculate total references
 	analysis.References.TotalReferences = len(analysis.References.Automations) +
@@ -317,13 +328,13 @@ func (h *AnalysisHandlers) findSceneReferences(ctx context.Context, client homea
 	}
 }
 
-func (h *AnalysisHandlers) findGroupReferences(ctx context.Context, client homeassistant.Client, entityID string, refs *EntityReferences) {
-	allStates, err := client.GetStates(ctx)
-	if err != nil {
+// findGroupReferencesWithSnapshot finds groups that contain the entity using pre-fetched data.
+func (h *AnalysisHandlers) findGroupReferencesWithSnapshot(snapshot *AnalysisSnapshot, entityID string, refs *EntityReferences) {
+	if snapshot.AllStates == nil {
 		return
 	}
 
-	for _, s := range allStates {
+	for _, s := range snapshot.AllStates {
 		if !strings.HasPrefix(s.EntityID, "group.") {
 			continue
 		}
@@ -342,11 +353,10 @@ func (h *AnalysisHandlers) findGroupReferences(ctx context.Context, client homea
 	}
 }
 
-// findAreaReferences finds automations and scripts that reference the entity's area.
-// This detects indirect control where automations target an area_id instead of specific entities.
-func (h *AnalysisHandlers) findAreaReferences(ctx context.Context, client homeassistant.Client, entityID string, refs *EntityReferences) {
-	// First, find which area the entity belongs to
-	entityArea := h.getEntityArea(ctx, client, entityID)
+// findAreaReferencesWithSnapshot finds automations and scripts that reference the entity's area using pre-fetched data.
+func (h *AnalysisHandlers) findAreaReferencesWithSnapshot(ctx context.Context, client homeassistant.Client, snapshot *AnalysisSnapshot, entityID string, refs *EntityReferences) {
+	// Get entity's area from snapshot
+	entityArea := snapshot.GetEntityArea(entityID)
 	if entityArea == "" {
 		return // Entity is not assigned to any area
 	}
@@ -402,48 +412,6 @@ func (h *AnalysisHandlers) findAreaReferences(ctx context.Context, client homeas
 			})
 		}
 	}
-}
-
-// getEntityArea returns the area_id for an entity, either directly or via its device.
-func (h *AnalysisHandlers) getEntityArea(ctx context.Context, client homeassistant.Client, entityID string) string {
-	// Check entity registry for direct area assignment
-	entities, err := client.GetEntityRegistry(ctx)
-	if err != nil {
-		return ""
-	}
-
-	var entityEntry *homeassistant.EntityRegistryEntry
-	for _, e := range entities {
-		if e.EntityID == entityID {
-			entityEntry = &e
-			break
-		}
-	}
-
-	if entityEntry == nil {
-		return ""
-	}
-
-	// If entity has a direct area_id, return it
-	if entityEntry.AreaID != "" {
-		return entityEntry.AreaID
-	}
-
-	// Otherwise, check the device's area
-	if entityEntry.DeviceID != "" {
-		devices, err := client.GetDeviceRegistry(ctx)
-		if err != nil {
-			return ""
-		}
-
-		for _, d := range devices {
-			if d.ID == entityEntry.DeviceID {
-				return d.AreaID
-			}
-		}
-	}
-
-	return ""
 }
 
 // findAreaUsageInConfig searches for area usage in automation config.

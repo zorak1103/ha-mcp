@@ -24,6 +24,7 @@ A Model Context Protocol (MCP) server that provides AI assistants with access to
 - **Lovelace Config**: Access dashboard configurations
 - **Auto-Reconnect**: Automatic reconnection with exponential backoff
 - **Request Retries**: Automatic retries with exponential backoff for transient failures (5xx, 429, network errors)
+- **Optional Caching**: TTL-based caching for static data (services, config, registries) to reduce API calls
 
 ## Installation
 
@@ -220,6 +221,13 @@ homeassistant:
     max_retries: 3  # Retry attempts for transient failures
     retry_initial_delay_ms: 100
     retry_max_delay_ms: 5000
+  cache:
+    enabled: false  # Enable caching for static data (opt-in)
+    services_ttl_min: 60     # Services cache TTL in minutes
+    config_ttl_min: 30       # Config cache TTL in minutes
+    entity_reg_ttl_min: 10   # Entity registry cache TTL
+    device_reg_ttl_min: 10   # Device registry cache TTL
+    area_reg_ttl_min: 30     # Area registry cache TTL
 
 server:
   port: 8080
@@ -247,6 +255,14 @@ export HA_REST_RETRY_MAX_DELAY_MS=5000     # Max retry delay in ms (default: 500
 export HA_WS_MAX_RETRIES=3     # Max retry attempts (default: 3)
 export HA_WS_RETRY_INITIAL_DELAY_MS=100    # Initial retry delay in ms (default: 100)
 export HA_WS_RETRY_MAX_DELAY_MS=5000       # Max retry delay in ms (default: 5000)
+
+# Caching settings (optional, disabled by default)
+export HA_CACHE_ENABLED=false              # Enable caching (default: false)
+export HA_CACHE_SERVICES_TTL_MIN=60        # Services cache TTL (default: 60)
+export HA_CACHE_CONFIG_TTL_MIN=30          # Config cache TTL (default: 30)
+export HA_CACHE_ENTITY_REG_TTL_MIN=10      # Entity registry TTL (default: 10)
+export HA_CACHE_DEVICE_REG_TTL_MIN=10      # Device registry TTL (default: 10)
+export HA_CACHE_AREA_REG_TTL_MIN=30        # Area registry TTL (default: 30)
 ```
 
 ### Command-Line Flags
@@ -915,6 +931,7 @@ ha-mcp/
 │   │   └── config.go            # Configuration handling
 │   ├── homeassistant/
 │   │   ├── client.go            # Client interface (~70 methods)
+│   │   ├── cached_client.go     # TTL-based caching decorator
 │   │   ├── factory.go           # Client factory (creates HybridClient)
 │   │   ├── hybrid_client.go     # Hybrid client combining WS + REST
 │   │   ├── rest_client.go       # REST client for automation/script/scene CRUD
@@ -934,6 +951,7 @@ ha-mcp/
 │   │   │   ├── cleanup.go       # Cleanup utilities
 │   │   │   ├── suite_test.go    # Base test suite
 │   │   │   └── *_integration_test.go  # Domain-specific tests
+│   │   ├── analysis_snapshot.go # Parallel data fetching for analysis
 │   │   ├── entities.go          # Entity tool handlers
 │   │   ├── automations.go       # Automation tool handlers
 │   │   ├── helpers.go           # Helper tool handlers

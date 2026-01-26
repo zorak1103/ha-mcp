@@ -6,20 +6,22 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zorak1103/ha-mcp/internal/config"
 	"github.com/zorak1103/ha-mcp/internal/logging"
 )
 
 // ClientPool manages a pool of Home Assistant clients, one per token.
 // It provides thread-safe access to clients and automatic cleanup of idle connections.
 type ClientPool struct {
-	baseURL    string
-	restConfig *RESTClientConfig
-	clients    map[string]*pooledClient
-	mu         sync.RWMutex
-	maxIdle    time.Duration
-	stopCh     chan struct{}
-	wg         sync.WaitGroup
-	logger     *logging.Logger
+	baseURL     string
+	restConfig  *RESTClientConfig
+	cacheConfig *config.CacheConfig
+	clients     map[string]*pooledClient
+	mu          sync.RWMutex
+	maxIdle     time.Duration
+	stopCh      chan struct{}
+	wg          sync.WaitGroup
+	logger      *logging.Logger
 }
 
 // pooledClient wraps a Client with last-used timestamp for idle cleanup.
@@ -36,24 +38,31 @@ func NewClientPool(baseURL string, maxIdle time.Duration) *ClientPool {
 
 // NewClientPoolWithConfig creates a new client pool with REST configuration.
 func NewClientPoolWithConfig(baseURL string, maxIdle time.Duration, restConfig *RESTClientConfig, logger *logging.Logger) *ClientPool {
+	return NewClientPoolWithFullConfig(baseURL, maxIdle, restConfig, nil, logger)
+}
+
+// NewClientPoolWithFullConfig creates a new client pool with REST and cache configuration.
+func NewClientPoolWithFullConfig(baseURL string, maxIdle time.Duration, restConfig *RESTClientConfig, cacheConfig *config.CacheConfig, logger *logging.Logger) *ClientPool {
 	if logger == nil {
 		logger = logging.New(logging.LevelInfo)
 	}
 
 	p := &ClientPool{
-		baseURL:    baseURL,
-		restConfig: restConfig,
-		clients:    make(map[string]*pooledClient),
-		maxIdle:    maxIdle,
-		stopCh:     make(chan struct{}),
-		logger:     logger,
+		baseURL:     baseURL,
+		restConfig:  restConfig,
+		cacheConfig: cacheConfig,
+		clients:     make(map[string]*pooledClient),
+		maxIdle:     maxIdle,
+		stopCh:      make(chan struct{}),
+		logger:      logger,
 	}
 
 	// Start idle cleanup goroutine
 	p.wg.Add(1)
 	go p.cleanupLoop()
 
-	logger.Debug("Client pool created", "baseURL", baseURL, "maxIdle", maxIdle)
+	cacheEnabled := cacheConfig != nil && cacheConfig.Enabled
+	logger.Debug("Client pool created", "baseURL", baseURL, "maxIdle", maxIdle, "cacheEnabled", cacheEnabled)
 	return p
 }
 
@@ -103,7 +112,12 @@ func (p *ClientPool) GetOrCreate(ctx context.Context, token string) (Client, err
 
 	// Create new client
 	p.logger.Info("Creating new client for pool", "tokenHash", tokenHash)
-	client, err := NewConnectedClient(ctx, p.baseURL, token, nil, p.restConfig)
+	opts := ClientOptions{
+		RESTConfig:  p.restConfig,
+		CacheConfig: p.cacheConfig,
+		Logger:      p.logger,
+	}
+	client, err := NewClientWithOptions(ctx, p.baseURL, token, opts)
 	if err != nil {
 		p.logger.Error("Failed to create client", "tokenHash", tokenHash, "error", err)
 		return nil, err

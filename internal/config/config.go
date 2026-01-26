@@ -55,6 +55,23 @@ type HomeAssistantConfig struct {
 	Token     string          `mapstructure:"token"`
 	REST      RESTConfig      `mapstructure:"rest"`
 	WebSocket WebSocketConfig `mapstructure:"websocket"`
+	Cache     CacheConfig     `mapstructure:"cache"`
+}
+
+// CacheConfig holds settings for caching static Home Assistant data.
+type CacheConfig struct {
+	// Enabled enables caching for static data (default: false)
+	Enabled bool `mapstructure:"enabled"`
+	// ServicesTTLMin is the TTL for services cache in minutes (default: 60)
+	ServicesTTLMin int `mapstructure:"services_ttl_min"`
+	// ConfigTTLMin is the TTL for system config cache in minutes (default: 30)
+	ConfigTTLMin int `mapstructure:"config_ttl_min"`
+	// EntityRegTTLMin is the TTL for entity registry cache in minutes (default: 10)
+	EntityRegTTLMin int `mapstructure:"entity_reg_ttl_min"`
+	// DeviceRegTTLMin is the TTL for device registry cache in minutes (default: 10)
+	DeviceRegTTLMin int `mapstructure:"device_reg_ttl_min"`
+	// AreaRegTTLMin is the TTL for area registry cache in minutes (default: 30)
+	AreaRegTTLMin int `mapstructure:"area_reg_ttl_min"`
 }
 
 // RESTConfig holds REST API client settings.
@@ -104,6 +121,12 @@ func setupViper(configFile string) (*viper.Viper, error) {
 	v.SetDefault("homeassistant.websocket.max_retries", 3)
 	v.SetDefault("homeassistant.websocket.retry_initial_delay_ms", 100)
 	v.SetDefault("homeassistant.websocket.retry_max_delay_ms", 5000)
+	v.SetDefault("homeassistant.cache.enabled", false)
+	v.SetDefault("homeassistant.cache.services_ttl_min", 60)
+	v.SetDefault("homeassistant.cache.config_ttl_min", 30)
+	v.SetDefault("homeassistant.cache.entity_reg_ttl_min", 10)
+	v.SetDefault("homeassistant.cache.device_reg_ttl_min", 10)
+	v.SetDefault("homeassistant.cache.area_reg_ttl_min", 30)
 	v.SetDefault("server.port", 8080)
 	v.SetDefault("logging.level", "INFO")
 
@@ -131,6 +154,12 @@ func setupViper(configFile string) (*viper.Viper, error) {
 	mustBindEnv(v, "homeassistant.websocket.max_retries", "HA_WS_MAX_RETRIES")
 	mustBindEnv(v, "homeassistant.websocket.retry_initial_delay_ms", "HA_WS_RETRY_INITIAL_DELAY_MS")
 	mustBindEnv(v, "homeassistant.websocket.retry_max_delay_ms", "HA_WS_RETRY_MAX_DELAY_MS")
+	mustBindEnv(v, "homeassistant.cache.enabled", "HA_CACHE_ENABLED")
+	mustBindEnv(v, "homeassistant.cache.services_ttl_min", "HA_CACHE_SERVICES_TTL_MIN")
+	mustBindEnv(v, "homeassistant.cache.config_ttl_min", "HA_CACHE_CONFIG_TTL_MIN")
+	mustBindEnv(v, "homeassistant.cache.entity_reg_ttl_min", "HA_CACHE_ENTITY_REG_TTL_MIN")
+	mustBindEnv(v, "homeassistant.cache.device_reg_ttl_min", "HA_CACHE_DEVICE_REG_TTL_MIN")
+	mustBindEnv(v, "homeassistant.cache.area_reg_ttl_min", "HA_CACHE_AREA_REG_TTL_MIN")
 	mustBindEnv(v, "server.port", "HA_MCP_PORT")
 	mustBindEnv(v, "logging.level", "HA_MCP_LOG_LEVEL")
 
@@ -190,6 +219,12 @@ func LoadWithViper(v *viper.Viper, configFile string) (*Config, error) {
 	v.SetDefault("homeassistant.websocket.max_retries", 3)
 	v.SetDefault("homeassistant.websocket.retry_initial_delay_ms", 100)
 	v.SetDefault("homeassistant.websocket.retry_max_delay_ms", 5000)
+	v.SetDefault("homeassistant.cache.enabled", false)
+	v.SetDefault("homeassistant.cache.services_ttl_min", 60)
+	v.SetDefault("homeassistant.cache.config_ttl_min", 30)
+	v.SetDefault("homeassistant.cache.entity_reg_ttl_min", 10)
+	v.SetDefault("homeassistant.cache.device_reg_ttl_min", 10)
+	v.SetDefault("homeassistant.cache.area_reg_ttl_min", 30)
 	v.SetDefault("server.port", 8080)
 	v.SetDefault("logging.level", "INFO")
 
@@ -217,6 +252,12 @@ func LoadWithViper(v *viper.Viper, configFile string) (*Config, error) {
 	mustBindEnv(v, "homeassistant.websocket.max_retries", "HA_WS_MAX_RETRIES")
 	mustBindEnv(v, "homeassistant.websocket.retry_initial_delay_ms", "HA_WS_RETRY_INITIAL_DELAY_MS")
 	mustBindEnv(v, "homeassistant.websocket.retry_max_delay_ms", "HA_WS_RETRY_MAX_DELAY_MS")
+	mustBindEnv(v, "homeassistant.cache.enabled", "HA_CACHE_ENABLED")
+	mustBindEnv(v, "homeassistant.cache.services_ttl_min", "HA_CACHE_SERVICES_TTL_MIN")
+	mustBindEnv(v, "homeassistant.cache.config_ttl_min", "HA_CACHE_CONFIG_TTL_MIN")
+	mustBindEnv(v, "homeassistant.cache.entity_reg_ttl_min", "HA_CACHE_ENTITY_REG_TTL_MIN")
+	mustBindEnv(v, "homeassistant.cache.device_reg_ttl_min", "HA_CACHE_DEVICE_REG_TTL_MIN")
+	mustBindEnv(v, "homeassistant.cache.area_reg_ttl_min", "HA_CACHE_AREA_REG_TTL_MIN")
 	mustBindEnv(v, "server.port", "HA_MCP_PORT")
 	mustBindEnv(v, "logging.level", "HA_MCP_LOG_LEVEL")
 

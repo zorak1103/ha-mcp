@@ -5,6 +5,9 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/zorak1103/ha-mcp/internal/config"
+	"github.com/zorak1103/ha-mcp/internal/logging"
 )
 
 // ClientOptions configures client creation.
@@ -13,6 +16,10 @@ type ClientOptions struct {
 	WSConfig *WSClientConfig
 	// RESTConfig provides REST API-specific configuration.
 	RESTConfig *RESTClientConfig
+	// CacheConfig provides caching configuration.
+	CacheConfig *config.CacheConfig
+	// Logger for logging cache operations.
+	Logger *logging.Logger
 }
 
 // DefaultClientOptions returns the default client options.
@@ -27,8 +34,19 @@ func DefaultClientOptions() ClientOptions {
 
 // NewClientWithOptions creates and connects a Home Assistant WebSocket client with custom options.
 // The connection is established before returning; use CloseClient() for cleanup.
+// If CacheConfig is provided and enabled, the client will be wrapped with caching capabilities.
 func NewClientWithOptions(ctx context.Context, baseURL, token string, opts ClientOptions) (Client, error) {
-	return NewConnectedClient(ctx, baseURL, token, opts.WSConfig, opts.RESTConfig)
+	client, err := NewConnectedClient(ctx, baseURL, token, opts.WSConfig, opts.RESTConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	// Wrap with caching if enabled
+	if opts.CacheConfig != nil && opts.CacheConfig.Enabled {
+		return NewCachedClient(client, *opts.CacheConfig, opts.Logger), nil
+	}
+
+	return client, nil
 }
 
 // NewConnectedClient creates a new hybrid client with both WebSocket and REST capabilities.
@@ -116,17 +134,17 @@ var (
 // RetryConfigFromSettings creates a RetryConfig from max retries, initial delay (ms), and max delay (ms).
 // This is a helper function for building retry configuration from application config settings.
 func RetryConfigFromSettings(maxRetries, initialDelayMs, maxDelayMs int) RetryConfig {
-	config := DefaultRetryConfig()
+	retryCfg := DefaultRetryConfig()
 
 	if maxRetries >= 0 {
-		config.MaxRetries = maxRetries
+		retryCfg.MaxRetries = maxRetries
 	}
 	if initialDelayMs > 0 {
-		config.InitialDelay = time.Duration(initialDelayMs) * time.Millisecond
+		retryCfg.InitialDelay = time.Duration(initialDelayMs) * time.Millisecond
 	}
 	if maxDelayMs > 0 {
-		config.MaxDelay = time.Duration(maxDelayMs) * time.Millisecond
+		retryCfg.MaxDelay = time.Duration(maxDelayMs) * time.Millisecond
 	}
 
-	return config
+	return retryCfg
 }

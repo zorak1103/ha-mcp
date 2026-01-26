@@ -21,6 +21,7 @@ type mockAnalysisClient struct {
 	GetStatesFn         func(ctx context.Context) ([]homeassistant.Entity, error)
 	GetEntityRegistryFn func(ctx context.Context) ([]homeassistant.EntityRegistryEntry, error)
 	GetDeviceRegistryFn func(ctx context.Context) ([]homeassistant.DeviceRegistryEntry, error)
+	GetAreaRegistryFn   func(ctx context.Context) ([]homeassistant.AreaRegistryEntry, error)
 	GetHistoryFn        func(ctx context.Context, entityID string, start, end time.Time) ([][]homeassistant.HistoryEntry, error)
 }
 
@@ -78,6 +79,13 @@ func (m *mockAnalysisClient) GetDeviceRegistry(ctx context.Context) ([]homeassis
 		return m.GetDeviceRegistryFn(ctx)
 	}
 	return []homeassistant.DeviceRegistryEntry{}, nil
+}
+
+func (m *mockAnalysisClient) GetAreaRegistry(ctx context.Context) ([]homeassistant.AreaRegistryEntry, error) {
+	if m.GetAreaRegistryFn != nil {
+		return m.GetAreaRegistryFn(ctx)
+	}
+	return []homeassistant.AreaRegistryEntry{}, nil
 }
 
 func (m *mockAnalysisClient) GetHistory(ctx context.Context, entityID string, start, end time.Time) ([][]homeassistant.HistoryEntry, error) {
