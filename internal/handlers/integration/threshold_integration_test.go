@@ -18,7 +18,7 @@ type ThresholdIntegrationTestSuite struct {
 }
 
 func TestThresholdIntegration(t *testing.T) {
-	t.Skip("Threshold helpers do not support WebSocket or REST API create/update - requires YAML configuration")
+	t.Skip("Threshold helpers require HTTP Config Entry Flow - no simple WebSocket API support")
 	suite.Run(t, new(ThresholdIntegrationTestSuite))
 }
 

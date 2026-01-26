@@ -12,12 +12,12 @@ A Model Context Protocol (MCP) server that provides AI assistants with access to
 
 ## Features
 
-- **Hybrid Architecture**: Primary WebSocket communication with REST API fallback for delete operations (automations, scripts, scenes)
+- **Hybrid Architecture**: Primary WebSocket communication with REST API for automation/script/scene CRUD operations
 - **Entity Management**: Read and control all Home Assistant entities
 - **Registry Access**: Query entity, device, and area registries
-- **Automation CRUD**: Create, read, update, and delete automations
-- **Helper Management**: Full support for all 14 Home Assistant helper types with CRUD operations
-- **Script & Scene Control**: Full CRUD operations for scripts and scenes
+- **Automation CRUD**: Create, read, update, and delete automations (via REST API)
+- **Helper Management**: Full support for WebSocket-based helpers (input_*, counter, timer, schedule)
+- **Script & Scene Control**: Full CRUD operations for scripts and scenes (via REST API)
 - **Service Calls**: Execute any Home Assistant service
 - **History & Statistics**: Query entity state history and recorder statistics
 - **Media Browser**: Browse media sources and get camera streams
@@ -917,7 +917,7 @@ ha-mcp/
 │   │   ├── client.go            # Client interface (~70 methods)
 │   │   ├── factory.go           # Client factory (creates HybridClient)
 │   │   ├── hybrid_client.go     # Hybrid client combining WS + REST
-│   │   ├── rest_client.go       # REST client for delete operations
+│   │   ├── rest_client.go       # REST client for automation/script/scene CRUD
 │   │   ├── retry.go             # Retry logic with exponential backoff
 │   │   ├── ws_client.go         # WebSocket connection management
 │   │   ├── ws_client_impl.go    # WebSocket Client implementation
@@ -968,8 +968,8 @@ ha-mcp/
 
 ha-mcp uses a hybrid approach combining WebSocket and REST APIs:
 
-- **WebSocket (primary)**: Used for most operations including state queries, service calls, entity management, and real-time updates
-- **REST API (fallback)**: Used specifically for delete operations (automations, scripts, scenes) that are not reliably supported via WebSocket
+- **WebSocket (primary)**: Used for most operations including state queries, service calls, helper management (input_*, counter, timer, schedule), and registry access
+- **REST API**: Used for automation/script/scene CRUD operations, template rendering, logbook, and config validation
 
 ```
 ┌─────────────┐     HTTP/JSON-RPC      ┌─────────────┐
@@ -980,8 +980,11 @@ ha-mcp uses a hybrid approach combining WebSocket and REST APIs:
                                                │
                            ┌───────────────────┴───────────────────┐
                            │                                       │
-                           │ WebSocket (primary)                   │ REST API (delete ops)
+                           │ WebSocket (primary)                   │ REST API
                            │ ws://host/api/websocket               │ http://host/api/...
+                           │ - State queries, service calls        │ - Automation CRUD
+                           │ - Helper CRUD (input_*, counter...)   │ - Script CRUD
+                           │ - Registry access                     │ - Scene CRUD
                            │                                       │
                            └───────────────┬───────────────────────┘
                                            │
@@ -994,9 +997,17 @@ ha-mcp uses a hybrid approach combining WebSocket and REST APIs:
 ### Message Flow
 
 1. AI client sends JSON-RPC request to ha-mcp
-2. ha-mcp routes to WebSocket (most operations) or REST API (delete operations)
+2. ha-mcp routes to WebSocket (most operations) or REST API (automation/script/scene CRUD)
 3. Home Assistant processes and responds
 4. ha-mcp returns result to AI client
+
+### API Limitations
+
+Some Home Assistant operations have limitations:
+
+- **Scripts**: REST API works, but `script.reload` service call is needed after create/update for entity to appear immediately
+- **Automations/Scenes**: REST API stores config, but entity may not appear until Home Assistant restart or reload
+- **YAML-only helpers**: Template, threshold, derivative, integration, and group helpers require YAML configuration and cannot be created via API
 
 ## License
 

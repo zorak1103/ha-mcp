@@ -18,7 +18,7 @@ type GroupIntegrationTestSuite struct {
 }
 
 func TestGroupIntegration(t *testing.T) {
-	t.Skip("Group helpers do not support WebSocket or REST API create/update - requires YAML configuration")
+	t.Skip("Group helpers require HTTP Config Entry Flow - no simple WebSocket API support")
 	suite.Run(t, new(GroupIntegrationTestSuite))
 }
 

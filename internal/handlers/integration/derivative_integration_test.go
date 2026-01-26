@@ -18,7 +18,7 @@ type DerivativeIntegrationTestSuite struct {
 }
 
 func TestDerivativeIntegration(t *testing.T) {
-	t.Skip("Derivative helpers do not support WebSocket or REST API create/update - requires YAML configuration")
+	t.Skip("Derivative helpers require HTTP Config Entry Flow - no simple WebSocket API support")
 	suite.Run(t, new(DerivativeIntegrationTestSuite))
 }
 

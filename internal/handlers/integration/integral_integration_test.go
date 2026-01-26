@@ -18,7 +18,7 @@ type IntegralIntegrationTestSuite struct {
 }
 
 func TestIntegralIntegration(t *testing.T) {
-	t.Skip("Integration (integral) helpers do not support WebSocket or REST API create/update - requires YAML configuration")
+	t.Skip("Integral helpers require HTTP Config Entry Flow - no simple WebSocket API support")
 	suite.Run(t, new(IntegralIntegrationTestSuite))
 }
 
