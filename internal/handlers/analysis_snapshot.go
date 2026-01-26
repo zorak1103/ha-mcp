@@ -31,6 +31,8 @@ type AnalysisSnapshot struct {
 // CreateAnalysisSnapshot fetches all data needed for entity analysis in parallel.
 // This optimizes analysis by making 4 parallel API calls instead of multiple sequential calls.
 // Returns a snapshot even if some fetches fail - the caller should check individual fields.
+//
+//nolint:funlen // Parallel fetch structure is clear and readable despite statement count.
 func CreateAnalysisSnapshot(ctx context.Context, client homeassistant.Client) *AnalysisSnapshot {
 	snapshot := &AnalysisSnapshot{
 		errors: make(map[string]error),

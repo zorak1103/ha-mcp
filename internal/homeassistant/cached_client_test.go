@@ -1,3 +1,4 @@
+//nolint:revive // Mock client methods intentionally ignore ctx parameters for testing.
 package homeassistant
 
 import (

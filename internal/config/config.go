@@ -105,6 +105,8 @@ type ServerConfig struct {
 
 // setupViper creates and configures a new viper instance with defaults and environment bindings.
 // This is the common setup used by all config loading functions.
+//
+//nolint:funlen // Configuration setup requires many defaults and bindings.
 func setupViper(configFile string) (*viper.Viper, error) {
 	loadDotEnv()
 
@@ -205,6 +207,8 @@ func BindFlags(v *viper.Viper, haURL, haToken string, port int) {
 
 // LoadWithViper loads configuration using a pre-configured viper instance.
 // This allows CLI flags to be bound before loading.
+//
+//nolint:funlen // Configuration loading requires many defaults and bindings.
 func LoadWithViper(v *viper.Viper, configFile string) (*Config, error) {
 	loadDotEnv()
 
