@@ -188,9 +188,9 @@ secret_detection:
 build:docker:
   when: never
   stage: build
-  image: docker:24
+  image: docker:29
   services:
-    - docker:24-dind
+    - docker:29-dind
   variables:
     DOCKER_TLS_CERTDIR: "/certs"
   before_script:
