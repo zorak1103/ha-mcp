@@ -145,14 +145,16 @@ func TestRegisterAllTools(t *testing.T) {
 		// Consolidated helper tools (manage_helper replaces 14 create_* tools)
 		"manage_helper",
 		"helper_action",
+		// Consolidated registry tools (get_registry replaces list_entity/device/area_registry)
+		"get_registry",
 		// Media
 		"browse_media",
 		// Statistics
 		"get_statistics",
 		// Lovelace
 		"get_lovelace_config",
-		// Targets
-		"get_triggers_for_target",
+		// Consolidated target tools (analyze_target replaces get_triggers/conditions/services_for_target)
+		"analyze_target",
 		// Config entries
 		"list_config_entries",
 		"get_config_entry",

@@ -1,0 +1,438 @@
+// Package handlers provides MCP tool handlers for Home Assistant operations.
+package handlers
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	"github.com/zorak1103/ha-mcp/internal/homeassistant"
+	"github.com/zorak1103/ha-mcp/internal/mcp"
+)
+
+// Target info type constants.
+const (
+	targetInfoTriggers   = "triggers"
+	targetInfoConditions = "conditions"
+	targetInfoServices   = "services"
+	targetInfoEntities   = "entities"
+	targetInfoAll        = "all"
+)
+
+// ConsolidatedTargetHandlers provides consolidated handlers for Home Assistant target operations.
+// This replaces the individual get_triggers_for_target, get_conditions_for_target,
+// get_services_for_target, and extract_from_target tools.
+type ConsolidatedTargetHandlers struct{}
+
+// NewConsolidatedTargetHandlers creates a new ConsolidatedTargetHandlers instance.
+func NewConsolidatedTargetHandlers() *ConsolidatedTargetHandlers {
+	return &ConsolidatedTargetHandlers{}
+}
+
+// RegisterTools registers the consolidated analyze_target tool.
+func (h *ConsolidatedTargetHandlers) RegisterTools(registry *mcp.Registry) {
+	registry.RegisterTool(h.analyzeTargetTool(), h.handleAnalyzeTarget)
+}
+
+// analyzeTargetTool returns the tool definition for the consolidated target analysis tool.
+func (h *ConsolidatedTargetHandlers) analyzeTargetTool() mcp.Tool {
+	return mcp.Tool{
+		Name:        "analyze_target",
+		Description: getAnalyzeTargetDescription(),
+		InputSchema: mcp.JSONSchema{
+			Type:       "object",
+			Properties: getAnalyzeTargetProperties(),
+			Required:   []string{"info"},
+		},
+	}
+}
+
+func getAnalyzeTargetDescription() string {
+	return `Analyze a target (entities, devices, areas, labels) for automation capabilities.
+
+Actions:
+- info=triggers: Get applicable automation triggers
+- info=conditions: Get applicable automation conditions
+- info=services: Get callable services
+- info=entities: Extract all referenced entities, devices, and areas
+- info=all: Get all of the above combined
+
+Examples:
+- Get triggers for a light: {"info": "triggers", "entity_id": ["light.living_room"]}
+- Get services for an area: {"info": "services", "area_id": ["living_room"]}
+- Get all info for a device: {"info": "all", "device_id": ["device_123"]}`
+}
+
+func getAnalyzeTargetProperties() map[string]mcp.JSONSchema {
+	return map[string]mcp.JSONSchema{
+		"info": {
+			Type:        "string",
+			Enum:        []string{targetInfoTriggers, targetInfoConditions, targetInfoServices, targetInfoEntities, targetInfoAll},
+			Description: "Type of information to retrieve: triggers, conditions, services, entities, or all",
+		},
+		"entity_id": {
+			Type:        "array",
+			Description: "List of entity IDs (e.g., ['light.living_room', 'switch.kitchen'])",
+			Items:       &mcp.JSONSchema{Type: "string"},
+		},
+		"device_id": {
+			Type:        "array",
+			Description: "List of device IDs",
+			Items:       &mcp.JSONSchema{Type: "string"},
+		},
+		"area_id": {
+			Type:        "array",
+			Description: "List of area IDs",
+			Items:       &mcp.JSONSchema{Type: "string"},
+		},
+		"label_id": {
+			Type:        "array",
+			Description: "List of label IDs",
+			Items:       &mcp.JSONSchema{Type: "string"},
+		},
+		"expand_group": {
+			Type:        "boolean",
+			Description: "When true (default), group entities are expanded to their members",
+		},
+	}
+}
+
+// handleAnalyzeTarget handles the consolidated analyze_target tool.
+func (h *ConsolidatedTargetHandlers) handleAnalyzeTarget(
+	ctx context.Context,
+	client homeassistant.Client,
+	args map[string]any,
+) (*mcp.ToolsCallResult, error) {
+	infoType, ok := args["info"].(string)
+	if !ok || infoType == "" {
+		return errorResult("info parameter is required"), nil
+	}
+
+	target, expandGroup, err := h.parseTargetParams(args)
+	if err != nil {
+		return errorResult(fmt.Sprintf("Invalid parameters: %v", err)), nil
+	}
+
+	switch infoType {
+	case targetInfoTriggers:
+		return h.handleTriggers(ctx, client, target, expandGroup)
+	case targetInfoConditions:
+		return h.handleConditions(ctx, client, target, expandGroup)
+	case targetInfoServices:
+		return h.handleServices(ctx, client, target, expandGroup)
+	case targetInfoEntities:
+		return h.handleEntities(ctx, client, target, expandGroup)
+	case targetInfoAll:
+		return h.handleAllInfo(ctx, client, target, expandGroup)
+	default:
+		return errorResult(fmt.Sprintf("Invalid info %q. Must be one of: triggers, conditions, services, entities, all", infoType)), nil
+	}
+}
+
+// parseTargetParams extracts target and expand_group from parameters.
+func (h *ConsolidatedTargetHandlers) parseTargetParams(params map[string]any) (homeassistant.Target, *bool, error) {
+	target := homeassistant.Target{
+		EntityID: h.extractStringArray(params, "entity_id"),
+		DeviceID: h.extractStringArray(params, "device_id"),
+		AreaID:   h.extractStringArray(params, "area_id"),
+		LabelID:  h.extractStringArray(params, "label_id"),
+	}
+
+	if len(target.EntityID) == 0 && len(target.DeviceID) == 0 &&
+		len(target.AreaID) == 0 && len(target.LabelID) == 0 {
+		return target, nil, fmt.Errorf("at least one of entity_id, device_id, area_id, or label_id is required")
+	}
+
+	var expandGroup *bool
+	if eg, ok := params["expand_group"]; ok {
+		if b, ok := eg.(bool); ok {
+			expandGroup = &b
+		}
+	}
+
+	return target, expandGroup, nil
+}
+
+// extractStringArray extracts a string array from parameters by key.
+func (h *ConsolidatedTargetHandlers) extractStringArray(params map[string]any, key string) []string {
+	value, ok := params[key]
+	if !ok {
+		return nil
+	}
+
+	arr, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+
+	result := make([]string, 0, len(arr))
+	for _, v := range arr {
+		if s, ok := v.(string); ok {
+			result = append(result, s)
+		}
+	}
+
+	return result
+}
+
+// handleTriggers handles info=triggers requests.
+func (h *ConsolidatedTargetHandlers) handleTriggers(
+	ctx context.Context,
+	client homeassistant.Client,
+	target homeassistant.Target,
+	expandGroup *bool,
+) (*mcp.ToolsCallResult, error) {
+	triggers, err := client.GetTriggersForTarget(ctx, target, expandGroup)
+	if err != nil {
+		return errorResult(fmt.Sprintf("Error getting triggers: %v", err)), nil
+	}
+
+	output, err := json.MarshalIndent(triggers, "", "  ")
+	if err != nil {
+		return errorResult(fmt.Sprintf("Error formatting response: %v", err)), nil
+	}
+
+	summary := fmt.Sprintf("Found %d applicable triggers", len(triggers))
+
+	return &mcp.ToolsCallResult{
+		Content: []mcp.ContentBlock{
+			mcp.NewTextContent(summary + "\n\n" + string(output)),
+		},
+	}, nil
+}
+
+// handleConditions handles info=conditions requests.
+func (h *ConsolidatedTargetHandlers) handleConditions(
+	ctx context.Context,
+	client homeassistant.Client,
+	target homeassistant.Target,
+	expandGroup *bool,
+) (*mcp.ToolsCallResult, error) {
+	conditions, err := client.GetConditionsForTarget(ctx, target, expandGroup)
+	if err != nil {
+		return errorResult(fmt.Sprintf("Error getting conditions: %v", err)), nil
+	}
+
+	output, err := json.MarshalIndent(conditions, "", "  ")
+	if err != nil {
+		return errorResult(fmt.Sprintf("Error formatting response: %v", err)), nil
+	}
+
+	summary := fmt.Sprintf("Found %d applicable conditions", len(conditions))
+
+	return &mcp.ToolsCallResult{
+		Content: []mcp.ContentBlock{
+			mcp.NewTextContent(summary + "\n\n" + string(output)),
+		},
+	}, nil
+}
+
+// handleServices handles info=services requests.
+func (h *ConsolidatedTargetHandlers) handleServices(
+	ctx context.Context,
+	client homeassistant.Client,
+	target homeassistant.Target,
+	expandGroup *bool,
+) (*mcp.ToolsCallResult, error) {
+	services, err := client.GetServicesForTarget(ctx, target, expandGroup)
+	if err != nil {
+		return errorResult(fmt.Sprintf("Error getting services: %v", err)), nil
+	}
+
+	output, err := json.MarshalIndent(services, "", "  ")
+	if err != nil {
+		return errorResult(fmt.Sprintf("Error formatting response: %v", err)), nil
+	}
+
+	summary := fmt.Sprintf("Found %d callable services", len(services))
+
+	return &mcp.ToolsCallResult{
+		Content: []mcp.ContentBlock{
+			mcp.NewTextContent(summary + "\n\n" + string(output)),
+		},
+	}, nil
+}
+
+// handleEntities handles info=entities requests.
+func (h *ConsolidatedTargetHandlers) handleEntities(
+	ctx context.Context,
+	client homeassistant.Client,
+	target homeassistant.Target,
+	expandGroup *bool,
+) (*mcp.ToolsCallResult, error) {
+	result, err := client.ExtractFromTarget(ctx, target, expandGroup)
+	if err != nil {
+		return errorResult(fmt.Sprintf("Error extracting entities: %v", err)), nil
+	}
+
+	output, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return errorResult(fmt.Sprintf("Error formatting response: %v", err)), nil
+	}
+
+	summary := fmt.Sprintf("Found %d entities, %d devices, %d areas",
+		len(result.ReferencedEntities),
+		len(result.ReferencedDevices),
+		len(result.ReferencedAreas))
+
+	return &mcp.ToolsCallResult{
+		Content: []mcp.ContentBlock{
+			mcp.NewTextContent(summary + "\n\n" + string(output)),
+		},
+	}, nil
+}
+
+// handleAllInfo handles info=all requests - returns all target analysis combined.
+func (h *ConsolidatedTargetHandlers) handleAllInfo(
+	ctx context.Context,
+	client homeassistant.Client,
+	target homeassistant.Target,
+	expandGroup *bool,
+) (*mcp.ToolsCallResult, error) {
+	var result strings.Builder
+
+	h.formatTriggersSection(ctx, client, target, expandGroup, &result)
+	h.formatConditionsSection(ctx, client, target, expandGroup, &result)
+	h.formatServicesSection(ctx, client, target, expandGroup, &result)
+	h.formatEntitiesSection(ctx, client, target, expandGroup, &result)
+
+	return &mcp.ToolsCallResult{
+		Content: []mcp.ContentBlock{
+			mcp.NewTextContent(result.String()),
+		},
+	}, nil
+}
+
+func (h *ConsolidatedTargetHandlers) formatTriggersSection(
+	ctx context.Context,
+	client homeassistant.Client,
+	target homeassistant.Target,
+	expandGroup *bool,
+	result *strings.Builder,
+) {
+	triggers, err := client.GetTriggersForTarget(ctx, target, expandGroup)
+	if err != nil {
+		fmt.Fprintf(result, "## Triggers\n\nError: %v\n\n", err)
+		return
+	}
+
+	fmt.Fprintf(result, "## Triggers (%d)\n\n", len(triggers))
+	for _, t := range triggers {
+		fmt.Fprintf(result, "- %s\n", t)
+	}
+	result.WriteString("\n")
+}
+
+func (h *ConsolidatedTargetHandlers) formatConditionsSection(
+	ctx context.Context,
+	client homeassistant.Client,
+	target homeassistant.Target,
+	expandGroup *bool,
+	result *strings.Builder,
+) {
+	conditions, err := client.GetConditionsForTarget(ctx, target, expandGroup)
+	if err != nil {
+		fmt.Fprintf(result, "## Conditions\n\nError: %v\n\n", err)
+		return
+	}
+
+	fmt.Fprintf(result, "## Conditions (%d)\n\n", len(conditions))
+	for _, c := range conditions {
+		fmt.Fprintf(result, "- %s\n", c)
+	}
+	result.WriteString("\n")
+}
+
+func (h *ConsolidatedTargetHandlers) formatServicesSection(
+	ctx context.Context,
+	client homeassistant.Client,
+	target homeassistant.Target,
+	expandGroup *bool,
+	result *strings.Builder,
+) {
+	services, err := client.GetServicesForTarget(ctx, target, expandGroup)
+	if err != nil {
+		fmt.Fprintf(result, "## Services\n\nError: %v\n\n", err)
+		return
+	}
+
+	fmt.Fprintf(result, "## Services (%d)\n\n", len(services))
+	for _, s := range services {
+		fmt.Fprintf(result, "- %s\n", s)
+	}
+	result.WriteString("\n")
+}
+
+func (h *ConsolidatedTargetHandlers) formatEntitiesSection(
+	ctx context.Context,
+	client homeassistant.Client,
+	target homeassistant.Target,
+	expandGroup *bool,
+	result *strings.Builder,
+) {
+	extracted, err := client.ExtractFromTarget(ctx, target, expandGroup)
+	if err != nil {
+		fmt.Fprintf(result, "## Entities\n\nError: %v\n\n", err)
+		return
+	}
+
+	fmt.Fprintf(result, "## Entities\n\n")
+	fmt.Fprintf(result, "Referenced entities (%d):\n", len(extracted.ReferencedEntities))
+	for _, e := range extracted.ReferencedEntities {
+		fmt.Fprintf(result, "- %s\n", e)
+	}
+	result.WriteString("\n")
+
+	if len(extracted.ReferencedDevices) > 0 {
+		fmt.Fprintf(result, "Referenced devices (%d):\n", len(extracted.ReferencedDevices))
+		for _, d := range extracted.ReferencedDevices {
+			fmt.Fprintf(result, "- %s\n", d)
+		}
+		result.WriteString("\n")
+	}
+
+	if len(extracted.ReferencedAreas) > 0 {
+		fmt.Fprintf(result, "Referenced areas (%d):\n", len(extracted.ReferencedAreas))
+		for _, a := range extracted.ReferencedAreas {
+			fmt.Fprintf(result, "- %s\n", a)
+		}
+		result.WriteString("\n")
+	}
+
+	h.formatMissingItems(extracted, result)
+}
+
+func (h *ConsolidatedTargetHandlers) formatMissingItems(
+	extracted *homeassistant.ExtractFromTargetResult,
+	result *strings.Builder,
+) {
+	hasMissing := len(extracted.MissingDevices) > 0 ||
+		len(extracted.MissingAreas) > 0 ||
+		len(extracted.MissingFloors) > 0 ||
+		len(extracted.MissingLabels) > 0
+
+	if !hasMissing {
+		return
+	}
+
+	result.WriteString("Missing references:\n")
+	if len(extracted.MissingDevices) > 0 {
+		fmt.Fprintf(result, "- Devices: %v\n", extracted.MissingDevices)
+	}
+	if len(extracted.MissingAreas) > 0 {
+		fmt.Fprintf(result, "- Areas: %v\n", extracted.MissingAreas)
+	}
+	if len(extracted.MissingFloors) > 0 {
+		fmt.Fprintf(result, "- Floors: %v\n", extracted.MissingFloors)
+	}
+	if len(extracted.MissingLabels) > 0 {
+		fmt.Fprintf(result, "- Labels: %v\n", extracted.MissingLabels)
+	}
+}
+
+// RegisterConsolidatedTargetTools registers the consolidated analyze_target tool.
+func RegisterConsolidatedTargetTools(registry *mcp.Registry) {
+	h := NewConsolidatedTargetHandlers()
+	h.RegisterTools(registry)
+}

@@ -406,9 +406,7 @@ Authorization: Bearer <your-ha-access-token>
 
 | Tool | Description |
 |------|-------------|
-| `list_entity_registry` | List all entities in the registry with metadata |
-| `list_device_registry` | List all devices with manufacturer, model info |
-| `list_area_registry` | List all areas/rooms defined in Home Assistant |
+| `get_registry` | Query registries (type: entities, devices, areas, all) with filters |
 | `list_config_entries` | List config entries (integrations/helpers metadata), optionally filtered by domain |
 | `get_config_entry` | Get a single config entry by entry ID |
 
@@ -517,10 +515,7 @@ Universal tool for runtime helper operations:
 
 | Tool | Description |
 |------|-------------|
-| `get_triggers_for_target` | Get applicable automation triggers for entities, devices, areas, or labels |
-| `get_conditions_for_target` | Get applicable automation conditions for entities, devices, areas, or labels |
-| `get_services_for_target` | Get applicable services for entities, devices, areas, or labels |
-| `extract_from_target` | Extract and resolve entities, devices, and areas from a target specification |
+| `analyze_target` | Analyze targets for automation capabilities (info: triggers, conditions, services, entities, all) |
 
 #### Service Tools
 
@@ -567,7 +562,7 @@ Universal tool for runtime helper operations:
 }
 ```
 
-#### List Entity Registry
+#### Query Registry
 
 ```json
 {
@@ -575,8 +570,11 @@ Universal tool for runtime helper operations:
   "id": 3,
   "method": "tools/call",
   "params": {
-    "name": "list_entity_registry",
-    "arguments": {}
+    "name": "get_registry",
+    "arguments": {
+      "type": "entities",
+      "domain": "light"
+    }
   }
 }
 ```
@@ -870,11 +868,13 @@ ha-mcp/
 │   │   ├── helpers_consolidated.go  # manage_helper and helper_action tools
 │   │   ├── scripts.go           # Consolidated manage_script tool
 │   │   ├── scenes.go            # Consolidated manage_scene tool
-│   │   ├── registry.go          # Registry tool handlers
+│   │   ├── registry.go          # Registry helper functions
+│   │   ├── registry_consolidated.go # Consolidated get_registry tool
 │   │   ├── media.go             # Media tool handlers
 │   │   ├── statistics.go        # Statistics tool handler
 │   │   ├── lovelace.go          # Lovelace tool handler
-│   │   ├── targets.go           # Target tool handlers
+│   │   ├── targets.go           # Target helper functions
+│   │   ├── targets_consolidated.go  # Consolidated analyze_target tool
 │   │   ├── services.go          # Service discovery handler
 │   │   ├── system.go            # System info handler
 │   │   ├── templates.go         # Template rendering handler

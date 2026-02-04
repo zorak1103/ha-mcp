@@ -1,0 +1,404 @@
+// Package handlers provides MCP tool handlers for Home Assistant operations.
+package handlers
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"sort"
+	"strings"
+
+	"github.com/zorak1103/ha-mcp/internal/homeassistant"
+	"github.com/zorak1103/ha-mcp/internal/mcp"
+)
+
+// Registry type constants.
+const (
+	registryTypeEntities = "entities"
+	registryTypeDevices  = "devices"
+	registryTypeAreas    = "areas"
+	registryTypeAll      = "all"
+)
+
+// ConsolidatedRegistryHandlers provides consolidated handlers for Home Assistant registry operations.
+// This replaces the individual list_entity_registry, list_device_registry, and list_area_registry tools.
+type ConsolidatedRegistryHandlers struct{}
+
+// NewConsolidatedRegistryHandlers creates a new ConsolidatedRegistryHandlers instance.
+func NewConsolidatedRegistryHandlers() *ConsolidatedRegistryHandlers {
+	return &ConsolidatedRegistryHandlers{}
+}
+
+// RegisterTools registers the consolidated get_registry tool.
+func (h *ConsolidatedRegistryHandlers) RegisterTools(registry *mcp.Registry) {
+	registry.RegisterTool(h.getRegistryTool(), h.handleGetRegistry)
+}
+
+// getRegistryTool returns the tool definition for the consolidated registry tool.
+func (h *ConsolidatedRegistryHandlers) getRegistryTool() mcp.Tool {
+	return mcp.Tool{
+		Name:        "get_registry",
+		Description: getRegistryDescription(),
+		InputSchema: mcp.JSONSchema{
+			Type:       "object",
+			Properties: getRegistryProperties(),
+			Required:   []string{"type"},
+		},
+	}
+}
+
+func getRegistryDescription() string {
+	return `Query Home Assistant registries (entities, devices, areas).
+
+Actions:
+- type=entities: List entity registry entries with optional filters (domain, platform, device_id, area_id)
+- type=devices: List device registry entries with optional filters (area_id, manufacturer, model)
+- type=areas: List all area registry entries
+- type=all: Get summary of all registries combined
+
+Examples:
+- Get all lights: {"type": "entities", "domain": "light"}
+- Get devices by manufacturer: {"type": "devices", "manufacturer": "Philips"}
+- Get all areas: {"type": "areas"}
+- Get full registry overview: {"type": "all"}`
+}
+
+func getRegistryProperties() map[string]mcp.JSONSchema {
+	return map[string]mcp.JSONSchema{
+		"type": {
+			Type:        "string",
+			Enum:        []string{registryTypeEntities, registryTypeDevices, registryTypeAreas, registryTypeAll},
+			Description: "Registry type to query: entities, devices, areas, or all",
+		},
+		"domain": {
+			Type:        "string",
+			Description: "Filter entities by domain (e.g., 'light', 'switch', 'sensor'). Only for type=entities",
+		},
+		"platform": {
+			Type:        "string",
+			Description: "Filter entities by platform/integration (e.g., 'hue', 'mqtt'). Only for type=entities",
+		},
+		"device_id": {
+			Type:        "string",
+			Description: "Filter entities by device ID. Only for type=entities",
+		},
+		"area_id": {
+			Type:        "string",
+			Description: "Filter by area ID. Works with type=entities and type=devices",
+		},
+		"manufacturer": {
+			Type:        "string",
+			Description: "Filter devices by manufacturer (case-insensitive, partial match). Only for type=devices",
+		},
+		"model": {
+			Type:        "string",
+			Description: "Filter devices by model (case-insensitive, partial match). Only for type=devices",
+		},
+		"verbose": {
+			Type:        "boolean",
+			Description: "If true, return full details. Default: false (compact output)",
+		},
+		"include_disabled": {
+			Type:        "boolean",
+			Description: "If true, include disabled entries. Default: false",
+		},
+		"limit": {
+			Type:        "integer",
+			Description: "Maximum number of entries to return (max 1000). Use with 'cursor' for pagination.",
+		},
+		"cursor": {
+			Type:        "string",
+			Description: "Pagination cursor from previous response to get next page",
+		},
+	}
+}
+
+// handleGetRegistry handles the consolidated get_registry tool.
+func (h *ConsolidatedRegistryHandlers) handleGetRegistry(
+	ctx context.Context,
+	client homeassistant.Client,
+	args map[string]any,
+) (*mcp.ToolsCallResult, error) {
+	registryType, ok := args["type"].(string)
+	if !ok || registryType == "" {
+		return errorResult("type parameter is required"), nil
+	}
+
+	switch registryType {
+	case registryTypeEntities:
+		return h.handleEntities(ctx, client, args)
+	case registryTypeDevices:
+		return h.handleDevices(ctx, client, args)
+	case registryTypeAreas:
+		return h.handleAreas(ctx, client)
+	case registryTypeAll:
+		return h.handleAll(ctx, client, args)
+	default:
+		return errorResult(fmt.Sprintf("Invalid type %q. Must be one of: entities, devices, areas, all", registryType)), nil
+	}
+}
+
+// handleEntities handles type=entities requests.
+func (h *ConsolidatedRegistryHandlers) handleEntities(
+	ctx context.Context,
+	client homeassistant.Client,
+	args map[string]any,
+) (*mcp.ToolsCallResult, error) {
+	entries, err := client.GetEntityRegistry(ctx)
+	if err != nil {
+		return errorResult(fmt.Sprintf("Error getting entity registry: %v", err)), nil
+	}
+
+	filter := newEntityRegistryFilterFromArgs(args)
+	filter.buildDeviceIDsInArea(ctx, client)
+	filtered := filter.filterEntityRegistry(entries)
+
+	sort.Slice(filtered, func(i, j int) bool {
+		return filtered[i].EntityID < filtered[j].EntityID
+	})
+
+	filtersMap := buildEntityRegistryFiltersMap(filter)
+	paginationParams, err := ParsePaginationParams(args, filtersMap)
+	if err != nil {
+		return errorResult(fmt.Sprintf("Error: %v", err)), nil
+	}
+
+	paginated := ApplyPagination(filtered, paginationParams)
+	verbose, _ := args["verbose"].(bool)
+	output, err := formatEntityRegistryOutput(paginated.Items, verbose)
+	if err != nil {
+		return errorResult(fmt.Sprintf("Error formatting response: %v", err)), nil
+	}
+
+	summary := BuildPaginationSummary(paginated.Pagination, "entities")
+	if !verbose {
+		summary += VerboseHint
+	}
+
+	response := buildPaginatedEntityRegistryResponse(paginated, output)
+
+	return &mcp.ToolsCallResult{
+		Content: []mcp.ContentBlock{
+			mcp.NewTextContent(summary + "\n\n" + response),
+		},
+	}, nil
+}
+
+// handleDevices handles type=devices requests.
+func (h *ConsolidatedRegistryHandlers) handleDevices(
+	ctx context.Context,
+	client homeassistant.Client,
+	args map[string]any,
+) (*mcp.ToolsCallResult, error) {
+	entries, err := client.GetDeviceRegistry(ctx)
+	if err != nil {
+		return errorResult(fmt.Sprintf("Error getting device registry: %v", err)), nil
+	}
+
+	filter := parseDeviceRegistryFilter(args)
+	filtered := filterDeviceRegistry(entries, filter)
+
+	sort.Slice(filtered, func(i, j int) bool {
+		return filtered[i].ID < filtered[j].ID
+	})
+
+	filtersMap := buildDeviceRegistryFiltersMap(filter)
+	paginationParams, err := ParsePaginationParams(args, filtersMap)
+	if err != nil {
+		return errorResult(fmt.Sprintf("Error: %v", err)), nil
+	}
+
+	paginated := ApplyPagination(filtered, paginationParams)
+	verbose, _ := args["verbose"].(bool)
+	output, err := formatDeviceRegistryOutput(paginated.Items, verbose)
+	if err != nil {
+		return errorResult(fmt.Sprintf("Error formatting response: %v", err)), nil
+	}
+
+	summary := BuildPaginationSummary(paginated.Pagination, "devices")
+	if !verbose {
+		summary += VerboseHint
+	}
+
+	response := buildPaginatedDeviceRegistryResponse(paginated, output)
+
+	return &mcp.ToolsCallResult{
+		Content: []mcp.ContentBlock{
+			mcp.NewTextContent(summary + "\n\n" + string(response)),
+		},
+	}, nil
+}
+
+// handleAreas handles type=areas requests.
+func (h *ConsolidatedRegistryHandlers) handleAreas(
+	ctx context.Context,
+	client homeassistant.Client,
+) (*mcp.ToolsCallResult, error) {
+	entries, err := client.GetAreaRegistry(ctx)
+	if err != nil {
+		return errorResult(fmt.Sprintf("Error getting area registry: %v", err)), nil
+	}
+
+	output, err := json.MarshalIndent(entries, "", "  ")
+	if err != nil {
+		return errorResult(fmt.Sprintf("Error formatting response: %v", err)), nil
+	}
+
+	summary := fmt.Sprintf("Found %d areas", len(entries))
+
+	return &mcp.ToolsCallResult{
+		Content: []mcp.ContentBlock{
+			mcp.NewTextContent(summary + "\n\n" + string(output)),
+		},
+	}, nil
+}
+
+// handleAll handles type=all requests - returns combined summary of all registries.
+func (h *ConsolidatedRegistryHandlers) handleAll(
+	ctx context.Context,
+	client homeassistant.Client,
+	args map[string]any,
+) (*mcp.ToolsCallResult, error) {
+	includeDisabled, _ := args["include_disabled"].(bool)
+	var result strings.Builder
+
+	h.formatEntitiesSummary(ctx, client, includeDisabled, &result)
+	h.formatDevicesSummary(ctx, client, includeDisabled, &result)
+	h.formatAreasSummary(ctx, client, &result)
+
+	return &mcp.ToolsCallResult{
+		Content: []mcp.ContentBlock{
+			mcp.NewTextContent(result.String()),
+		},
+	}, nil
+}
+
+func (h *ConsolidatedRegistryHandlers) formatEntitiesSummary(
+	ctx context.Context,
+	client homeassistant.Client,
+	includeDisabled bool,
+	result *strings.Builder,
+) {
+	entities, err := client.GetEntityRegistry(ctx)
+	if err != nil {
+		fmt.Fprintf(result, "Entities: Error - %v\n\n", err)
+		return
+	}
+
+	enabledCount := countEnabledEntities(entities, includeDisabled)
+	fmt.Fprintf(result, "## Entities\n\nTotal: %d", len(entities))
+	if !includeDisabled {
+		fmt.Fprintf(result, " (enabled: %d)", enabledCount)
+	}
+	result.WriteString("\n\n")
+
+	domainCounts := countEntitiesByDomain(entities, includeDisabled)
+	writeCountMap(result, "By domain:", domainCounts)
+}
+
+func (h *ConsolidatedRegistryHandlers) formatDevicesSummary(
+	ctx context.Context,
+	client homeassistant.Client,
+	includeDisabled bool,
+	result *strings.Builder,
+) {
+	devices, err := client.GetDeviceRegistry(ctx)
+	if err != nil {
+		fmt.Fprintf(result, "Devices: Error - %v\n\n", err)
+		return
+	}
+
+	enabledCount := countEnabledDevices(devices, includeDisabled)
+	fmt.Fprintf(result, "## Devices\n\nTotal: %d", len(devices))
+	if !includeDisabled {
+		fmt.Fprintf(result, " (enabled: %d)", enabledCount)
+	}
+	result.WriteString("\n\n")
+
+	manufacturerCounts := countDevicesByManufacturer(devices, includeDisabled)
+	writeCountMap(result, "By manufacturer:", manufacturerCounts)
+}
+
+func (h *ConsolidatedRegistryHandlers) formatAreasSummary(
+	ctx context.Context,
+	client homeassistant.Client,
+	result *strings.Builder,
+) {
+	areas, err := client.GetAreaRegistry(ctx)
+	if err != nil {
+		fmt.Fprintf(result, "Areas: Error - %v\n\n", err)
+		return
+	}
+
+	fmt.Fprintf(result, "## Areas\n\nTotal: %d\n\n", len(areas))
+	for _, a := range areas {
+		fmt.Fprintf(result, "- %s (%s)\n", a.Name, a.AreaID)
+	}
+}
+
+func countEnabledEntities(entities []homeassistant.EntityRegistryEntry, includeDisabled bool) int {
+	count := 0
+	for _, e := range entities {
+		if includeDisabled || e.DisabledBy == "" {
+			count++
+		}
+	}
+	return count
+}
+
+func countEntitiesByDomain(entities []homeassistant.EntityRegistryEntry, includeDisabled bool) map[string]int {
+	counts := make(map[string]int)
+	for _, e := range entities {
+		if !includeDisabled && e.DisabledBy != "" {
+			continue
+		}
+		domain := extractDomain(e.EntityID)
+		counts[domain]++
+	}
+	return counts
+}
+
+func countEnabledDevices(devices []homeassistant.DeviceRegistryEntry, includeDisabled bool) int {
+	count := 0
+	for _, d := range devices {
+		if includeDisabled || d.DisabledBy == "" {
+			count++
+		}
+	}
+	return count
+}
+
+func countDevicesByManufacturer(devices []homeassistant.DeviceRegistryEntry, includeDisabled bool) map[string]int {
+	counts := make(map[string]int)
+	for _, d := range devices {
+		if !includeDisabled && d.DisabledBy != "" {
+			continue
+		}
+		manufacturer := d.Manufacturer
+		if manufacturer == "" {
+			manufacturer = "(unknown)"
+		}
+		counts[manufacturer]++
+	}
+	return counts
+}
+
+func writeCountMap(result *strings.Builder, header string, counts map[string]int) {
+	var keys []string
+	for k := range counts {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	result.WriteString(header + "\n")
+	for _, k := range keys {
+		fmt.Fprintf(result, "- %s: %d\n", k, counts[k])
+	}
+	result.WriteString("\n")
+}
+
+// RegisterConsolidatedRegistryTools registers the consolidated get_registry tool.
+func RegisterConsolidatedRegistryTools(registry *mcp.Registry) {
+	h := NewConsolidatedRegistryHandlers()
+	h.RegisterTools(registry)
+}

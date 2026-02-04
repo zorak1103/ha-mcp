@@ -107,12 +107,16 @@ func RegisterAllTools(registry *mcp.Registry) {
 	// Replaces individual tools: create/delete/action for all 14 helper types
 	RegisterConsolidatedHelperTools(registry)
 
-	// Registry, media, and advanced handlers
-	RegisterRegistryTools(registry)
+	// Registry tools (consolidated: get_registry replaces list_entity/device/area_registry)
+	RegisterConsolidatedRegistryTools(registry)
+
+	// Media and advanced handlers
 	RegisterMediaTools(registry)
 	RegisterStatisticsTools(registry)
 	RegisterLovelaceTools(registry)
-	RegisterTargetTools(registry)
+
+	// Target tools (consolidated: analyze_target replaces get_triggers/conditions/services/extract_for_target)
+	RegisterConsolidatedTargetTools(registry)
 
 	// Analysis tools for entity dependency tracking
 	RegisterAnalysisTools(registry)
