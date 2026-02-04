@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zorak1103/ha-mcp/internal/handlers/formatter"
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
@@ -36,7 +37,7 @@ func (h *EntityHandlers) RegisterTools(registry *mcp.Registry) {
 func (h *EntityHandlers) getStatesTool() mcp.Tool {
 	return mcp.Tool{
 		Name:        "get_states",
-		Description: "Get all entity states from Home Assistant. By default returns a compact list with entity_id, state, and friendly_name. Use 'verbose' for full details including all attributes. Supports pagination via 'limit' and 'cursor' parameters.",
+		Description: "Get all entity states from Home Assistant. By default returns natural language format optimized for LLMs. Use 'format=json' for structured data. Use 'verbose' for full details. Supports pagination via 'limit' and 'cursor' parameters.",
 		InputSchema: mcp.JSONSchema{
 			Type:        "object",
 			Description: "Optional filters for entity states",
@@ -57,9 +58,14 @@ func (h *EntityHandlers) getStatesTool() mcp.Tool {
 					Type:        "string",
 					Description: "Filter by entity_id or friendly_name containing this string (case-insensitive)",
 				},
+				"format": {
+					Type:        "string",
+					Description: "Output format: 'natural' (default, human-readable LLM-optimized) or 'json' (structured data)",
+					Enum:        []string{"natural", "json"},
+				},
 				"verbose": {
 					Type:        "boolean",
-					Description: "If true, return full details (all attributes, timestamps, context). Default: false (compact output with entity_id, state, friendly_name only)",
+					Description: "If true, return full details. Default: false (compact output)",
 				},
 				"limit": {
 					Type:        "integer",
@@ -77,7 +83,7 @@ func (h *EntityHandlers) getStatesTool() mcp.Tool {
 func (h *EntityHandlers) getStateTool() mcp.Tool {
 	return mcp.Tool{
 		Name:        "get_state",
-		Description: "Get the state of a specific entity",
+		Description: "Get the state of a specific entity. By default returns natural language format optimized for LLMs. Use 'format=json' for structured data.",
 		InputSchema: mcp.JSONSchema{
 			Type:        "object",
 			Description: "Parameters for getting entity state",
@@ -85,6 +91,11 @@ func (h *EntityHandlers) getStateTool() mcp.Tool {
 				"entity_id": {
 					Type:        "string",
 					Description: "The entity ID (e.g., 'light.living_room')",
+				},
+				"format": {
+					Type:        "string",
+					Description: "Output format: 'natural' (default, human-readable LLM-optimized) or 'json' (structured data)",
+					Enum:        []string{"natural", "json"},
 				},
 			},
 			Required: []string{"entity_id"},
@@ -95,7 +106,7 @@ func (h *EntityHandlers) getStateTool() mcp.Tool {
 func (h *EntityHandlers) getHistoryTool() mcp.Tool {
 	return mcp.Tool{
 		Name:        "get_history",
-		Description: "Get historical state changes for an entity. By default returns compact output with state and timestamp. Use 'verbose' for full details.",
+		Description: "Get historical state changes for an entity. By default returns natural language format optimized for LLMs. Use 'format=json' for structured data. Use 'verbose' for full details.",
 		InputSchema: mcp.JSONSchema{
 			Type:        "object",
 			Description: "Parameters for getting entity history",
@@ -124,9 +135,14 @@ func (h *EntityHandlers) getHistoryTool() mcp.Tool {
 					Type:        "integer",
 					Description: "Maximum number of entries to return (most recent first). Default: all entries.",
 				},
+				"format": {
+					Type:        "string",
+					Description: "Output format: 'natural' (default, human-readable LLM-optimized) or 'json' (structured data)",
+					Enum:        []string{"natural", "json"},
+				},
 				"verbose": {
 					Type:        "boolean",
-					Description: "If true, return full details (all attributes). Default: false (compact output with state and timestamp only)",
+					Description: "If true, return full details. Default: false (compact output)",
 				},
 			},
 			Required: []string{"entity_id"},
@@ -176,6 +192,7 @@ type stateFilterParams struct {
 	stateFilter    string
 	stateNotFilter string
 	nameContains   string
+	format         formatter.Format
 	verbose        bool
 }
 
@@ -186,6 +203,7 @@ func parseStateFilterParams(args map[string]any) stateFilterParams {
 		stateFilter:    getStringArg(args, "state"),
 		stateNotFilter: getStringArg(args, "state_not"),
 		nameContains:   getStringArg(args, "name_contains"),
+		format:         formatter.ParseFormat(getStringArg(args, "format")),
 		verbose:        getBoolArg(args, "verbose"),
 	}
 }
@@ -298,6 +316,12 @@ func (h *EntityHandlers) handleGetStates(ctx context.Context, client homeassista
 	// Apply pagination
 	paginated := ApplyPagination(states, paginationParams)
 
+	// Use formatter based on format parameter
+	if filterParams.format == formatter.FormatNatural {
+		return h.formatStatesNatural(ctx, paginated, filterParams)
+	}
+
+	// JSON format (backward compatible)
 	output, err := formatStatesOutput(paginated.Items, filterParams.verbose)
 	if err != nil {
 		return &mcp.ToolsCallResult{
@@ -316,6 +340,36 @@ func (h *EntityHandlers) handleGetStates(ctx context.Context, client homeassista
 
 	return &mcp.ToolsCallResult{
 		Content: []mcp.ContentBlock{mcp.NewTextContent(summary + "\n\n" + string(response))},
+	}, nil
+}
+
+// formatStatesNatural formats states using natural language formatter.
+func (h *EntityHandlers) formatStatesNatural(ctx context.Context, paginated PaginatedResponse[homeassistant.Entity], params stateFilterParams) (*mcp.ToolsCallResult, error) {
+	f := formatter.NewNaturalFormatter()
+
+	opts := formatter.EntityListOptions{
+		Verbose:        params.verbose,
+		IncludeSummary: true,
+		GroupByDomain:  !params.verbose, // Group by domain in compact mode
+	}
+
+	output, err := f.FormatEntities(ctx, paginated.Items, opts)
+	if err != nil {
+		return &mcp.ToolsCallResult{
+			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error formatting states: %v", err))},
+			IsError: true,
+		}, nil
+	}
+
+	// Add pagination info if paginated
+	if paginated.Pagination.HasMore && paginated.Pagination.NextCursor != nil {
+		output += fmt.Sprintf("\n\n[Page %d of results. Use cursor='%s' for next page]",
+			(paginated.Pagination.Offset/paginated.Pagination.Limit)+1,
+			*paginated.Pagination.NextCursor)
+	}
+
+	return &mcp.ToolsCallResult{
+		Content: []mcp.ContentBlock{mcp.NewTextContent(output)},
 	}, nil
 }
 
@@ -375,7 +429,11 @@ func (h *EntityHandlers) handleGetState(ctx context.Context, client homeassistan
 		}, nil
 	}
 
-	output, err := json.MarshalIndent(state, "", "  ")
+	// Use formatter based on format parameter
+	format := formatter.ParseFormat(getStringArg(args, "format"))
+	f := formatter.New(format)
+
+	output, err := f.FormatEntity(ctx, *state)
 	if err != nil {
 		return &mcp.ToolsCallResult{
 			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error formatting state: %v", err))},
@@ -384,7 +442,7 @@ func (h *EntityHandlers) handleGetState(ctx context.Context, client homeassistan
 	}
 
 	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{mcp.NewTextContent(string(output))},
+		Content: []mcp.ContentBlock{mcp.NewTextContent(output)},
 	}, nil
 }
 
@@ -579,6 +637,7 @@ type historyParams struct {
 	endTime     time.Time
 	stateFilter string
 	limit       int
+	format      formatter.Format
 	verbose     bool
 }
 
@@ -607,6 +666,7 @@ func parseHistoryParams(args map[string]any) (*historyParams, error) {
 		limit = int(limitVal)
 	}
 
+	formatStr, _ := args["format"].(string)
 	verbose, _ := args["verbose"].(bool)
 
 	return &historyParams{
@@ -615,6 +675,7 @@ func parseHistoryParams(args map[string]any) (*historyParams, error) {
 		endTime:     endTime,
 		stateFilter: stateFilter,
 		limit:       limit,
+		format:      formatter.ParseFormat(formatStr),
 		verbose:     verbose,
 	}, nil
 }
@@ -738,6 +799,12 @@ func (h *EntityHandlers) handleGetHistory(ctx context.Context, client homeassist
 
 	result := processHistoryEntries(history, params.stateFilter, params.limit)
 
+	// Use formatter based on format parameter
+	if params.format == formatter.FormatNatural {
+		return h.formatHistoryNatural(ctx, params.entityID, result, params)
+	}
+
+	// JSON format (backward compatible)
 	output, err := formatHistoryOutput(result.entries, params.verbose)
 	if err != nil {
 		return &mcp.ToolsCallResult{
@@ -750,6 +817,42 @@ func (h *EntityHandlers) handleGetHistory(ctx context.Context, client homeassist
 
 	return &mcp.ToolsCallResult{
 		Content: []mcp.ContentBlock{mcp.NewTextContent(summary + "\n\n" + string(output))},
+	}, nil
+}
+
+// formatHistoryNatural formats history using natural language formatter.
+func (h *EntityHandlers) formatHistoryNatural(ctx context.Context, entityID string, result historyResult, params *historyParams) (*mcp.ToolsCallResult, error) {
+	f := formatter.NewNaturalFormatter()
+
+	opts := formatter.HistoryOptions{
+		Verbose: params.verbose,
+		Limit:   params.limit,
+	}
+	if opts.Limit == 0 {
+		opts.Limit = 10 // Default limit for verbose natural language output
+	}
+
+	output, err := f.FormatHistory(ctx, entityID, result.entries, opts)
+	if err != nil {
+		return &mcp.ToolsCallResult{
+			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error formatting history: %v", err))},
+			IsError: true,
+		}, nil
+	}
+
+	// Add filter info if filtered
+	if params.stateFilter != "" {
+		output += fmt.Sprintf(" (filtered by state='%s')", params.stateFilter)
+	}
+
+	// Add truncation notice if applicable
+	if result.totalCount > len(result.entries) {
+		output += fmt.Sprintf("\n\n[Showing %d of %d entries. Use limit parameter for more.]",
+			len(result.entries), result.totalCount)
+	}
+
+	return &mcp.ToolsCallResult{
+		Content: []mcp.ContentBlock{mcp.NewTextContent(output)},
 	}, nil
 }
 

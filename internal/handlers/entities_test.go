@@ -60,101 +60,101 @@ func TestHandleGetStates(t *testing.T) {
 	}{
 		{
 			name:            "no filters - compact output",
-			args:            map[string]any{},
+			args:            map[string]any{"format": "json"},
 			wantEntityCount: 4,
 			wantContains:    []string{"light.living_room", "Living Room Light", "switch.kitchen", "sensor.temperature"},
 			wantNotContains: []string{"brightness", "unit_of_measurement", "last_changed"},
 		},
 		{
 			name:            "domain filter - light only",
-			args:            map[string]any{"domain": "light"},
+			args:            map[string]any{"domain": "light", "format": "json"},
 			wantEntityCount: 2,
 			wantContains:    []string{"light.living_room", "light.bedroom"},
 			wantNotContains: []string{"switch.kitchen", "sensor.temperature"},
 		},
 		{
 			name:            "domain filter - switch only",
-			args:            map[string]any{"domain": "switch"},
+			args:            map[string]any{"domain": "switch", "format": "json"},
 			wantEntityCount: 1,
 			wantContains:    []string{"switch.kitchen", "Kitchen Switch"},
 			wantNotContains: []string{"light.living_room", "sensor.temperature"},
 		},
 		{
 			name:            "state filter - on only",
-			args:            map[string]any{"state": "on"},
+			args:            map[string]any{"state": "on", "format": "json"},
 			wantEntityCount: 2,
 			wantContains:    []string{"light.living_room", "switch.kitchen"},
 			wantNotContains: []string{"light.bedroom"},
 		},
 		{
 			name:            "state filter - off only",
-			args:            map[string]any{"state": "off"},
+			args:            map[string]any{"state": "off", "format": "json"},
 			wantEntityCount: 1,
 			wantContains:    []string{"light.bedroom"},
 			wantNotContains: []string{"light.living_room", "switch.kitchen", "sensor.temperature"},
 		},
 		{
 			name:            "state_not filter - exclude off",
-			args:            map[string]any{"state_not": "off"},
+			args:            map[string]any{"state_not": "off", "format": "json"},
 			wantEntityCount: 3,
 			wantContains:    []string{"light.living_room", "switch.kitchen", "sensor.temperature"},
 			wantNotContains: []string{"light.bedroom"},
 		},
 		{
 			name:            "name_contains filter - by entity_id",
-			args:            map[string]any{"name_contains": "living"},
+			args:            map[string]any{"name_contains": "living", "format": "json"},
 			wantEntityCount: 1,
 			wantContains:    []string{"light.living_room"},
 			wantNotContains: []string{"light.bedroom", "switch.kitchen"},
 		},
 		{
 			name:            "name_contains filter - by friendly_name",
-			args:            map[string]any{"name_contains": "kitchen"},
+			args:            map[string]any{"name_contains": "kitchen", "format": "json"},
 			wantEntityCount: 1,
 			wantContains:    []string{"switch.kitchen", "Kitchen Switch"},
 			wantNotContains: []string{"light.living_room"},
 		},
 		{
 			name:            "name_contains filter - case insensitive",
-			args:            map[string]any{"name_contains": "BEDROOM"},
+			args:            map[string]any{"name_contains": "BEDROOM", "format": "json"},
 			wantEntityCount: 1,
 			wantContains:    []string{"light.bedroom"},
 		},
 		{
 			name:            "combined filters - domain and state",
-			args:            map[string]any{"domain": "light", "state": "on"},
+			args:            map[string]any{"domain": "light", "state": "on", "format": "json"},
 			wantEntityCount: 1,
 			wantContains:    []string{"light.living_room"},
 			wantNotContains: []string{"light.bedroom", "switch.kitchen"},
 		},
 		{
 			name:            "verbose mode includes all attributes",
-			args:            map[string]any{"verbose": true, "domain": "light"},
+			args:            map[string]any{"verbose": true, "domain": "light", "format": "json"},
 			wantEntityCount: 2,
 			wantContains:    []string{"brightness", "255", "attributes"},
 		},
 		{
 			name:            "verbose mode includes timestamps",
-			args:            map[string]any{"verbose": true, "domain": "sensor"},
+			args:            map[string]any{"verbose": true, "domain": "sensor", "format": "json"},
 			wantEntityCount: 1,
 			wantContains:    []string{"unit_of_measurement", "°C", "last_changed"},
 		},
 		{
 			name:            "compact mode shows state",
-			args:            map[string]any{"domain": "light"},
+			args:            map[string]any{"domain": "light", "format": "json"},
 			wantEntityCount: 2,
 			wantContains:    []string{`"state": "on"`, `"state": "off"`},
 		},
 		{
 			name:            "empty result after filtering - no matches",
-			args:            map[string]any{"domain": "nonexistent"},
+			args:            map[string]any{"domain": "nonexistent", "format": "json"},
 			wantEntityCount: 0,
 			wantContains:    []string{"Found 0 entities"},
 			wantNotContains: []string{"light.living_room", "switch.kitchen"},
 		},
 		{
 			name:            "all filters combined",
-			args:            map[string]any{"domain": "light", "state": "on", "state_not": "off", "name_contains": "living"},
+			args:            map[string]any{"domain": "light", "state": "on", "state_not": "off", "name_contains": "living", "format": "json"},
 			wantEntityCount: 1,
 			wantContains:    []string{"light.living_room", "Living Room Light"},
 			wantNotContains: []string{"light.bedroom", "switch.kitchen", "sensor.temperature"},
@@ -308,7 +308,7 @@ func TestHandleGetState(t *testing.T) {
 	}{
 		{
 			name: "success - returns entity state",
-			args: map[string]any{"entity_id": "light.living_room"},
+			args: map[string]any{"entity_id": "light.living_room", "format": "json"},
 			setupMock: func(m *UniversalMockClient) {
 				m.GetStateFn = func(_ context.Context, _ string) (*homeassistant.Entity, error) {
 					return testEntityData, nil
@@ -407,7 +407,7 @@ func TestHandleGetHistory(t *testing.T) {
 	}{
 		{
 			name: "success - basic history retrieval",
-			args: map[string]any{"entity_id": "sensor.temperature"},
+			args: map[string]any{"entity_id": "sensor.temperature", "format": "json"},
 			setupMock: func(m *UniversalMockClient) {
 				m.GetHistoryFn = func(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
 					return testHistory, nil
@@ -418,7 +418,7 @@ func TestHandleGetHistory(t *testing.T) {
 		},
 		{
 			name: "success - with hours parameter",
-			args: map[string]any{"entity_id": "sensor.temperature", "hours": float64(6)},
+			args: map[string]any{"entity_id": "sensor.temperature", "hours": float64(6), "format": "json"},
 			setupMock: func(m *UniversalMockClient) {
 				m.GetHistoryFn = func(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
 					return testHistory, nil
@@ -429,7 +429,7 @@ func TestHandleGetHistory(t *testing.T) {
 		},
 		{
 			name: "success - with state filter",
-			args: map[string]any{"entity_id": "sensor.temperature", "state": "22.0"},
+			args: map[string]any{"entity_id": "sensor.temperature", "state": "22.0", "format": "json"},
 			setupMock: func(m *UniversalMockClient) {
 				m.GetHistoryFn = func(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
 					return testHistory, nil
@@ -441,7 +441,7 @@ func TestHandleGetHistory(t *testing.T) {
 		},
 		{
 			name: "success - with limit",
-			args: map[string]any{"entity_id": "sensor.temperature", "limit": float64(2)},
+			args: map[string]any{"entity_id": "sensor.temperature", "limit": float64(2), "format": "json"},
 			setupMock: func(m *UniversalMockClient) {
 				m.GetHistoryFn = func(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
 					return testHistory, nil
@@ -453,7 +453,7 @@ func TestHandleGetHistory(t *testing.T) {
 		},
 		{
 			name: "success - verbose mode",
-			args: map[string]any{"entity_id": "sensor.temperature", "verbose": true},
+			args: map[string]any{"entity_id": "sensor.temperature", "verbose": true, "format": "json"},
 			setupMock: func(m *UniversalMockClient) {
 				m.GetHistoryFn = func(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
 					return testHistory, nil
@@ -464,7 +464,7 @@ func TestHandleGetHistory(t *testing.T) {
 		},
 		{
 			name: "success - compact mode shows state and timestamp",
-			args: map[string]any{"entity_id": "sensor.temperature"},
+			args: map[string]any{"entity_id": "sensor.temperature", "format": "json"},
 			setupMock: func(m *UniversalMockClient) {
 				m.GetHistoryFn = func(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
 					return testHistory, nil
@@ -523,6 +523,7 @@ func TestHandleGetHistory(t *testing.T) {
 			args: map[string]any{
 				"entity_id":  "sensor.temperature",
 				"start_time": now.Add(-12 * time.Hour).Format(time.RFC3339),
+				"format":     "json",
 			},
 			setupMock: func(m *UniversalMockClient) {
 				m.GetHistoryFn = func(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
@@ -537,6 +538,7 @@ func TestHandleGetHistory(t *testing.T) {
 			args: map[string]any{
 				"entity_id": "sensor.temperature",
 				"end_time":  now.Format(time.RFC3339),
+				"format":    "json",
 			},
 			setupMock: func(m *UniversalMockClient) {
 				m.GetHistoryFn = func(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
@@ -548,7 +550,7 @@ func TestHandleGetHistory(t *testing.T) {
 		},
 		{
 			name: "success - empty history",
-			args: map[string]any{"entity_id": "sensor.temperature"},
+			args: map[string]any{"entity_id": "sensor.temperature", "format": "json"},
 			setupMock: func(m *UniversalMockClient) {
 				m.GetHistoryFn = func(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
 					return [][]homeassistant.HistoryEntry{}, nil
@@ -563,6 +565,7 @@ func TestHandleGetHistory(t *testing.T) {
 				"entity_id":  "sensor.temperature",
 				"hours":      float64(1),
 				"start_time": now.Add(-48 * time.Hour).Format(time.RFC3339), // should be ignored
+				"format":     "json",
 			},
 			setupMock: func(m *UniversalMockClient) {
 				m.GetHistoryFn = func(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
@@ -578,6 +581,7 @@ func TestHandleGetHistory(t *testing.T) {
 				"entity_id": "sensor.temperature",
 				"state":     "22.0",
 				"limit":     float64(1),
+				"format":    "json",
 			},
 			setupMock: func(m *UniversalMockClient) {
 				m.GetHistoryFn = func(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
@@ -593,6 +597,7 @@ func TestHandleGetHistory(t *testing.T) {
 			args: map[string]any{
 				"entity_id": "sensor.temperature",
 				"limit":     float64(100),
+				"format":    "json",
 			},
 			setupMock: func(m *UniversalMockClient) {
 				m.GetHistoryFn = func(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
