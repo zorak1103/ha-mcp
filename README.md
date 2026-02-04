@@ -18,7 +18,7 @@ A Model Context Protocol (MCP) server that provides AI assistants with access to
 - **Entity Management**: Read and control all Home Assistant entities
 - **Registry Access**: Query entity, device, and area registries
 - **Automation CRUD**: Create, read, update, and delete automations (via REST API)
-- **Helper Management**: Full support for WebSocket-based helpers (input_*, counter, timer, schedule)
+- **Helper Management**: Full support for all 14 helper types via consolidated `manage_helper` and `helper_action` tools
 - **Script & Scene Control**: Full CRUD operations for scripts and scenes (via REST API)
 - **Service Calls**: Execute any Home Assistant service
 - **History & Statistics**: Query entity state history and recorder statistics
@@ -425,132 +425,48 @@ Authorization: Bearer <your-ha-access-token>
 
 #### Helper Tools
 
-ha-mcp provides comprehensive support for all 14 Home Assistant helper types. Each helper type has its own dedicated tools.
-
-##### Generic Helper Tools
+ha-mcp provides comprehensive support for all 14 Home Assistant helper types through two consolidated tools.
 
 | Tool | Description |
 |------|-------------|
 | `list_helpers` | List all helpers across all types |
+| `manage_helper` | Create, delete, or get details for any helper type |
+| `helper_action` | Execute runtime actions (toggle, set, increment, start, etc.) |
 
-##### Input Boolean
+##### manage_helper
 
-| Tool | Description |
-|------|-------------|
-| `create_input_boolean` | Create an input_boolean toggle |
-| `delete_input_boolean` | Delete an input_boolean |
-| `toggle_input_boolean` | Toggle an input_boolean on/off |
+Universal tool for helper lifecycle management:
 
-##### Input Number
+| Action | Description |
+|--------|-------------|
+| `create` | Create a new helper (requires `type`, `id`, `name`) |
+| `delete` | Delete an existing helper (requires `entity_id`) |
+| `get_details` | Get detailed configuration (requires `entity_id`, schedule only) |
 
-| Tool | Description |
-|------|-------------|
-| `create_input_number` | Create an input_number with min/max/step |
-| `delete_input_number` | Delete an input_number |
-| `set_input_number_value` | Set the value of an input_number |
+**Supported helper types:** `input_boolean`, `input_number`, `input_text`, `input_select`, `input_datetime`, `input_button`, `counter`, `timer`, `schedule`, `group`, `template_sensor`, `template_binary_sensor`, `threshold`, `derivative`, `integral`
 
-##### Input Text
+##### helper_action
 
-| Tool | Description |
-|------|-------------|
-| `create_input_text` | Create an input_text field |
-| `delete_input_text` | Delete an input_text |
-| `set_input_text_value` | Set the value of an input_text |
+Universal tool for runtime helper operations:
 
-##### Input Select
-
-| Tool | Description |
-|------|-------------|
-| `create_input_select` | Create an input_select dropdown |
-| `delete_input_select` | Delete an input_select |
-| `select_option` | Select an option from the dropdown |
-| `set_options` | Update the available options |
-
-##### Input Datetime
-
-| Tool | Description |
-|------|-------------|
-| `create_input_datetime` | Create an input_datetime picker |
-| `delete_input_datetime` | Delete an input_datetime |
-| `set_input_datetime` | Set the date/time value |
-
-##### Input Button
-
-| Tool | Description |
-|------|-------------|
-| `create_input_button` | Create an input_button |
-| `delete_input_button` | Delete an input_button |
-| `press_input_button` | Press/trigger the button |
-
-##### Counter
-
-| Tool | Description |
-|------|-------------|
-| `create_counter` | Create a counter with initial/step/min/max |
-| `delete_counter` | Delete a counter |
-| `increment_counter` | Increment the counter by step |
-| `decrement_counter` | Decrement the counter by step |
-| `reset_counter` | Reset the counter to initial value |
-| `set_counter_value` | Set the counter to a specific value |
-
-##### Timer
-
-| Tool | Description |
-|------|-------------|
-| `create_timer` | Create a timer with duration |
-| `delete_timer` | Delete a timer |
-| `start_timer` | Start the timer (optionally with duration) |
-| `pause_timer` | Pause a running timer |
-| `cancel_timer` | Cancel the timer |
-| `finish_timer` | Finish the timer immediately |
-| `change_timer` | Change duration of running timer |
-
-##### Schedule
-
-| Tool | Description |
-|------|-------------|
-| `create_schedule` | Create a weekly schedule with time blocks |
-| `delete_schedule` | Delete a schedule |
-| `reload_schedule` | Reload schedule from configuration |
-
-##### Group
-
-| Tool | Description |
-|------|-------------|
-| `create_group` | Create a group of entities |
-| `delete_group` | Delete a group |
-| `set_group_entities` | Add or remove entities from group |
-| `reload_group` | Reload group from configuration |
-
-##### Template (Sensor/Binary Sensor)
-
-| Tool | Description |
-|------|-------------|
-| `create_template_sensor` | Create a template sensor with Jinja2 state template |
-| `create_template_binary_sensor` | Create a template binary sensor |
-| `delete_template_helper` | Delete a template sensor/binary sensor |
-
-##### Threshold
-
-| Tool | Description |
-|------|-------------|
-| `create_threshold` | Create a threshold binary sensor from a source sensor |
-| `delete_threshold` | Delete a threshold sensor |
-
-##### Derivative
-
-| Tool | Description |
-|------|-------------|
-| `create_derivative` | Create a derivative sensor (rate of change) |
-| `delete_derivative` | Delete a derivative sensor |
-
-##### Integral (Integration)
-
-| Tool | Description |
-|------|-------------|
-| `create_integral` | Create an integral sensor (Riemann sum) |
-| `delete_integral` | Delete an integral sensor |
-| `reset_integral` | Reset the integral value to zero |
+| Action | Applicable To | Description |
+|--------|---------------|-------------|
+| `toggle` | input_boolean | Toggle on/off |
+| `set` | input_number, input_text, input_datetime, counter | Set value |
+| `increment` | counter | Increment by step |
+| `decrement` | counter | Decrement by step |
+| `reset` | counter, integral | Reset to initial/zero |
+| `start` | timer | Start timer (optional duration) |
+| `pause` | timer | Pause running timer |
+| `cancel` | timer | Cancel timer |
+| `finish` | timer | Finish immediately |
+| `change` | timer | Change duration while running |
+| `press` | input_button | Press/trigger button |
+| `select` | input_select | Select an option |
+| `set_options` | input_select | Update available options |
+| `reload` | schedule, group | Reload from configuration |
+| `add_entities` | group | Add entities to group |
+| `remove_entities` | group | Remove entities from group |
 
 #### Script Tools
 
@@ -965,7 +881,8 @@ ha-mcp/
 │   │   ├── analysis_snapshot.go # Parallel data fetching for analysis
 │   │   ├── entities.go          # Entity tool handlers
 │   │   ├── automations.go       # Automation tool handlers
-│   │   ├── helpers.go           # Helper tool handlers
+│   │   ├── helpers.go           # list_helpers tool handler
+│   │   ├── helpers_consolidated.go  # manage_helper and helper_action tools
 │   │   ├── scripts.go           # Script tool handlers
 │   │   ├── scenes.go            # Scene tool handlers
 │   │   ├── registry.go          # Registry tool handlers
@@ -997,7 +914,7 @@ ha-mcp/
 
 ha-mcp uses a hybrid approach combining WebSocket and REST APIs:
 
-- **WebSocket (primary)**: Used for most operations including state queries, service calls, helper management (input_*, counter, timer, schedule), and registry access
+- **WebSocket (primary)**: Used for most operations including state queries, service calls, helper management (via `manage_helper`/`helper_action`), and registry access
 - **REST API**: Used for automation/script/scene CRUD operations, template rendering, logbook, and config validation
 
 ```
@@ -1012,7 +929,7 @@ ha-mcp uses a hybrid approach combining WebSocket and REST APIs:
                            │ WebSocket (primary)                   │ REST API
                            │ ws://host/api/websocket               │ http://host/api/...
                            │ - State queries, service calls        │ - Automation CRUD
-                           │ - Helper CRUD (input_*, counter...)   │ - Script CRUD
+                           │ - Helper CRUD (manage_helper)         │ - Script CRUD
                            │ - Registry access                     │ - Scene CRUD
                            │                                       │
                            └───────────────┬───────────────────────┘
