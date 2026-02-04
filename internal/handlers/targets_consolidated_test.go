@@ -409,3 +409,148 @@ func TestRegisterConsolidatedTargetTools(t *testing.T) {
 		t.Errorf("Tool name = %q, want %q", tools[0].Name, "analyze_target")
 	}
 }
+
+func TestConsolidatedTargetHandlers_AnalyzeTargetTool_HasFormatParameter(t *testing.T) {
+	t.Parallel()
+
+	h := NewConsolidatedTargetHandlers()
+	tool := h.analyzeTargetTool()
+
+	prop, ok := tool.InputSchema.Properties["format"]
+	if !ok {
+		t.Fatal("format property missing")
+	}
+
+	if len(prop.Enum) != 2 {
+		t.Errorf("format enum has %d values, want 2 (natural, json)", len(prop.Enum))
+	}
+}
+
+func TestConsolidatedTargetHandlers_HandleAnalyzeTarget_Triggers_FormatJSON(t *testing.T) {
+	t.Parallel()
+
+	h := NewConsolidatedTargetHandlers()
+	client := &mockConsolidatedTargetsClient{
+		triggers: []string{"state", "numeric_state"},
+	}
+
+	result, err := h.handleAnalyzeTarget(context.Background(), client, map[string]any{
+		"info":      "triggers",
+		"entity_id": []any{"light.living_room"},
+		"format":    "json",
+	})
+	if err != nil {
+		t.Fatalf("handleAnalyzeTarget() error = %v", err)
+	}
+
+	if result.IsError {
+		t.Fatalf("handleAnalyzeTarget() returned error: %v", result.Content)
+	}
+
+	content := result.Content[0].Text
+
+	// JSON format should contain quoted strings
+	if !strings.Contains(content, `"state"`) {
+		t.Errorf("Expected JSON output to contain quoted trigger name, got: %s", content[:min(500, len(content))])
+	}
+}
+
+func TestConsolidatedTargetHandlers_HandleAnalyzeTarget_Triggers_FormatNatural(t *testing.T) {
+	t.Parallel()
+
+	h := NewConsolidatedTargetHandlers()
+	client := &mockConsolidatedTargetsClient{
+		triggers: []string{"state", "numeric_state"},
+	}
+
+	result, err := h.handleAnalyzeTarget(context.Background(), client, map[string]any{
+		"info":      "triggers",
+		"entity_id": []any{"light.living_room"},
+		"format":    "natural",
+	})
+	if err != nil {
+		t.Fatalf("handleAnalyzeTarget() error = %v", err)
+	}
+
+	if result.IsError {
+		t.Fatalf("handleAnalyzeTarget() returned error: %v", result.Content)
+	}
+
+	content := result.Content[0].Text
+
+	// Natural format should contain count summary
+	if !strings.Contains(content, "2 applicable triggers") {
+		t.Errorf("Expected natural output to contain count summary, got: %s", content[:min(500, len(content))])
+	}
+}
+
+func TestConsolidatedTargetHandlers_HandleAnalyzeTarget_Entities_FormatJSON(t *testing.T) {
+	t.Parallel()
+
+	h := NewConsolidatedTargetHandlers()
+	client := &mockConsolidatedTargetsClient{
+		extract: &homeassistant.ExtractFromTargetResult{
+			ReferencedEntities: []string{"light.living_room"},
+		},
+	}
+
+	result, err := h.handleAnalyzeTarget(context.Background(), client, map[string]any{
+		"info":      "entities",
+		"entity_id": []any{"light.living_room"},
+		"format":    "json",
+	})
+	if err != nil {
+		t.Fatalf("handleAnalyzeTarget() error = %v", err)
+	}
+
+	if result.IsError {
+		t.Fatalf("handleAnalyzeTarget() returned error: %v", result.Content)
+	}
+
+	content := result.Content[0].Text
+
+	// JSON format should contain referenced_entities JSON field
+	if !strings.Contains(content, `"referenced_entities"`) {
+		t.Errorf("Expected JSON output to contain referenced_entities field, got: %s", content[:min(500, len(content))])
+	}
+}
+
+func TestConsolidatedTargetHandlers_HandleAnalyzeTarget_All_FormatJSON(t *testing.T) {
+	t.Parallel()
+
+	h := NewConsolidatedTargetHandlers()
+	client := &mockConsolidatedTargetsClient{
+		triggers:   []string{"state"},
+		conditions: []string{"state"},
+		services:   []string{"light.turn_on"},
+		extract: &homeassistant.ExtractFromTargetResult{
+			ReferencedEntities: []string{"light.living_room"},
+		},
+	}
+
+	result, err := h.handleAnalyzeTarget(context.Background(), client, map[string]any{
+		"info":      "all",
+		"entity_id": []any{"light.living_room"},
+		"format":    "json",
+	})
+	if err != nil {
+		t.Fatalf("handleAnalyzeTarget() error = %v", err)
+	}
+
+	if result.IsError {
+		t.Fatalf("handleAnalyzeTarget() returned error: %v", result.Content)
+	}
+
+	content := result.Content[0].Text
+
+	// JSON format should contain all JSON fields
+	if !strings.Contains(content, `"triggers"`) {
+		t.Errorf("Expected JSON output to contain triggers field, got: %s", content[:min(500, len(content))])
+	}
+	if !strings.Contains(content, `"conditions"`) {
+		t.Errorf("Expected JSON output to contain conditions field, got: %s", content[:min(500, len(content))])
+	}
+	if !strings.Contains(content, `"services"`) {
+		t.Errorf("Expected JSON output to contain services field, got: %s", content[:min(500, len(content))])
+	}
+}

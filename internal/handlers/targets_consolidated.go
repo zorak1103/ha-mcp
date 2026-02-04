@@ -3,10 +3,10 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
+	"github.com/zorak1103/ha-mcp/internal/handlers/formatter"
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
@@ -71,6 +71,11 @@ func getAnalyzeTargetProperties() map[string]mcp.JSONSchema {
 			Enum:        []string{targetInfoTriggers, targetInfoConditions, targetInfoServices, targetInfoEntities, targetInfoAll},
 			Description: "Type of information to retrieve: triggers, conditions, services, entities, or all",
 		},
+		"format": {
+			Type:        "string",
+			Enum:        []string{"natural", "json"},
+			Description: "Output format: 'natural' for LLM-optimized human-readable output (default), 'json' for structured JSON",
+		},
 		"entity_id": {
 			Type:        "array",
 			Description: "List of entity IDs (e.g., ['light.living_room', 'switch.kitchen'])",
@@ -114,17 +119,21 @@ func (h *ConsolidatedTargetHandlers) handleAnalyzeTarget(
 		return errorResult(fmt.Sprintf("Invalid parameters: %v", err)), nil
 	}
 
+	// Parse format parameter
+	formatStr, _ := args["format"].(string)
+	format := formatter.ParseFormat(formatStr)
+
 	switch infoType {
 	case targetInfoTriggers:
-		return h.handleTriggers(ctx, client, target, expandGroup)
+		return h.handleTriggers(ctx, client, target, expandGroup, format)
 	case targetInfoConditions:
-		return h.handleConditions(ctx, client, target, expandGroup)
+		return h.handleConditions(ctx, client, target, expandGroup, format)
 	case targetInfoServices:
-		return h.handleServices(ctx, client, target, expandGroup)
+		return h.handleServices(ctx, client, target, expandGroup, format)
 	case targetInfoEntities:
-		return h.handleEntities(ctx, client, target, expandGroup)
+		return h.handleTargetEntities(ctx, client, target, expandGroup, format)
 	case targetInfoAll:
-		return h.handleAllInfo(ctx, client, target, expandGroup)
+		return h.handleAllInfo(ctx, client, target, expandGroup, format)
 	default:
 		return errorResult(fmt.Sprintf("Invalid info %q. Must be one of: triggers, conditions, services, entities, all", infoType)), nil
 	}
@@ -182,22 +191,22 @@ func (h *ConsolidatedTargetHandlers) handleTriggers(
 	client homeassistant.Client,
 	target homeassistant.Target,
 	expandGroup *bool,
+	format formatter.Format,
 ) (*mcp.ToolsCallResult, error) {
 	triggers, err := client.GetTriggersForTarget(ctx, target, expandGroup)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Error getting triggers: %v", err)), nil
 	}
 
-	output, err := json.MarshalIndent(triggers, "", "  ")
+	f := formatter.NewTargetFormatter(format)
+	output, err := f.FormatTriggers(ctx, triggers)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Error formatting response: %v", err)), nil
 	}
 
-	summary := fmt.Sprintf("Found %d applicable triggers", len(triggers))
-
 	return &mcp.ToolsCallResult{
 		Content: []mcp.ContentBlock{
-			mcp.NewTextContent(summary + "\n\n" + string(output)),
+			mcp.NewTextContent(output),
 		},
 	}, nil
 }
@@ -208,22 +217,22 @@ func (h *ConsolidatedTargetHandlers) handleConditions(
 	client homeassistant.Client,
 	target homeassistant.Target,
 	expandGroup *bool,
+	format formatter.Format,
 ) (*mcp.ToolsCallResult, error) {
 	conditions, err := client.GetConditionsForTarget(ctx, target, expandGroup)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Error getting conditions: %v", err)), nil
 	}
 
-	output, err := json.MarshalIndent(conditions, "", "  ")
+	f := formatter.NewTargetFormatter(format)
+	output, err := f.FormatConditions(ctx, conditions)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Error formatting response: %v", err)), nil
 	}
 
-	summary := fmt.Sprintf("Found %d applicable conditions", len(conditions))
-
 	return &mcp.ToolsCallResult{
 		Content: []mcp.ContentBlock{
-			mcp.NewTextContent(summary + "\n\n" + string(output)),
+			mcp.NewTextContent(output),
 		},
 	}, nil
 }
@@ -234,51 +243,48 @@ func (h *ConsolidatedTargetHandlers) handleServices(
 	client homeassistant.Client,
 	target homeassistant.Target,
 	expandGroup *bool,
+	format formatter.Format,
 ) (*mcp.ToolsCallResult, error) {
 	services, err := client.GetServicesForTarget(ctx, target, expandGroup)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Error getting services: %v", err)), nil
 	}
 
-	output, err := json.MarshalIndent(services, "", "  ")
+	f := formatter.NewTargetFormatter(format)
+	output, err := f.FormatServices(ctx, services)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Error formatting response: %v", err)), nil
 	}
 
-	summary := fmt.Sprintf("Found %d callable services", len(services))
-
 	return &mcp.ToolsCallResult{
 		Content: []mcp.ContentBlock{
-			mcp.NewTextContent(summary + "\n\n" + string(output)),
+			mcp.NewTextContent(output),
 		},
 	}, nil
 }
 
-// handleEntities handles info=entities requests.
-func (h *ConsolidatedTargetHandlers) handleEntities(
+// handleTargetEntities handles info=entities requests for target analysis.
+func (h *ConsolidatedTargetHandlers) handleTargetEntities(
 	ctx context.Context,
 	client homeassistant.Client,
 	target homeassistant.Target,
 	expandGroup *bool,
+	format formatter.Format,
 ) (*mcp.ToolsCallResult, error) {
 	result, err := client.ExtractFromTarget(ctx, target, expandGroup)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Error extracting entities: %v", err)), nil
 	}
 
-	output, err := json.MarshalIndent(result, "", "  ")
+	f := formatter.NewTargetFormatter(format)
+	output, err := f.FormatExtractResult(ctx, result)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Error formatting response: %v", err)), nil
 	}
 
-	summary := fmt.Sprintf("Found %d entities, %d devices, %d areas",
-		len(result.ReferencedEntities),
-		len(result.ReferencedDevices),
-		len(result.ReferencedAreas))
-
 	return &mcp.ToolsCallResult{
 		Content: []mcp.ContentBlock{
-			mcp.NewTextContent(summary + "\n\n" + string(output)),
+			mcp.NewTextContent(output),
 		},
 	}, nil
 }
@@ -289,95 +295,70 @@ func (h *ConsolidatedTargetHandlers) handleAllInfo(
 	client homeassistant.Client,
 	target homeassistant.Target,
 	expandGroup *bool,
+	format formatter.Format,
 ) (*mcp.ToolsCallResult, error) {
-	var result strings.Builder
+	// Fetch all data
+	triggers, triggersErr := client.GetTriggersForTarget(ctx, target, expandGroup)
+	conditions, conditionsErr := client.GetConditionsForTarget(ctx, target, expandGroup)
+	services, servicesErr := client.GetServicesForTarget(ctx, target, expandGroup)
+	extracted, extractedErr := client.ExtractFromTarget(ctx, target, expandGroup)
 
-	h.formatTriggersSection(ctx, client, target, expandGroup, &result)
-	h.formatConditionsSection(ctx, client, target, expandGroup, &result)
-	h.formatServicesSection(ctx, client, target, expandGroup, &result)
-	h.formatEntitiesSection(ctx, client, target, expandGroup, &result)
-
-	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{
-			mcp.NewTextContent(result.String()),
-		},
-	}, nil
-}
-
-func (h *ConsolidatedTargetHandlers) formatTriggersSection(
-	ctx context.Context,
-	client homeassistant.Client,
-	target homeassistant.Target,
-	expandGroup *bool,
-	result *strings.Builder,
-) {
-	triggers, err := client.GetTriggersForTarget(ctx, target, expandGroup)
-	if err != nil {
-		fmt.Fprintf(result, "## Triggers\n\nError: %v\n\n", err)
-		return
+	// For natural format, we can show partial results with errors
+	if format == formatter.FormatNatural {
+		var result strings.Builder
+		h.formatSectionWithError(&result, "Triggers", triggers, triggersErr)
+		h.formatSectionWithError(&result, "Conditions", conditions, conditionsErr)
+		h.formatSectionWithError(&result, "Services", services, servicesErr)
+		h.formatExtractedSectionWithError(&result, extracted, extractedErr)
+		return &mcp.ToolsCallResult{Content: []mcp.ContentBlock{mcp.NewTextContent(result.String())}}, nil
 	}
 
-	fmt.Fprintf(result, "## Triggers (%d)\n\n", len(triggers))
-	for _, t := range triggers {
-		fmt.Fprintf(result, "- %s\n", t)
+	// For JSON, errors are fatal
+	if triggersErr != nil {
+		return errorResult(fmt.Sprintf("Error getting triggers: %v", triggersErr)), nil
+	}
+	if conditionsErr != nil {
+		return errorResult(fmt.Sprintf("Error getting conditions: %v", conditionsErr)), nil
+	}
+	if servicesErr != nil {
+		return errorResult(fmt.Sprintf("Error getting services: %v", servicesErr)), nil
+	}
+	if extractedErr != nil {
+		return errorResult(fmt.Sprintf("Error extracting entities: %v", extractedErr)), nil
+	}
+
+	f := formatter.NewTargetFormatter(format)
+	output, err := f.FormatAllTargetInfo(ctx, triggers, conditions, services, extracted)
+	if err != nil {
+		return errorResult(fmt.Sprintf("Error formatting response: %v", err)), nil
+	}
+
+	return &mcp.ToolsCallResult{Content: []mcp.ContentBlock{mcp.NewTextContent(output)}}, nil
+}
+
+func (h *ConsolidatedTargetHandlers) formatSectionWithError(result *strings.Builder, name string, items []string, err error) {
+	fmt.Fprintf(result, "## %s\n\n", name)
+	if err != nil {
+		fmt.Fprintf(result, "Error: %v\n\n", err)
+		return
+	}
+	fmt.Fprintf(result, "%d items:\n", len(items))
+	for _, item := range items {
+		fmt.Fprintf(result, "- %s\n", item)
 	}
 	result.WriteString("\n")
 }
 
-func (h *ConsolidatedTargetHandlers) formatConditionsSection(
-	ctx context.Context,
-	client homeassistant.Client,
-	target homeassistant.Target,
-	expandGroup *bool,
-	result *strings.Builder,
-) {
-	conditions, err := client.GetConditionsForTarget(ctx, target, expandGroup)
+func (h *ConsolidatedTargetHandlers) formatExtractedSectionWithError(result *strings.Builder, extracted *homeassistant.ExtractFromTargetResult, err error) {
+	result.WriteString("## Entities\n\n")
 	if err != nil {
-		fmt.Fprintf(result, "## Conditions\n\nError: %v\n\n", err)
+		fmt.Fprintf(result, "Error: %v\n\n", err)
 		return
 	}
-
-	fmt.Fprintf(result, "## Conditions (%d)\n\n", len(conditions))
-	for _, c := range conditions {
-		fmt.Fprintf(result, "- %s\n", c)
-	}
-	result.WriteString("\n")
-}
-
-func (h *ConsolidatedTargetHandlers) formatServicesSection(
-	ctx context.Context,
-	client homeassistant.Client,
-	target homeassistant.Target,
-	expandGroup *bool,
-	result *strings.Builder,
-) {
-	services, err := client.GetServicesForTarget(ctx, target, expandGroup)
-	if err != nil {
-		fmt.Fprintf(result, "## Services\n\nError: %v\n\n", err)
+	if extracted == nil {
+		result.WriteString("No entities found.\n")
 		return
 	}
-
-	fmt.Fprintf(result, "## Services (%d)\n\n", len(services))
-	for _, s := range services {
-		fmt.Fprintf(result, "- %s\n", s)
-	}
-	result.WriteString("\n")
-}
-
-func (h *ConsolidatedTargetHandlers) formatEntitiesSection(
-	ctx context.Context,
-	client homeassistant.Client,
-	target homeassistant.Target,
-	expandGroup *bool,
-	result *strings.Builder,
-) {
-	extracted, err := client.ExtractFromTarget(ctx, target, expandGroup)
-	if err != nil {
-		fmt.Fprintf(result, "## Entities\n\nError: %v\n\n", err)
-		return
-	}
-
-	fmt.Fprintf(result, "## Entities\n\n")
 	fmt.Fprintf(result, "Referenced entities (%d):\n", len(extracted.ReferencedEntities))
 	for _, e := range extracted.ReferencedEntities {
 		fmt.Fprintf(result, "- %s\n", e)

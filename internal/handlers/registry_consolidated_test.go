@@ -180,28 +180,28 @@ func TestConsolidatedRegistryHandlers_HandleGetRegistry_Entities(t *testing.T) {
 	}{
 		{
 			name:            "entities - no filters",
-			args:            map[string]any{"type": "entities"},
+			args:            map[string]any{"type": "entities", "format": "json"},
 			wantEntityCount: 3,
 			wantContains:    []string{"switch.test1", "switch.test2", "light.test3"},
 			wantNotContains: []string{"sensor.disabled"},
 		},
 		{
 			name:            "entities - domain filter",
-			args:            map[string]any{"type": "entities", "domain": "switch"},
+			args:            map[string]any{"type": "entities", "domain": "switch", "format": "json"},
 			wantEntityCount: 2,
 			wantContains:    []string{"switch.test1", "switch.test2"},
 			wantNotContains: []string{"light.test3"},
 		},
 		{
 			name:            "entities - platform filter",
-			args:            map[string]any{"type": "entities", "platform": "hue"},
+			args:            map[string]any{"type": "entities", "platform": "hue", "format": "json"},
 			wantEntityCount: 2,
 			wantContains:    []string{"switch.test2", "light.test3"},
 			wantNotContains: []string{"switch.test1"},
 		},
 		{
 			name:            "entities - include_disabled",
-			args:            map[string]any{"type": "entities", "include_disabled": true},
+			args:            map[string]any{"type": "entities", "include_disabled": true, "format": "json"},
 			wantEntityCount: 4,
 			wantContains:    []string{"sensor.disabled"},
 		},
@@ -261,25 +261,25 @@ func TestConsolidatedRegistryHandlers_HandleGetRegistry_Devices(t *testing.T) {
 	}{
 		{
 			name:           "devices - no filters",
-			args:           map[string]any{"type": "devices"},
+			args:           map[string]any{"type": "devices", "format": "json"},
 			wantContains:   []string{"dev1", "dev2"},
 			wantNotContain: []string{"dev3"}, // disabled
 		},
 		{
 			name:           "devices - manufacturer filter",
-			args:           map[string]any{"type": "devices", "manufacturer": "Philips"},
+			args:           map[string]any{"type": "devices", "manufacturer": "Philips", "format": "json"},
 			wantContains:   []string{"dev1"},
 			wantNotContain: []string{"dev2"},
 		},
 		{
 			name:           "devices - area filter",
-			args:           map[string]any{"type": "devices", "area_id": "area1"},
+			args:           map[string]any{"type": "devices", "area_id": "area1", "format": "json"},
 			wantContains:   []string{"dev1"},
 			wantNotContain: []string{"dev2"},
 		},
 		{
 			name:         "devices - include_disabled",
-			args:         map[string]any{"type": "devices", "include_disabled": true},
+			args:         map[string]any{"type": "devices", "include_disabled": true, "format": "json"},
 			wantContains: []string{"dev1", "dev2", "dev3"},
 		},
 	}
@@ -328,7 +328,8 @@ func TestConsolidatedRegistryHandlers_HandleGetRegistry_Areas(t *testing.T) {
 	h := NewConsolidatedRegistryHandlers()
 	client := &mockConsolidatedRegistryClient{areaRegistry: testAreas}
 
-	result, err := h.handleGetRegistry(context.Background(), client, map[string]any{"type": "areas"})
+	// Use format=json for backward compatibility (tests expect JSON field names)
+	result, err := h.handleGetRegistry(context.Background(), client, map[string]any{"type": "areas", "format": "json"})
 	if err != nil {
 		t.Fatalf("handleGetRegistry() error = %v", err)
 	}
@@ -488,5 +489,149 @@ func TestRegisterConsolidatedRegistryTools(t *testing.T) {
 
 	if len(tools) > 0 && tools[0].Name != "get_registry" {
 		t.Errorf("Tool name = %q, want %q", tools[0].Name, "get_registry")
+	}
+}
+
+func TestConsolidatedRegistryHandlers_GetRegistryTool_HasFormatParameter(t *testing.T) {
+	t.Parallel()
+
+	h := NewConsolidatedRegistryHandlers()
+	tool := h.getRegistryTool()
+
+	prop, ok := tool.InputSchema.Properties["format"]
+	if !ok {
+		t.Fatal("format property missing")
+	}
+
+	if len(prop.Enum) != 2 {
+		t.Errorf("format enum has %d values, want 2 (natural, json)", len(prop.Enum))
+	}
+}
+
+func TestConsolidatedRegistryHandlers_HandleGetRegistry_Entities_FormatJSON(t *testing.T) {
+	t.Parallel()
+
+	testEntities := []homeassistant.EntityRegistryEntry{
+		{EntityID: "light.test1", Platform: "hue", Name: "Test Light"},
+	}
+
+	h := NewConsolidatedRegistryHandlers()
+	client := &mockConsolidatedRegistryClient{entityRegistry: testEntities}
+
+	result, err := h.handleGetRegistry(context.Background(), client, map[string]any{
+		"type":   "entities",
+		"format": "json",
+	})
+	if err != nil {
+		t.Fatalf("handleGetRegistry() error = %v", err)
+	}
+
+	if result.IsError {
+		t.Fatalf("handleGetRegistry() returned error: %v", result.Content)
+	}
+
+	content := result.Content[0].Text
+
+	// JSON format should contain entity_id as JSON field
+	if !strings.Contains(content, `"entity_id"`) {
+		t.Errorf("Expected JSON output to contain entity_id field, got: %s", content[:min(500, len(content))])
+	}
+	if !strings.Contains(content, `"light.test1"`) {
+		t.Errorf("Expected JSON output to contain entity_id value, got: %s", content[:min(500, len(content))])
+	}
+}
+
+func TestConsolidatedRegistryHandlers_HandleGetRegistry_Entities_FormatNatural(t *testing.T) {
+	t.Parallel()
+
+	testEntities := []homeassistant.EntityRegistryEntry{
+		{EntityID: "light.test1", Platform: "hue", Name: "Test Light"},
+		{EntityID: "sensor.test2", Platform: "mqtt", Name: "Test Sensor"},
+	}
+
+	h := NewConsolidatedRegistryHandlers()
+	client := &mockConsolidatedRegistryClient{entityRegistry: testEntities}
+
+	result, err := h.handleGetRegistry(context.Background(), client, map[string]any{
+		"type":   "entities",
+		"format": "natural",
+	})
+	if err != nil {
+		t.Fatalf("handleGetRegistry() error = %v", err)
+	}
+
+	if result.IsError {
+		t.Fatalf("handleGetRegistry() returned error: %v", result.Content)
+	}
+
+	content := result.Content[0].Text
+
+	// Natural format should contain summary
+	if !strings.Contains(content, "Found 2 entities") {
+		t.Errorf("Expected natural output to contain count summary, got: %s", content[:min(500, len(content))])
+	}
+	// Should contain domain breakdown
+	if !strings.Contains(content, "By Domain") {
+		t.Errorf("Expected natural output to contain domain breakdown, got: %s", content[:min(500, len(content))])
+	}
+}
+
+func TestConsolidatedRegistryHandlers_HandleGetRegistry_Devices_FormatJSON(t *testing.T) {
+	t.Parallel()
+
+	testDevices := []homeassistant.DeviceRegistryEntry{
+		{ID: "dev1", Name: "Test Device", Manufacturer: "Philips"},
+	}
+
+	h := NewConsolidatedRegistryHandlers()
+	client := &mockConsolidatedRegistryClient{deviceRegistry: testDevices}
+
+	result, err := h.handleGetRegistry(context.Background(), client, map[string]any{
+		"type":   "devices",
+		"format": "json",
+	})
+	if err != nil {
+		t.Fatalf("handleGetRegistry() error = %v", err)
+	}
+
+	if result.IsError {
+		t.Fatalf("handleGetRegistry() returned error: %v", result.Content)
+	}
+
+	content := result.Content[0].Text
+
+	// JSON format should contain id as JSON field
+	if !strings.Contains(content, `"id"`) {
+		t.Errorf("Expected JSON output to contain id field, got: %s", content[:min(500, len(content))])
+	}
+}
+
+func TestConsolidatedRegistryHandlers_HandleGetRegistry_Areas_FormatJSON(t *testing.T) {
+	t.Parallel()
+
+	testAreas := []homeassistant.AreaRegistryEntry{
+		{AreaID: "living_room", Name: "Living Room"},
+	}
+
+	h := NewConsolidatedRegistryHandlers()
+	client := &mockConsolidatedRegistryClient{areaRegistry: testAreas}
+
+	result, err := h.handleGetRegistry(context.Background(), client, map[string]any{
+		"type":   "areas",
+		"format": "json",
+	})
+	if err != nil {
+		t.Fatalf("handleGetRegistry() error = %v", err)
+	}
+
+	if result.IsError {
+		t.Fatalf("handleGetRegistry() returned error: %v", result.Content)
+	}
+
+	content := result.Content[0].Text
+
+	// JSON format should contain area_id as JSON field
+	if !strings.Contains(content, `"area_id"`) {
+		t.Errorf("Expected JSON output to contain area_id field, got: %s", content[:min(500, len(content))])
 	}
 }

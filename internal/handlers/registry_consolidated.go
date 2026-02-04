@@ -3,11 +3,11 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 
+	"github.com/zorak1103/ha-mcp/internal/handlers/formatter"
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
@@ -70,6 +70,11 @@ func getRegistryProperties() map[string]mcp.JSONSchema {
 			Enum:        []string{registryTypeEntities, registryTypeDevices, registryTypeAreas, registryTypeAll},
 			Description: "Registry type to query: entities, devices, areas, or all",
 		},
+		"format": {
+			Type:        "string",
+			Enum:        []string{"natural", "json"},
+			Description: "Output format: 'natural' for LLM-optimized human-readable output (default), 'json' for structured JSON",
+		},
 		"domain": {
 			Type:        "string",
 			Description: "Filter entities by domain (e.g., 'light', 'switch', 'sensor'). Only for type=entities",
@@ -130,7 +135,7 @@ func (h *ConsolidatedRegistryHandlers) handleGetRegistry(
 	case registryTypeDevices:
 		return h.handleDevices(ctx, client, args)
 	case registryTypeAreas:
-		return h.handleAreas(ctx, client)
+		return h.handleAreas(ctx, client, args)
 	case registryTypeAll:
 		return h.handleAll(ctx, client, args)
 	default:
@@ -165,21 +170,43 @@ func (h *ConsolidatedRegistryHandlers) handleEntities(
 
 	paginated := ApplyPagination(filtered, paginationParams)
 	verbose, _ := args["verbose"].(bool)
-	output, err := formatEntityRegistryOutput(paginated.Items, verbose)
+	includeDisabled, _ := args["include_disabled"].(bool)
+
+	// Parse format parameter
+	formatStr, _ := args["format"].(string)
+	format := formatter.ParseFormat(formatStr)
+
+	// Use formatter
+	f := formatter.NewRegistryFormatter(format)
+	opts := formatter.RegistryOptions{
+		Verbose:         verbose,
+		IncludeDisabled: includeDisabled,
+		Limit:           paginationParams.Limit,
+	}
+	output, err := f.FormatEntityRegistry(ctx, paginated.Items, opts)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Error formatting response: %v", err)), nil
 	}
 
-	summary := BuildPaginationSummary(paginated.Pagination, "entities")
-	if !verbose {
-		summary += VerboseHint
+	// Add pagination summary for natural format only
+	var response string
+	if format == formatter.FormatNatural {
+		summary := BuildPaginationSummary(paginated.Pagination, "entities")
+		if !verbose {
+			summary += VerboseHint
+		}
+		response = summary + "\n\n" + output
+		if paginated.Pagination.HasMore && paginated.Pagination.NextCursor != nil {
+			response += fmt.Sprintf("\n\nNext cursor: %s", *paginated.Pagination.NextCursor)
+		}
+	} else {
+		// For JSON format, wrap with pagination metadata
+		response = buildPaginatedEntityRegistryResponse(paginated, output)
 	}
-
-	response := buildPaginatedEntityRegistryResponse(paginated, output)
 
 	return &mcp.ToolsCallResult{
 		Content: []mcp.ContentBlock{
-			mcp.NewTextContent(summary + "\n\n" + response),
+			mcp.NewTextContent(response),
 		},
 	}, nil
 }
@@ -210,21 +237,43 @@ func (h *ConsolidatedRegistryHandlers) handleDevices(
 
 	paginated := ApplyPagination(filtered, paginationParams)
 	verbose, _ := args["verbose"].(bool)
-	output, err := formatDeviceRegistryOutput(paginated.Items, verbose)
+	includeDisabled, _ := args["include_disabled"].(bool)
+
+	// Parse format parameter
+	formatStr, _ := args["format"].(string)
+	format := formatter.ParseFormat(formatStr)
+
+	// Use formatter
+	f := formatter.NewRegistryFormatter(format)
+	opts := formatter.RegistryOptions{
+		Verbose:         verbose,
+		IncludeDisabled: includeDisabled,
+		Limit:           paginationParams.Limit,
+	}
+	output, err := f.FormatDeviceRegistry(ctx, paginated.Items, opts)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Error formatting response: %v", err)), nil
 	}
 
-	summary := BuildPaginationSummary(paginated.Pagination, "devices")
-	if !verbose {
-		summary += VerboseHint
+	// Add pagination summary for natural format only
+	var response string
+	if format == formatter.FormatNatural {
+		summary := BuildPaginationSummary(paginated.Pagination, "devices")
+		if !verbose {
+			summary += VerboseHint
+		}
+		response = summary + "\n\n" + output
+		if paginated.Pagination.HasMore && paginated.Pagination.NextCursor != nil {
+			response += fmt.Sprintf("\n\nNext cursor: %s", *paginated.Pagination.NextCursor)
+		}
+	} else {
+		// For JSON format, wrap with pagination metadata
+		response = string(buildPaginatedDeviceRegistryResponse(paginated, []byte(output)))
 	}
-
-	response := buildPaginatedDeviceRegistryResponse(paginated, output)
 
 	return &mcp.ToolsCallResult{
 		Content: []mcp.ContentBlock{
-			mcp.NewTextContent(summary + "\n\n" + string(response)),
+			mcp.NewTextContent(response),
 		},
 	}, nil
 }
@@ -233,22 +282,27 @@ func (h *ConsolidatedRegistryHandlers) handleDevices(
 func (h *ConsolidatedRegistryHandlers) handleAreas(
 	ctx context.Context,
 	client homeassistant.Client,
+	args map[string]any,
 ) (*mcp.ToolsCallResult, error) {
 	entries, err := client.GetAreaRegistry(ctx)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Error getting area registry: %v", err)), nil
 	}
 
-	output, err := json.MarshalIndent(entries, "", "  ")
+	// Parse format parameter
+	formatStr, _ := args["format"].(string)
+	format := formatter.ParseFormat(formatStr)
+
+	// Use formatter
+	f := formatter.NewRegistryFormatter(format)
+	output, err := f.FormatAreaRegistry(ctx, entries)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Error formatting response: %v", err)), nil
 	}
 
-	summary := fmt.Sprintf("Found %d areas", len(entries))
-
 	return &mcp.ToolsCallResult{
 		Content: []mcp.ContentBlock{
-			mcp.NewTextContent(summary + "\n\n" + string(output)),
+			mcp.NewTextContent(output),
 		},
 	}, nil
 }
@@ -260,31 +314,86 @@ func (h *ConsolidatedRegistryHandlers) handleAll(
 	args map[string]any,
 ) (*mcp.ToolsCallResult, error) {
 	includeDisabled, _ := args["include_disabled"].(bool)
-	var result strings.Builder
 
-	h.formatEntitiesSummary(ctx, client, includeDisabled, &result)
-	h.formatDevicesSummary(ctx, client, includeDisabled, &result)
-	h.formatAreasSummary(ctx, client, &result)
+	// Parse format parameter
+	formatStr, _ := args["format"].(string)
+	format := formatter.ParseFormat(formatStr)
 
-	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{
-			mcp.NewTextContent(result.String()),
-		},
-	}, nil
+	// Fetch all registries
+	entities, entitiesErr := client.GetEntityRegistry(ctx)
+	devices, devicesErr := client.GetDeviceRegistry(ctx)
+	areas, areasErr := client.GetAreaRegistry(ctx)
+
+	// For natural format, we can still show partial results with errors
+	if format == formatter.FormatNatural {
+		return h.handleAllNatural(entities, entitiesErr, devices, devicesErr, areas, areasErr, includeDisabled)
+	}
+
+	// For JSON format, errors are fatal
+	return h.handleAllJSON(ctx, entities, entitiesErr, devices, devicesErr, areas, areasErr, includeDisabled)
 }
 
-func (h *ConsolidatedRegistryHandlers) formatEntitiesSummary(
+func (h *ConsolidatedRegistryHandlers) handleAllNatural(
+	entities []homeassistant.EntityRegistryEntry, entitiesErr error,
+	devices []homeassistant.DeviceRegistryEntry, devicesErr error,
+	areas []homeassistant.AreaRegistryEntry, areasErr error,
+	includeDisabled bool,
+) (*mcp.ToolsCallResult, error) {
+	var result strings.Builder
+
+	if entitiesErr != nil {
+		fmt.Fprintf(&result, "Entities: Error - %v\n\n", entitiesErr)
+	} else {
+		h.formatEntitiesSummaryWithData(entities, includeDisabled, &result)
+	}
+
+	if devicesErr != nil {
+		fmt.Fprintf(&result, "Devices: Error - %v\n\n", devicesErr)
+	} else {
+		h.formatDevicesSummaryWithData(devices, includeDisabled, &result)
+	}
+
+	if areasErr != nil {
+		fmt.Fprintf(&result, "Areas: Error - %v\n\n", areasErr)
+	} else {
+		h.formatAreasSummaryWithData(areas, &result)
+	}
+
+	return &mcp.ToolsCallResult{Content: []mcp.ContentBlock{mcp.NewTextContent(result.String())}}, nil
+}
+
+func (h *ConsolidatedRegistryHandlers) handleAllJSON(
 	ctx context.Context,
-	client homeassistant.Client,
+	entities []homeassistant.EntityRegistryEntry, entitiesErr error,
+	devices []homeassistant.DeviceRegistryEntry, devicesErr error,
+	areas []homeassistant.AreaRegistryEntry, areasErr error,
+	includeDisabled bool,
+) (*mcp.ToolsCallResult, error) {
+	if entitiesErr != nil {
+		return errorResult(fmt.Sprintf("Error getting entity registry: %v", entitiesErr)), nil
+	}
+	if devicesErr != nil {
+		return errorResult(fmt.Sprintf("Error getting device registry: %v", devicesErr)), nil
+	}
+	if areasErr != nil {
+		return errorResult(fmt.Sprintf("Error getting area registry: %v", areasErr)), nil
+	}
+
+	f := formatter.NewRegistryFormatter(formatter.FormatJSON)
+	opts := formatter.RegistryOptions{IncludeDisabled: includeDisabled}
+	output, err := f.FormatAllRegistries(ctx, entities, devices, areas, opts)
+	if err != nil {
+		return errorResult(fmt.Sprintf("Error formatting response: %v", err)), nil
+	}
+
+	return &mcp.ToolsCallResult{Content: []mcp.ContentBlock{mcp.NewTextContent(output)}}, nil
+}
+
+func (h *ConsolidatedRegistryHandlers) formatEntitiesSummaryWithData(
+	entities []homeassistant.EntityRegistryEntry,
 	includeDisabled bool,
 	result *strings.Builder,
 ) {
-	entities, err := client.GetEntityRegistry(ctx)
-	if err != nil {
-		fmt.Fprintf(result, "Entities: Error - %v\n\n", err)
-		return
-	}
-
 	enabledCount := countEnabledEntities(entities, includeDisabled)
 	fmt.Fprintf(result, "## Entities\n\nTotal: %d", len(entities))
 	if !includeDisabled {
@@ -296,18 +405,11 @@ func (h *ConsolidatedRegistryHandlers) formatEntitiesSummary(
 	writeCountMap(result, "By domain:", domainCounts)
 }
 
-func (h *ConsolidatedRegistryHandlers) formatDevicesSummary(
-	ctx context.Context,
-	client homeassistant.Client,
+func (h *ConsolidatedRegistryHandlers) formatDevicesSummaryWithData(
+	devices []homeassistant.DeviceRegistryEntry,
 	includeDisabled bool,
 	result *strings.Builder,
 ) {
-	devices, err := client.GetDeviceRegistry(ctx)
-	if err != nil {
-		fmt.Fprintf(result, "Devices: Error - %v\n\n", err)
-		return
-	}
-
 	enabledCount := countEnabledDevices(devices, includeDisabled)
 	fmt.Fprintf(result, "## Devices\n\nTotal: %d", len(devices))
 	if !includeDisabled {
@@ -319,17 +421,10 @@ func (h *ConsolidatedRegistryHandlers) formatDevicesSummary(
 	writeCountMap(result, "By manufacturer:", manufacturerCounts)
 }
 
-func (h *ConsolidatedRegistryHandlers) formatAreasSummary(
-	ctx context.Context,
-	client homeassistant.Client,
+func (h *ConsolidatedRegistryHandlers) formatAreasSummaryWithData(
+	areas []homeassistant.AreaRegistryEntry,
 	result *strings.Builder,
 ) {
-	areas, err := client.GetAreaRegistry(ctx)
-	if err != nil {
-		fmt.Fprintf(result, "Areas: Error - %v\n\n", err)
-		return
-	}
-
 	fmt.Fprintf(result, "## Areas\n\nTotal: %d\n\n", len(areas))
 	for _, a := range areas {
 		fmt.Fprintf(result, "- %s (%s)\n", a.Name, a.AreaID)

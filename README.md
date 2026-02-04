@@ -397,16 +397,16 @@ Authorization: Bearer <your-ha-access-token>
 
 | Tool | Description |
 |------|-------------|
-| `get_states` | List all entity states |
-| `get_state` | Get state of a specific entity |
-| `get_history` | Get historical states of an entity |
+| `get_states` | List all entity states (format: natural/json) |
+| `get_state` | Get state of a specific entity (format: natural/json) |
+| `get_history` | Get historical states of an entity (format: natural/json) |
 | `list_domains` | List available domains |
 
 #### Registry Tools
 
 | Tool | Description |
 |------|-------------|
-| `get_registry` | Query registries (type: entities, devices, areas, all) with filters |
+| `get_registry` | Query registries (type: entities, devices, areas, all; format: natural/json) |
 | `list_config_entries` | List config entries (integrations/helpers metadata), optionally filtered by domain |
 | `get_config_entry` | Get a single config entry by entry ID |
 
@@ -515,7 +515,7 @@ Universal tool for runtime helper operations:
 
 | Tool | Description |
 |------|-------------|
-| `analyze_target` | Analyze targets for automation capabilities (info: triggers, conditions, services, entities, all) |
+| `analyze_target` | Analyze targets for automation capabilities (info: triggers, conditions, services, entities, all; format: natural/json) |
 
 #### Service Tools
 
@@ -856,6 +856,12 @@ ha-mcp/
 │   │   ├── registry.go          # Tool registry
 │   │   └── types.go             # MCP protocol types
 │   ├── handlers/
+│   │   ├── formatter/           # Output formatters (natural/json)
+│   │   │   ├── formatter.go     # Formatter interfaces
+│   │   │   ├── natural.go       # LLM-optimized natural language output
+│   │   │   ├── json.go          # Structured JSON output
+│   │   │   ├── registry.go      # Registry formatters
+│   │   │   └── target.go        # Target analysis formatters
 │   │   ├── integration/         # Integration tests (build tag: integration)
 │   │   │   ├── helpers.go       # Test ID generation, validation
 │   │   │   ├── cleanup.go       # Cleanup utilities
