@@ -398,9 +398,11 @@ func TestManageAutomation_Update(t *testing.T) {
 			wantContains: []string{"Error getting current automation"},
 		},
 		{
-			name:         "error - update fails",
-			args:         map[string]any{"action": "update", "automation_id": "test_automation", "alias": "New"},
-			setupClient:  func() *mockAutomationClient { return &mockAutomationClient{automation: newExistingAutomation(), updateErr: errors.New("failed")} },
+			name: "error - update fails",
+			args: map[string]any{"action": "update", "automation_id": "test_automation", "alias": "New"},
+			setupClient: func() *mockAutomationClient {
+				return &mockAutomationClient{automation: newExistingAutomation(), updateErr: errors.New("failed")}
+			},
 			wantError:    true,
 			wantContains: []string{"Error updating automation"},
 		},
