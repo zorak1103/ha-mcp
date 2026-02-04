@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
@@ -252,11 +253,11 @@ func TestLovelaceHandlers_handleGetLovelaceConfig(t *testing.T) {
 			}
 
 			content := result.Content[0].Text
-			if tt.wantContains != "" && !contains(content, tt.wantContains) {
+			if tt.wantContains != "" && !strings.Contains(content, tt.wantContains) {
 				t.Errorf("Content = %q, want to contain %q", content, tt.wantContains)
 			}
 
-			if tt.wantNotContains != "" && contains(content, tt.wantNotContains) {
+			if tt.wantNotContains != "" && strings.Contains(content, tt.wantNotContains) {
 				t.Errorf("Content = %q, should not contain %q", content, tt.wantNotContains)
 			}
 		})
@@ -581,12 +582,12 @@ func TestLovelaceHandlers_compactViewEntry(t *testing.T) {
 	content := result.Content[0].Text
 
 	// Should count: 1 card from "cards" + 2 cards from section 1 + 1 card from section 2 = 4 total
-	if !contains(content, `"card_count": 4`) {
+	if !strings.Contains(content, `"card_count": 4`) {
 		t.Errorf("Expected card_count of 4, got content: %s", content)
 	}
 
 	// Should count 2 badges
-	if !contains(content, `"badge_count": 2`) {
+	if !strings.Contains(content, `"badge_count": 2`) {
 		t.Errorf("Expected badge_count of 2, got content: %s", content)
 	}
 }

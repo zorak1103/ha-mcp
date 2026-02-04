@@ -4,6 +4,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -99,7 +100,7 @@ func TestLoad(t *testing.T) {
 					t.Errorf("Load() error = nil, wantErr = true")
 					return
 				}
-				if tt.errContain != "" && !containsString(err.Error(), tt.errContain) {
+				if tt.errContain != "" && !strings.Contains(err.Error(), tt.errContain) {
 					t.Errorf("Load() error = %v, want error containing %q", err, tt.errContain)
 				}
 				return
@@ -258,7 +259,7 @@ func TestLoadWithViper(t *testing.T) {
 					t.Errorf("LoadWithViper() error = nil, wantErr = true")
 					return
 				}
-				if tt.errContain != "" && !containsString(err.Error(), tt.errContain) {
+				if tt.errContain != "" && !strings.Contains(err.Error(), tt.errContain) {
 					t.Errorf("LoadWithViper() error = %v, want error containing %q", err, tt.errContain)
 				}
 				return
@@ -647,7 +648,7 @@ func TestValidate(t *testing.T) {
 					t.Errorf("validate() error = nil, wantErr = true")
 					return
 				}
-				if tt.errContain != "" && !containsString(err.Error(), tt.errContain) {
+				if tt.errContain != "" && !strings.Contains(err.Error(), tt.errContain) {
 					t.Errorf("validate() error = %v, want error containing %q", err, tt.errContain)
 				}
 				return
@@ -836,17 +837,4 @@ func clearEnvVars() {
 	for _, v := range envVars {
 		_ = os.Unsetenv(v)
 	}
-}
-
-func containsString(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstring(s, substr))
-}
-
-func containsSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

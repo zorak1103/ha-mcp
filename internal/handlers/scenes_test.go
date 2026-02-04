@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
@@ -244,7 +245,7 @@ func TestSceneHandlers_HandleListScenes(t *testing.T) {
 			}
 
 			content := result.Content[0].Text
-			if tt.wantContains != "" && !contains(content, tt.wantContains) {
+			if tt.wantContains != "" && !strings.Contains(content, tt.wantContains) {
 				t.Errorf("Content = %q, want to contain %q", content, tt.wantContains)
 			}
 		})
@@ -328,7 +329,7 @@ func TestSceneHandlers_HandleGetScene(t *testing.T) {
 			}
 
 			content := result.Content[0].Text
-			if tt.wantContains != "" && !contains(content, tt.wantContains) {
+			if tt.wantContains != "" && !strings.Contains(content, tt.wantContains) {
 				t.Errorf("Content = %q, want to contain %q", content, tt.wantContains)
 			}
 		})
@@ -497,7 +498,7 @@ func TestSceneHandlers_HandleCreateScene(t *testing.T) {
 			}
 
 			content := result.Content[0].Text
-			if tt.wantContains != "" && !contains(content, tt.wantContains) {
+			if tt.wantContains != "" && !strings.Contains(content, tt.wantContains) {
 				t.Errorf("Content = %q, want to contain %q", content, tt.wantContains)
 			}
 		})
@@ -610,7 +611,7 @@ func TestSceneHandlers_HandleUpdateScene(t *testing.T) {
 			}
 
 			content := result.Content[0].Text
-			if tt.wantContains != "" && !contains(content, tt.wantContains) {
+			if tt.wantContains != "" && !strings.Contains(content, tt.wantContains) {
 				t.Errorf("Content = %q, want to contain %q", content, tt.wantContains)
 			}
 		})
@@ -688,7 +689,7 @@ func TestSceneHandlers_HandleDeleteScene(t *testing.T) {
 			}
 
 			content := result.Content[0].Text
-			if tt.wantContains != "" && !contains(content, tt.wantContains) {
+			if tt.wantContains != "" && !strings.Contains(content, tt.wantContains) {
 				t.Errorf("Content = %q, want to contain %q", content, tt.wantContains)
 			}
 		})
@@ -775,7 +776,7 @@ func TestSceneHandlers_HandleActivateScene(t *testing.T) {
 			}
 
 			content := result.Content[0].Text
-			if tt.wantContains != "" && !contains(content, tt.wantContains) {
+			if tt.wantContains != "" && !strings.Contains(content, tt.wantContains) {
 				t.Errorf("Content = %q, want to contain %q", content, tt.wantContains)
 			}
 		})

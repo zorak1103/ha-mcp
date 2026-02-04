@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
@@ -180,7 +181,7 @@ func TestHelperHandlers_handleListHelpers(t *testing.T) {
 			}
 
 			text := result.Content[0].Text
-			if !contains(text, tt.wantContains) {
+			if !strings.Contains(text, tt.wantContains) {
 				t.Errorf("handleListHelpers() result = %q, want to contain %q", text, tt.wantContains)
 			}
 		})

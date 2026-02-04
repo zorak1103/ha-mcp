@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
@@ -206,7 +207,7 @@ func TestScriptHandlers_HandleListScripts(t *testing.T) {
 			}
 
 			content := result.Content[0].Text
-			if tt.wantContains != "" && !contains(content, tt.wantContains) {
+			if tt.wantContains != "" && !strings.Contains(content, tt.wantContains) {
 				t.Errorf("Content = %q, want to contain %q", content, tt.wantContains)
 			}
 		})
@@ -297,7 +298,7 @@ func TestScriptHandlers_HandleGetScript(t *testing.T) {
 			}
 
 			content := result.Content[0].Text
-			if tt.wantContains != "" && !contains(content, tt.wantContains) {
+			if tt.wantContains != "" && !strings.Contains(content, tt.wantContains) {
 				t.Errorf("Content = %q, want to contain %q", content, tt.wantContains)
 			}
 		})
@@ -438,7 +439,7 @@ func TestScriptHandlers_HandleCreateScript(t *testing.T) {
 			}
 
 			content := result.Content[0].Text
-			if tt.wantContains != "" && !contains(content, tt.wantContains) {
+			if tt.wantContains != "" && !strings.Contains(content, tt.wantContains) {
 				t.Errorf("Content = %q, want to contain %q", content, tt.wantContains)
 			}
 		})
@@ -552,7 +553,7 @@ func TestScriptHandlers_HandleUpdateScript(t *testing.T) {
 			}
 
 			content := result.Content[0].Text
-			if tt.wantContains != "" && !contains(content, tt.wantContains) {
+			if tt.wantContains != "" && !strings.Contains(content, tt.wantContains) {
 				t.Errorf("Content = %q, want to contain %q", content, tt.wantContains)
 			}
 		})
@@ -630,7 +631,7 @@ func TestScriptHandlers_HandleDeleteScript(t *testing.T) {
 			}
 
 			content := result.Content[0].Text
-			if tt.wantContains != "" && !contains(content, tt.wantContains) {
+			if tt.wantContains != "" && !strings.Contains(content, tt.wantContains) {
 				t.Errorf("Content = %q, want to contain %q", content, tt.wantContains)
 			}
 		})
@@ -720,7 +721,7 @@ func TestScriptHandlers_HandleExecuteScript(t *testing.T) {
 			}
 
 			content := result.Content[0].Text
-			if tt.wantContains != "" && !contains(content, tt.wantContains) {
+			if tt.wantContains != "" && !strings.Contains(content, tt.wantContains) {
 				t.Errorf("Content = %q, want to contain %q", content, tt.wantContains)
 			}
 		})
@@ -840,7 +841,7 @@ func TestScriptHandlers_HandleCallService(t *testing.T) {
 			}
 
 			content := result.Content[0].Text
-			if tt.wantContains != "" && !contains(content, tt.wantContains) {
+			if tt.wantContains != "" && !strings.Contains(content, tt.wantContains) {
 				t.Errorf("Content = %q, want to contain %q", content, tt.wantContains)
 			}
 		})

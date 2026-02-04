@@ -980,7 +980,7 @@ func buildHelperConfig(helperType, name string, args map[string]any) (map[string
 }
 
 func buildInputSimpleConfig(config, args map[string]any, helperType string) {
-	if helperType == "input_boolean" {
+	if helperType == platformInputBoolean {
 		addOptionalBool(config, args, "initial")
 	}
 }

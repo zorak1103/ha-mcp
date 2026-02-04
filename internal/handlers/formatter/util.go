@@ -136,8 +136,3 @@ func GetFloatAttr(attrs map[string]any, key string) float64 {
 		return 0
 	}
 }
-
-// StateToOnOff returns the state as-is (for binary sensors and switches).
-func StateToOnOff(state string) string {
-	return state
-}

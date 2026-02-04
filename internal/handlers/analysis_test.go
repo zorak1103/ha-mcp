@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -371,7 +372,7 @@ func TestAnalysisHandlers_handleAnalyzeEntity(t *testing.T) {
 			}
 
 			text := result.Content[0].Text
-			if !contains(text, tt.wantContains) {
+			if !strings.Contains(text, tt.wantContains) {
 				t.Errorf("handleAnalyzeEntity() result = %q, want to contain %q", text, tt.wantContains)
 			}
 		})
@@ -490,7 +491,7 @@ func TestAnalysisHandlers_handleGetEntityDependencies(t *testing.T) {
 			}
 
 			text := result.Content[0].Text
-			if !contains(text, tt.wantContains) {
+			if !strings.Contains(text, tt.wantContains) {
 				t.Errorf("handleGetEntityDependencies() result = %q, want to contain %q", text, tt.wantContains)
 			}
 		})

@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
@@ -457,7 +458,7 @@ func TestTargetHandlers_handleGetTriggersForTarget(t *testing.T) {
 			}
 
 			text := result.Content[0].Text
-			if !contains(text, tt.wantContains) {
+			if !strings.Contains(text, tt.wantContains) {
 				t.Errorf("handleGetTriggersForTarget() result = %q, want to contain %q", text, tt.wantContains)
 			}
 		})
@@ -534,7 +535,7 @@ func TestTargetHandlers_handleGetConditionsForTarget(t *testing.T) {
 			}
 
 			text := result.Content[0].Text
-			if !contains(text, tt.wantContains) {
+			if !strings.Contains(text, tt.wantContains) {
 				t.Errorf("handleGetConditionsForTarget() result = %q, want to contain %q", text, tt.wantContains)
 			}
 		})
@@ -611,7 +612,7 @@ func TestTargetHandlers_handleGetServicesForTarget(t *testing.T) {
 			}
 
 			text := result.Content[0].Text
-			if !contains(text, tt.wantContains) {
+			if !strings.Contains(text, tt.wantContains) {
 				t.Errorf("handleGetServicesForTarget() result = %q, want to contain %q", text, tt.wantContains)
 			}
 		})
@@ -692,7 +693,7 @@ func TestTargetHandlers_handleExtractFromTarget(t *testing.T) {
 			}
 
 			text := result.Content[0].Text
-			if !contains(text, tt.wantContains) {
+			if !strings.Contains(text, tt.wantContains) {
 				t.Errorf("handleExtractFromTarget() result = %q, want to contain %q", text, tt.wantContains)
 			}
 		})

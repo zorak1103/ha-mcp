@@ -622,11 +622,6 @@ func truncateForError(content string) string {
 	return content
 }
 
-// contains checks if haystack contains needle.
-func contains(haystack, needle string) bool {
-	return strings.Contains(haystack, needle)
-}
-
 // =============================================================================
 // Common Test Data
 // =============================================================================
