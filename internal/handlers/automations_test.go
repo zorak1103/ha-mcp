@@ -361,43 +361,46 @@ func TestManageAutomation_Create(t *testing.T) {
 func TestManageAutomation_Update(t *testing.T) {
 	t.Parallel()
 
-	existingAutomation := &homeassistant.Automation{
-		EntityID: "automation.test_automation",
-		State:    "on",
-		Config:   &homeassistant.AutomationConfig{ID: "test_automation", Alias: "Test Automation"},
+	// Helper to create a fresh automation for each test to avoid data races
+	newExistingAutomation := func() *homeassistant.Automation {
+		return &homeassistant.Automation{
+			EntityID: "automation.test_automation",
+			State:    "on",
+			Config:   &homeassistant.AutomationConfig{ID: "test_automation", Alias: "Test Automation"},
+		}
 	}
 
 	tests := []struct {
 		name         string
 		args         map[string]any
-		client       *mockAutomationClient
+		setupClient  func() *mockAutomationClient
 		wantError    bool
 		wantContains []string
 	}{
 		{
 			name:         "success",
 			args:         map[string]any{"action": "update", "automation_id": "test_automation", "alias": "Updated"},
-			client:       &mockAutomationClient{automation: existingAutomation},
+			setupClient:  func() *mockAutomationClient { return &mockAutomationClient{automation: newExistingAutomation()} },
 			wantContains: []string{"updated successfully"},
 		},
 		{
 			name:         "error - missing automation_id",
 			args:         map[string]any{"action": "update"},
-			client:       &mockAutomationClient{},
+			setupClient:  func() *mockAutomationClient { return &mockAutomationClient{} },
 			wantError:    true,
 			wantContains: []string{"automation_id is required"},
 		},
 		{
 			name:         "error - automation not found",
 			args:         map[string]any{"action": "update", "automation_id": "nonexistent"},
-			client:       &mockAutomationClient{automationErr: errors.New("not found")},
+			setupClient:  func() *mockAutomationClient { return &mockAutomationClient{automationErr: errors.New("not found")} },
 			wantError:    true,
 			wantContains: []string{"Error getting current automation"},
 		},
 		{
 			name:         "error - update fails",
 			args:         map[string]any{"action": "update", "automation_id": "test_automation", "alias": "New"},
-			client:       &mockAutomationClient{automation: existingAutomation, updateErr: errors.New("failed")},
+			setupClient:  func() *mockAutomationClient { return &mockAutomationClient{automation: newExistingAutomation(), updateErr: errors.New("failed")} },
 			wantError:    true,
 			wantContains: []string{"Error updating automation"},
 		},
@@ -408,7 +411,7 @@ func TestManageAutomation_Update(t *testing.T) {
 			t.Parallel()
 
 			h := &AutomationHandlers{}
-			result, err := h.handleManageAutomation(context.Background(), tt.client, tt.args)
+			result, err := h.handleManageAutomation(context.Background(), tt.setupClient(), tt.args)
 			if err != nil {
 				t.Fatalf("handleManageAutomation() unexpected error = %v", err)
 			}
