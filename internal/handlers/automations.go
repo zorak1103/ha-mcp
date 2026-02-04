@@ -13,6 +13,16 @@ import (
 	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
 
+// Automation action constants.
+const (
+	automationActionList   = "list"
+	automationActionGet    = "get"
+	automationActionCreate = "create"
+	automationActionUpdate = "update"
+	automationActionDelete = "delete"
+	automationActionToggle = "toggle"
+)
+
 // AutomationHandlers provides MCP tool handlers for automation operations.
 type AutomationHandlers struct{}
 
@@ -126,17 +136,17 @@ func (h *AutomationHandlers) handleManageAutomation(
 	}
 
 	switch action {
-	case "list":
+	case automationActionList:
 		return h.handleList(ctx, client, args)
-	case "get":
+	case automationActionGet:
 		return h.handleGet(ctx, client, args)
-	case "create":
+	case automationActionCreate:
 		return h.handleCreate(ctx, client, args)
-	case "update":
+	case automationActionUpdate:
 		return h.handleUpdate(ctx, client, args)
-	case "delete":
+	case automationActionDelete:
 		return h.handleDelete(ctx, client, args)
-	case "toggle":
+	case automationActionToggle:
 		return h.handleToggle(ctx, client, args)
 	default:
 		return errorResult(fmt.Sprintf("invalid action: %s (must be list, get, create, update, delete, or toggle)", action)), nil
@@ -295,12 +305,12 @@ func (h *AutomationHandlers) handleDelete(ctx context.Context, client homeassist
 func (h *AutomationHandlers) handleToggle(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
 	automationID, ok := args["automation_id"].(string)
 	if !ok || automationID == "" {
-		return errorResult("automation_id is required for toggle action"), nil
+		return errorResult("automation_id is required for " + automationActionToggle + " action"), nil
 	}
 
 	enabled, ok := args["enabled"].(bool)
 	if !ok {
-		return errorResult("enabled is required for toggle action"), nil
+		return errorResult("enabled is required for " + automationActionToggle + " action"), nil
 	}
 
 	if err := client.ToggleAutomation(ctx, automationID, enabled); err != nil {
