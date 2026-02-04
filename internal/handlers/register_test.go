@@ -136,8 +136,10 @@ func TestRegisterAllTools(t *testing.T) {
 		// Entity tools
 		"get_state",
 		"call_service",
-		// Automation tools
-		"list_automations",
+		// Consolidated automation/script/scene tools
+		"manage_automation",
+		"manage_script",
+		"manage_scene",
 		// Helper tools (generic list)
 		"list_helpers",
 		// Consolidated helper tools (manage_helper replaces 14 create_* tools)

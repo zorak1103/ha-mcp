@@ -76,55 +76,26 @@ func TestNewSceneHandlers(t *testing.T) {
 	}
 }
 
-func TestSceneHandlers_Register(t *testing.T) {
+func TestSceneHandlers_RegisterTools(t *testing.T) {
 	t.Parallel()
 
 	h := NewSceneHandlers()
 	registry := mcp.NewRegistry()
 
-	h.Register(registry)
+	h.RegisterTools(registry)
 
 	tools := registry.ListTools()
-	const expectedToolCount = 6
+	const expectedToolCount = 1 // manage_scene
 	if len(tools) != expectedToolCount {
-		t.Errorf("Register() registered %d tools, want %d", len(tools), expectedToolCount)
+		t.Errorf("RegisterTools() registered %d tools, want %d", len(tools), expectedToolCount)
 	}
 
-	expectedTools := map[string]bool{
-		"list_scenes":    false,
-		"get_scene":      false,
-		"create_scene":   false,
-		"update_scene":   false,
-		"delete_scene":   false,
-		"activate_scene": false,
-	}
-
-	for _, tool := range tools {
-		if _, ok := expectedTools[tool.Name]; ok {
-			expectedTools[tool.Name] = true
-		}
-	}
-
-	for name, found := range expectedTools {
-		if !found {
-			t.Errorf("Tool %q not registered", name)
-		}
+	if tools[0].Name != "manage_scene" {
+		t.Errorf("Expected tool name 'manage_scene', got %q", tools[0].Name)
 	}
 }
 
-func TestSceneHandlers_Tools(t *testing.T) {
-	t.Parallel()
-
-	h := NewSceneHandlers()
-	tools := h.Tools()
-
-	const expectedToolCount = 6
-	if len(tools) != expectedToolCount {
-		t.Errorf("Tools() returned %d tools, want %d", len(tools), expectedToolCount)
-	}
-}
-
-func TestSceneHandlers_HandleListScenes(t *testing.T) {
+func TestSceneHandlers_ManageScene_List(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -137,13 +108,13 @@ func TestSceneHandlers_HandleListScenes(t *testing.T) {
 	}{
 		{
 			name:       "success empty",
-			args:       map[string]any{},
+			args:       map[string]any{"action": "list"},
 			listScenes: []homeassistant.Entity{},
 			wantError:  false,
 		},
 		{
 			name: "success with scenes",
-			args: map[string]any{},
+			args: map[string]any{"action": "list"},
 			listScenes: []homeassistant.Entity{
 				{
 					EntityID: "scene.movie_time",
@@ -165,6 +136,7 @@ func TestSceneHandlers_HandleListScenes(t *testing.T) {
 		{
 			name: "success with name filter",
 			args: map[string]any{
+				"action":        "list",
 				"name_contains": "movie",
 			},
 			listScenes: []homeassistant.Entity{
@@ -185,6 +157,7 @@ func TestSceneHandlers_HandleListScenes(t *testing.T) {
 		{
 			name: "success with entity filter",
 			args: map[string]any{
+				"action":          "list",
 				"entity_contains": "light",
 			},
 			listScenes: []homeassistant.Entity{
@@ -207,7 +180,7 @@ func TestSceneHandlers_HandleListScenes(t *testing.T) {
 		},
 		{
 			name:          "client error",
-			args:          map[string]any{},
+			args:          map[string]any{"action": "list"},
 			listScenesErr: errors.New("connection failed"),
 			wantError:     true,
 			wantContains:  "Error listing scenes",
@@ -228,10 +201,10 @@ func TestSceneHandlers_HandleListScenes(t *testing.T) {
 			}
 
 			h := NewSceneHandlers()
-			result, err := h.HandleListScenes(context.Background(), client, tt.args)
+			result, err := h.handleManageScene(context.Background(), client, tt.args)
 
 			if err != nil {
-				t.Errorf("HandleListScenes() returned error: %v", err)
+				t.Errorf("handleManageScene() returned error: %v", err)
 				return
 			}
 
@@ -252,7 +225,7 @@ func TestSceneHandlers_HandleListScenes(t *testing.T) {
 	}
 }
 
-func TestSceneHandlers_HandleGetScene(t *testing.T) {
+func TestSceneHandlers_ManageScene_Get(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -265,19 +238,23 @@ func TestSceneHandlers_HandleGetScene(t *testing.T) {
 		{
 			name: "success",
 			args: map[string]any{
+				"action":   "get",
 				"scene_id": "movie_time",
 			},
 			wantError: false,
 		},
 		{
-			name:         "missing scene_id",
-			args:         map[string]any{},
+			name: "missing scene_id",
+			args: map[string]any{
+				"action": "get",
+			},
 			wantError:    true,
 			wantContains: "scene_id is required",
 		},
 		{
 			name: "empty scene_id",
 			args: map[string]any{
+				"action":   "get",
 				"scene_id": "",
 			},
 			wantError:    true,
@@ -286,6 +263,7 @@ func TestSceneHandlers_HandleGetScene(t *testing.T) {
 		{
 			name: "client error",
 			args: map[string]any{
+				"action":   "get",
 				"scene_id": "movie_time",
 			},
 			getStateErr:  errors.New("not found"),
@@ -312,10 +290,10 @@ func TestSceneHandlers_HandleGetScene(t *testing.T) {
 			}
 
 			h := NewSceneHandlers()
-			result, err := h.HandleGetScene(context.Background(), client, tt.args)
+			result, err := h.handleManageScene(context.Background(), client, tt.args)
 
 			if err != nil {
-				t.Errorf("HandleGetScene() returned error: %v", err)
+				t.Errorf("handleManageScene() returned error: %v", err)
 				return
 			}
 
@@ -336,7 +314,7 @@ func TestSceneHandlers_HandleGetScene(t *testing.T) {
 	}
 }
 
-func TestSceneHandlers_HandleCreateScene(t *testing.T) {
+func TestSceneHandlers_ManageScene_Create(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -349,6 +327,7 @@ func TestSceneHandlers_HandleCreateScene(t *testing.T) {
 		{
 			name: "success",
 			args: map[string]any{
+				"action":   "create",
 				"scene_id": "movie_time",
 				"name":     "Movie Time",
 				"entities": map[string]any{
@@ -361,6 +340,7 @@ func TestSceneHandlers_HandleCreateScene(t *testing.T) {
 		{
 			name: "success with detailed entities",
 			args: map[string]any{
+				"action":   "create",
 				"scene_id": "movie_time",
 				"name":     "Movie Time",
 				"icon":     "mdi:movie",
@@ -381,7 +361,8 @@ func TestSceneHandlers_HandleCreateScene(t *testing.T) {
 		{
 			name: "missing scene_id",
 			args: map[string]any{
-				"name": "Movie Time",
+				"action": "create",
+				"name":   "Movie Time",
 				"entities": map[string]any{
 					"light.living_room": "off",
 				},
@@ -392,6 +373,7 @@ func TestSceneHandlers_HandleCreateScene(t *testing.T) {
 		{
 			name: "empty scene_id",
 			args: map[string]any{
+				"action":   "create",
 				"scene_id": "",
 				"name":     "Movie Time",
 				"entities": map[string]any{
@@ -404,6 +386,7 @@ func TestSceneHandlers_HandleCreateScene(t *testing.T) {
 		{
 			name: "missing name",
 			args: map[string]any{
+				"action":   "create",
 				"scene_id": "movie_time",
 				"entities": map[string]any{
 					"light.living_room": "off",
@@ -415,6 +398,7 @@ func TestSceneHandlers_HandleCreateScene(t *testing.T) {
 		{
 			name: "empty name",
 			args: map[string]any{
+				"action":   "create",
 				"scene_id": "movie_time",
 				"name":     "",
 				"entities": map[string]any{
@@ -427,6 +411,7 @@ func TestSceneHandlers_HandleCreateScene(t *testing.T) {
 		{
 			name: "missing entities",
 			args: map[string]any{
+				"action":   "create",
 				"scene_id": "movie_time",
 				"name":     "Movie Time",
 			},
@@ -436,6 +421,7 @@ func TestSceneHandlers_HandleCreateScene(t *testing.T) {
 		{
 			name: "empty entities",
 			args: map[string]any{
+				"action":   "create",
 				"scene_id": "movie_time",
 				"name":     "Movie Time",
 				"entities": map[string]any{},
@@ -446,6 +432,7 @@ func TestSceneHandlers_HandleCreateScene(t *testing.T) {
 		{
 			name: "invalid entity state format",
 			args: map[string]any{
+				"action":   "create",
 				"scene_id": "movie_time",
 				"name":     "Movie Time",
 				"entities": map[string]any{
@@ -458,6 +445,7 @@ func TestSceneHandlers_HandleCreateScene(t *testing.T) {
 		{
 			name: "client error",
 			args: map[string]any{
+				"action":   "create",
 				"scene_id": "movie_time",
 				"name":     "Movie Time",
 				"entities": map[string]any{
@@ -481,10 +469,10 @@ func TestSceneHandlers_HandleCreateScene(t *testing.T) {
 			}
 
 			h := NewSceneHandlers()
-			result, err := h.HandleCreateScene(context.Background(), client, tt.args)
+			result, err := h.handleManageScene(context.Background(), client, tt.args)
 
 			if err != nil {
-				t.Errorf("HandleCreateScene() returned error: %v", err)
+				t.Errorf("handleManageScene() returned error: %v", err)
 				return
 			}
 
@@ -505,7 +493,7 @@ func TestSceneHandlers_HandleCreateScene(t *testing.T) {
 	}
 }
 
-func TestSceneHandlers_HandleUpdateScene(t *testing.T) {
+func TestSceneHandlers_ManageScene_Update(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -519,6 +507,7 @@ func TestSceneHandlers_HandleUpdateScene(t *testing.T) {
 		{
 			name: "success",
 			args: map[string]any{
+				"action":   "update",
 				"scene_id": "movie_time",
 				"name":     "Updated Movie Time",
 			},
@@ -528,6 +517,7 @@ func TestSceneHandlers_HandleUpdateScene(t *testing.T) {
 		{
 			name: "success with entities",
 			args: map[string]any{
+				"action":   "update",
 				"scene_id": "movie_time",
 				"name":     "Updated Movie Time",
 				"icon":     "mdi:movie-open",
@@ -539,14 +529,17 @@ func TestSceneHandlers_HandleUpdateScene(t *testing.T) {
 			wantContains: "updated successfully",
 		},
 		{
-			name:         "missing scene_id",
-			args:         map[string]any{},
+			name: "missing scene_id",
+			args: map[string]any{
+				"action": "update",
+			},
 			wantError:    true,
 			wantContains: "scene_id is required",
 		},
 		{
 			name: "empty scene_id",
 			args: map[string]any{
+				"action":   "update",
 				"scene_id": "",
 			},
 			wantError:    true,
@@ -555,6 +548,7 @@ func TestSceneHandlers_HandleUpdateScene(t *testing.T) {
 		{
 			name: "get state error",
 			args: map[string]any{
+				"action":   "update",
 				"scene_id": "movie_time",
 			},
 			getStateErr:  errors.New("not found"),
@@ -564,6 +558,7 @@ func TestSceneHandlers_HandleUpdateScene(t *testing.T) {
 		{
 			name: "update error",
 			args: map[string]any{
+				"action":   "update",
 				"scene_id": "movie_time",
 				"name":     "Updated",
 			},
@@ -594,10 +589,10 @@ func TestSceneHandlers_HandleUpdateScene(t *testing.T) {
 			}
 
 			h := NewSceneHandlers()
-			result, err := h.HandleUpdateScene(context.Background(), client, tt.args)
+			result, err := h.handleManageScene(context.Background(), client, tt.args)
 
 			if err != nil {
-				t.Errorf("HandleUpdateScene() returned error: %v", err)
+				t.Errorf("handleManageScene() returned error: %v", err)
 				return
 			}
 
@@ -618,7 +613,7 @@ func TestSceneHandlers_HandleUpdateScene(t *testing.T) {
 	}
 }
 
-func TestSceneHandlers_HandleDeleteScene(t *testing.T) {
+func TestSceneHandlers_ManageScene_Delete(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -631,20 +626,24 @@ func TestSceneHandlers_HandleDeleteScene(t *testing.T) {
 		{
 			name: "success",
 			args: map[string]any{
+				"action":   "delete",
 				"scene_id": "movie_time",
 			},
 			wantError:    false,
 			wantContains: "deleted successfully",
 		},
 		{
-			name:         "missing scene_id",
-			args:         map[string]any{},
+			name: "missing scene_id",
+			args: map[string]any{
+				"action": "delete",
+			},
 			wantError:    true,
 			wantContains: "scene_id is required",
 		},
 		{
 			name: "empty scene_id",
 			args: map[string]any{
+				"action":   "delete",
 				"scene_id": "",
 			},
 			wantError:    true,
@@ -653,6 +652,7 @@ func TestSceneHandlers_HandleDeleteScene(t *testing.T) {
 		{
 			name: "client error",
 			args: map[string]any{
+				"action":   "delete",
 				"scene_id": "movie_time",
 			},
 			deleteSceneErr: errors.New("deletion failed"),
@@ -672,10 +672,10 @@ func TestSceneHandlers_HandleDeleteScene(t *testing.T) {
 			}
 
 			h := NewSceneHandlers()
-			result, err := h.HandleDeleteScene(context.Background(), client, tt.args)
+			result, err := h.handleManageScene(context.Background(), client, tt.args)
 
 			if err != nil {
-				t.Errorf("HandleDeleteScene() returned error: %v", err)
+				t.Errorf("handleManageScene() returned error: %v", err)
 				return
 			}
 
@@ -696,7 +696,7 @@ func TestSceneHandlers_HandleDeleteScene(t *testing.T) {
 	}
 }
 
-func TestSceneHandlers_HandleActivateScene(t *testing.T) {
+func TestSceneHandlers_ManageScene_Activate(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -709,6 +709,7 @@ func TestSceneHandlers_HandleActivateScene(t *testing.T) {
 		{
 			name: "success",
 			args: map[string]any{
+				"action":   "activate",
 				"scene_id": "movie_time",
 			},
 			wantError:    false,
@@ -717,6 +718,7 @@ func TestSceneHandlers_HandleActivateScene(t *testing.T) {
 		{
 			name: "success with transition",
 			args: map[string]any{
+				"action":     "activate",
 				"scene_id":   "movie_time",
 				"transition": 2.5,
 			},
@@ -724,14 +726,17 @@ func TestSceneHandlers_HandleActivateScene(t *testing.T) {
 			wantContains: "activated successfully",
 		},
 		{
-			name:         "missing scene_id",
-			args:         map[string]any{},
+			name: "missing scene_id",
+			args: map[string]any{
+				"action": "activate",
+			},
 			wantError:    true,
 			wantContains: "scene_id is required",
 		},
 		{
 			name: "empty scene_id",
 			args: map[string]any{
+				"action":   "activate",
 				"scene_id": "",
 			},
 			wantError:    true,
@@ -740,6 +745,7 @@ func TestSceneHandlers_HandleActivateScene(t *testing.T) {
 		{
 			name: "client error",
 			args: map[string]any{
+				"action":   "activate",
 				"scene_id": "movie_time",
 			},
 			callServiceErr: errors.New("activation failed"),
@@ -759,10 +765,10 @@ func TestSceneHandlers_HandleActivateScene(t *testing.T) {
 			}
 
 			h := NewSceneHandlers()
-			result, err := h.HandleActivateScene(context.Background(), client, tt.args)
+			result, err := h.handleManageScene(context.Background(), client, tt.args)
 
 			if err != nil {
-				t.Errorf("HandleActivateScene() returned error: %v", err)
+				t.Errorf("handleManageScene() returned error: %v", err)
 				return
 			}
 
@@ -780,5 +786,38 @@ func TestSceneHandlers_HandleActivateScene(t *testing.T) {
 				t.Errorf("Content = %q, want to contain %q", content, tt.wantContains)
 			}
 		})
+	}
+}
+
+func TestSceneHandlers_ManageScene_InvalidAction(t *testing.T) {
+	t.Parallel()
+
+	h := NewSceneHandlers()
+	client := &mockSceneClient{}
+
+	// Test missing action
+	result, err := h.handleManageScene(context.Background(), client, map[string]any{})
+	if err != nil {
+		t.Errorf("handleManageScene() returned error: %v", err)
+		return
+	}
+	if !result.IsError {
+		t.Error("Expected error for missing action")
+	}
+	if !strings.Contains(result.Content[0].Text, "action is required") {
+		t.Errorf("Expected 'action is required' error, got: %s", result.Content[0].Text)
+	}
+
+	// Test invalid action
+	result, err = h.handleManageScene(context.Background(), client, map[string]any{"action": "invalid"})
+	if err != nil {
+		t.Errorf("handleManageScene() returned error: %v", err)
+		return
+	}
+	if !result.IsError {
+		t.Error("Expected error for invalid action")
+	}
+	if !strings.Contains(result.Content[0].Text, "invalid action") {
+		t.Errorf("Expected 'invalid action' error, got: %s", result.Content[0].Text)
 	}
 }

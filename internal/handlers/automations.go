@@ -21,82 +21,44 @@ func NewAutomationHandlers() *AutomationHandlers {
 	return &AutomationHandlers{}
 }
 
-// RegisterTools registers all automation-related tools with the registry.
+// RegisterTools registers the consolidated manage_automation tool with the registry.
 func (h *AutomationHandlers) RegisterTools(registry *mcp.Registry) {
-	registry.RegisterTool(h.listAutomationsTool(), h.handleListAutomations)
-	registry.RegisterTool(h.getAutomationTool(), h.handleGetAutomation)
-	registry.RegisterTool(h.createAutomationTool(), h.handleCreateAutomation)
-	registry.RegisterTool(h.updateAutomationTool(), h.handleUpdateAutomation)
-	registry.RegisterTool(h.deleteAutomationTool(), h.handleDeleteAutomation)
-	registry.RegisterTool(h.toggleAutomationTool(), h.handleToggleAutomation)
+	registry.RegisterTool(h.manageAutomationTool(), h.handleManageAutomation)
 }
 
-func (h *AutomationHandlers) listAutomationsTool() mcp.Tool {
-	return mcp.Tool{
-		Name:        "list_automations",
-		Description: "List all automations in Home Assistant. By default returns a compact list. Use filters to narrow down results and 'verbose' for full details including configuration. Supports pagination via 'limit' and 'cursor' parameters.",
-		InputSchema: mcp.JSONSchema{
-			Type:        "object",
-			Description: "Filter and output options for automations list",
-			Properties: map[string]mcp.JSONSchema{
-				"state": {
-					Type:        "string",
-					Description: "Filter by state: 'on' (enabled), 'off' (disabled), or omit for all",
-				},
-				"alias": {
-					Type:        "string",
-					Description: "Filter by alias/name (case-insensitive, partial match)",
-				},
-				"entity_id": {
-					Type:        "string",
-					Description: "Filter by entity used in the automation (searches triggers, conditions, and actions)",
-				},
-				"verbose": {
-					Type:        "boolean",
-					Description: "If true, return full details including configuration. Default: false (compact output with entity_id, state, alias, last_triggered)",
-				},
-				"limit": {
-					Type:        "integer",
-					Description: "Maximum number of automations to return (max 1000, default: no limit). Use with 'cursor' for pagination.",
-				},
-				"cursor": {
-					Type:        "string",
-					Description: "Pagination cursor from previous response to get next page of results",
-				},
-			},
-		},
-	}
-}
+// =============================================================================
+// Tool Definition
+// =============================================================================
 
-func (h *AutomationHandlers) getAutomationTool() mcp.Tool {
+//nolint:funlen // Tool schema definition
+func (h *AutomationHandlers) manageAutomationTool() mcp.Tool {
 	return mcp.Tool{
-		Name:        "get_automation",
-		Description: "Get details of a specific automation",
+		Name: "manage_automation",
+		Description: `Manage Home Assistant automations - list, get, create, update, delete, or toggle.
+
+Actions:
+- list: List automations (optional filters: state, alias, entity_id; supports verbose, limit, cursor)
+- get: Get details of a specific automation (requires automation_id)
+- create: Create a new automation (requires alias, trigger, action)
+- update: Update an existing automation (requires automation_id)
+- delete: Delete an automation (requires automation_id)
+- toggle: Enable or disable an automation (requires automation_id, enabled)`,
 		InputSchema: mcp.JSONSchema{
 			Type:        "object",
-			Description: "Parameters for getting automation details",
+			Description: "Automation management operation",
 			Properties: map[string]mcp.JSONSchema{
+				"action": {
+					Type:        "string",
+					Description: "Operation to perform: list, get, create, update, delete, toggle",
+					Enum:        []string{"list", "get", "create", "update", "delete", "toggle"},
+				},
 				"automation_id": {
 					Type:        "string",
-					Description: "The automation ID",
+					Description: "Automation ID (required for get/update/delete/toggle)",
 				},
-			},
-			Required: []string{"automation_id"},
-		},
-	}
-}
-
-func (h *AutomationHandlers) createAutomationTool() mcp.Tool {
-	return mcp.Tool{
-		Name:        "create_automation",
-		Description: "Create a new automation in Home Assistant",
-		InputSchema: mcp.JSONSchema{
-			Type:        "object",
-			Description: "Automation configuration",
-			Properties: map[string]mcp.JSONSchema{
 				"alias": {
 					Type:        "string",
-					Description: "Human-readable name for the automation",
+					Description: "Human-readable name for the automation (required for create, filter for list)",
 				},
 				"description": {
 					Type:        "string",
@@ -104,107 +66,258 @@ func (h *AutomationHandlers) createAutomationTool() mcp.Tool {
 				},
 				"trigger": {
 					Type:        "array",
-					Description: "List of triggers that start the automation",
+					Description: "List of triggers that start the automation (required for create)",
 				},
 				"condition": {
 					Type:        "array",
 					Description: "Optional conditions that must be met",
 				},
-				"action": {
+				"automation_action": {
 					Type:        "array",
-					Description: "Actions to perform when triggered",
+					Description: "Actions to perform when triggered (required for create)",
 				},
 				"mode": {
 					Type:        "string",
 					Description: "Automation mode: single, restart, queued, parallel",
-				},
-			},
-			Required: []string{"alias", "trigger", "action"},
-		},
-	}
-}
-
-func (h *AutomationHandlers) updateAutomationTool() mcp.Tool {
-	return mcp.Tool{
-		Name:        "update_automation",
-		Description: "Update an existing automation",
-		InputSchema: mcp.JSONSchema{
-			Type:        "object",
-			Description: "Automation ID and updated configuration",
-			Properties: map[string]mcp.JSONSchema{
-				"automation_id": {
-					Type:        "string",
-					Description: "The automation ID to update",
-				},
-				"alias": {
-					Type:        "string",
-					Description: "Human-readable name for the automation",
-				},
-				"description": {
-					Type:        "string",
-					Description: "Description of what the automation does",
-				},
-				"trigger": {
-					Type:        "array",
-					Description: "List of triggers that start the automation",
-				},
-				"condition": {
-					Type:        "array",
-					Description: "Optional conditions that must be met",
-				},
-				"action": {
-					Type:        "array",
-					Description: "Actions to perform when triggered",
-				},
-				"mode": {
-					Type:        "string",
-					Description: "Automation mode: single, restart, queued, parallel",
-				},
-			},
-			Required: []string{"automation_id"},
-		},
-	}
-}
-
-func (h *AutomationHandlers) deleteAutomationTool() mcp.Tool {
-	return mcp.Tool{
-		Name:        "delete_automation",
-		Description: "Delete an automation from Home Assistant",
-		InputSchema: mcp.JSONSchema{
-			Type:        "object",
-			Description: "Automation ID to delete",
-			Properties: map[string]mcp.JSONSchema{
-				"automation_id": {
-					Type:        "string",
-					Description: "The automation ID to delete",
-				},
-			},
-			Required: []string{"automation_id"},
-		},
-	}
-}
-
-func (h *AutomationHandlers) toggleAutomationTool() mcp.Tool {
-	return mcp.Tool{
-		Name:        "toggle_automation",
-		Description: "Enable or disable an automation",
-		InputSchema: mcp.JSONSchema{
-			Type:        "object",
-			Description: "Automation ID and enabled state",
-			Properties: map[string]mcp.JSONSchema{
-				"automation_id": {
-					Type:        "string",
-					Description: "The automation ID",
+					Enum:        []string{"single", "restart", "queued", "parallel"},
 				},
 				"enabled": {
 					Type:        "boolean",
-					Description: "Whether the automation should be enabled",
+					Description: "Whether the automation should be enabled (for toggle action)",
+				},
+				"state": {
+					Type:        "string",
+					Description: "Filter by state: 'on' (enabled), 'off' (disabled) (for list action)",
+				},
+				"entity_id": {
+					Type:        "string",
+					Description: "Filter by entity used in the automation (for list action)",
+				},
+				"verbose": {
+					Type:        "boolean",
+					Description: "If true, return full details including configuration (for list action)",
+				},
+				"limit": {
+					Type:        "integer",
+					Description: "Maximum number of automations to return (for list action, max 1000)",
+				},
+				"cursor": {
+					Type:        "string",
+					Description: "Pagination cursor from previous response (for list action)",
 				},
 			},
-			Required: []string{"automation_id", "enabled"},
+			Required: []string{"action"},
 		},
 	}
 }
+
+// =============================================================================
+// Main Handler
+// =============================================================================
+
+func (h *AutomationHandlers) handleManageAutomation(
+	ctx context.Context,
+	client homeassistant.Client,
+	args map[string]any,
+) (*mcp.ToolsCallResult, error) {
+	action, _ := args["action"].(string)
+	if action == "" {
+		return errorResult("action is required"), nil
+	}
+
+	switch action {
+	case "list":
+		return h.handleList(ctx, client, args)
+	case "get":
+		return h.handleGet(ctx, client, args)
+	case "create":
+		return h.handleCreate(ctx, client, args)
+	case "update":
+		return h.handleUpdate(ctx, client, args)
+	case "delete":
+		return h.handleDelete(ctx, client, args)
+	case "toggle":
+		return h.handleToggle(ctx, client, args)
+	default:
+		return errorResult(fmt.Sprintf("invalid action: %s (must be list, get, create, update, delete, or toggle)", action)), nil
+	}
+}
+
+// =============================================================================
+// Action Handlers
+// =============================================================================
+
+func (h *AutomationHandlers) handleList(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+	automations, err := client.ListAutomations(ctx)
+	if err != nil {
+		return errorResult(fmt.Sprintf("Error listing automations: %v", err)), nil
+	}
+
+	filters := parseAutomationFilters(args)
+	verbose, _ := args["verbose"].(bool)
+
+	result := applyAutomationFilters(ctx, client, automations, filters)
+
+	// Sort by entity_id for stable pagination
+	sort.Slice(result.automations, func(i, j int) bool {
+		return result.automations[i].EntityID < result.automations[j].EntityID
+	})
+
+	filtersMap := buildAutomationFiltersMap(filters)
+
+	paginationParams, err := ParsePaginationParams(args, filtersMap)
+	if err != nil {
+		return errorResult(fmt.Sprintf("Error: %v", err)), nil
+	}
+
+	paginated := ApplyPagination(result.automations, paginationParams)
+
+	var output []byte
+	if verbose {
+		output, err = buildVerboseAutomationOutput(ctx, client, paginated.Items, result.configs)
+	} else {
+		output, err = buildCompactAutomationOutput(paginated.Items)
+	}
+
+	if err != nil {
+		return errorResult(fmt.Sprintf("Error formatting automations: %v", err)), nil
+	}
+
+	summary := BuildPaginationSummary(paginated.Pagination, "automations")
+	if !verbose {
+		summary += VerboseHint
+	}
+
+	response := buildPaginatedAutomationResponse(paginated, output)
+	return successResult(summary + "\n\n" + string(response)), nil
+}
+
+func (h *AutomationHandlers) handleGet(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+	automationID, ok := args["automation_id"].(string)
+	if !ok || automationID == "" {
+		return errorResult("automation_id is required for get action"), nil
+	}
+
+	normalizedID := strings.TrimPrefix(automationID, "automation.")
+
+	automation, err := client.GetAutomation(ctx, normalizedID)
+	if err != nil {
+		automation, err = h.findAutomationByID(ctx, client, automationID)
+		if err != nil {
+			return errorResult(fmt.Sprintf("Error getting automation: %v", err)), nil
+		}
+	}
+
+	output, err := json.MarshalIndent(automation, "", "  ")
+	if err != nil {
+		return errorResult(fmt.Sprintf("Error formatting automation: %v", err)), nil
+	}
+
+	return successResult(string(output)), nil
+}
+
+func (h *AutomationHandlers) handleCreate(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+	alias, _ := args["alias"].(string)
+	if alias == "" {
+		return errorResult("alias is required for create action"), nil
+	}
+
+	trigger, _ := args["trigger"].([]any)
+	if len(trigger) == 0 {
+		return errorResult("trigger is required for create action"), nil
+	}
+
+	// Support both "action" and "automation_action" for backwards compatibility
+	automationAction, _ := args["automation_action"].([]any)
+	if len(automationAction) == 0 {
+		// Try legacy "action" field
+		automationAction, _ = args["action"].([]any)
+	}
+	if len(automationAction) == 0 {
+		return errorResult("automation_action is required for create action"), nil
+	}
+
+	id := generateAutomationID(alias)
+
+	config := homeassistant.AutomationConfig{
+		ID:          id,
+		Alias:       alias,
+		Description: getString(args, "description"),
+		Triggers:    trigger,
+		Conditions:  getSlice(args, "condition"),
+		Actions:     automationAction,
+		Mode:        getString(args, "mode"),
+	}
+
+	if err := client.CreateAutomation(ctx, config); err != nil {
+		return errorResult(fmt.Sprintf("Error creating automation: %v", err)), nil
+	}
+
+	return successResult(fmt.Sprintf("Automation '%s' created successfully with ID '%s'", alias, id)), nil
+}
+
+func (h *AutomationHandlers) handleUpdate(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+	automationID, ok := args["automation_id"].(string)
+	if !ok || automationID == "" {
+		return errorResult("automation_id is required for update action"), nil
+	}
+
+	current, err := client.GetAutomation(ctx, automationID)
+	if err != nil {
+		return errorResult(fmt.Sprintf("Error getting current automation: %v", err)), nil
+	}
+
+	if current.Config == nil {
+		current.Config = &homeassistant.AutomationConfig{ID: automationID}
+	}
+	applyAutomationConfigUpdates(current.Config, args)
+
+	if err := client.UpdateAutomation(ctx, automationID, *current.Config); err != nil {
+		return errorResult(fmt.Sprintf("Error updating automation: %v", err)), nil
+	}
+
+	return successResult(fmt.Sprintf("Automation '%s' updated successfully", automationID)), nil
+}
+
+func (h *AutomationHandlers) handleDelete(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+	automationID, ok := args["automation_id"].(string)
+	if !ok || automationID == "" {
+		return errorResult("automation_id is required for delete action"), nil
+	}
+
+	if err := client.DeleteAutomation(ctx, automationID); err != nil {
+		return errorResult(fmt.Sprintf("Error deleting automation: %v", err)), nil
+	}
+
+	return successResult(fmt.Sprintf("Automation '%s' deleted successfully", automationID)), nil
+}
+
+func (h *AutomationHandlers) handleToggle(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+	automationID, ok := args["automation_id"].(string)
+	if !ok || automationID == "" {
+		return errorResult("automation_id is required for toggle action"), nil
+	}
+
+	enabled, ok := args["enabled"].(bool)
+	if !ok {
+		return errorResult("enabled is required for toggle action"), nil
+	}
+
+	if err := client.ToggleAutomation(ctx, automationID, enabled); err != nil {
+		return errorResult(fmt.Sprintf("Error toggling automation: %v", err)), nil
+	}
+
+	state := "enabled"
+	if !enabled {
+		state = "disabled"
+	}
+
+	return successResult(fmt.Sprintf("Automation '%s' %s successfully", automationID, state)), nil
+}
+
+// =============================================================================
+// Helper Types
+// =============================================================================
 
 // compactAutomationEntry represents a minimal automation entry for compact output.
 type compactAutomationEntry struct {
@@ -236,6 +349,48 @@ type automationListResult struct {
 	configs     map[string]*homeassistant.AutomationConfig
 }
 
+// paginatedAutomationResponse wraps automation output with pagination metadata.
+type paginatedAutomationResponse struct {
+	Items      json.RawMessage    `json:"items"`
+	Pagination PaginationMetadata `json:"pagination"`
+}
+
+// =============================================================================
+// Helper Functions
+// =============================================================================
+
+// findAutomationByID searches for an automation by various ID formats.
+func (h *AutomationHandlers) findAutomationByID(ctx context.Context, client homeassistant.Client, searchID string) (*homeassistant.Automation, error) {
+	automations, err := client.ListAutomations(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list automations: %w", err)
+	}
+
+	if strings.HasPrefix(searchID, "automation.") {
+		entityID := searchID
+		for _, auto := range automations {
+			if auto.EntityID == entityID {
+				autoID := strings.TrimPrefix(auto.EntityID, "automation.")
+				return client.GetAutomation(ctx, autoID)
+			}
+		}
+	}
+
+	for _, auto := range automations {
+		autoID := strings.TrimPrefix(auto.EntityID, "automation.")
+		fullAuto, getErr := client.GetAutomation(ctx, autoID)
+		if getErr != nil {
+			continue
+		}
+
+		if fullAuto.Config != nil && fullAuto.Config.ID == searchID {
+			return fullAuto, nil
+		}
+	}
+
+	return nil, fmt.Errorf("automation not found with ID: %s (tried as automation_id, entity_id, and config.id)", searchID)
+}
+
 // parseAutomationFilters extracts filter parameters from args.
 func parseAutomationFilters(args map[string]any) automationFilters {
 	return automationFilters{
@@ -259,7 +414,6 @@ func matchesAliasFilter(auto homeassistant.Automation, aliasFilter string) bool 
 }
 
 // matchesEntityIDFilter checks if automation uses the specified entity ID.
-// Requires the automation config to be loaded.
 func matchesEntityIDFilter(config *homeassistant.AutomationConfig, entityIDFilter string) bool {
 	if entityIDFilter == "" {
 		return true
@@ -276,7 +430,6 @@ func (f automationFilters) needsConfigForFiltering() bool {
 }
 
 // fetchAutomationConfigs fetches all automation configs in batch.
-// This is more efficient than fetching one-by-one for entity_id filtering or verbose output.
 func fetchAutomationConfigs(
 	ctx context.Context,
 	client homeassistant.Client,
@@ -287,7 +440,7 @@ func fetchAutomationConfigs(
 	for _, auto := range automations {
 		autoID := strings.TrimPrefix(auto.EntityID, "automation.")
 		if autoID == auto.EntityID {
-			continue // Invalid entity_id format
+			continue
 		}
 
 		fullAuto, err := client.GetAutomation(ctx, autoID)
@@ -300,7 +453,6 @@ func fetchAutomationConfigs(
 }
 
 // applyAutomationFilters filters automations based on the provided filters.
-// Returns filtered automations and their configs (if fetched).
 func applyAutomationFilters(
 	ctx context.Context,
 	client homeassistant.Client,
@@ -309,7 +461,6 @@ func applyAutomationFilters(
 ) automationListResult {
 	var configs map[string]*homeassistant.AutomationConfig
 
-	// Pre-fetch configs if needed for entity_id filtering
 	if filters.needsConfigForFiltering() {
 		configs = fetchAutomationConfigs(ctx, client, automations)
 	}
@@ -352,14 +503,12 @@ func buildCompactAutomationOutput(automations []homeassistant.Automation) ([]byt
 }
 
 // buildVerboseAutomationOutput formats automations with full config as JSON.
-// Uses pre-fetched configs if available, otherwise fetches them.
 func buildVerboseAutomationOutput(
 	ctx context.Context,
 	client homeassistant.Client,
 	automations []homeassistant.Automation,
 	existingConfigs map[string]*homeassistant.AutomationConfig,
 ) ([]byte, error) {
-	// Ensure we have configs
 	configs := existingConfigs
 	if configs == nil {
 		configs = fetchAutomationConfigs(ctx, client, automations)
@@ -381,80 +530,6 @@ func buildVerboseAutomationOutput(
 	return json.MarshalIndent(verboseList, "", "  ")
 }
 
-// buildAutomationSummary creates the summary message for automation results.
-func buildAutomationSummary(count int, verbose bool) string {
-	summary := fmt.Sprintf("Found %d automations", count)
-	if !verbose {
-		summary += VerboseHint
-	}
-	return summary
-}
-
-func (h *AutomationHandlers) handleListAutomations(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	// Fetch all automations
-	automations, err := client.ListAutomations(ctx)
-	if err != nil {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error listing automations: %v", err))},
-			IsError: true,
-		}, nil
-	}
-
-	// Parse filters and verbose flag
-	filters := parseAutomationFilters(args)
-	verbose, _ := args["verbose"].(bool)
-
-	// Apply filters
-	result := applyAutomationFilters(ctx, client, automations, filters)
-
-	// Sort by entity_id for stable pagination
-	sort.Slice(result.automations, func(i, j int) bool {
-		return result.automations[i].EntityID < result.automations[j].EntityID
-	})
-
-	// Build filters map for pagination hash
-	filtersMap := buildAutomationFiltersMap(filters)
-
-	// Parse pagination params
-	paginationParams, err := ParsePaginationParams(args, filtersMap)
-	if err != nil {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error: %v", err))},
-			IsError: true,
-		}, nil
-	}
-
-	// Apply pagination
-	paginated := ApplyPagination(result.automations, paginationParams)
-
-	// Format output
-	var output []byte
-	if verbose {
-		output, err = buildVerboseAutomationOutput(ctx, client, paginated.Items, result.configs)
-	} else {
-		output, err = buildCompactAutomationOutput(paginated.Items)
-	}
-
-	if err != nil {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error formatting automations: %v", err))},
-			IsError: true,
-		}, nil
-	}
-
-	summary := BuildPaginationSummary(paginated.Pagination, "automations")
-	if !verbose {
-		summary += VerboseHint
-	}
-
-	// Build response with pagination metadata
-	response := buildPaginatedAutomationResponse(paginated, output)
-
-	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{mcp.NewTextContent(summary + "\n\n" + string(response))},
-	}, nil
-}
-
 // buildAutomationFiltersMap creates a map of filter values for pagination hash.
 func buildAutomationFiltersMap(filters automationFilters) map[string]any {
 	filtersMap := make(map[string]any)
@@ -470,15 +545,8 @@ func buildAutomationFiltersMap(filters automationFilters) map[string]any {
 	return filtersMap
 }
 
-// paginatedAutomationResponse wraps automation output with pagination metadata.
-type paginatedAutomationResponse struct {
-	Items      json.RawMessage    `json:"items"`
-	Pagination PaginationMetadata `json:"pagination"`
-}
-
 // buildPaginatedAutomationResponse creates the final response JSON.
 func buildPaginatedAutomationResponse(paginated PaginatedResponse[homeassistant.Automation], itemsOutput []byte) []byte {
-	// If no pagination was applied (limit=0), return items directly for backwards compatibility
 	if paginated.Pagination.Limit == 0 {
 		return itemsOutput
 	}
@@ -489,168 +557,6 @@ func buildPaginatedAutomationResponse(paginated PaginatedResponse[homeassistant.
 	}
 	result, _ := json.MarshalIndent(response, "", "  ")
 	return result
-}
-
-func (h *AutomationHandlers) handleGetAutomation(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	automationID, ok := args["automation_id"].(string)
-	if !ok || automationID == "" {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent("automation_id is required")},
-			IsError: true,
-		}, nil
-	}
-
-	// Normalize the automation ID - strip "automation." prefix if present
-	normalizedID := strings.TrimPrefix(automationID, "automation.")
-
-	// First, try to get automation directly with the provided ID
-	automation, err := client.GetAutomation(ctx, normalizedID)
-	if err != nil {
-		// If direct lookup failed, try to find by unique_id or entity_id
-		automation, err = h.findAutomationByID(ctx, client, automationID)
-		if err != nil {
-			return &mcp.ToolsCallResult{
-				Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error getting automation: %v", err))},
-				IsError: true,
-			}, nil
-		}
-	}
-
-	output, err := json.MarshalIndent(automation, "", "  ")
-	if err != nil {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error formatting automation: %v", err))},
-			IsError: true,
-		}, nil
-	}
-
-	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{mcp.NewTextContent(string(output))},
-	}, nil
-}
-
-// findAutomationByID searches for an automation by various ID formats:
-// - entity_id (automation.xxx)
-// - unique_id (numeric ID from entity registry)
-// - automation ID (the id field in automation config)
-func (h *AutomationHandlers) findAutomationByID(ctx context.Context, client homeassistant.Client, searchID string) (*homeassistant.Automation, error) {
-	automations, err := client.ListAutomations(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list automations: %w", err)
-	}
-
-	// Check if searchID matches entity_id pattern
-	if strings.HasPrefix(searchID, "automation.") {
-		entityID := searchID
-		for _, auto := range automations {
-			if auto.EntityID == entityID {
-				autoID := strings.TrimPrefix(auto.EntityID, "automation.")
-				return client.GetAutomation(ctx, autoID)
-			}
-		}
-	}
-
-	// Try to find by iterating through automations and checking config ID or unique_id
-	for _, auto := range automations {
-		autoID := strings.TrimPrefix(auto.EntityID, "automation.")
-		fullAuto, getErr := client.GetAutomation(ctx, autoID)
-		if getErr != nil {
-			continue
-		}
-
-		// Check if config ID matches
-		if fullAuto.Config != nil && fullAuto.Config.ID == searchID {
-			return fullAuto, nil
-		}
-	}
-
-	return nil, fmt.Errorf("automation not found with ID: %s (tried as automation_id, entity_id, and config.id)", searchID)
-}
-
-func (h *AutomationHandlers) handleCreateAutomation(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	alias, _ := args["alias"].(string)
-	if alias == "" {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent("alias is required")},
-			IsError: true,
-		}, nil
-	}
-
-	trigger, _ := args["trigger"].([]any)
-	if len(trigger) == 0 {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent("trigger is required")},
-			IsError: true,
-		}, nil
-	}
-
-	action, _ := args["action"].([]any)
-	if len(action) == 0 {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent("action is required")},
-			IsError: true,
-		}, nil
-	}
-
-	// Generate ID from alias (lowercase, underscores)
-	id := generateAutomationID(alias)
-
-	config := homeassistant.AutomationConfig{
-		ID:          id,
-		Alias:       alias,
-		Description: getString(args, "description"),
-		Triggers:    trigger,
-		Conditions:  getSlice(args, "condition"),
-		Actions:     action,
-		Mode:        getString(args, "mode"),
-	}
-
-	if err := client.CreateAutomation(ctx, config); err != nil {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error creating automation: %v", err))},
-			IsError: true,
-		}, nil
-	}
-
-	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Automation '%s' created successfully with ID '%s'", alias, id))},
-	}, nil
-}
-
-func (h *AutomationHandlers) handleUpdateAutomation(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	automationID, ok := args["automation_id"].(string)
-	if !ok || automationID == "" {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent("automation_id is required")},
-			IsError: true,
-		}, nil
-	}
-
-	// Get current automation first
-	current, err := client.GetAutomation(ctx, automationID)
-	if err != nil {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error getting current automation: %v", err))},
-			IsError: true,
-		}, nil
-	}
-
-	// Ensure Config exists and apply updates
-	if current.Config == nil {
-		current.Config = &homeassistant.AutomationConfig{ID: automationID}
-	}
-	applyAutomationConfigUpdates(current.Config, args)
-
-	if err := client.UpdateAutomation(ctx, automationID, *current.Config); err != nil {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error updating automation: %v", err))},
-			IsError: true,
-		}, nil
-	}
-
-	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Automation '%s' updated successfully", automationID))},
-	}, nil
 }
 
 // applyAutomationConfigUpdates applies provided fields from args to the automation config.
@@ -667,7 +573,10 @@ func applyAutomationConfigUpdates(config *homeassistant.AutomationConfig, args m
 	if condition, ok := args["condition"].([]any); ok {
 		config.Conditions = condition
 	}
-	if action, ok := args["action"].([]any); ok && len(action) > 0 {
+	// Support both "automation_action" and legacy "action"
+	if automationAction, ok := args["automation_action"].([]any); ok && len(automationAction) > 0 {
+		config.Actions = automationAction
+	} else if action, ok := args["action"].([]any); ok && len(action) > 0 {
 		config.Actions = action
 	}
 	if mode, ok := args["mode"].(string); ok && mode != "" {
@@ -675,64 +584,7 @@ func applyAutomationConfigUpdates(config *homeassistant.AutomationConfig, args m
 	}
 }
 
-func (h *AutomationHandlers) handleDeleteAutomation(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	automationID, ok := args["automation_id"].(string)
-	if !ok || automationID == "" {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent("automation_id is required")},
-			IsError: true,
-		}, nil
-	}
-
-	if err := client.DeleteAutomation(ctx, automationID); err != nil {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error deleting automation: %v", err))},
-			IsError: true,
-		}, nil
-	}
-
-	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Automation '%s' deleted successfully", automationID))},
-	}, nil
-}
-
-func (h *AutomationHandlers) handleToggleAutomation(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	automationID, ok := args["automation_id"].(string)
-	if !ok || automationID == "" {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent("automation_id is required")},
-			IsError: true,
-		}, nil
-	}
-
-	enabled, ok := args["enabled"].(bool)
-	if !ok {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent("enabled is required")},
-			IsError: true,
-		}, nil
-	}
-
-	if err := client.ToggleAutomation(ctx, automationID, enabled); err != nil {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error toggling automation: %v", err))},
-			IsError: true,
-		}, nil
-	}
-
-	state := "enabled"
-	if !enabled {
-		state = "disabled"
-	}
-
-	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Automation '%s' %s successfully", automationID, state))},
-	}, nil
-}
-
 // getString safely extracts a string value from a map of arguments.
-// It returns an empty string if the key doesn't exist or the value is not a string.
-// This is a common pattern for handling optional parameters in MCP tool calls.
 func getString(args map[string]any, key string) string {
 	if v, ok := args[key].(string); ok {
 		return v
@@ -741,8 +593,6 @@ func getString(args map[string]any, key string) string {
 }
 
 // getSlice safely extracts a slice value from a map of arguments.
-// It returns nil if the key doesn't exist or the value is not a slice.
-// This is used for handling optional array parameters like conditions.
 func getSlice(args map[string]any, key string) []any {
 	if v, ok := args[key].([]any); ok {
 		return v
@@ -810,19 +660,16 @@ func searchInConfigMapValue(m map[string]any, entityID string) bool {
 
 // searchInConfigMapEntry checks a single map entry for entity ID.
 func searchInConfigMapEntry(key string, subval any, entityID string) bool {
-	// Check entity_id fields directly
 	if key == configKeyEntityID {
 		return searchInConfigValue(subval, entityID)
 	}
 
-	// Check target.entity_id
 	if key == "target" {
 		if found := searchTargetEntityID(subval, entityID); found {
 			return true
 		}
 	}
 
-	// Recursively search all nested structures
 	return searchInConfigValue(subval, entityID)
 }
 
@@ -836,8 +683,6 @@ func searchTargetEntityID(val any, entityID string) bool {
 }
 
 // generateAutomationID converts an alias to a valid automation ID.
-// It transforms the alias to lowercase and replaces spaces/special characters with underscores.
-// Example: "Turn On Living Room Lights" -> "turn_on_living_room_lights"
 func generateAutomationID(alias string) string {
 	var result strings.Builder
 	prevUnderscore := false
@@ -854,7 +699,6 @@ func generateAutomationID(alias string) string {
 		}
 	}
 
-	// Trim trailing underscore
 	s := result.String()
 	return strings.TrimSuffix(s, "_")
 }

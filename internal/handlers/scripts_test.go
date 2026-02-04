@@ -84,28 +84,23 @@ func TestNewScriptHandlers(t *testing.T) {
 	}
 }
 
-func TestScriptHandlers_Register(t *testing.T) {
+func TestScriptHandlers_RegisterTools(t *testing.T) {
 	t.Parallel()
 
 	h := NewScriptHandlers()
 	registry := mcp.NewRegistry()
 
-	h.Register(registry)
+	h.RegisterTools(registry)
 
 	tools := registry.ListTools()
-	const expectedToolCount = 7
+	const expectedToolCount = 2 // manage_script + call_service
 	if len(tools) != expectedToolCount {
-		t.Errorf("Register() registered %d tools, want %d", len(tools), expectedToolCount)
+		t.Errorf("RegisterTools() registered %d tools, want %d", len(tools), expectedToolCount)
 	}
 
 	expectedTools := map[string]bool{
-		"list_scripts":   false,
-		"get_script":     false,
-		"create_script":  false,
-		"update_script":  false,
-		"delete_script":  false,
-		"execute_script": false,
-		"call_service":   false,
+		"manage_script": false,
+		"call_service":  false,
 	}
 
 	for _, tool := range tools {
@@ -121,19 +116,7 @@ func TestScriptHandlers_Register(t *testing.T) {
 	}
 }
 
-func TestScriptHandlers_Tools(t *testing.T) {
-	t.Parallel()
-
-	h := NewScriptHandlers()
-	tools := h.Tools()
-
-	const expectedToolCount = 7
-	if len(tools) != expectedToolCount {
-		t.Errorf("Tools() returned %d tools, want %d", len(tools), expectedToolCount)
-	}
-}
-
-func TestScriptHandlers_HandleListScripts(t *testing.T) {
+func TestScriptHandlers_ManageScript_List(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -190,10 +173,10 @@ func TestScriptHandlers_HandleListScripts(t *testing.T) {
 			}
 
 			h := NewScriptHandlers()
-			result, err := h.HandleListScripts(context.Background(), client, nil)
+			result, err := h.handleManageScript(context.Background(), client, map[string]any{"action": "list"})
 
 			if err != nil {
-				t.Errorf("HandleListScripts() returned error: %v", err)
+				t.Errorf("handleManageScript() returned error: %v", err)
 				return
 			}
 
@@ -214,7 +197,7 @@ func TestScriptHandlers_HandleListScripts(t *testing.T) {
 	}
 }
 
-func TestScriptHandlers_HandleGetScript(t *testing.T) {
+func TestScriptHandlers_ManageScript_Get(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -228,6 +211,7 @@ func TestScriptHandlers_HandleGetScript(t *testing.T) {
 		{
 			name: "success",
 			args: map[string]any{
+				"action":    "get",
 				"script_id": "morning_routine",
 			},
 			script: &homeassistant.Script{
@@ -243,14 +227,17 @@ func TestScriptHandlers_HandleGetScript(t *testing.T) {
 			wantError: false,
 		},
 		{
-			name:         "missing script_id",
-			args:         map[string]any{},
+			name: "missing script_id",
+			args: map[string]any{
+				"action": "get",
+			},
 			wantError:    true,
 			wantContains: "script_id is required",
 		},
 		{
 			name: "empty script_id",
 			args: map[string]any{
+				"action":    "get",
 				"script_id": "",
 			},
 			wantError:    true,
@@ -259,6 +246,7 @@ func TestScriptHandlers_HandleGetScript(t *testing.T) {
 		{
 			name: "client error",
 			args: map[string]any{
+				"action":    "get",
 				"script_id": "morning_routine",
 			},
 			getScriptErr: errors.New("not found"),
@@ -281,10 +269,10 @@ func TestScriptHandlers_HandleGetScript(t *testing.T) {
 			}
 
 			h := NewScriptHandlers()
-			result, err := h.HandleGetScript(context.Background(), client, tt.args)
+			result, err := h.handleManageScript(context.Background(), client, tt.args)
 
 			if err != nil {
-				t.Errorf("HandleGetScript() returned error: %v", err)
+				t.Errorf("handleManageScript() returned error: %v", err)
 				return
 			}
 
@@ -305,7 +293,7 @@ func TestScriptHandlers_HandleGetScript(t *testing.T) {
 	}
 }
 
-func TestScriptHandlers_HandleCreateScript(t *testing.T) {
+func TestScriptHandlers_ManageScript_Create(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -318,6 +306,7 @@ func TestScriptHandlers_HandleCreateScript(t *testing.T) {
 		{
 			name: "success",
 			args: map[string]any{
+				"action":    "create",
 				"script_id": "morning_routine",
 				"alias":     "Morning Routine",
 				"sequence":  []any{map[string]any{"service": "light.turn_on"}},
@@ -328,6 +317,7 @@ func TestScriptHandlers_HandleCreateScript(t *testing.T) {
 		{
 			name: "success with all options",
 			args: map[string]any{
+				"action":      "create",
 				"script_id":   "morning_routine",
 				"alias":       "Morning Routine",
 				"description": "Runs in the morning",
@@ -344,6 +334,7 @@ func TestScriptHandlers_HandleCreateScript(t *testing.T) {
 		{
 			name: "missing script_id",
 			args: map[string]any{
+				"action":   "create",
 				"alias":    "Morning Routine",
 				"sequence": []any{map[string]any{"service": "light.turn_on"}},
 			},
@@ -353,6 +344,7 @@ func TestScriptHandlers_HandleCreateScript(t *testing.T) {
 		{
 			name: "empty script_id",
 			args: map[string]any{
+				"action":    "create",
 				"script_id": "",
 				"alias":     "Morning Routine",
 				"sequence":  []any{map[string]any{"service": "light.turn_on"}},
@@ -363,6 +355,7 @@ func TestScriptHandlers_HandleCreateScript(t *testing.T) {
 		{
 			name: "missing alias",
 			args: map[string]any{
+				"action":    "create",
 				"script_id": "morning_routine",
 				"sequence":  []any{map[string]any{"service": "light.turn_on"}},
 			},
@@ -372,6 +365,7 @@ func TestScriptHandlers_HandleCreateScript(t *testing.T) {
 		{
 			name: "empty alias",
 			args: map[string]any{
+				"action":    "create",
 				"script_id": "morning_routine",
 				"alias":     "",
 				"sequence":  []any{map[string]any{"service": "light.turn_on"}},
@@ -382,6 +376,7 @@ func TestScriptHandlers_HandleCreateScript(t *testing.T) {
 		{
 			name: "missing sequence",
 			args: map[string]any{
+				"action":    "create",
 				"script_id": "morning_routine",
 				"alias":     "Morning Routine",
 			},
@@ -391,6 +386,7 @@ func TestScriptHandlers_HandleCreateScript(t *testing.T) {
 		{
 			name: "empty sequence",
 			args: map[string]any{
+				"action":    "create",
 				"script_id": "morning_routine",
 				"alias":     "Morning Routine",
 				"sequence":  []any{},
@@ -401,6 +397,7 @@ func TestScriptHandlers_HandleCreateScript(t *testing.T) {
 		{
 			name: "client error",
 			args: map[string]any{
+				"action":    "create",
 				"script_id": "morning_routine",
 				"alias":     "Morning Routine",
 				"sequence":  []any{map[string]any{"service": "light.turn_on"}},
@@ -422,10 +419,10 @@ func TestScriptHandlers_HandleCreateScript(t *testing.T) {
 			}
 
 			h := NewScriptHandlers()
-			result, err := h.HandleCreateScript(context.Background(), client, tt.args)
+			result, err := h.handleManageScript(context.Background(), client, tt.args)
 
 			if err != nil {
-				t.Errorf("HandleCreateScript() returned error: %v", err)
+				t.Errorf("handleManageScript() returned error: %v", err)
 				return
 			}
 
@@ -446,7 +443,7 @@ func TestScriptHandlers_HandleCreateScript(t *testing.T) {
 	}
 }
 
-func TestScriptHandlers_HandleUpdateScript(t *testing.T) {
+func TestScriptHandlers_ManageScript_Update(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -460,6 +457,7 @@ func TestScriptHandlers_HandleUpdateScript(t *testing.T) {
 		{
 			name: "success",
 			args: map[string]any{
+				"action":    "update",
 				"script_id": "morning_routine",
 				"alias":     "Updated Morning Routine",
 			},
@@ -469,6 +467,7 @@ func TestScriptHandlers_HandleUpdateScript(t *testing.T) {
 		{
 			name: "success with all options",
 			args: map[string]any{
+				"action":      "update",
 				"script_id":   "morning_routine",
 				"alias":       "Updated Morning Routine",
 				"description": "Updated description",
@@ -481,14 +480,17 @@ func TestScriptHandlers_HandleUpdateScript(t *testing.T) {
 			wantContains: "updated successfully",
 		},
 		{
-			name:         "missing script_id",
-			args:         map[string]any{},
+			name: "missing script_id",
+			args: map[string]any{
+				"action": "update",
+			},
 			wantError:    true,
 			wantContains: "script_id is required",
 		},
 		{
 			name: "empty script_id",
 			args: map[string]any{
+				"action":    "update",
 				"script_id": "",
 			},
 			wantError:    true,
@@ -497,6 +499,7 @@ func TestScriptHandlers_HandleUpdateScript(t *testing.T) {
 		{
 			name: "get state error",
 			args: map[string]any{
+				"action":    "update",
 				"script_id": "morning_routine",
 			},
 			getStateErr:  errors.New("not found"),
@@ -506,6 +509,7 @@ func TestScriptHandlers_HandleUpdateScript(t *testing.T) {
 		{
 			name: "update error",
 			args: map[string]any{
+				"action":    "update",
 				"script_id": "morning_routine",
 				"alias":     "Updated",
 			},
@@ -536,10 +540,10 @@ func TestScriptHandlers_HandleUpdateScript(t *testing.T) {
 			}
 
 			h := NewScriptHandlers()
-			result, err := h.HandleUpdateScript(context.Background(), client, tt.args)
+			result, err := h.handleManageScript(context.Background(), client, tt.args)
 
 			if err != nil {
-				t.Errorf("HandleUpdateScript() returned error: %v", err)
+				t.Errorf("handleManageScript() returned error: %v", err)
 				return
 			}
 
@@ -560,7 +564,7 @@ func TestScriptHandlers_HandleUpdateScript(t *testing.T) {
 	}
 }
 
-func TestScriptHandlers_HandleDeleteScript(t *testing.T) {
+func TestScriptHandlers_ManageScript_Delete(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -573,20 +577,24 @@ func TestScriptHandlers_HandleDeleteScript(t *testing.T) {
 		{
 			name: "success",
 			args: map[string]any{
+				"action":    "delete",
 				"script_id": "morning_routine",
 			},
 			wantError:    false,
 			wantContains: "deleted successfully",
 		},
 		{
-			name:         "missing script_id",
-			args:         map[string]any{},
+			name: "missing script_id",
+			args: map[string]any{
+				"action": "delete",
+			},
 			wantError:    true,
 			wantContains: "script_id is required",
 		},
 		{
 			name: "empty script_id",
 			args: map[string]any{
+				"action":    "delete",
 				"script_id": "",
 			},
 			wantError:    true,
@@ -595,6 +603,7 @@ func TestScriptHandlers_HandleDeleteScript(t *testing.T) {
 		{
 			name: "client error",
 			args: map[string]any{
+				"action":    "delete",
 				"script_id": "morning_routine",
 			},
 			deleteScriptErr: errors.New("deletion failed"),
@@ -614,10 +623,10 @@ func TestScriptHandlers_HandleDeleteScript(t *testing.T) {
 			}
 
 			h := NewScriptHandlers()
-			result, err := h.HandleDeleteScript(context.Background(), client, tt.args)
+			result, err := h.handleManageScript(context.Background(), client, tt.args)
 
 			if err != nil {
-				t.Errorf("HandleDeleteScript() returned error: %v", err)
+				t.Errorf("handleManageScript() returned error: %v", err)
 				return
 			}
 
@@ -638,7 +647,7 @@ func TestScriptHandlers_HandleDeleteScript(t *testing.T) {
 	}
 }
 
-func TestScriptHandlers_HandleExecuteScript(t *testing.T) {
+func TestScriptHandlers_ManageScript_Execute(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -651,6 +660,7 @@ func TestScriptHandlers_HandleExecuteScript(t *testing.T) {
 		{
 			name: "success",
 			args: map[string]any{
+				"action":    "execute",
 				"script_id": "morning_routine",
 			},
 			wantError:    false,
@@ -659,6 +669,7 @@ func TestScriptHandlers_HandleExecuteScript(t *testing.T) {
 		{
 			name: "success with variables",
 			args: map[string]any{
+				"action":    "execute",
 				"script_id": "morning_routine",
 				"variables": map[string]any{
 					"brightness": 100,
@@ -669,14 +680,17 @@ func TestScriptHandlers_HandleExecuteScript(t *testing.T) {
 			wantContains: "executed successfully",
 		},
 		{
-			name:         "missing script_id",
-			args:         map[string]any{},
+			name: "missing script_id",
+			args: map[string]any{
+				"action": "execute",
+			},
 			wantError:    true,
 			wantContains: "script_id is required",
 		},
 		{
 			name: "empty script_id",
 			args: map[string]any{
+				"action":    "execute",
 				"script_id": "",
 			},
 			wantError:    true,
@@ -685,6 +699,7 @@ func TestScriptHandlers_HandleExecuteScript(t *testing.T) {
 		{
 			name: "client error",
 			args: map[string]any{
+				"action":    "execute",
 				"script_id": "morning_routine",
 			},
 			callServiceErr: errors.New("execution failed"),
@@ -704,10 +719,10 @@ func TestScriptHandlers_HandleExecuteScript(t *testing.T) {
 			}
 
 			h := NewScriptHandlers()
-			result, err := h.HandleExecuteScript(context.Background(), client, tt.args)
+			result, err := h.handleManageScript(context.Background(), client, tt.args)
 
 			if err != nil {
-				t.Errorf("HandleExecuteScript() returned error: %v", err)
+				t.Errorf("handleManageScript() returned error: %v", err)
 				return
 			}
 
@@ -728,7 +743,40 @@ func TestScriptHandlers_HandleExecuteScript(t *testing.T) {
 	}
 }
 
-func TestScriptHandlers_HandleCallService(t *testing.T) {
+func TestScriptHandlers_ManageScript_InvalidAction(t *testing.T) {
+	t.Parallel()
+
+	h := NewScriptHandlers()
+	client := &mockScriptClient{}
+
+	// Test missing action
+	result, err := h.handleManageScript(context.Background(), client, map[string]any{})
+	if err != nil {
+		t.Errorf("handleManageScript() returned error: %v", err)
+		return
+	}
+	if !result.IsError {
+		t.Error("Expected error for missing action")
+	}
+	if !strings.Contains(result.Content[0].Text, "action is required") {
+		t.Errorf("Expected 'action is required' error, got: %s", result.Content[0].Text)
+	}
+
+	// Test invalid action
+	result, err = h.handleManageScript(context.Background(), client, map[string]any{"action": "invalid"})
+	if err != nil {
+		t.Errorf("handleManageScript() returned error: %v", err)
+		return
+	}
+	if !result.IsError {
+		t.Error("Expected error for invalid action")
+	}
+	if !strings.Contains(result.Content[0].Text, "invalid action") {
+		t.Errorf("Expected 'invalid action' error, got: %s", result.Content[0].Text)
+	}
+}
+
+func TestScriptHandlers_CallService(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -824,10 +872,10 @@ func TestScriptHandlers_HandleCallService(t *testing.T) {
 			}
 
 			h := NewScriptHandlers()
-			result, err := h.HandleCallService(context.Background(), client, tt.args)
+			result, err := h.handleCallService(context.Background(), client, tt.args)
 
 			if err != nil {
-				t.Errorf("HandleCallService() returned error: %v", err)
+				t.Errorf("handleCallService() returned error: %v", err)
 				return
 			}
 

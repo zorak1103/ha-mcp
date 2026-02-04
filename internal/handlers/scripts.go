@@ -10,6 +10,16 @@ import (
 	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
 
+// Script action constants.
+const (
+	scriptActionList    = "list"
+	scriptActionGet     = "get"
+	scriptActionCreate  = "create"
+	scriptActionUpdate  = "update"
+	scriptActionDelete  = "delete"
+	scriptActionExecute = "execute"
+)
+
 // ScriptHandlers provides handlers for script-related MCP tools.
 type ScriptHandlers struct{}
 
@@ -18,72 +28,45 @@ func NewScriptHandlers() *ScriptHandlers {
 	return &ScriptHandlers{}
 }
 
-// Tools returns all script-related tool definitions.
-func (h *ScriptHandlers) Tools() []mcp.Tool {
-	return []mcp.Tool{
-		h.listScriptsTool(),
-		h.getScriptTool(),
-		h.createScriptTool(),
-		h.updateScriptTool(),
-		h.deleteScriptTool(),
-		h.executeScriptTool(),
-		h.callServiceTool(),
-	}
+// RegisterTools registers the consolidated manage_script tool with the registry.
+func (h *ScriptHandlers) RegisterTools(registry *mcp.Registry) {
+	registry.RegisterTool(h.manageScriptTool(), h.handleManageScript)
+	registry.RegisterTool(h.callServiceTool(), h.handleCallService)
 }
 
-// Register registers all script-related tools with the registry.
-func (h *ScriptHandlers) Register(registry *mcp.Registry) {
-	registry.RegisterTool(h.listScriptsTool(), h.HandleListScripts)
-	registry.RegisterTool(h.getScriptTool(), h.HandleGetScript)
-	registry.RegisterTool(h.createScriptTool(), h.HandleCreateScript)
-	registry.RegisterTool(h.updateScriptTool(), h.HandleUpdateScript)
-	registry.RegisterTool(h.deleteScriptTool(), h.HandleDeleteScript)
-	registry.RegisterTool(h.executeScriptTool(), h.HandleExecuteScript)
-	registry.RegisterTool(h.callServiceTool(), h.HandleCallService)
-}
+// =============================================================================
+// Tool Definitions
+// =============================================================================
 
-func (h *ScriptHandlers) listScriptsTool() mcp.Tool {
+//nolint:funlen // Tool schema definition
+func (h *ScriptHandlers) manageScriptTool() mcp.Tool {
 	return mcp.Tool{
-		Name:        "list_scripts",
-		Description: "List all scripts in Home Assistant",
-		InputSchema: mcp.JSONSchema{
-			Type:       "object",
-			Properties: map[string]mcp.JSONSchema{},
-		},
-	}
-}
+		Name: "manage_script",
+		Description: `Manage Home Assistant scripts - list, get, create, update, delete, or execute.
 
-func (h *ScriptHandlers) getScriptTool() mcp.Tool {
-	return mcp.Tool{
-		Name:        "get_script",
-		Description: "Get details of a specific script",
+Actions:
+- list: List all scripts in Home Assistant
+- get: Get details of a specific script (requires script_id)
+- create: Create a new script (requires script_id, alias, sequence)
+- update: Update an existing script (requires script_id)
+- delete: Delete a script (requires script_id)
+- execute: Execute a script (requires script_id, optional variables)`,
 		InputSchema: mcp.JSONSchema{
-			Type: "object",
+			Type:        "object",
+			Description: "Script management operation",
 			Properties: map[string]mcp.JSONSchema{
-				"script_id": {
+				"action": {
 					Type:        "string",
-					Description: "The script ID (without 'script.' prefix)",
+					Description: "Operation to perform: list, get, create, update, delete, execute",
+					Enum:        []string{"list", "get", "create", "update", "delete", "execute"},
 				},
-			},
-			Required: []string{"script_id"},
-		},
-	}
-}
-
-func (h *ScriptHandlers) createScriptTool() mcp.Tool {
-	return mcp.Tool{
-		Name:        "create_script",
-		Description: "Create a new script in Home Assistant",
-		InputSchema: mcp.JSONSchema{
-			Type: "object",
-			Properties: map[string]mcp.JSONSchema{
 				"script_id": {
 					Type:        "string",
-					Description: "Unique ID for the script (lowercase, underscores allowed)",
+					Description: "Script ID without 'script.' prefix (required for get/create/update/delete/execute)",
 				},
 				"alias": {
 					Type:        "string",
-					Description: "Friendly name for the script",
+					Description: "Friendly name for the script (required for create)",
 				},
 				"description": {
 					Type:        "string",
@@ -101,7 +84,7 @@ func (h *ScriptHandlers) createScriptTool() mcp.Tool {
 				},
 				"sequence": {
 					Type:        "array",
-					Description: "Array of actions to execute",
+					Description: "Array of actions to execute (required for create)",
 					Items: &mcp.JSONSchema{
 						Type:        "object",
 						Description: "Action object",
@@ -111,92 +94,12 @@ func (h *ScriptHandlers) createScriptTool() mcp.Tool {
 					Type:        "object",
 					Description: "Input fields for the script",
 				},
-			},
-			Required: []string{"script_id", "alias", "sequence"},
-		},
-	}
-}
-
-func (h *ScriptHandlers) updateScriptTool() mcp.Tool {
-	return mcp.Tool{
-		Name:        "update_script",
-		Description: "Update an existing script in Home Assistant",
-		InputSchema: mcp.JSONSchema{
-			Type: "object",
-			Properties: map[string]mcp.JSONSchema{
-				"script_id": {
-					Type:        "string",
-					Description: "The script ID to update",
-				},
-				"alias": {
-					Type:        "string",
-					Description: "New friendly name for the script",
-				},
-				"description": {
-					Type:        "string",
-					Description: "New description",
-				},
-				"mode": {
-					Type:        "string",
-					Description: "Script mode: single, restart, queued, parallel",
-					Enum:        []string{"single", "restart", "queued", "parallel"},
-				},
-				"icon": {
-					Type:        "string",
-					Description: "New icon for the script",
-				},
-				"sequence": {
-					Type:        "array",
-					Description: "New array of actions to execute",
-					Items: &mcp.JSONSchema{
-						Type:        "object",
-						Description: "Action object",
-					},
-				},
-				"fields": {
-					Type:        "object",
-					Description: "New input fields for the script",
-				},
-			},
-			Required: []string{"script_id"},
-		},
-	}
-}
-
-func (h *ScriptHandlers) deleteScriptTool() mcp.Tool {
-	return mcp.Tool{
-		Name:        "delete_script",
-		Description: "Delete a script from Home Assistant",
-		InputSchema: mcp.JSONSchema{
-			Type: "object",
-			Properties: map[string]mcp.JSONSchema{
-				"script_id": {
-					Type:        "string",
-					Description: "The script ID to delete",
-				},
-			},
-			Required: []string{"script_id"},
-		},
-	}
-}
-
-func (h *ScriptHandlers) executeScriptTool() mcp.Tool {
-	return mcp.Tool{
-		Name:        "execute_script",
-		Description: "Execute a script in Home Assistant",
-		InputSchema: mcp.JSONSchema{
-			Type: "object",
-			Properties: map[string]mcp.JSONSchema{
-				"script_id": {
-					Type:        "string",
-					Description: "The script ID to execute (without 'script.' prefix)",
-				},
 				"variables": {
 					Type:        "object",
-					Description: "Variables to pass to the script",
+					Description: "Variables to pass when executing the script",
 				},
 			},
-			Required: []string{"script_id"},
+			Required: []string{"action"},
 		},
 	}
 }
@@ -226,14 +129,46 @@ func (h *ScriptHandlers) callServiceTool() mcp.Tool {
 	}
 }
 
-// HandleListScripts handles the list_scripts tool call.
-func (h *ScriptHandlers) HandleListScripts(ctx context.Context, client homeassistant.Client, _ map[string]any) (*mcp.ToolsCallResult, error) {
+// =============================================================================
+// Main Handler
+// =============================================================================
+
+func (h *ScriptHandlers) handleManageScript(
+	ctx context.Context,
+	client homeassistant.Client,
+	args map[string]any,
+) (*mcp.ToolsCallResult, error) {
+	action, _ := args["action"].(string)
+	if action == "" {
+		return errorResult("action is required"), nil
+	}
+
+	switch action {
+	case scriptActionList:
+		return h.handleList(ctx, client)
+	case scriptActionGet:
+		return h.handleGet(ctx, client, args)
+	case scriptActionCreate:
+		return h.handleCreate(ctx, client, args)
+	case scriptActionUpdate:
+		return h.handleUpdate(ctx, client, args)
+	case scriptActionDelete:
+		return h.handleDelete(ctx, client, args)
+	case scriptActionExecute:
+		return h.handleExecute(ctx, client, args)
+	default:
+		return errorResult(fmt.Sprintf("invalid action: %s (must be list, get, create, update, delete, or execute)", action)), nil
+	}
+}
+
+// =============================================================================
+// Action Handlers
+// =============================================================================
+
+func (h *ScriptHandlers) handleList(ctx context.Context, client homeassistant.Client) (*mcp.ToolsCallResult, error) {
 	scripts, err := client.ListScripts(ctx)
 	if err != nil {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error listing scripts: %v", err))},
-			IsError: true,
-		}, nil
+		return errorResult(fmt.Sprintf("Error listing scripts: %v", err)), nil
 	}
 
 	type scriptInfo struct {
@@ -260,73 +195,45 @@ func (h *ScriptHandlers) HandleListScripts(ctx context.Context, client homeassis
 
 	jsonBytes, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error marshaling scripts: %v", err))},
-			IsError: true,
-		}, nil
+		return errorResult(fmt.Sprintf("Error marshaling scripts: %v", err)), nil
 	}
 
-	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{mcp.NewTextContent(string(jsonBytes))},
-	}, nil
+	return successResult(string(jsonBytes)), nil
 }
 
-// HandleGetScript handles the get_script tool call.
-// Returns the full script configuration including sequence, fields, mode, and variables.
-func (h *ScriptHandlers) HandleGetScript(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+func (h *ScriptHandlers) handleGet(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
 	scriptID, ok := args["script_id"].(string)
 	if !ok || scriptID == "" {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent("script_id is required")},
-			IsError: true,
-		}, nil
+		return errorResult("script_id is required for get action"), nil
 	}
 
 	script, err := client.GetScript(ctx, scriptID)
 	if err != nil {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error getting script: %v", err))},
-			IsError: true,
-		}, nil
+		return errorResult(fmt.Sprintf("Error getting script: %v", err)), nil
 	}
 
 	jsonBytes, err := json.MarshalIndent(script, "", "  ")
 	if err != nil {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error marshaling script: %v", err))},
-			IsError: true,
-		}, nil
+		return errorResult(fmt.Sprintf("Error marshaling script: %v", err)), nil
 	}
 
-	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{mcp.NewTextContent(string(jsonBytes))},
-	}, nil
+	return successResult(string(jsonBytes)), nil
 }
 
-// HandleCreateScript handles the create_script tool call.
-func (h *ScriptHandlers) HandleCreateScript(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+func (h *ScriptHandlers) handleCreate(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
 	scriptID, ok := args["script_id"].(string)
 	if !ok || scriptID == "" {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent("script_id is required")},
-			IsError: true,
-		}, nil
+		return errorResult("script_id is required for create action"), nil
 	}
 
 	alias, ok := args["alias"].(string)
 	if !ok || alias == "" {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent("alias is required")},
-			IsError: true,
-		}, nil
+		return errorResult("alias is required for create action"), nil
 	}
 
 	sequence, ok := args["sequence"].([]any)
 	if !ok || len(sequence) == 0 {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent("sequence is required and must be a non-empty array")},
-			IsError: true,
-		}, nil
+		return errorResult("sequence is required for create action and must be a non-empty array"), nil
 	}
 
 	config := homeassistant.ScriptConfig{
@@ -348,35 +255,23 @@ func (h *ScriptHandlers) HandleCreateScript(ctx context.Context, client homeassi
 	}
 
 	if err := client.CreateScript(ctx, scriptID, config); err != nil {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error creating script: %v", err))},
-			IsError: true,
-		}, nil
+		return errorResult(fmt.Sprintf("Error creating script: %v", err)), nil
 	}
 
-	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Script '%s' created successfully", scriptID))},
-	}, nil
+	return successResult(fmt.Sprintf("Script '%s' created successfully", scriptID)), nil
 }
 
-// HandleUpdateScript handles the update_script tool call.
-func (h *ScriptHandlers) HandleUpdateScript(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+func (h *ScriptHandlers) handleUpdate(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
 	scriptID, ok := args["script_id"].(string)
 	if !ok || scriptID == "" {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent("script_id is required")},
-			IsError: true,
-		}, nil
+		return errorResult("script_id is required for update action"), nil
 	}
 
 	// Get current script state to preserve existing values
 	entityID := "script." + scriptID
 	current, err := client.GetState(ctx, entityID)
 	if err != nil {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error getting current script: %v", err))},
-			IsError: true,
-		}, nil
+		return errorResult(fmt.Sprintf("Error getting current script: %v", err)), nil
 	}
 
 	// Build config from current state and args
@@ -408,47 +303,29 @@ func (h *ScriptHandlers) HandleUpdateScript(ctx context.Context, client homeassi
 	}
 
 	if err := client.UpdateScript(ctx, scriptID, config); err != nil {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error updating script: %v", err))},
-			IsError: true,
-		}, nil
+		return errorResult(fmt.Sprintf("Error updating script: %v", err)), nil
 	}
 
-	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Script '%s' updated successfully", scriptID))},
-	}, nil
+	return successResult(fmt.Sprintf("Script '%s' updated successfully", scriptID)), nil
 }
 
-// HandleDeleteScript handles the delete_script tool call.
-func (h *ScriptHandlers) HandleDeleteScript(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+func (h *ScriptHandlers) handleDelete(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
 	scriptID, ok := args["script_id"].(string)
 	if !ok || scriptID == "" {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent("script_id is required")},
-			IsError: true,
-		}, nil
+		return errorResult("script_id is required for delete action"), nil
 	}
 
 	if err := client.DeleteScript(ctx, scriptID); err != nil {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error deleting script: %v", err))},
-			IsError: true,
-		}, nil
+		return errorResult(fmt.Sprintf("Error deleting script: %v", err)), nil
 	}
 
-	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Script '%s' deleted successfully", scriptID))},
-	}, nil
+	return successResult(fmt.Sprintf("Script '%s' deleted successfully", scriptID)), nil
 }
 
-// HandleExecuteScript handles the execute_script tool call.
-func (h *ScriptHandlers) HandleExecuteScript(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+func (h *ScriptHandlers) handleExecute(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
 	scriptID, ok := args["script_id"].(string)
 	if !ok || scriptID == "" {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent("script_id is required")},
-			IsError: true,
-		}, nil
+		return errorResult("script_id is required for execute action"), nil
 	}
 
 	data := map[string]any{
@@ -462,33 +339,25 @@ func (h *ScriptHandlers) HandleExecuteScript(ctx context.Context, client homeass
 	}
 
 	if _, err := client.CallService(ctx, "script", "turn_on", data); err != nil {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error executing script: %v", err))},
-			IsError: true,
-		}, nil
+		return errorResult(fmt.Sprintf("Error executing script: %v", err)), nil
 	}
 
-	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Script '%s' executed successfully", scriptID))},
-	}, nil
+	return successResult(fmt.Sprintf("Script '%s' executed successfully", scriptID)), nil
 }
 
-// HandleCallService handles the call_service tool call.
-func (h *ScriptHandlers) HandleCallService(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+// =============================================================================
+// call_service Handler (separate tool)
+// =============================================================================
+
+func (h *ScriptHandlers) handleCallService(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
 	domain, ok := args["domain"].(string)
 	if !ok || domain == "" {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent("domain is required")},
-			IsError: true,
-		}, nil
+		return errorResult("domain is required"), nil
 	}
 
 	service, ok := args["service"].(string)
 	if !ok || service == "" {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent("service is required")},
-			IsError: true,
-		}, nil
+		return errorResult("service is required"), nil
 	}
 
 	var data map[string]any
@@ -498,10 +367,7 @@ func (h *ScriptHandlers) HandleCallService(ctx context.Context, client homeassis
 
 	entities, err := client.CallService(ctx, domain, service, data)
 	if err != nil {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error calling service: %v", err))},
-			IsError: true,
-		}, nil
+		return errorResult(fmt.Sprintf("Error calling service: %v", err)), nil
 	}
 
 	result := map[string]any{
@@ -519,13 +385,9 @@ func (h *ScriptHandlers) HandleCallService(ctx context.Context, client homeassis
 
 	// Try to marshal result to JSON, fall back to simple message if it fails
 	if jsonBytes, marshalErr := json.MarshalIndent(result, "", "  "); marshalErr == nil {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent(string(jsonBytes))},
-		}, nil
+		return successResult(string(jsonBytes)), nil
 	}
 
 	// Fallback if JSON marshaling fails
-	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Service called successfully, affected %d entities", len(entities)))},
-	}, nil
+	return successResult(fmt.Sprintf("Service called successfully, affected %d entities", len(entities))), nil
 }

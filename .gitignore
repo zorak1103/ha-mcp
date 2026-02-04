@@ -28,6 +28,9 @@ vendor/
 .idea/
 .vscode/
 *.swp
+
+# Claude Code local settings
+.claude.local.md
 *.swo
 *~
 .DS_Store

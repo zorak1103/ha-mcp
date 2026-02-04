@@ -416,12 +416,7 @@ Authorization: Bearer <your-ha-access-token>
 
 | Tool | Description |
 |------|-------------|
-| `list_automations` | List all automations |
-| `get_automation` | Get automation details |
-| `create_automation` | Create a new automation |
-| `update_automation` | Update an existing automation |
-| `delete_automation` | Delete an automation |
-| `toggle_automation` | Enable/disable an automation |
+| `manage_automation` | Consolidated automation management (actions: list, get, create, update, delete, toggle) |
 
 #### Helper Tools
 
@@ -472,23 +467,13 @@ Universal tool for runtime helper operations:
 
 | Tool | Description |
 |------|-------------|
-| `list_scripts` | List all scripts |
-| `get_script` | Get script details |
-| `create_script` | Create a new script |
-| `update_script` | Update a script |
-| `delete_script` | Delete a script |
-| `execute_script` | Execute a script |
+| `manage_script` | Consolidated script management (actions: list, get, create, update, delete, execute) |
 
 #### Scene Tools
 
 | Tool | Description |
 |------|-------------|
-| `list_scenes` | List all scenes |
-| `get_scene` | Get scene details |
-| `create_scene` | Create a new scene |
-| `update_scene` | Update a scene |
-| `delete_scene` | Delete a scene |
-| `activate_scene` | Activate a scene |
+| `manage_scene` | Consolidated scene management (actions: list, get, create, update, delete, activate) |
 
 #### Media Tools
 
@@ -880,11 +865,11 @@ ha-mcp/
 │   │   │   └── *_integration_test.go  # Domain-specific tests
 │   │   ├── analysis_snapshot.go # Parallel data fetching for analysis
 │   │   ├── entities.go          # Entity tool handlers
-│   │   ├── automations.go       # Automation tool handlers
+│   │   ├── automations.go       # Consolidated manage_automation tool
 │   │   ├── helpers.go           # list_helpers tool handler
 │   │   ├── helpers_consolidated.go  # manage_helper and helper_action tools
-│   │   ├── scripts.go           # Script tool handlers
-│   │   ├── scenes.go            # Scene tool handlers
+│   │   ├── scripts.go           # Consolidated manage_script tool
+│   │   ├── scenes.go            # Consolidated manage_scene tool
 │   │   ├── registry.go          # Registry tool handlers
 │   │   ├── media.go             # Media tool handlers
 │   │   ├── statistics.go        # Statistics tool handler

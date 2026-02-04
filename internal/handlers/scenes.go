@@ -11,6 +11,16 @@ import (
 	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
 
+// Scene action constants.
+const (
+	sceneActionList     = "list"
+	sceneActionGet      = "get"
+	sceneActionCreate   = "create"
+	sceneActionUpdate   = "update"
+	sceneActionDelete   = "delete"
+	sceneActionActivate = "activate"
+)
+
 // SceneHandlers provides handlers for scene-related MCP tools.
 type SceneHandlers struct{}
 
@@ -19,80 +29,43 @@ func NewSceneHandlers() *SceneHandlers {
 	return &SceneHandlers{}
 }
 
-// Tools returns all scene-related tool definitions.
-func (h *SceneHandlers) Tools() []mcp.Tool {
-	return []mcp.Tool{
-		h.listScenesTool(),
-		h.getSceneTool(),
-		h.createSceneTool(),
-		h.updateSceneTool(),
-		h.deleteSceneTool(),
-		h.activateSceneTool(),
-	}
+// RegisterTools registers the consolidated manage_scene tool with the registry.
+func (h *SceneHandlers) RegisterTools(registry *mcp.Registry) {
+	registry.RegisterTool(h.manageSceneTool(), h.handleManageScene)
 }
 
-// Register registers all scene-related tools with the registry.
-func (h *SceneHandlers) Register(registry *mcp.Registry) {
-	registry.RegisterTool(h.listScenesTool(), h.HandleListScenes)
-	registry.RegisterTool(h.getSceneTool(), h.HandleGetScene)
-	registry.RegisterTool(h.createSceneTool(), h.HandleCreateScene)
-	registry.RegisterTool(h.updateSceneTool(), h.HandleUpdateScene)
-	registry.RegisterTool(h.deleteSceneTool(), h.HandleDeleteScene)
-	registry.RegisterTool(h.activateSceneTool(), h.HandleActivateScene)
-}
+// =============================================================================
+// Tool Definition
+// =============================================================================
 
-func (h *SceneHandlers) listScenesTool() mcp.Tool {
+func (h *SceneHandlers) manageSceneTool() mcp.Tool {
 	return mcp.Tool{
-		Name:        "list_scenes",
-		Description: "List all scenes in Home Assistant. Use filters to narrow down results.",
+		Name: "manage_scene",
+		Description: `Manage Home Assistant scenes - list, get, create, update, delete, or activate.
+
+Actions:
+- list: List all scenes (optional filters: name_contains, entity_contains)
+- get: Get details of a specific scene (requires scene_id)
+- create: Create a new scene (requires scene_id, name, entities)
+- update: Update an existing scene (requires scene_id)
+- delete: Delete a scene (requires scene_id)
+- activate: Activate a scene (requires scene_id, optional transition)`,
 		InputSchema: mcp.JSONSchema{
 			Type:        "object",
-			Description: "Filter options for scenes list",
+			Description: "Scene management operation",
 			Properties: map[string]mcp.JSONSchema{
-				"name_contains": {
+				"action": {
 					Type:        "string",
-					Description: "Filter by scene name or entity_id containing this string (case-insensitive)",
+					Description: "Operation to perform: list, get, create, update, delete, activate",
+					Enum:        []string{"list", "get", "create", "update", "delete", "activate"},
 				},
-				"entity_contains": {
-					Type:        "string",
-					Description: "Filter to scenes that contain this entity ID in their entity list",
-				},
-			},
-		},
-	}
-}
-
-func (h *SceneHandlers) getSceneTool() mcp.Tool {
-	return mcp.Tool{
-		Name:        "get_scene",
-		Description: "Get details of a specific scene",
-		InputSchema: mcp.JSONSchema{
-			Type: "object",
-			Properties: map[string]mcp.JSONSchema{
 				"scene_id": {
 					Type:        "string",
-					Description: "The scene ID (without 'scene.' prefix)",
-				},
-			},
-			Required: []string{"scene_id"},
-		},
-	}
-}
-
-func (h *SceneHandlers) createSceneTool() mcp.Tool {
-	return mcp.Tool{
-		Name:        "create_scene",
-		Description: "Create a new scene in Home Assistant",
-		InputSchema: mcp.JSONSchema{
-			Type: "object",
-			Properties: map[string]mcp.JSONSchema{
-				"scene_id": {
-					Type:        "string",
-					Description: "Unique ID for the scene (lowercase, underscores allowed)",
+					Description: "Scene ID without 'scene.' prefix (required for get/create/update/delete/activate)",
 				},
 				"name": {
 					Type:        "string",
-					Description: "Friendly name for the scene",
+					Description: "Friendly name for the scene (required for create)",
 				},
 				"icon": {
 					Type:        "string",
@@ -102,78 +75,59 @@ func (h *SceneHandlers) createSceneTool() mcp.Tool {
 					Type:        "object",
 					Description: "Entity states to set when scene is activated. Keys are entity IDs, values are state objects with 'state' and optional 'attributes'",
 				},
-			},
-			Required: []string{"scene_id", "name", "entities"},
-		},
-	}
-}
-
-func (h *SceneHandlers) updateSceneTool() mcp.Tool {
-	return mcp.Tool{
-		Name:        "update_scene",
-		Description: "Update an existing scene in Home Assistant",
-		InputSchema: mcp.JSONSchema{
-			Type: "object",
-			Properties: map[string]mcp.JSONSchema{
-				"scene_id": {
+				"name_contains": {
 					Type:        "string",
-					Description: "The scene ID to update",
+					Description: "Filter by scene name or entity_id containing this string (for list action, case-insensitive)",
 				},
-				"name": {
+				"entity_contains": {
 					Type:        "string",
-					Description: "New friendly name for the scene",
-				},
-				"icon": {
-					Type:        "string",
-					Description: "New icon for the scene",
-				},
-				"entities": {
-					Type:        "object",
-					Description: "New entity states for the scene",
-				},
-			},
-			Required: []string{"scene_id"},
-		},
-	}
-}
-
-func (h *SceneHandlers) deleteSceneTool() mcp.Tool {
-	return mcp.Tool{
-		Name:        "delete_scene",
-		Description: "Delete a scene from Home Assistant",
-		InputSchema: mcp.JSONSchema{
-			Type: "object",
-			Properties: map[string]mcp.JSONSchema{
-				"scene_id": {
-					Type:        "string",
-					Description: "The scene ID to delete",
-				},
-			},
-			Required: []string{"scene_id"},
-		},
-	}
-}
-
-func (h *SceneHandlers) activateSceneTool() mcp.Tool {
-	return mcp.Tool{
-		Name:        "activate_scene",
-		Description: "Activate a scene in Home Assistant",
-		InputSchema: mcp.JSONSchema{
-			Type: "object",
-			Properties: map[string]mcp.JSONSchema{
-				"scene_id": {
-					Type:        "string",
-					Description: "The scene ID to activate (without 'scene.' prefix)",
+					Description: "Filter to scenes that contain this entity ID in their entity list (for list action)",
 				},
 				"transition": {
 					Type:        "number",
-					Description: "Transition time in seconds (optional)",
+					Description: "Transition time in seconds (for activate action)",
 				},
 			},
-			Required: []string{"scene_id"},
+			Required: []string{"action"},
 		},
 	}
 }
+
+// =============================================================================
+// Main Handler
+// =============================================================================
+
+func (h *SceneHandlers) handleManageScene(
+	ctx context.Context,
+	client homeassistant.Client,
+	args map[string]any,
+) (*mcp.ToolsCallResult, error) {
+	action, _ := args["action"].(string)
+	if action == "" {
+		return errorResult("action is required"), nil
+	}
+
+	switch action {
+	case sceneActionList:
+		return h.handleList(ctx, client, args)
+	case sceneActionGet:
+		return h.handleGet(ctx, client, args)
+	case sceneActionCreate:
+		return h.handleCreate(ctx, client, args)
+	case sceneActionUpdate:
+		return h.handleUpdate(ctx, client, args)
+	case sceneActionDelete:
+		return h.handleDelete(ctx, client, args)
+	case sceneActionActivate:
+		return h.handleActivate(ctx, client, args)
+	default:
+		return errorResult(fmt.Sprintf("invalid action: %s (must be list, get, create, update, delete, or activate)", action)), nil
+	}
+}
+
+// =============================================================================
+// Action Handlers
+// =============================================================================
 
 // sceneInfo represents scene information for list output.
 type sceneInfo struct {
@@ -188,6 +142,136 @@ type sceneFilters struct {
 	nameContains   string
 	entityContains string
 }
+
+func (h *SceneHandlers) handleList(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+	scenes, err := client.ListScenes(ctx)
+	if err != nil {
+		return errorResult(fmt.Sprintf("Error listing scenes: %v", err)), nil
+	}
+
+	filters := parseSceneFilters(args)
+	result := filterScenes(scenes, filters)
+
+	jsonBytes, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return errorResult(fmt.Sprintf("Error marshaling scenes: %v", err)), nil
+	}
+
+	summary := fmt.Sprintf("Found %d scenes\n\n", len(result))
+	return successResult(summary + string(jsonBytes)), nil
+}
+
+func (h *SceneHandlers) handleGet(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+	sceneID, ok := args["scene_id"].(string)
+	if !ok || sceneID == "" {
+		return errorResult("scene_id is required for get action"), nil
+	}
+
+	entityID := "scene." + sceneID
+	state, err := client.GetState(ctx, entityID)
+	if err != nil {
+		return errorResult(fmt.Sprintf("Error getting scene: %v", err)), nil
+	}
+
+	jsonBytes, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return errorResult(fmt.Sprintf("Error marshaling scene: %v", err)), nil
+	}
+
+	return successResult(string(jsonBytes)), nil
+}
+
+func (h *SceneHandlers) handleCreate(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+	sceneID, ok := args["scene_id"].(string)
+	if !ok || sceneID == "" {
+		return errorResult("scene_id is required for create action"), nil
+	}
+
+	name, ok := args["name"].(string)
+	if !ok || name == "" {
+		return errorResult("name is required for create action"), nil
+	}
+
+	entitiesRaw, ok := args["entities"].(map[string]any)
+	if !ok || len(entitiesRaw) == 0 {
+		return errorResult("entities is required for create action and must be a non-empty object"), nil
+	}
+
+	entities, invalidEntity := parseSceneEntities(entitiesRaw)
+	if invalidEntity != "" {
+		return errorResult(fmt.Sprintf("Invalid state format for entity %s", invalidEntity)), nil
+	}
+
+	config := homeassistant.SceneConfig{Name: name, Entities: entities}
+	if icon, ok := args["icon"].(string); ok {
+		config.Icon = icon
+	}
+
+	if err := client.CreateScene(ctx, sceneID, config); err != nil {
+		return errorResult(fmt.Sprintf("Error creating scene: %v", err)), nil
+	}
+
+	return successResult(fmt.Sprintf("Scene '%s' created successfully", sceneID)), nil
+}
+
+func (h *SceneHandlers) handleUpdate(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+	sceneID, ok := args["scene_id"].(string)
+	if !ok || sceneID == "" {
+		return errorResult("scene_id is required for update action"), nil
+	}
+
+	entityID := "scene." + sceneID
+	current, err := client.GetState(ctx, entityID)
+	if err != nil {
+		return errorResult(fmt.Sprintf("Error getting current scene: %v", err)), nil
+	}
+
+	config := buildSceneConfigFromArgs(current, args)
+
+	if err := client.UpdateScene(ctx, sceneID, config); err != nil {
+		return errorResult(fmt.Sprintf("Error updating scene: %v", err)), nil
+	}
+
+	return successResult(fmt.Sprintf("Scene '%s' updated successfully", sceneID)), nil
+}
+
+func (h *SceneHandlers) handleDelete(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+	sceneID, ok := args["scene_id"].(string)
+	if !ok || sceneID == "" {
+		return errorResult("scene_id is required for delete action"), nil
+	}
+
+	if err := client.DeleteScene(ctx, sceneID); err != nil {
+		return errorResult(fmt.Sprintf("Error deleting scene: %v", err)), nil
+	}
+
+	return successResult(fmt.Sprintf("Scene '%s' deleted successfully", sceneID)), nil
+}
+
+func (h *SceneHandlers) handleActivate(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+	sceneID, ok := args["scene_id"].(string)
+	if !ok || sceneID == "" {
+		return errorResult("scene_id is required for activate action"), nil
+	}
+
+	data := map[string]any{
+		"entity_id": "scene." + sceneID,
+	}
+
+	if transition, ok := args["transition"].(float64); ok {
+		data["transition"] = transition
+	}
+
+	if _, err := client.CallService(ctx, "scene", "turn_on", data); err != nil {
+		return errorResult(fmt.Sprintf("Error activating scene: %v", err)), nil
+	}
+
+	return successResult(fmt.Sprintf("Scene '%s' activated successfully", sceneID)), nil
+}
+
+// =============================================================================
+// Helper Functions
+// =============================================================================
 
 // parseSceneFilters extracts filter parameters from args.
 func parseSceneFilters(args map[string]any) sceneFilters {
@@ -272,66 +356,6 @@ func filterScenes(scenes []homeassistant.Entity, filters sceneFilters) []sceneIn
 	return result
 }
 
-// HandleListScenes handles the list_scenes tool call.
-func (h *SceneHandlers) HandleListScenes(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	scenes, err := client.ListScenes(ctx)
-	if err != nil {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error listing scenes: %v", err))},
-			IsError: true,
-		}, nil
-	}
-
-	filters := parseSceneFilters(args)
-	result := filterScenes(scenes, filters)
-
-	jsonBytes, err := json.MarshalIndent(result, "", "  ")
-	if err != nil {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error marshaling scenes: %v", err))},
-			IsError: true,
-		}, nil
-	}
-
-	summary := fmt.Sprintf("Found %d scenes\n\n", len(result))
-
-	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{mcp.NewTextContent(summary + string(jsonBytes))},
-	}, nil
-}
-
-// HandleGetScene handles the get_scene tool call.
-func (h *SceneHandlers) HandleGetScene(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	sceneID, ok := args["scene_id"].(string)
-	if !ok || sceneID == "" {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent("scene_id is required")},
-			IsError: true,
-		}, nil
-	}
-
-	entityID := "scene." + sceneID
-	state, err := client.GetState(ctx, entityID)
-	if err != nil {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error getting scene: %v", err))},
-			IsError: true,
-		}, nil
-	}
-
-	jsonBytes, err := json.MarshalIndent(state, "", "  ")
-	if err != nil {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error marshaling scene: %v", err))},
-			IsError: true,
-		}, nil
-	}
-
-	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{mcp.NewTextContent(string(jsonBytes))},
-	}, nil
-}
-
 // parseSceneState converts raw state data to SceneState.
 func parseSceneState(stateRaw any) (homeassistant.SceneState, bool) {
 	sceneState := homeassistant.SceneState{}
@@ -366,57 +390,6 @@ func parseSceneEntities(entitiesRaw map[string]any) (map[string]homeassistant.Sc
 	return entities, ""
 }
 
-// HandleCreateScene handles the create_scene tool call.
-func (h *SceneHandlers) HandleCreateScene(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	sceneID, ok := args["scene_id"].(string)
-	if !ok || sceneID == "" {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent("scene_id is required")},
-			IsError: true,
-		}, nil
-	}
-
-	name, ok := args["name"].(string)
-	if !ok || name == "" {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent("name is required")},
-			IsError: true,
-		}, nil
-	}
-
-	entitiesRaw, ok := args["entities"].(map[string]any)
-	if !ok || len(entitiesRaw) == 0 {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent("entities is required and must be a non-empty object")},
-			IsError: true,
-		}, nil
-	}
-
-	entities, invalidEntity := parseSceneEntities(entitiesRaw)
-	if invalidEntity != "" {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Invalid state format for entity %s", invalidEntity))},
-			IsError: true,
-		}, nil
-	}
-
-	config := homeassistant.SceneConfig{Name: name, Entities: entities}
-	if icon, ok := args["icon"].(string); ok {
-		config.Icon = icon
-	}
-
-	if err := client.CreateScene(ctx, sceneID, config); err != nil {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error creating scene: %v", err))},
-			IsError: true,
-		}, nil
-	}
-
-	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Scene '%s' created successfully", sceneID))},
-	}, nil
-}
-
 // buildSceneConfigFromArgs builds scene config from current state and args.
 func buildSceneConfigFromArgs(current *homeassistant.Entity, args map[string]any) homeassistant.SceneConfig {
 	config := homeassistant.SceneConfig{Entities: make(map[string]homeassistant.SceneState)}
@@ -439,89 +412,4 @@ func buildSceneConfigFromArgs(current *homeassistant.Entity, args map[string]any
 	}
 
 	return config
-}
-
-// HandleUpdateScene handles the update_scene tool call.
-func (h *SceneHandlers) HandleUpdateScene(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	sceneID, ok := args["scene_id"].(string)
-	if !ok || sceneID == "" {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent("scene_id is required")},
-			IsError: true,
-		}, nil
-	}
-
-	entityID := "scene." + sceneID
-	current, err := client.GetState(ctx, entityID)
-	if err != nil {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error getting current scene: %v", err))},
-			IsError: true,
-		}, nil
-	}
-
-	config := buildSceneConfigFromArgs(current, args)
-
-	if err := client.UpdateScene(ctx, sceneID, config); err != nil {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error updating scene: %v", err))},
-			IsError: true,
-		}, nil
-	}
-
-	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Scene '%s' updated successfully", sceneID))},
-	}, nil
-}
-
-// HandleDeleteScene handles the delete_scene tool call.
-func (h *SceneHandlers) HandleDeleteScene(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	sceneID, ok := args["scene_id"].(string)
-	if !ok || sceneID == "" {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent("scene_id is required")},
-			IsError: true,
-		}, nil
-	}
-
-	if err := client.DeleteScene(ctx, sceneID); err != nil {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error deleting scene: %v", err))},
-			IsError: true,
-		}, nil
-	}
-
-	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Scene '%s' deleted successfully", sceneID))},
-	}, nil
-}
-
-// HandleActivateScene handles the activate_scene tool call.
-func (h *SceneHandlers) HandleActivateScene(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	sceneID, ok := args["scene_id"].(string)
-	if !ok || sceneID == "" {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent("scene_id is required")},
-			IsError: true,
-		}, nil
-	}
-
-	data := map[string]any{
-		"entity_id": "scene." + sceneID,
-	}
-
-	if transition, ok := args["transition"].(float64); ok {
-		data["transition"] = transition
-	}
-
-	if _, err := client.CallService(ctx, "scene", "turn_on", data); err != nil {
-		return &mcp.ToolsCallResult{
-			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Error activating scene: %v", err))},
-			IsError: true,
-		}, nil
-	}
-
-	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("Scene '%s' activated successfully", sceneID))},
-	}, nil
 }
