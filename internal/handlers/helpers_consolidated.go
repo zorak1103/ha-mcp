@@ -3,10 +3,10 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
+	"github.com/zorak1103/ha-mcp/internal/handlers/formatter"
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
@@ -200,7 +200,7 @@ func (h *ConsolidatedHelperHandlers) manageHelperTool() mcp.Tool {
 
 	return mcp.Tool{
 		Name: "manage_helper",
-		Description: `Manage Home Assistant helpers - create, delete, or get details.
+		Description: `Manage Home Assistant helpers - list, create, delete, or get details.
 
 Helper Types:
 - Input helpers: input_boolean, input_number, input_text, input_select, input_datetime, input_button
@@ -209,6 +209,7 @@ Helper Types:
 - Advanced helpers: template_sensor, template_binary_sensor, threshold, derivative, integral
 
 Actions:
+- list: List all helpers (optional: format=natural|json, verbose=true|false)
 - create: Create a new helper (requires type, id, name)
 - delete: Delete an existing helper (requires entity_id)
 - get_details: Get schedule details (requires entity_id, only for schedule)`,
@@ -218,8 +219,17 @@ Actions:
 			Properties: map[string]mcp.JSONSchema{
 				"action": {
 					Type:        "string",
-					Description: "Operation to perform: create, delete, or get_details",
-					Enum:        []string{"create", "delete", "get_details"},
+					Description: "Operation to perform: list, create, delete, or get_details",
+					Enum:        []string{"list", "create", "delete", "get_details"},
+				},
+				"format": {
+					Type:        "string",
+					Description: "Output format: 'natural' (default) for LLM-optimized text, 'json' for structured data",
+					Enum:        []string{"natural", "json"},
+				},
+				"verbose": {
+					Type:        "boolean",
+					Description: "Include additional details in list output (default: false)",
 				},
 				"type": {
 					Type:        "string",
@@ -470,6 +480,8 @@ func (h *ConsolidatedHelperHandlers) handleManageHelper(ctx context.Context, cli
 	}
 
 	switch action {
+	case "list":
+		return h.handleList(ctx, client, args)
 	case "create":
 		return h.handleCreate(ctx, client, args)
 	case "delete":
@@ -477,8 +489,32 @@ func (h *ConsolidatedHelperHandlers) handleManageHelper(ctx context.Context, cli
 	case "get_details":
 		return h.handleGetDetails(ctx, client, args)
 	default:
-		return errorResult(fmt.Sprintf("invalid action: %s (must be create, delete, or get_details)", action)), nil
+		return errorResult(fmt.Sprintf("invalid action: %s (must be list, create, delete, or get_details)", action)), nil
 	}
+}
+
+func (h *ConsolidatedHelperHandlers) handleList(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+	helpers, err := client.ListHelpers(ctx)
+	if err != nil {
+		return errorResult(fmt.Sprintf("Error listing helpers: %v", err)), nil
+	}
+
+	formatStr, _ := args["format"].(string)
+	format := formatter.ParseFormat(formatStr)
+	verbose, _ := args["verbose"].(bool)
+
+	helperFormatter := formatter.NewHelperFormatter(format)
+	opts := formatter.HelperListOptions{
+		Verbose:     verbose,
+		GroupByType: true,
+	}
+
+	output, err := helperFormatter.FormatList(ctx, helpers, opts)
+	if err != nil {
+		return errorResult(fmt.Sprintf("Error formatting helpers: %v", err)), nil
+	}
+
+	return successResult(output), nil
 }
 
 func (h *ConsolidatedHelperHandlers) handleCreate(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
@@ -569,12 +605,17 @@ func (h *ConsolidatedHelperHandlers) handleGetDetails(ctx context.Context, clien
 	timeBlocks := parseTimeBlocks(config)
 	details := buildScheduleDetails(state, timeBlocks)
 
-	output, err := json.MarshalIndent(details, "", "  ")
+	// Format output based on format parameter
+	formatStr, _ := args["format"].(string)
+	format := formatter.ParseFormat(formatStr)
+
+	helperFormatter := formatter.NewHelperFormatter(format)
+	output, err := helperFormatter.FormatScheduleDetail(ctx, details)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Error formatting schedule: %v", err)), nil
 	}
 
-	return successResult(string(output)), nil
+	return successResult(output), nil
 }
 
 // =============================================================================

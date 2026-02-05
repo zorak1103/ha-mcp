@@ -615,10 +615,11 @@ func TestManageHelper_GetDetails(t *testing.T) {
 
 	tests := []handlerTestCase{
 		{
-			name: "get_details for schedule",
+			name: "get_details for schedule with json format",
 			args: map[string]any{
 				"action":    "get_details",
 				"entity_id": "schedule.work_hours",
+				"format":    "json",
 			},
 			setupMock: func(m *UniversalMockClient) {
 				m.GetStateFn = func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
@@ -642,6 +643,34 @@ func TestManageHelper_GetDetails(t *testing.T) {
 			wantContains: []string{"schedule.work_hours"},
 		},
 		{
+			name: "get_details for schedule with natural format",
+			args: map[string]any{
+				"action":    "get_details",
+				"entity_id": "schedule.work_hours",
+				"format":    "natural",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetStateFn = func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+					return &homeassistant.Entity{
+						EntityID: entityID,
+						State:    "on",
+						Attributes: map[string]any{
+							"friendly_name": "Work Hours",
+						},
+					}, nil
+				}
+				m.GetScheduleConfigFn = func(_ context.Context, _ string) (map[string]any, error) {
+					return map[string]any{
+						"monday": []any{
+							map[string]any{"from": "09:00:00", "to": "17:00:00"},
+						},
+					}, nil
+				}
+			},
+			wantError:    false,
+			wantContains: []string{"Work Hours", "on", "Mon"},
+		},
+		{
 			name: "get_details for non-schedule entity",
 			args: map[string]any{
 				"action":    "get_details",
@@ -649,6 +678,99 @@ func TestManageHelper_GetDetails(t *testing.T) {
 			},
 			wantError:    true,
 			wantContains: []string{"schedule"},
+		},
+	}
+
+	h := NewConsolidatedHelperHandlers()
+	runHandlerTestCases(t, tests, h.handleManageHelper)
+}
+
+// =============================================================================
+// manage_helper - List Tests
+// =============================================================================
+
+func TestManageHelper_List(t *testing.T) {
+	t.Parallel()
+
+	tests := []handlerTestCase{
+		{
+			name: "list helpers with natural format (default)",
+			args: map[string]any{
+				"action": "list",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.ListHelpersFn = func(_ context.Context) ([]homeassistant.Entity, error) {
+					return []homeassistant.Entity{
+						{EntityID: "counter.visitors", State: "42", Attributes: map[string]any{"friendly_name": "Visitor Counter"}},
+						{EntityID: "input_boolean.vacation", State: "off", Attributes: map[string]any{"friendly_name": "Vacation Mode"}},
+						{EntityID: "timer.pomodoro", State: "idle", Attributes: map[string]any{"friendly_name": "Pomodoro Timer"}},
+					}, nil
+				}
+			},
+			wantError:    false,
+			wantContains: []string{"3 helpers", "Counters", "Input Booleans", "Timers"},
+		},
+		{
+			name: "list helpers with json format",
+			args: map[string]any{
+				"action": "list",
+				"format": "json",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.ListHelpersFn = func(_ context.Context) ([]homeassistant.Entity, error) {
+					return []homeassistant.Entity{
+						{EntityID: "counter.visitors", State: "42", Attributes: map[string]any{"friendly_name": "Visitor Counter"}},
+					}, nil
+				}
+			},
+			wantError:    false,
+			wantContains: []string{"counter.visitors", "entity_id", "state"},
+		},
+		{
+			name: "list helpers empty",
+			args: map[string]any{
+				"action": "list",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.ListHelpersFn = func(_ context.Context) ([]homeassistant.Entity, error) {
+					return []homeassistant.Entity{}, nil
+				}
+			},
+			wantError:    false,
+			wantContains: []string{"No helpers found"},
+		},
+		{
+			name: "list helpers with verbose",
+			args: map[string]any{
+				"action":  "list",
+				"verbose": true,
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.ListHelpersFn = func(_ context.Context) ([]homeassistant.Entity, error) {
+					return []homeassistant.Entity{
+						{EntityID: "counter.visitors", State: "42", Attributes: map[string]any{
+							"friendly_name": "Visitor Counter",
+							"minimum":       float64(0),
+							"maximum":       float64(100),
+						}},
+					}, nil
+				}
+			},
+			wantError:    false,
+			wantContains: []string{"Counters", "Visitor Counter"},
+		},
+		{
+			name: "list helpers error",
+			args: map[string]any{
+				"action": "list",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.ListHelpersFn = func(_ context.Context) ([]homeassistant.Entity, error) {
+					return nil, fmt.Errorf("connection failed")
+				}
+			},
+			wantError:    true,
+			wantContains: []string{"Error", "listing"},
 		},
 	}
 

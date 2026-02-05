@@ -423,7 +423,7 @@ ha-mcp provides comprehensive support for all 14 Home Assistant helper types thr
 | Tool | Description |
 |------|-------------|
 | `list_helpers` | List all helpers across all types |
-| `manage_helper` | Create, delete, or get details for any helper type |
+| `manage_helper` | List, create, delete, or get details for any helper type (format: natural/json) |
 | `helper_action` | Execute runtime actions (toggle, set, increment, start, etc.) |
 
 ##### manage_helper
@@ -432,9 +432,10 @@ Universal tool for helper lifecycle management:
 
 | Action | Description |
 |--------|-------------|
+| `list` | List all helpers with optional format (natural/json) and verbose mode |
 | `create` | Create a new helper (requires `type`, `id`, `name`) |
 | `delete` | Delete an existing helper (requires `entity_id`) |
-| `get_details` | Get detailed configuration (requires `entity_id`, schedule only) |
+| `get_details` | Get detailed configuration (requires `entity_id`, schedule only, format: natural/json) |
 
 **Supported helper types:** `input_boolean`, `input_number`, `input_text`, `input_select`, `input_datetime`, `input_button`, `counter`, `timer`, `schedule`, `group`, `template_sensor`, `template_binary_sensor`, `threshold`, `derivative`, `integral`
 
@@ -861,7 +862,11 @@ ha-mcp/
 │   │   │   ├── natural.go       # LLM-optimized natural language output
 │   │   │   ├── json.go          # Structured JSON output
 │   │   │   ├── registry.go      # Registry formatters
-│   │   │   └── target.go        # Target analysis formatters
+│   │   │   ├── target.go        # Target analysis formatters
+│   │   │   ├── automations.go   # Automation list/get formatters
+│   │   │   ├── scripts.go       # Script list/get formatters
+│   │   │   ├── scenes.go        # Scene list/get formatters
+│   │   │   └── helpers.go       # Helper list/get_details formatters
 │   │   ├── integration/         # Integration tests (build tag: integration)
 │   │   │   ├── helpers.go       # Test ID generation, validation
 │   │   │   ├── cleanup.go       # Cleanup utilities
