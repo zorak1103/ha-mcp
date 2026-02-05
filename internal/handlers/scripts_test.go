@@ -121,6 +121,7 @@ func TestScriptHandlers_ManageScript_List(t *testing.T) {
 
 	tests := []struct {
 		name           string
+		args           map[string]any
 		listScriptsErr error
 		listScripts    []homeassistant.Entity
 		wantError      bool
@@ -128,11 +129,13 @@ func TestScriptHandlers_ManageScript_List(t *testing.T) {
 	}{
 		{
 			name:        "success empty",
+			args:        map[string]any{"action": "list"},
 			listScripts: []homeassistant.Entity{},
 			wantError:   false,
 		},
 		{
-			name: "success with scripts",
+			name: "success with scripts (json)",
+			args: map[string]any{"action": "list", "format": "json"},
 			listScripts: []homeassistant.Entity{
 				{
 					EntityID: "script.morning_routine",
@@ -152,7 +155,24 @@ func TestScriptHandlers_ManageScript_List(t *testing.T) {
 			wantContains: "morning_routine",
 		},
 		{
+			name: "success with scripts (natural)",
+			args: map[string]any{"action": "list"},
+			listScripts: []homeassistant.Entity{
+				{
+					EntityID: "script.morning_routine",
+					State:    "off",
+					Attributes: map[string]any{
+						"friendly_name":  "Morning Routine",
+						"last_triggered": "2024-01-15T07:00:00",
+					},
+				},
+			},
+			wantError:    false,
+			wantContains: "Morning Routine",
+		},
+		{
 			name:           "client error",
+			args:           map[string]any{"action": "list"},
 			listScriptsErr: errors.New("connection failed"),
 			wantError:      true,
 			wantContains:   "Error listing scripts",
@@ -173,7 +193,7 @@ func TestScriptHandlers_ManageScript_List(t *testing.T) {
 			}
 
 			h := NewScriptHandlers()
-			result, err := h.handleManageScript(context.Background(), client, map[string]any{"action": "list"})
+			result, err := h.handleManageScript(context.Background(), client, tt.args)
 
 			if err != nil {
 				t.Errorf("handleManageScript() returned error: %v", err)

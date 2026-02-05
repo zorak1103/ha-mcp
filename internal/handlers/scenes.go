@@ -3,10 +3,10 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
+	"github.com/zorak1103/ha-mcp/internal/handlers/formatter"
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
@@ -87,6 +87,11 @@ Actions:
 					Type:        "number",
 					Description: "Transition time in seconds (for activate action)",
 				},
+				"format": {
+					Type:        "string",
+					Enum:        []string{"natural", "json"},
+					Description: "Output format: 'natural' (default) for LLM-optimized text, 'json' for structured data",
+				},
 			},
 			Required: []string{"action"},
 		},
@@ -152,13 +157,29 @@ func (h *SceneHandlers) handleList(ctx context.Context, client homeassistant.Cli
 	filters := parseSceneFilters(args)
 	result := filterScenes(scenes, filters)
 
-	jsonBytes, err := json.MarshalIndent(result, "", "  ")
-	if err != nil {
-		return errorResult(fmt.Sprintf("Error marshaling scenes: %v", err)), nil
+	formatStr, _ := args["format"].(string)
+	format := formatter.ParseFormat(formatStr)
+
+	// Convert to SceneInfo for formatter
+	sceneInfoList := make([]formatter.SceneInfo, 0, len(result))
+	for _, info := range result {
+		sceneInfoList = append(sceneInfoList, formatter.SceneInfo{
+			EntityID:     info.EntityID,
+			State:        info.State,
+			FriendlyName: info.FriendlyName,
+			EntityIDs:    info.EntityIDs,
+		})
 	}
 
-	summary := fmt.Sprintf("Found %d scenes\n\n", len(result))
-	return successResult(summary + string(jsonBytes)), nil
+	f := formatter.NewSceneFormatter(format)
+	opts := formatter.SceneListOptions{}
+
+	output, err := f.FormatList(ctx, sceneInfoList, opts)
+	if err != nil {
+		return errorResult(fmt.Sprintf("Error formatting scenes: %v", err)), nil
+	}
+
+	return successResult(output), nil
 }
 
 func (h *SceneHandlers) handleGet(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
@@ -173,12 +194,16 @@ func (h *SceneHandlers) handleGet(ctx context.Context, client homeassistant.Clie
 		return errorResult(fmt.Sprintf("Error getting scene: %v", err)), nil
 	}
 
-	jsonBytes, err := json.MarshalIndent(state, "", "  ")
+	formatStr, _ := args["format"].(string)
+	format := formatter.ParseFormat(formatStr)
+	f := formatter.NewSceneFormatter(format)
+
+	output, err := f.FormatDetail(ctx, *state)
 	if err != nil {
-		return errorResult(fmt.Sprintf("Error marshaling scene: %v", err)), nil
+		return errorResult(fmt.Sprintf("Error formatting scene: %v", err)), nil
 	}
 
-	return successResult(string(jsonBytes)), nil
+	return successResult(output), nil
 }
 
 func (h *SceneHandlers) handleCreate(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/zorak1103/ha-mcp/internal/handlers/formatter"
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
@@ -115,6 +116,11 @@ Actions:
 					Type:        "string",
 					Description: "Pagination cursor from previous response (for list action)",
 				},
+				"format": {
+					Type:        "string",
+					Enum:        []string{"natural", "json"},
+					Description: "Output format: 'natural' (default) for LLM-optimized text, 'json' for structured data",
+				},
 			},
 			Required: []string{"action"},
 		},
@@ -165,41 +171,80 @@ func (h *AutomationHandlers) handleList(ctx context.Context, client homeassistan
 
 	filters := parseAutomationFilters(args)
 	verbose, _ := args["verbose"].(bool)
+	format := formatter.ParseFormat(getString(args, "format"))
 
-	result := applyAutomationFilters(ctx, client, automations, filters)
-
-	// Sort by entity_id for stable pagination
-	sort.Slice(result.automations, func(i, j int) bool {
-		return result.automations[i].EntityID < result.automations[j].EntityID
-	})
+	filterResult := applyAutomationFilters(ctx, client, automations, filters)
+	sortAutomationsByEntityID(filterResult.automations)
 
 	filtersMap := buildAutomationFiltersMap(filters)
-
 	paginationParams, err := ParsePaginationParams(args, filtersMap)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Error: %v", err)), nil
 	}
 
-	paginated := ApplyPagination(result.automations, paginationParams)
+	paginated := ApplyPagination(filterResult.automations, paginationParams)
+	configs := ensureAutomationConfigs(ctx, client, filterResult.configs, paginated.Items, format, verbose)
 
-	var output []byte
-	if verbose {
-		output, err = buildVerboseAutomationOutput(ctx, client, paginated.Items, result.configs)
-	} else {
-		output, err = buildCompactAutomationOutput(paginated.Items)
-	}
+	f := formatter.NewAutomationFormatter(format)
+	opts := formatter.AutomationListOptions{Verbose: verbose, Limit: paginationParams.Limit}
 
+	output, err := f.FormatList(ctx, paginated.Items, configs, opts)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Error formatting automations: %v", err)), nil
 	}
 
+	// For JSON format with pagination, wrap in pagination response
+	if format == formatter.FormatJSON && paginationParams.Limit > 0 {
+		return formatJSONPaginatedAutomations(ctx, client, paginated, configs, verbose)
+	}
+
+	// For natural format, include pagination info in text
+	if format == formatter.FormatNatural && paginated.Pagination.HasMore {
+		output += formatNaturalPaginationNote(paginated)
+	}
+
+	return successResult(output), nil
+}
+
+// sortAutomationsByEntityID sorts automations by entity_id for stable pagination.
+func sortAutomationsByEntityID(automations []homeassistant.Automation) {
+	sort.Slice(automations, func(i, j int) bool {
+		return automations[i].EntityID < automations[j].EntityID
+	})
+}
+
+// ensureAutomationConfigs loads configs if needed for formatting.
+func ensureAutomationConfigs(ctx context.Context, client homeassistant.Client,
+	existingConfigs map[string]*homeassistant.AutomationConfig, items []homeassistant.Automation,
+	format formatter.Format, verbose bool) map[string]*homeassistant.AutomationConfig {
+	if existingConfigs == nil && (format == formatter.FormatNatural || verbose) {
+		return fetchAutomationConfigs(ctx, client, items)
+	}
+	return existingConfigs
+}
+
+// formatJSONPaginatedAutomations formats automations as JSON with pagination.
+func formatJSONPaginatedAutomations(ctx context.Context, client homeassistant.Client,
+	paginated PaginatedResponse[homeassistant.Automation],
+	configs map[string]*homeassistant.AutomationConfig, verbose bool) (*mcp.ToolsCallResult, error) {
+	var items json.RawMessage
+	if verbose {
+		items, _ = buildVerboseAutomationOutput(ctx, client, paginated.Items, configs)
+	} else {
+		items, _ = buildCompactAutomationOutput(paginated.Items)
+	}
+	response := buildPaginatedAutomationResponse(paginated, items)
 	summary := BuildPaginationSummary(paginated.Pagination, "automations")
 	if !verbose {
 		summary += VerboseHint
 	}
-
-	response := buildPaginatedAutomationResponse(paginated, output)
 	return successResult(summary + "\n\n" + string(response)), nil
+}
+
+// formatNaturalPaginationNote formats pagination note for natural output.
+func formatNaturalPaginationNote(paginated PaginatedResponse[homeassistant.Automation]) string {
+	return fmt.Sprintf("\n\nShowing %d of %d. Use cursor '%s' to see more.",
+		len(paginated.Items), paginated.Pagination.Total, safeDeref(paginated.Pagination.NextCursor))
 }
 
 func (h *AutomationHandlers) handleGet(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
@@ -218,12 +263,15 @@ func (h *AutomationHandlers) handleGet(ctx context.Context, client homeassistant
 		}
 	}
 
-	output, err := json.MarshalIndent(automation, "", "  ")
+	format := formatter.ParseFormat(getString(args, "format"))
+	f := formatter.NewAutomationFormatter(format)
+
+	output, err := f.FormatDetail(ctx, *automation)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Error formatting automation: %v", err)), nil
 	}
 
-	return successResult(string(output)), nil
+	return successResult(output), nil
 }
 
 func (h *AutomationHandlers) handleCreate(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
@@ -454,7 +502,7 @@ func fetchAutomationConfigs(
 		}
 
 		fullAuto, err := client.GetAutomation(ctx, autoID)
-		if err == nil && fullAuto.Config != nil {
+		if err == nil && fullAuto != nil && fullAuto.Config != nil {
 			configs[autoID] = fullAuto.Config
 		}
 	}
@@ -608,6 +656,14 @@ func getSlice(args map[string]any, key string) []any {
 		return v
 	}
 	return nil
+}
+
+// safeDeref safely dereferences a string pointer, returning empty string if nil.
+func safeDeref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // searchEntityInAutomationConfig searches for an entity ID in automation triggers, conditions, and actions.

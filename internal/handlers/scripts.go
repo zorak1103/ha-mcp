@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
+	"github.com/zorak1103/ha-mcp/internal/handlers/formatter"
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
@@ -98,6 +100,11 @@ Actions:
 					Type:        "object",
 					Description: "Variables to pass when executing the script",
 				},
+				"format": {
+					Type:        "string",
+					Enum:        []string{"natural", "json"},
+					Description: "Output format: 'natural' (default) for LLM-optimized text, 'json' for structured data",
+				},
 			},
 			Required: []string{"action"},
 		},
@@ -145,7 +152,7 @@ func (h *ScriptHandlers) handleManageScript(
 
 	switch action {
 	case scriptActionList:
-		return h.handleList(ctx, client)
+		return h.handleList(ctx, client, args)
 	case scriptActionGet:
 		return h.handleGet(ctx, client, args)
 	case scriptActionCreate:
@@ -165,40 +172,47 @@ func (h *ScriptHandlers) handleManageScript(
 // Action Handlers
 // =============================================================================
 
-func (h *ScriptHandlers) handleList(ctx context.Context, client homeassistant.Client) (*mcp.ToolsCallResult, error) {
+func (h *ScriptHandlers) handleList(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
 	scripts, err := client.ListScripts(ctx)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Error listing scripts: %v", err)), nil
 	}
 
-	type scriptInfo struct {
-		EntityID      string `json:"entity_id"`
-		State         string `json:"state"`
-		FriendlyName  string `json:"friendly_name,omitempty"`
-		LastTriggered string `json:"last_triggered,omitempty"`
-	}
+	formatStr, _ := args["format"].(string)
+	format := formatter.ParseFormat(formatStr)
 
-	result := make([]scriptInfo, 0, len(scripts))
+	// Convert Entity list to Script list with configs
+	scriptList := make([]homeassistant.Script, 0, len(scripts))
 	for _, s := range scripts {
-		info := scriptInfo{
+		script := homeassistant.Script{
 			EntityID: s.EntityID,
 			State:    s.State,
 		}
 		if name, ok := s.Attributes["friendly_name"].(string); ok {
-			info.FriendlyName = name
+			script.FriendlyName = name
 		}
 		if lastTriggered, ok := s.Attributes["last_triggered"].(string); ok {
-			info.LastTriggered = lastTriggered
+			script.LastTriggered = lastTriggered
 		}
-		result = append(result, info)
+		// Try to get full script config for natural output
+		if format == formatter.FormatNatural {
+			scriptID := strings.TrimPrefix(s.EntityID, "script.")
+			if fullScript, getErr := client.GetScript(ctx, scriptID); getErr == nil {
+				script.Config = fullScript.Config
+			}
+		}
+		scriptList = append(scriptList, script)
 	}
 
-	jsonBytes, err := json.MarshalIndent(result, "", "  ")
+	f := formatter.NewScriptFormatter(format)
+	opts := formatter.ScriptListOptions{}
+
+	output, err := f.FormatList(ctx, scriptList, opts)
 	if err != nil {
-		return errorResult(fmt.Sprintf("Error marshaling scripts: %v", err)), nil
+		return errorResult(fmt.Sprintf("Error formatting scripts: %v", err)), nil
 	}
 
-	return successResult(string(jsonBytes)), nil
+	return successResult(output), nil
 }
 
 func (h *ScriptHandlers) handleGet(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
@@ -212,12 +226,16 @@ func (h *ScriptHandlers) handleGet(ctx context.Context, client homeassistant.Cli
 		return errorResult(fmt.Sprintf("Error getting script: %v", err)), nil
 	}
 
-	jsonBytes, err := json.MarshalIndent(script, "", "  ")
+	formatStr, _ := args["format"].(string)
+	format := formatter.ParseFormat(formatStr)
+	f := formatter.NewScriptFormatter(format)
+
+	output, err := f.FormatDetail(ctx, *script)
 	if err != nil {
-		return errorResult(fmt.Sprintf("Error marshaling script: %v", err)), nil
+		return errorResult(fmt.Sprintf("Error formatting script: %v", err)), nil
 	}
 
-	return successResult(string(jsonBytes)), nil
+	return successResult(output), nil
 }
 
 func (h *ScriptHandlers) handleCreate(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {

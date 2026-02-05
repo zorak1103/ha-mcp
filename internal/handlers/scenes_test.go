@@ -113,8 +113,8 @@ func TestSceneHandlers_ManageScene_List(t *testing.T) {
 			wantError:  false,
 		},
 		{
-			name: "success with scenes",
-			args: map[string]any{"action": "list"},
+			name: "success with scenes (json)",
+			args: map[string]any{"action": "list", "format": "json"},
 			listScenes: []homeassistant.Entity{
 				{
 					EntityID: "scene.movie_time",
@@ -134,10 +134,27 @@ func TestSceneHandlers_ManageScene_List(t *testing.T) {
 			wantContains: "movie_time",
 		},
 		{
-			name: "success with name filter",
+			name: "success with scenes (natural)",
+			args: map[string]any{"action": "list"},
+			listScenes: []homeassistant.Entity{
+				{
+					EntityID: "scene.movie_time",
+					State:    "scening",
+					Attributes: map[string]any{
+						"friendly_name": "Movie Time",
+						"entity_id":     []any{"light.living_room", "media_player.tv"},
+					},
+				},
+			},
+			wantError:    false,
+			wantContains: "Movie Time",
+		},
+		{
+			name: "success with name filter (json)",
 			args: map[string]any{
 				"action":        "list",
 				"name_contains": "movie",
+				"format":        "json",
 			},
 			listScenes: []homeassistant.Entity{
 				{
@@ -155,10 +172,11 @@ func TestSceneHandlers_ManageScene_List(t *testing.T) {
 			wantContains: "movie_time",
 		},
 		{
-			name: "success with entity filter",
+			name: "success with entity filter (json)",
 			args: map[string]any{
 				"action":          "list",
 				"entity_contains": "light",
+				"format":          "json",
 			},
 			listScenes: []homeassistant.Entity{
 				{

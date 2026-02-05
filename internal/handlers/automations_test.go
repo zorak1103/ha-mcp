@@ -115,7 +115,7 @@ func TestManageAutomationTool_Schema(t *testing.T) {
 	}
 
 	// Check expected properties exist
-	expectedProps := []string{"action", "automation_id", "alias", "trigger", "condition", "automation_action", "mode", "enabled", "state", "verbose", "limit", "cursor"}
+	expectedProps := []string{"action", "automation_id", "alias", "trigger", "condition", "automation_action", "mode", "enabled", "state", "verbose", "limit", "cursor", "format"}
 	for _, prop := range expectedProps {
 		if _, ok := tool.InputSchema.Properties[prop]; !ok {
 			t.Errorf("Expected property %q in input schema", prop)
@@ -146,21 +146,27 @@ func TestManageAutomation_List(t *testing.T) {
 		wantNotContains []string
 	}{
 		{
-			name:         "success - no filters",
-			args:         map[string]any{"action": "list"},
+			name:         "success - no filters (json)",
+			args:         map[string]any{"action": "list", "format": "json"},
 			client:       &mockAutomationClient{automations: testAutomations},
-			wantContains: []string{"automation.turn_on_lights", "Found 3 automations"},
+			wantContains: []string{"automation.turn_on_lights"},
 		},
 		{
-			name:            "success - filter by state",
-			args:            map[string]any{"action": "list", "state": "on"},
+			name:         "success - no filters (natural)",
+			args:         map[string]any{"action": "list"},
+			client:       &mockAutomationClient{automations: testAutomations},
+			wantContains: []string{"3 automations", "enabled", "disabled"},
+		},
+		{
+			name:            "success - filter by state (json)",
+			args:            map[string]any{"action": "list", "state": "on", "format": "json"},
 			client:          &mockAutomationClient{automations: testAutomations},
 			wantContains:    []string{"automation.turn_on_lights", "automation.morning_routine"},
 			wantNotContains: []string{"automation.turn_off_lights"},
 		},
 		{
-			name:            "success - filter by alias",
-			args:            map[string]any{"action": "list", "alias": "lights"},
+			name:            "success - filter by alias (json)",
+			args:            map[string]any{"action": "list", "alias": "lights", "format": "json"},
 			client:          &mockAutomationClient{automations: testAutomations},
 			wantContains:    []string{"automation.turn_on_lights", "automation.turn_off_lights"},
 			wantNotContains: []string{"automation.morning_routine"},
@@ -221,10 +227,16 @@ func TestManageAutomation_Get(t *testing.T) {
 		wantContains []string
 	}{
 		{
-			name:         "success",
-			args:         map[string]any{"action": "get", "automation_id": "test_automation"},
+			name:         "success (json)",
+			args:         map[string]any{"action": "get", "automation_id": "test_automation", "format": "json"},
 			client:       &mockAutomationClient{automation: testAutomation},
 			wantContains: []string{"automation.test_automation", "Test Automation"},
+		},
+		{
+			name:         "success (natural)",
+			args:         map[string]any{"action": "get", "automation_id": "test_automation"},
+			client:       &mockAutomationClient{automation: testAutomation},
+			wantContains: []string{"Test Automation", "enabled"},
 		},
 		{
 			name:         "error - missing automation_id",
