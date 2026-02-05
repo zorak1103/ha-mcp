@@ -879,7 +879,6 @@ ha-mcp/
 │   │   ├── media.go             # Media tool handlers
 │   │   ├── statistics.go        # Statistics tool handler
 │   │   ├── lovelace.go          # Lovelace tool handler
-│   │   ├── targets.go           # Target helper functions
 │   │   ├── targets_consolidated.go  # Consolidated analyze_target tool
 │   │   ├── services.go          # Service discovery handler
 │   │   ├── system.go            # System info handler

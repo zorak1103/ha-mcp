@@ -67,18 +67,6 @@ func TestRegisterConsolidatedHelperTools(t *testing.T) {
 	}
 }
 
-func TestRegisterRegistryTools(t *testing.T) {
-	t.Parallel()
-
-	registry := mcp.NewRegistry()
-	RegisterRegistryTools(registry)
-
-	tools := registry.ListTools()
-	if len(tools) == 0 {
-		t.Error("RegisterRegistryTools() registered no tools")
-	}
-}
-
 func TestRegisterMediaTools(t *testing.T) {
 	t.Parallel()
 

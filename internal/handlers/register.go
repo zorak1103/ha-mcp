@@ -29,12 +29,6 @@ func RegisterConsolidatedHelperTools(registry *mcp.Registry) {
 	h.RegisterTools(registry)
 }
 
-// RegisterRegistryTools registers all registry-related tools (entity/device/area registries).
-func RegisterRegistryTools(registry *mcp.Registry) {
-	h := NewRegistryHandlers()
-	h.RegisterTools(registry)
-}
-
 // RegisterMediaTools registers all media-related tools with the registry.
 func RegisterMediaTools(registry *mcp.Registry) {
 	h := NewMediaHandlers()
