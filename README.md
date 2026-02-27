@@ -9,6 +9,7 @@
 [![License](https://img.shields.io/github/license/zorak1103/ha-mcp)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/zorak1103/ha-mcp)](https://github.com/zorak1103/ha-mcp/releases/latest)
 [![Docker Hub](https://img.shields.io/docker/v/zorak1103/ha-mcp?label=Docker%20Hub&logo=docker)](https://hub.docker.com/r/zorak1103/ha-mcp)
+[![Docker Pulls](https://img.shields.io/docker/pulls/zorak1103/ha-mcp?logo=docker)](https://hub.docker.com/r/zorak1103/ha-mcp)
 
 A Model Context Protocol (MCP) server that provides AI assistants with access to Home Assistant, enabling smart home control and automation management.
 
