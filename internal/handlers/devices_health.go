@@ -33,45 +33,13 @@ type DeviceHealthStatistics struct {
 	ByCategory         map[string]int `json:"by_category"`
 }
 
-// DeviceRemoveResult represents the outcome of removing devices.
-type DeviceRemoveResult struct {
-	Successes []DeviceRemoveSuccess `json:"successes"`
-	Failures  []DeviceRemoveFailure `json:"failures,omitempty"`
-}
-
-// DeviceRemoveSuccess represents a successful device removal.
-type DeviceRemoveSuccess struct {
-	DeviceID string `json:"device_id"`
-	Name     string `json:"name"`
-}
-
-// DeviceRemoveFailure represents a failure during device removal.
-type DeviceRemoveFailure struct {
-	DeviceID string `json:"device_id"`
-	Name     string `json:"name"`
-	Error    string `json:"error"`
-}
-
-// handleDeviceHealth handles health mode analysis and cleanup operations for devices.
+// handleDeviceHealth handles health mode analysis for devices.
 func (h *DeviceQueryHandlers) handleDeviceHealth(
 	ctx context.Context,
 	client homeassistant.Client,
 	args map[string]any,
 ) (*mcp.ToolsCallResult, error) {
-	// Parse action parameter (default: analyze)
-	action, _ := args["action"].(string)
-	if action == "" {
-		action = deviceHealthActionAnalyze
-	}
-
-	switch action {
-	case deviceHealthActionAnalyze:
-		return h.handleDeviceHealthAnalyze(ctx, client, args)
-	case deviceHealthActionRemove:
-		return h.handleDeviceHealthRemove(ctx, client, args)
-	default:
-		return errorResult(fmt.Sprintf("action must be one of: %s, %s", deviceHealthActionAnalyze, deviceHealthActionRemove)), nil
-	}
+	return h.handleDeviceHealthAnalyze(ctx, client, args)
 }
 
 func (h *DeviceQueryHandlers) handleDeviceHealthAnalyze(
@@ -125,109 +93,9 @@ func (h *DeviceQueryHandlers) handleDeviceHealthAnalyze(
 	return formatDeviceHealthReportNatural(report)
 }
 
-func (h *DeviceQueryHandlers) handleDeviceHealthRemove(
-	ctx context.Context,
-	client homeassistant.Client,
-	args map[string]any,
-) (*mcp.ToolsCallResult, error) {
-	// Parse device_ids parameter
-	deviceIDs, err := parseDeviceIDsParam(args)
-	if err != nil {
-		return errorResult(err.Error()), nil
-	}
-
-	// Fetch device and config entry registries
-	devices, err := client.GetDeviceRegistry(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get device registry: %w", err)
-	}
-
-	configEntries, err := client.GetConfigEntries(ctx, "")
-	if err != nil {
-		return nil, fmt.Errorf("failed to get config entries: %w", err)
-	}
-
-	// Build maps
-	deviceMap := buildDeviceMap(devices)
-	configEntryMap := buildConfigEntryMap(configEntries)
-
-	// Remove devices and collect results
-	result := removeDevicesWithResults(ctx, client, deviceIDs, deviceMap, configEntryMap)
-
-	// Format output
-	format, _ := args["format"].(string)
-	if format == "json" {
-		return formatDeviceRemoveResultJSON(result)
-	}
-	return formatDeviceRemoveResultNatural(result)
-}
-
-func parseDeviceIDsParam(args map[string]any) ([]string, error) {
-	deviceIDsRaw, ok := args["device_ids"]
-	if !ok {
-		return nil, fmt.Errorf("device_ids parameter is required for action=remove")
-	}
-
-	deviceIDsAny, ok := deviceIDsRaw.([]any)
-	if !ok {
-		return nil, fmt.Errorf("device_ids must be an array")
-	}
-
-	var deviceIDs []string
-	for _, idAny := range deviceIDsAny {
-		if idStr, ok := idAny.(string); ok {
-			deviceIDs = append(deviceIDs, idStr)
-		}
-	}
-
-	if len(deviceIDs) == 0 {
-		return nil, fmt.Errorf("device_ids array is empty")
-	}
-
-	return deviceIDs, nil
-}
-
-func removeDevicesWithResults(
-	ctx context.Context,
-	client homeassistant.Client,
-	deviceIDs []string,
-	deviceMap map[string]homeassistant.DeviceRegistryEntry,
-	configEntryMap map[string]homeassistant.ConfigEntryFull,
-) DeviceRemoveResult {
-	var successes []DeviceRemoveSuccess
-	var failures []DeviceRemoveFailure
-
-	for _, deviceID := range deviceIDs {
-		device, found := deviceMap[deviceID]
-		if !found {
-			failures = append(failures, DeviceRemoveFailure{
-				DeviceID: deviceID,
-				Error:    "device not found",
-			})
-			continue
-		}
-
-		success, errMsg := removeDeviceConfigEntries(ctx, client, device, configEntryMap)
-		if success {
-			successes = append(successes, DeviceRemoveSuccess{
-				DeviceID: deviceID,
-				Name:     device.Name,
-			})
-		} else {
-			failures = append(failures, DeviceRemoveFailure{
-				DeviceID: deviceID,
-				Name:     device.Name,
-				Error:    errMsg,
-			})
-		}
-	}
-
-	return DeviceRemoveResult{
-		Successes: successes,
-		Failures:  failures,
-	}
-}
-
+// removeDeviceConfigEntries removes all config entries for a device.
+// Returns (true, "") on success, (false, errorMsg) on failure.
+// Kept here as it is reused by manage_device delete action.
 func removeDeviceConfigEntries(
 	ctx context.Context,
 	client homeassistant.Client,
@@ -386,14 +254,6 @@ func parseDeviceCategoriesFilter(args map[string]any) map[string]bool {
 	return categorySet
 }
 
-func buildDeviceMap(devices []homeassistant.DeviceRegistryEntry) map[string]homeassistant.DeviceRegistryEntry {
-	m := make(map[string]homeassistant.DeviceRegistryEntry, len(devices))
-	for _, device := range devices {
-		m[device.ID] = device
-	}
-	return m
-}
-
 func buildEntityDeviceMap(entities []homeassistant.EntityRegistryEntry) map[string][]string {
 	m := make(map[string][]string)
 	for _, entity := range entities {
@@ -500,47 +360,6 @@ func formatDeviceHealthReportNatural(report DeviceHealthReport) (*mcp.ToolsCallR
 			sb.WriteString("\n")
 		}
 		sb.WriteString("\n")
-	}
-
-	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{mcp.NewTextContent(sb.String())},
-	}, nil
-}
-
-func formatDeviceRemoveResultJSON(result DeviceRemoveResult) (*mcp.ToolsCallResult, error) {
-	data, err := json.MarshalIndent(result, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal result: %w", err)
-	}
-
-	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{mcp.NewTextContent(string(data))},
-	}, nil
-}
-
-func formatDeviceRemoveResultNatural(result DeviceRemoveResult) (*mcp.ToolsCallResult, error) {
-	var sb strings.Builder
-
-	sb.WriteString("# Device Removal Result\n\n")
-
-	if len(result.Successes) > 0 {
-		fmt.Fprintf(&sb, "## Successfully Removed (%d)\n", len(result.Successes))
-		for _, success := range result.Successes {
-			fmt.Fprintf(&sb, "- **%s** (`%s`)\n", success.Name, success.DeviceID)
-		}
-		sb.WriteString("\n")
-	}
-
-	if len(result.Failures) > 0 {
-		fmt.Fprintf(&sb, "## Failed to Remove (%d)\n", len(result.Failures))
-		for _, failure := range result.Failures {
-			fmt.Fprintf(&sb, "- **%s** (`%s`): %s\n", failure.Name, failure.DeviceID, failure.Error)
-		}
-		sb.WriteString("\n")
-	}
-
-	if len(result.Successes) == 0 && len(result.Failures) == 0 {
-		sb.WriteString("No devices were processed.\n")
 	}
 
 	return &mcp.ToolsCallResult{

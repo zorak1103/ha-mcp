@@ -16,8 +16,8 @@ Authorization: Bearer <your-ha-access-token>
 
 | Tool                      | Description                                                                                                                                                                                                                              |
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `query_entities`          | Consolidated entity queries (mode: current, history, statistics, domains, presence, health; format: natural/json; group_by: domain, area_id, device_class, integration; health: analyze/remove dead entities with multi-category filter) |
-| `query_devices`           | Device health check (mode: health; action: analyze/remove; format: natural/json; categories: disabled, orphaned_config_entry, config_entry_error, no_entities, no_config_entries; manufacturer filter)                                   |
+| `query_entities`          | Consolidated entity queries (mode: current, history, statistics, domains, presence, health; format: natural/json; group_by: domain, area_id, device_class, integration; health: multi-category filter for unavailable/unknown/disabled/orphaned/stale entities) |
+| `query_devices`           | Device health check (mode: health; format: natural/json; categories: disabled, orphaned_config_entry, config_entry_error, no_entities, no_config_entries; manufacturer filter)                                                                                |
 | `get_state`               | Get state of a specific entity (format: natural/json)                                                                                                                                                                                    |
 | `analyze_entity`          | Analyze entity usage in automations, scripts, and scenes; includes registry metadata (platform, area, device, labels, aliases) at zero extra API cost (format: natural/json)                                                             |
 | `get_entity_dependencies` | Find all entities an automation/script depends on (format: natural/json)                                                                                                                                                                 |
@@ -33,8 +33,8 @@ Authorization: Bearer <your-ha-access-token>
 | `manage_zone`         | Consolidated zone management (actions: list, get, create, update, delete; format: natural/json for list/get)                                                            |
 | `manage_person`       | Consolidated person management (actions: list, get, create, update, delete; format: natural/json for list/get)                                                          |
 | `manage_tag`          | Consolidated tag management (actions: list, get, create, update, delete; format: natural/json for list/get)                                                             |
-| `manage_entity`       | Entity registry management (actions: get, update; update fields: name, icon, area_id, disabled_by, hidden_by, labels, aliases, new_entity_id; update supports label_mode/alias_mode: add/remove/replace; format: natural/json) |
-| `manage_device`       | Device registry management (actions: get, update; update fields: name_by_user, area_id, disabled_by, labels; update supports label_mode: add/remove/replace; format: natural/json)                                              |
+| `manage_entity`       | Entity registry management (actions: get, update, delete; update fields: name, icon, area_id, disabled_by, hidden_by, labels, aliases, new_entity_id; update supports label_mode/alias_mode: add/remove/replace; format: natural/json) |
+| `manage_device`       | Device registry management (actions: get, update, delete; update fields: name_by_user, area_id, disabled_by, labels; update supports label_mode: add/remove/replace; format: natural/json)                                              |
 | `manage_config_entry` | Consolidated config entry management (actions: list, get; list: optional domain filter; get: requires entry_id; format: natural/json) |
 
 ### Automation Tools

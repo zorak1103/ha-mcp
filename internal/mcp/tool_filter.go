@@ -3,6 +3,7 @@ package mcp
 import (
 	"fmt"
 	"path"
+	"sort"
 	"strings"
 )
 
@@ -491,4 +492,117 @@ func (f *ToolFilterEngine) IsActionAllowed(toolName string, args map[string]any)
 // IsEnabled returns whether the filter is active.
 func (f *ToolFilterEngine) IsEnabled() bool {
 	return f.enabled
+}
+
+// ValidateFilterConfig validates all entries in the filter config against the known tool set.
+// Returns a combined error listing every invalid entry, or nil if all are valid.
+// Must be called before NewToolFilterEngine to catch stale or mistyped config at startup.
+func ValidateFilterConfig(cfg ToolFilterConfig) error {
+	if len(cfg.Whitelist) == 0 && len(cfg.Blacklist) == 0 {
+		return nil
+	}
+
+	accessMap := buildAccessControlMap()
+
+	var errs []string
+	for _, entry := range cfg.Whitelist {
+		if err := validateFilterEntry(entry, accessMap); err != nil {
+			errs = append(errs, fmt.Sprintf("  %q: %s", entry, err.Error()))
+		}
+	}
+	for _, entry := range cfg.Blacklist {
+		if err := validateFilterEntry(entry, accessMap); err != nil {
+			errs = append(errs, fmt.Sprintf("  %q: %s", entry, err.Error()))
+		}
+	}
+
+	if len(errs) == 0 {
+		return nil
+	}
+
+	return fmt.Errorf(
+		"tool filter configuration error: invalid entries found:\n%s\n\nfix your config and restart, or run 'ha-mcp config' to inspect the effective configuration",
+		strings.Join(errs, "\n"),
+	)
+}
+
+// validateFilterEntry validates a single filter entry against the access map.
+func validateFilterEntry(entry string, accessMap map[string]ToolClassification) error {
+	toolPattern, actionOrCategory, subAction := parseFilterEntry(entry)
+
+	// Category expansions (*:write, *:read) are always valid internal keywords.
+	if isCategoryExpansion(actionOrCategory) {
+		return nil
+	}
+
+	matchedTools := filterGlobMatches(toolPattern, accessMap)
+	if len(matchedTools) == 0 {
+		return fmt.Errorf("no tools match pattern %q", toolPattern)
+	}
+
+	// Bare tool name — existence verified above.
+	if actionOrCategory == "" {
+		return nil
+	}
+
+	isGlob := strings.ContainsAny(toolPattern, "*?[")
+	if subAction != "" {
+		return validateFilterSubAction(toolPattern, actionOrCategory, subAction, matchedTools, accessMap, isGlob)
+	}
+	return validateFilterAction(toolPattern, actionOrCategory, matchedTools, accessMap, isGlob)
+}
+
+// filterGlobMatches returns all tool names in accessMap matching pattern.
+func filterGlobMatches(pattern string, accessMap map[string]ToolClassification) []string {
+	var matches []string
+	for toolName := range accessMap {
+		if matched, err := path.Match(pattern, toolName); err == nil && matched {
+			matches = append(matches, toolName)
+		}
+	}
+	return matches
+}
+
+// validateFilterSubAction checks that a tool:mode:subAction triple is valid.
+func validateFilterSubAction(toolPattern, mode, subAction string, matchedTools []string, accessMap map[string]ToolClassification, isGlob bool) error {
+	for _, toolName := range matchedTools {
+		classification := accessMap[toolName]
+		if classification.SubActions == nil {
+			continue
+		}
+		subActionsMap, ok := classification.SubActions[mode]
+		if !ok {
+			continue
+		}
+		if _, exists := subActionsMap[subAction]; exists {
+			return nil
+		}
+	}
+	if isGlob {
+		return fmt.Errorf("action %q not found on any tool matching %q", mode+":"+subAction, toolPattern)
+	}
+	return fmt.Errorf("tool %q has no sub-action %q for mode %q", matchedTools[0], subAction, mode)
+}
+
+// validateFilterAction checks that a tool:action pair is valid.
+func validateFilterAction(toolPattern, action string, matchedTools []string, accessMap map[string]ToolClassification, isGlob bool) error {
+	for _, toolName := range matchedTools {
+		if _, exists := accessMap[toolName].Actions[action]; exists {
+			return nil
+		}
+	}
+	if isGlob {
+		return fmt.Errorf("action %q not found on any tool matching %q", action, toolPattern)
+	}
+	toolName := matchedTools[0]
+	classification := accessMap[toolName]
+	if classification.ParamName == "" {
+		return fmt.Errorf("tool %q has no action parameter; use bare tool name", toolName)
+	}
+	var validActions []string
+	for a := range classification.Actions {
+		validActions = append(validActions, a)
+	}
+	sort.Strings(validActions)
+	return fmt.Errorf("tool %q has no action %q (valid: %s)", toolName, action, strings.Join(validActions, ", "))
 }

@@ -111,16 +111,16 @@ server:
       - "*:read"                       # Allow only read operations
 ```
 
-### Sub-Action Filtering
+### Action Filtering on manage_entity / manage_device
 
-For tools with nested actions (like `query_entities` with mode=health, action=remove):
+To allow read access but block deletions:
 
 ```yaml
 server:
   tool_filter:
     blacklist:
-      - "query_entities:health:remove"   # Block health check removal
-      - "query_devices:health:remove"    # Block device health removal
+      - "manage_entity:delete"   # Block entity registry deletion
+      - "manage_device:delete"   # Block device registry deletion
 ```
 
 ## Filter Behavior
@@ -128,6 +128,7 @@ server:
 - **Tool Removal**: Completely blocked tools disappear from `tools/list` (the AI won't see them)
 - **Schema Modification**: Partially blocked tools have their schemas updated to show only allowed actions
 - **Runtime Check**: Attempted blocked actions return an error at runtime
+- **Startup Validation**: Every entry is validated against the known tool set at startup — unknown tools, typos, and removed actions cause the server to refuse to start with a descriptive error listing all invalid entries at once
 - **Mutual Exclusion**: Whitelist and blacklist cannot be used together - configuration validation will fail if both are non-empty
 - **Whitelist Mode**: If whitelist is specified, ONLY listed items are allowed (implicit deny-all)
 - **Blacklist Mode**: If whitelist is empty, blacklist blocks specific items (implicit allow-all)
@@ -178,4 +179,4 @@ server:
       - "helper_action"                # Exception: allow helper actions
 ```
 
-**Note:** You cannot combine whitelist and blacklist - the server will refuse to start with a validation error if both are specified.
+**Note:** You cannot combine whitelist and blacklist - the server will refuse to start with a validation error if both are specified. Every individual entry is also validated; stale or mistyped entries (e.g. `"manage_entity:frobnicate"`, `"query_entities:health:remove"`) cause the server to refuse to start with a clear error message listing all problems at once.

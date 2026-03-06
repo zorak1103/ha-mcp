@@ -37,16 +37,16 @@ func TestManageEntity_Schema(t *testing.T) {
 		t.Errorf("expected tool name 'manage_entity', got '%s'", tool.Name)
 	}
 
-	// Verify action enum has 2 values: get, update
+	// Verify action enum has 3 values: get, update, delete
 	actionProp, ok := tool.InputSchema.Properties["action"]
 	if !ok {
 		t.Fatal("expected 'action' property in schema")
 	}
-	if len(actionProp.Enum) != 2 {
-		t.Errorf("expected 2 action enum values, got %d", len(actionProp.Enum))
+	if len(actionProp.Enum) != 3 {
+		t.Errorf("expected 3 action enum values, got %d", len(actionProp.Enum))
 	}
 
-	expectedActions := []string{"get", "update"}
+	expectedActions := []string{"get", "update", "delete"}
 	for _, expected := range expectedActions {
 		found := false
 		for _, enum := range actionProp.Enum {
@@ -617,6 +617,60 @@ func TestHandleManageEntity(t *testing.T) {
 				}
 			},
 			wantContain: `"entity_id":"light.main_room"`,
+		},
+
+		// =========================
+		// Delete Action Tests
+		// =========================
+		{
+			name: "delete - success natural format",
+			args: map[string]any{
+				"action":    "delete",
+				"entity_id": "sensor.dead_sensor",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.RemoveEntityRegistryEntryFn = func(_ context.Context, entityID string) error {
+					if entityID != "sensor.dead_sensor" {
+						t.Errorf("expected entity_id 'sensor.dead_sensor', got '%s'", entityID)
+					}
+					return nil
+				}
+			},
+			wantContain: "deleted from registry",
+		},
+		{
+			name: "delete - success json format",
+			args: map[string]any{
+				"action":    "delete",
+				"entity_id": "sensor.dead_sensor",
+				"format":    "json",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.RemoveEntityRegistryEntryFn = func(context.Context, string) error {
+					return nil
+				}
+			},
+			wantContain: `"deleted":true`,
+		},
+		{
+			name: "delete - missing entity_id",
+			args: map[string]any{
+				"action": "delete",
+			},
+			wantContain: "entity_id is required",
+		},
+		{
+			name: "delete - API error",
+			args: map[string]any{
+				"action":    "delete",
+				"entity_id": "sensor.dead_sensor",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.RemoveEntityRegistryEntryFn = func(context.Context, string) error {
+					return errors.New("API connection failed")
+				}
+			},
+			wantErr: true,
 		},
 
 		// =========================
