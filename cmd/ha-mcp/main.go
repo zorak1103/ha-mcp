@@ -255,7 +255,10 @@ func (a *App) run(_ *cobra.Command, _ []string) error {
 		logger.Info("No default token configured - clients must provide Authorization header")
 	}
 
-	mcpServer := a.initMCPServer(clientPool, defaultClient, cfg, logger)
+	mcpServer, err := a.initMCPServer(clientPool, defaultClient, cfg, logger)
+	if err != nil {
+		return fmt.Errorf("initializing MCP server: %w", err)
+	}
 	a.startMCPServer(mcpServer, logger, cancel)
 
 	<-ctx.Done()
@@ -330,23 +333,28 @@ func (a *App) closeHomeAssistantClient(client homeassistant.Client, logger *logg
 }
 
 // initMCPServer creates and configures the MCP server with all registered tools.
+// Returns an error if the tool filter config references non-existent tools or actions.
 func (a *App) initMCPServer(
 	clientPool *homeassistant.ClientPool,
 	defaultClient homeassistant.Client,
 	cfg *config.Config,
 	logger *logging.Logger,
-) *mcp.Server {
+) (*mcp.Server, error) {
 	registry := mcp.NewRegistry()
 	handlers.RegisterAllTools(registry)
 
 	logger.Info("Registered MCP tools", "count", registry.ToolCount())
 	registry.LogRegisteredTools(logger)
 
-	// Apply tool filter if configured
-	filter := mcp.NewToolFilterEngine(mcp.ToolFilterConfig{
+	filterCfg := mcp.ToolFilterConfig{
 		Whitelist: cfg.Server.ToolFilter.Whitelist,
 		Blacklist: cfg.Server.ToolFilter.Blacklist,
-	}, cfg.Server.ReadOnly)
+	}
+	if err := mcp.ValidateFilterConfig(filterCfg); err != nil {
+		return nil, err
+	}
+
+	filter := mcp.NewToolFilterEngine(filterCfg, cfg.Server.ReadOnly)
 
 	if filter.IsEnabled() {
 		removed := filter.ApplyToRegistry(registry)
@@ -363,7 +371,7 @@ func (a *App) initMCPServer(
 		PollInterval: time.Duration(cfg.HomeAssistant.Wait.WaitPollIntervalMs) * time.Millisecond,
 	})
 
-	return server
+	return server, nil
 }
 
 // startMCPServer starts the MCP server in a goroutine.

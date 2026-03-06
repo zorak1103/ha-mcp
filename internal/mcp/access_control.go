@@ -133,11 +133,11 @@ func addHelperManagementTools(result map[string]ToolClassification) {
 	}
 	result["manage_entity"] = ToolClassification{
 		ParamName: "action",
-		Actions:   map[string]ActionCategory{"get": CategoryRead, "update": CategoryWrite},
+		Actions:   map[string]ActionCategory{"get": CategoryRead, "update": CategoryWrite, "delete": CategoryWrite},
 	}
 	result["manage_device"] = ToolClassification{
 		ParamName: "action",
-		Actions:   map[string]ActionCategory{"get": CategoryRead, "update": CategoryWrite},
+		Actions:   map[string]ActionCategory{"get": CategoryRead, "update": CategoryWrite, "delete": CategoryWrite},
 	}
 	result["manage_config_entry"] = ToolClassification{
 		ParamName: "action",
@@ -247,25 +247,13 @@ func buildQueryTools() map[string]ToolClassification {
 				"statistics": CategoryRead,
 				"domains":    CategoryRead,
 				"presence":   CategoryRead,
-				"health":     CategoryRead, // Default health action is read
-			},
-			SubActions: map[string]map[string]ActionCategory{
-				"health": {
-					"analyze": CategoryRead,
-					"remove":  CategoryWrite,
-				},
+				"health":     CategoryRead,
 			},
 		},
 		"query_devices": {
 			ParamName: "mode",
 			Actions: map[string]ActionCategory{
-				"health": CategoryRead, // Default health action is read
-			},
-			SubActions: map[string]map[string]ActionCategory{
-				"health": {
-					"analyze": CategoryRead,
-					"remove":  CategoryWrite,
-				},
+				"health": CategoryRead,
 			},
 		},
 	}

@@ -13,12 +13,6 @@ const (
 	deviceModeHealth = "health"
 )
 
-// Device health actions.
-const (
-	deviceHealthActionAnalyze = "analyze"
-	deviceHealthActionRemove  = "remove"
-)
-
 // Device health issue categories.
 const (
 	deviceCategoryDisabled            = "disabled"
@@ -40,7 +34,7 @@ func NewDeviceQueryHandlers() *DeviceQueryHandlers {
 func (h *DeviceQueryHandlers) RegisterTools(registry *mcp.Registry) {
 	queryDevicesTool := mcp.Tool{
 		Name:        "query_devices",
-		Description: "Query Home Assistant devices with different modes: health check (detect problematic devices and optionally remove them)",
+		Description: "Query Home Assistant devices with different modes: health check (detect problematic devices)",
 		InputSchema: buildQueryDevicesSchema(),
 	}
 
@@ -61,11 +55,6 @@ func buildQueryDevicesSchema() mcp.JSONSchema {
 				Description: "Output format: natural (LLM-friendly), json (structured)",
 				Enum:        []string{"natural", "json"},
 			},
-			"action": {
-				Type:        "string",
-				Description: "Health mode: analyze (detect issues), remove (delete problematic devices)",
-				Enum:        []string{deviceHealthActionAnalyze, deviceHealthActionRemove},
-			},
 			"categories": {
 				Type:        "array",
 				Description: "Filter health check categories (empty = all)",
@@ -78,13 +67,6 @@ func buildQueryDevicesSchema() mcp.JSONSchema {
 						deviceCategoryNoEntities,
 						deviceCategoryNoConfigEntries,
 					},
-				},
-			},
-			"device_ids": {
-				Type:        "array",
-				Description: "Device IDs for removal (required for action=remove)",
-				Items: &mcp.JSONSchema{
-					Type: "string",
 				},
 			},
 			"manufacturer": {

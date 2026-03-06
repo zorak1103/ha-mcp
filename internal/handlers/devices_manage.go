@@ -14,6 +14,7 @@ import (
 const (
 	deviceActionGet    = "get"
 	deviceActionUpdate = "update"
+	deviceActionDelete = "delete"
 )
 
 // DeviceManageHandlers provides handlers for device registry management.
@@ -36,11 +37,12 @@ func (h *DeviceManageHandlers) RegisterTools(registry *mcp.Registry) {
 func (h *DeviceManageHandlers) manageDeviceTool() mcp.Tool {
 	return mcp.Tool{
 		Name: "manage_device",
-		Description: `Manage Home Assistant device registry entries - get or update.
+		Description: `Manage Home Assistant device registry entries - get, update, or delete.
 
 Actions:
 - get: Get device registry details (requires device_id)
 - update: Update device registry entry (requires device_id and at least one field to update)
+- delete: Delete device from registry (requires device_id; the integration must support device removal)
 
 Safe fields that can be updated:
 - name_by_user: Custom display name (empty string removes override)
@@ -54,12 +56,12 @@ Safe fields that can be updated:
 			Properties: map[string]mcp.JSONSchema{
 				"action": {
 					Type:        "string",
-					Description: "Operation to perform: get, update",
-					Enum:        []string{"get", "update"},
+					Description: "Operation to perform: get, update, delete",
+					Enum:        []string{"get", "update", "delete"},
 				},
 				"device_id": {
 					Type:        "string",
-					Description: "Device ID. Required for get/update.",
+					Description: "Device ID. Required for all actions.",
 				},
 				"name_by_user": {
 					Type:        "string",
@@ -98,7 +100,7 @@ Safe fields that can be updated:
 func (h *DeviceManageHandlers) handleManageDevice(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
 	action, ok := args["action"].(string)
 	if !ok || action == "" {
-		return errorResult("action is required and must be a string (get or update)"), nil
+		return errorResult("action is required and must be a string (get, update, or delete)"), nil
 	}
 
 	format := formatNatural
@@ -111,8 +113,10 @@ func (h *DeviceManageHandlers) handleManageDevice(ctx context.Context, client ho
 		return h.handleGetDevice(ctx, client, args, format)
 	case deviceActionUpdate:
 		return h.handleUpdateDevice(ctx, client, args, format)
+	case deviceActionDelete:
+		return h.handleDeleteDevice(ctx, client, args, format)
 	default:
-		return errorResult(fmt.Sprintf("unsupported action '%s'. Valid actions: get, update", action)), nil
+		return errorResult(fmt.Sprintf("unsupported action '%s'. Valid actions: get, update, delete", action)), nil
 	}
 }
 
@@ -175,6 +179,53 @@ func (h *DeviceManageHandlers) handleUpdateDevice(ctx context.Context, client ho
 		return h.formatDeviceJSON(updated)
 	}
 	return h.formatDeviceNaturalWithSuccess(updated), nil
+}
+
+func (h *DeviceManageHandlers) handleDeleteDevice(ctx context.Context, client homeassistant.Client, args map[string]any, format string) (*mcp.ToolsCallResult, error) {
+	deviceID, ok := args["device_id"].(string)
+	if !ok || deviceID == "" {
+		return errorResult("device_id is required for delete action"), nil
+	}
+
+	// Fetch device registry to find the device
+	devices, err := client.GetDeviceRegistry(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get device registry: %w", err)
+	}
+
+	var device homeassistant.DeviceRegistryEntry
+	found := false
+	for _, d := range devices {
+		if d.ID == deviceID {
+			device = d
+			found = true
+			break
+		}
+	}
+	if !found {
+		return errorResult(fmt.Sprintf("device '%s' not found in registry", deviceID)), nil
+	}
+
+	// Fetch config entries needed for removal
+	configEntries, err := client.GetConfigEntries(ctx, "")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get config entries: %w", err)
+	}
+
+	configEntryMap := buildConfigEntryMap(configEntries)
+	success, errMsg := removeDeviceConfigEntries(ctx, client, device, configEntryMap)
+	if !success {
+		return errorResult(fmt.Sprintf("failed to delete device '%s': %s", deviceID, errMsg)), nil
+	}
+
+	if format == formatJSON {
+		data, err := json.Marshal(map[string]any{"device_id": deviceID, "deleted": true})
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal result: %w", err)
+		}
+		return textResult(string(data)), nil
+	}
+	return textResult(fmt.Sprintf("Device '%s' deleted from registry.", deviceID)), nil
 }
 
 // fetchDeviceForMerge fetches the device registry entry for label merge.
