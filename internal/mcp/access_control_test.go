@@ -202,13 +202,13 @@ func TestManagedToolsActions(t *testing.T) {
 			tool:         "manage_entity",
 			paramName:    "action",
 			readActions:  []string{"get"},
-			writeActions: []string{"update"},
+			writeActions: []string{"update", "delete"},
 		},
 		{
 			tool:         "manage_device",
 			paramName:    "action",
 			readActions:  []string{"get"},
-			writeActions: []string{"update"},
+			writeActions: []string{"update", "delete"},
 		},
 		{
 			tool:         "manage_dashboard",
@@ -327,7 +327,7 @@ func TestAnalyzeTargetInfo(t *testing.T) {
 	}
 }
 
-// TestQueryEntityModes verifies query_entities modes with sub-actions.
+// TestQueryEntityModes verifies query_entities modes are all read-only.
 func TestQueryEntityModes(t *testing.T) {
 	t.Parallel()
 
@@ -338,33 +338,19 @@ func TestQueryEntityModes(t *testing.T) {
 		t.Errorf("ParamName = %q, want %q", classification.ParamName, "mode")
 	}
 
-	readModes := []string{"current", "history", "statistics", "domains", "presence"}
+	readModes := []string{"current", "history", "statistics", "domains", "presence", "health"}
 	for _, mode := range readModes {
 		if classification.Actions[mode] != CategoryRead {
 			t.Errorf("Mode %q should be CategoryRead, got %q", mode, classification.Actions[mode])
 		}
 	}
 
-	// Health mode has sub-actions
-	if classification.SubActions == nil {
-		t.Fatal("SubActions map is nil")
-	}
-
-	healthActions := classification.SubActions["health"]
-	if healthActions == nil {
-		t.Fatal("Health sub-actions not found")
-	}
-
-	if healthActions["analyze"] != CategoryRead {
-		t.Errorf("Health:analyze should be CategoryRead, got %q", healthActions["analyze"])
-	}
-
-	if healthActions["remove"] != CategoryWrite {
-		t.Errorf("Health:remove should be CategoryWrite, got %q", healthActions["remove"])
+	if len(classification.SubActions) != 0 {
+		t.Errorf("query_entities should have no SubActions, got %d", len(classification.SubActions))
 	}
 }
 
-// TestQueryDeviceModes verifies query_devices modes with sub-actions.
+// TestQueryDeviceModes verifies query_devices modes are all read-only.
 func TestQueryDeviceModes(t *testing.T) {
 	t.Parallel()
 
@@ -375,22 +361,12 @@ func TestQueryDeviceModes(t *testing.T) {
 		t.Errorf("ParamName = %q, want %q", classification.ParamName, "mode")
 	}
 
-	// Health mode has sub-actions
-	if classification.SubActions == nil {
-		t.Fatal("SubActions map is nil")
+	if classification.Actions["health"] != CategoryRead {
+		t.Errorf("Mode %q should be CategoryRead, got %q", "health", classification.Actions["health"])
 	}
 
-	healthActions := classification.SubActions["health"]
-	if healthActions == nil {
-		t.Fatal("Health sub-actions not found")
-	}
-
-	if healthActions["analyze"] != CategoryRead {
-		t.Errorf("Health:analyze should be CategoryRead, got %q", healthActions["analyze"])
-	}
-
-	if healthActions["remove"] != CategoryWrite {
-		t.Errorf("Health:remove should be CategoryWrite, got %q", healthActions["remove"])
+	if len(classification.SubActions) != 0 {
+		t.Errorf("query_devices should have no SubActions, got %d", len(classification.SubActions))
 	}
 }
 

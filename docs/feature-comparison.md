@@ -31,7 +31,7 @@ This document compares the features of `ha-mcp` (this project) with the official
 | **Blacklist**            | ✅ Yes (block specific tools/actions)                                  | ❌ No                                              |
 | **Glob Patterns**        | ✅ Yes (`manage_*:delete`, `get_*`)                                    | ❌ No                                              |
 | **Category Filtering**   | ✅ Yes (`*:write`, `*:read`)                                           | ❌ No                                              |
-| **Sub-Action Control**   | ✅ Yes (`query_entities:health:remove`)                                | ❌ No                                              |
+| **Sub-Action Control**   | ✅ Yes (`manage_entity:delete`, `manage_*:delete`)                     | ❌ No                                              |
 | **Granularity**          | Per tool, per action, per sub-action                                   | Per entity                                         |
 | **Use Case**             | Limit AI capabilities (e.g., read-only monitoring, block deletions)    | Limit entity visibility (e.g., hide private rooms) |
 | **Schema Modification**  | ✅ Yes (filtered tools show only allowed actions in schema)            | ❌ No                                              |
@@ -60,8 +60,10 @@ For maximum security, you could theoretically use both: Official integration for
 | Entity history           | `query_entities` mode=history (time range, filter, pagination, natural/json)                                                                                | ------------------------------------------------------- |
 | Entity statistics        | `query_entities` mode=statistics (long-term data, pagination, natural/json)                                                                                 | ------------------------------------------------------- |
 | Presence analysis        | `query_entities` mode=presence (person/tracker correlation, natural/json)                                                                                   | ------------------------------------------------------- |
-| Health detection/cleanup | `query_entities` mode=health (detect unavailable/unknown/disabled/orphaned/stale entities, multi-category filter, action=remove to cleanup, natural/json)   | ------------------------------------------------------- |
-| Device health check      | `query_devices` mode=health (detect disabled/orphaned/error devices, multi-category filter, action=remove to cleanup, natural/json)                         | ------------------------------------------------------- |
+| Health detection         | `query_entities` mode=health (detect unavailable/unknown/disabled/orphaned/stale entities, multi-category filter, natural/json)                             | ------------------------------------------------------- |
+| Entity registry delete   | `manage_entity` action=delete (remove entity from registry)                                                                                                 | ------------------------------------------------------- |
+| Device health check      | `query_devices` mode=health (detect disabled/orphaned/error devices, multi-category filter, natural/json)                                                   | ------------------------------------------------------- |
+| Device registry delete   | `manage_device` action=delete (remove device from registry; integration must support removal)                                                               | ------------------------------------------------------- |
 | Cover control            | `call_service` (domain=cover)                                                                                                                               | `HassOpenCover`, `HassCloseCover`                       |
 | Date/Time                | `get_datetime`                                                                                                                                              | `GetDateTime`                                           |
 
@@ -116,9 +118,9 @@ For maximum security, you could theoretically use both: Official integration for
 | Function        | ha-mcp                                                                           | Official HA MCP         |
 | --------------- | -------------------------------------------------------------------------------- | ----------------------- |
 | Entity registry        | `get_registry` type=entities                                                                                 | ----------------------- |
-| Entity registry update | `manage_entity` (actions: get, update; fields: name, icon, area_id, disabled_by, hidden_by, labels, aliases) | ----------------------- |
-| Device registry        | `get_registry` type=devices                                                                                  | ----------------------- |
-| Device registry update | `manage_device` (actions: get, update; fields: name_by_user, area_id, disabled_by, labels)                   | ----------------------- |
+| Entity registry update | `manage_entity` (actions: get, update, delete; fields: name, icon, area_id, disabled_by, hidden_by, labels, aliases) | ----------------------- |
+| Device registry        | `get_registry` type=devices                                                                                          | ----------------------- |
+| Device registry update | `manage_device` (actions: get, update, delete; fields: name_by_user, area_id, disabled_by, labels)                   | ----------------------- |
 | Area registry          | `get_registry` type=areas                                                                                    | Area context in prompts |
 | Area management        | `manage_area` (actions: list, get, create, update, delete; format: natural/json)                             | ----------------------- |
 | Label management       | `manage_label` (actions: list, get, create, update, delete; format: natural/json)                            | ----------------------- |

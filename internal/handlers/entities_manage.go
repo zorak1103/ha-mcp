@@ -14,6 +14,7 @@ import (
 const (
 	entityActionGet    = "get"
 	entityActionUpdate = "update"
+	entityActionDelete = "delete"
 
 	formatNatural = "natural"
 	noneValue     = "none"
@@ -39,11 +40,12 @@ func (h *EntityManageHandlers) RegisterTools(registry *mcp.Registry) {
 func (h *EntityManageHandlers) manageEntityTool() mcp.Tool {
 	return mcp.Tool{
 		Name: "manage_entity",
-		Description: `Manage Home Assistant entity registry entries - get or update.
+		Description: `Manage Home Assistant entity registry entries - get, update, or delete.
 
 Actions:
 - get: Get entity registry details (requires entity_id)
 - update: Update entity registry entry (requires entity_id and at least one field to update)
+- delete: Delete entity from registry (requires entity_id)
 
 Safe fields that can be updated:
 - name: Custom display name (empty string removes override)
@@ -67,12 +69,12 @@ func (h *EntityManageHandlers) buildEntityManageSchema() mcp.JSONSchema {
 		Properties: map[string]mcp.JSONSchema{
 			"action": {
 				Type:        "string",
-				Description: "Operation to perform: get, update",
-				Enum:        []string{"get", "update"},
+				Description: "Operation to perform: get, update, delete",
+				Enum:        []string{"get", "update", "delete"},
 			},
 			"entity_id": {
 				Type:        "string",
-				Description: "Entity ID (e.g., 'light.living_room'). Required for get/update.",
+				Description: "Entity ID (e.g., 'light.living_room'). Required for all actions.",
 			},
 			"name": {
 				Type:        "string",
@@ -129,7 +131,7 @@ func (h *EntityManageHandlers) buildEntityManageSchema() mcp.JSONSchema {
 func (h *EntityManageHandlers) handleManageEntity(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
 	action, ok := args["action"].(string)
 	if !ok || action == "" {
-		return errorResult("action is required and must be a string (get or update)"), nil
+		return errorResult("action is required and must be a string (get, update, or delete)"), nil
 	}
 
 	format := formatNatural
@@ -142,8 +144,10 @@ func (h *EntityManageHandlers) handleManageEntity(ctx context.Context, client ho
 		return h.handleGetEntity(ctx, client, args, format)
 	case entityActionUpdate:
 		return h.handleUpdateEntity(ctx, client, args, format)
+	case entityActionDelete:
+		return h.handleDeleteEntity(ctx, client, args, format)
 	default:
-		return errorResult(fmt.Sprintf("unsupported action '%s'. Valid actions: get, update", action)), nil
+		return errorResult(fmt.Sprintf("unsupported action '%s'. Valid actions: get, update, delete", action)), nil
 	}
 }
 
@@ -226,6 +230,26 @@ func (h *EntityManageHandlers) handleUpdateEntity(ctx context.Context, client ho
 		return h.formatEntityJSON(updated)
 	}
 	return h.formatEntityNaturalWithSuccess(updated, oldEntityID), nil
+}
+
+func (h *EntityManageHandlers) handleDeleteEntity(ctx context.Context, client homeassistant.Client, args map[string]any, format string) (*mcp.ToolsCallResult, error) {
+	entityID, ok := args["entity_id"].(string)
+	if !ok || entityID == "" {
+		return errorResult("entity_id is required for delete action"), nil
+	}
+
+	if err := client.RemoveEntityRegistryEntry(ctx, entityID); err != nil {
+		return nil, fmt.Errorf("failed to delete entity: %w", err)
+	}
+
+	if format == formatJSON {
+		data, err := json.Marshal(map[string]any{"entity_id": entityID, "deleted": true})
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal result: %w", err)
+		}
+		return textResult(string(data)), nil
+	}
+	return textResult(fmt.Sprintf("Entity '%s' deleted from registry.", entityID)), nil
 }
 
 // fetchEntityForMerge fetches the entity registry entry for label/alias merge.

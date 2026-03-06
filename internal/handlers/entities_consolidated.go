@@ -515,7 +515,7 @@ Modes:
 - statistics: Get long-term statistics for entities (requires statistic_ids array)
 - domains: List all available entity domains with counts
 - presence: Analyze person entities and device tracker correlation
-- health: Detect problematic entities and optionally remove them from the registry
+- health: Detect problematic entities (unavailable, unknown, disabled, orphaned, stale)
 
 Examples:
 - Get all lights: {"mode": "current", "domain": "light"}
@@ -523,8 +523,7 @@ Examples:
 - Get statistics: {"mode": "statistics", "statistic_ids": ["sensor.energy"]}
 - List domains: {"mode": "domains"}
 - Health check: {"mode": "health"}
-- Health filtered: {"mode": "health", "categories": ["unavailable", "unknown"]}
-- Remove dead entities: {"mode": "health", "action": "remove", "entity_ids": ["sensor.dead1"]}`
+- Health filtered: {"mode": "health", "categories": ["unavailable", "unknown"]}`
 }
 
 //nolint:funlen // Schema definition naturally long
@@ -617,11 +616,6 @@ func queryEntitiesProperties() map[string]mcp.JSONSchema {
 			Description: "Pagination cursor from previous response",
 		},
 		// Health mode parameters
-		"action": {
-			Type:        "string",
-			Enum:        []string{"analyze", "remove"},
-			Description: "Health action: 'analyze' (default) to detect issues, 'remove' to delete entities from registry. Only for mode=health",
-		},
 		"categories": {
 			Type:        "array",
 			Description: "Filter by one or more health issue categories. Only for mode=health with action=analyze. Example: ['unavailable', 'unknown', 'stale']",
@@ -632,12 +626,7 @@ func queryEntitiesProperties() map[string]mcp.JSONSchema {
 		},
 		"stale_days": {
 			Type:        "number",
-			Description: "Number of days for stale entity detection (default: 30). Only for mode=health with action=analyze",
-		},
-		"entity_ids": {
-			Type:        "array",
-			Description: "Array of entity IDs to remove from registry. Required for mode=health with action=remove",
-			Items:       &mcp.JSONSchema{Type: "string"},
+			Description: "Number of days for stale entity detection (default: 30). Only for mode=health",
 		},
 	}
 }

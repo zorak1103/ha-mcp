@@ -31,12 +31,6 @@ const (
 	stateUnknown     = "unknown"
 )
 
-// Health action constants.
-const (
-	healthActionAnalyze = "analyze"
-	healthActionRemove  = "remove"
-)
-
 // Default stale threshold in days.
 const defaultStaleDays = 30
 
@@ -77,39 +71,13 @@ type HealthStatistics struct {
 	ByCategory          map[string]int `json:"by_category"`
 }
 
-// RemoveResult represents the outcome of removing entities.
-type RemoveResult struct {
-	Removed []string        `json:"removed"`
-	Failed  []RemoveFailure `json:"failed,omitempty"`
-}
-
-// RemoveFailure represents a failure during entity removal.
-type RemoveFailure struct {
-	EntityID string `json:"entity_id"`
-	Error    string `json:"error"`
-}
-
-// handleHealth handles health mode analysis and cleanup operations.
+// handleHealth handles health mode analysis for entities.
 func (h *ConsolidatedEntityQueryHandlers) handleHealth(
 	ctx context.Context,
 	client homeassistant.Client,
 	args map[string]any,
 ) (*mcp.ToolsCallResult, error) {
-	// Parse action parameter (default: analyze)
-	action, _ := args["action"].(string)
-	if action == "" {
-		action = healthActionAnalyze
-	}
-
-	// Route to appropriate handler
-	switch action {
-	case healthActionAnalyze:
-		return h.handleHealthAnalyze(ctx, client, args)
-	case healthActionRemove:
-		return h.handleHealthRemove(ctx, client, args)
-	default:
-		return errorResult(fmt.Sprintf("invalid action %q, expected 'analyze' or 'remove'", action)), nil
-	}
+	return h.handleHealthAnalyze(ctx, client, args)
 }
 
 // handleHealthAnalyze performs health analysis on entities.
@@ -173,68 +141,6 @@ func (h *ConsolidatedEntityQueryHandlers) handleHealthAnalyze(
 		return jsonResult(report)
 	}
 	return textResult(formatHealthReportNatural(report, staleDays)), nil
-}
-
-// handleHealthRemove removes entities from the registry.
-func (h *ConsolidatedEntityQueryHandlers) handleHealthRemove(
-	ctx context.Context,
-	client homeassistant.Client,
-	args map[string]any,
-) (*mcp.ToolsCallResult, error) {
-	// Parse entity_ids parameter
-	entityIDsRaw, ok := args["entity_ids"]
-	if !ok {
-		return errorResult("entity_ids parameter is required for remove action"), nil
-	}
-
-	entityIDsAny, ok := entityIDsRaw.([]any)
-	if !ok {
-		return errorResult("entity_ids must be an array of strings"), nil
-	}
-
-	if len(entityIDsAny) == 0 {
-		return errorResult("entity_ids cannot be empty"), nil
-	}
-
-	// Convert to string slice
-	entityIDs := make([]string, 0, len(entityIDsAny))
-	for _, idAny := range entityIDsAny {
-		if idStr, ok := idAny.(string); ok {
-			entityIDs = append(entityIDs, idStr)
-		}
-	}
-
-	// Remove entities
-	result := removeEntities(ctx, client, entityIDs)
-
-	// Format output
-	formatStr := formatter.ParseFormat(getStringArg(args, "format"))
-	if formatStr == formatter.FormatJSON {
-		return jsonResult(result)
-	}
-	return textResult(formatRemoveResultNatural(result)), nil
-}
-
-// removeEntities attempts to remove each entity and collects results.
-func removeEntities(ctx context.Context, client homeassistant.Client, entityIDs []string) RemoveResult {
-	result := RemoveResult{
-		Removed: []string{},
-		Failed:  []RemoveFailure{},
-	}
-
-	for _, entityID := range entityIDs {
-		err := client.RemoveEntityRegistryEntry(ctx, entityID)
-		if err != nil {
-			result.Failed = append(result.Failed, RemoveFailure{
-				EntityID: entityID,
-				Error:    err.Error(),
-			})
-		} else {
-			result.Removed = append(result.Removed, entityID)
-		}
-	}
-
-	return result
 }
 
 // Detector functions
@@ -546,29 +452,6 @@ func formatHealthReportNatural(report HealthReport, staleDays int) string {
 				issue.EntityID, issue.Name, issue.Platform, issue.Details)
 		}
 		b.WriteString("\n")
-	}
-
-	return strings.TrimSpace(b.String())
-}
-
-func formatRemoveResultNatural(result RemoveResult) string {
-	var b strings.Builder
-
-	b.WriteString("Entity Registry Cleanup\n\n")
-
-	if len(result.Removed) > 0 {
-		fmt.Fprintf(&b, "Removed %d entities:\n", len(result.Removed))
-		for _, entityID := range result.Removed {
-			fmt.Fprintf(&b, "  - %s\n", entityID)
-		}
-		b.WriteString("\n")
-	}
-
-	if len(result.Failed) > 0 {
-		fmt.Fprintf(&b, "Failed %d:\n", len(result.Failed))
-		for _, failure := range result.Failed {
-			fmt.Fprintf(&b, "  - %s: %s\n", failure.EntityID, failure.Error)
-		}
 	}
 
 	return strings.TrimSpace(b.String())

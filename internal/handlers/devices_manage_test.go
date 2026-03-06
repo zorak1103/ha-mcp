@@ -37,16 +37,16 @@ func TestManageDevice_Schema(t *testing.T) {
 		t.Errorf("expected tool name 'manage_device', got '%s'", tool.Name)
 	}
 
-	// Verify action enum has 2 values: get, update
+	// Verify action enum has 3 values: get, update, delete
 	actionProp, ok := tool.InputSchema.Properties["action"]
 	if !ok {
 		t.Fatal("expected 'action' property in schema")
 	}
-	if len(actionProp.Enum) != 2 {
-		t.Errorf("expected 2 action enum values, got %d", len(actionProp.Enum))
+	if len(actionProp.Enum) != 3 {
+		t.Errorf("expected 3 action enum values, got %d", len(actionProp.Enum))
 	}
 
-	expectedActions := []string{"get", "update"}
+	expectedActions := []string{"get", "update", "delete"}
 	for _, expected := range expectedActions {
 		found := false
 		for _, enum := range actionProp.Enum {
@@ -396,6 +396,113 @@ func TestHandleManageDevice(t *testing.T) {
 			},
 			wantContain: "keep_me",
 		},
+		// =========================
+		// Delete Action Tests
+		// =========================
+		{
+			name: "delete - success natural format",
+			args: map[string]any{
+				"action":    "delete",
+				"device_id": "abc123",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetDeviceRegistryFn = func(_ context.Context) ([]homeassistant.DeviceRegistryEntry, error) {
+					return []homeassistant.DeviceRegistryEntry{
+						{ID: "abc123", Name: "Test Device", ConfigEntries: []string{"entry1"}},
+					}, nil
+				}
+				m.GetConfigEntriesFn = func(_ context.Context, _ string) ([]homeassistant.ConfigEntryFull, error) {
+					return []homeassistant.ConfigEntryFull{
+						{EntryID: "entry1", Domain: "test_integration", SupportsRemoveDevice: true},
+					}, nil
+				}
+				m.RemoveDeviceConfigEntryFn = func(_ context.Context, deviceID, _ string) error {
+					if deviceID != "abc123" {
+						t.Errorf("expected device_id 'abc123', got '%s'", deviceID)
+					}
+					return nil
+				}
+			},
+			wantContain: "deleted from registry",
+		},
+		{
+			name: "delete - success json format",
+			args: map[string]any{
+				"action":    "delete",
+				"device_id": "abc123",
+				"format":    "json",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetDeviceRegistryFn = func(_ context.Context) ([]homeassistant.DeviceRegistryEntry, error) {
+					return []homeassistant.DeviceRegistryEntry{
+						{ID: "abc123", Name: "Test Device", ConfigEntries: []string{"entry1"}},
+					}, nil
+				}
+				m.GetConfigEntriesFn = func(_ context.Context, _ string) ([]homeassistant.ConfigEntryFull, error) {
+					return []homeassistant.ConfigEntryFull{
+						{EntryID: "entry1", Domain: "test_integration", SupportsRemoveDevice: true},
+					}, nil
+				}
+				m.RemoveDeviceConfigEntryFn = func(context.Context, string, string) error {
+					return nil
+				}
+			},
+			wantContain: `"deleted":true`,
+		},
+		{
+			name: "delete - missing device_id",
+			args: map[string]any{
+				"action": "delete",
+			},
+			wantContain: "device_id is required",
+		},
+		{
+			name: "delete - device not found",
+			args: map[string]any{
+				"action":    "delete",
+				"device_id": "nonexistent",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetDeviceRegistryFn = func(_ context.Context) ([]homeassistant.DeviceRegistryEntry, error) {
+					return []homeassistant.DeviceRegistryEntry{}, nil
+				}
+			},
+			wantContain: "not found",
+		},
+		{
+			name: "delete - unsupported removal",
+			args: map[string]any{
+				"action":    "delete",
+				"device_id": "abc123",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetDeviceRegistryFn = func(_ context.Context) ([]homeassistant.DeviceRegistryEntry, error) {
+					return []homeassistant.DeviceRegistryEntry{
+						{ID: "abc123", Name: "Test Device", ConfigEntries: []string{"entry1"}},
+					}, nil
+				}
+				m.GetConfigEntriesFn = func(_ context.Context, _ string) ([]homeassistant.ConfigEntryFull, error) {
+					return []homeassistant.ConfigEntryFull{
+						{EntryID: "entry1", Domain: "test_integration", SupportsRemoveDevice: false},
+					}, nil
+				}
+			},
+			wantContain: "does not support device removal",
+		},
+		{
+			name: "delete - API error fetching registry",
+			args: map[string]any{
+				"action":    "delete",
+				"device_id": "abc123",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetDeviceRegistryFn = func(context.Context) ([]homeassistant.DeviceRegistryEntry, error) {
+					return nil, errors.New("API connection failed")
+				}
+			},
+			wantErr: true,
+		},
+
 		// =========================
 		// Invalid Action Tests
 		// =========================
