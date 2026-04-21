@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
+	"github.com/zorak1103/ha-mcp/internal/jsonpatch"
 	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
 
@@ -804,6 +805,173 @@ func TestHandleManageDashboard_Patch_ViewOrderPreserved(t *testing.T) {
 		if vm["title"] != want[i] {
 			t.Errorf("views[%d].title = %v, want %q (sibling order changed)", i, vm["title"], want[i])
 		}
+	}
+}
+
+// TestBuildViewMoveOps verifies that the move-op generator produces ops that
+// correctly restore an intended view order from a scrambled actual order.
+func TestBuildViewMoveOps(t *testing.T) {
+	t.Parallel()
+
+	view := func(path string) any {
+		return map[string]any{"title": path, "path": path}
+	}
+
+	tests := []struct {
+		name     string
+		intended []any
+		actual   []any
+		// wantOrder is the final order after applying the generated ops via jsonpatch.Apply.
+		wantOrder []string
+	}{
+		{
+			name:      "already in order - no ops needed",
+			intended:  []any{view("a"), view("b"), view("c")},
+			actual:    []any{view("a"), view("b"), view("c")},
+			wantOrder: []string{"a", "b", "c"},
+		},
+		{
+			name:      "two adjacent views swapped",
+			intended:  []any{view("a"), view("b"), view("c"), view("d")},
+			actual:    []any{view("b"), view("a"), view("c"), view("d")},
+			wantOrder: []string{"a", "b", "c", "d"},
+		},
+		{
+			name:      "first view moved to last",
+			intended:  []any{view("a"), view("b"), view("c")},
+			actual:    []any{view("b"), view("c"), view("a")},
+			wantOrder: []string{"a", "b", "c"},
+		},
+		{
+			name:      "full reverse",
+			intended:  []any{view("a"), view("b"), view("c"), view("d")},
+			actual:    []any{view("d"), view("c"), view("b"), view("a")},
+			wantOrder: []string{"a", "b", "c", "d"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			ops := buildViewMoveOps(tc.intended, tc.actual)
+
+			// Apply the generated move ops to the actual doc.
+			doc := map[string]any{"views": tc.actual}
+			result, err := jsonpatch.Apply(doc, ops)
+			if err != nil {
+				// No ops needed → Apply should be a no-op on the unchanged doc.
+				if len(ops) == 0 {
+					result = doc
+				} else {
+					t.Fatalf("Apply(moveOps) error: %v", err)
+				}
+			}
+
+			views := result.(map[string]any)["views"].([]any)
+			if len(views) != len(tc.wantOrder) {
+				t.Fatalf("len(views) = %d, want %d", len(views), len(tc.wantOrder))
+			}
+			for i, v := range views {
+				got := v.(map[string]any)["path"]
+				if got != tc.wantOrder[i] {
+					t.Errorf("views[%d].path = %v, want %q", i, got, tc.wantOrder[i])
+				}
+			}
+		})
+	}
+}
+
+// TestHandleManageDashboard_Patch_HAReordersCorrected verifies that when HA
+// returns a reordered views array after save, the handler detects and corrects it.
+func TestHandleManageDashboard_Patch_HAReordersCorrected(t *testing.T) {
+	t.Parallel()
+
+	// Initial config with 4 views in intended order.
+	initial := map[string]any{
+		"title": "Home",
+		"views": []any{
+			map[string]any{"title": "A", "path": "a"},
+			map[string]any{"title": "B", "path": "b"},
+			map[string]any{"title": "C", "path": "c"},
+			map[string]any{"title": "D", "path": "d"},
+		},
+	}
+
+	// Simulated HA response after save: views[0] and views[1] swapped (the bug).
+	haReordered := map[string]any{
+		"title": "Home",
+		"views": []any{
+			map[string]any{"title": "B", "path": "b"},
+			map[string]any{"title": "A", "path": "a"},
+			map[string]any{"title": "C updated", "path": "c"},
+			map[string]any{"title": "D", "path": "d"},
+		},
+	}
+
+	h := NewDashboardHandlers()
+
+	getCallCount := 0
+	var savedConfigs []map[string]any
+	m := &UniversalMockClient{
+		GetLovelaceConfigFn: func(_ context.Context, _ string) (map[string]any, error) {
+			getCallCount++
+			if getCallCount == 1 {
+				return deepCopyMap(initial), nil
+			}
+			// Second call (post-save read-back) returns HA's reordered version.
+			return deepCopyMap(haReordered), nil
+		},
+		SaveLovelaceConfigFn: func(_ context.Context, _ string, cfg map[string]any) error {
+			savedConfigs = append(savedConfigs, cfg)
+			return nil
+		},
+	}
+
+	ctx := context.Background()
+	result, err := h.handleManageDashboard(ctx, m, map[string]any{
+		"action": "patch",
+		"operations": []any{
+			map[string]any{
+				"op":    "replace",
+				"path":  "/views/2/title",
+				"value": "C updated",
+			},
+		},
+	})
+
+	if err != nil {
+		t.Fatalf("handler returned error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("handler returned nil result")
+	}
+
+	// Should have called SaveLovelaceConfig twice: once for the patch, once for the correction.
+	if len(savedConfigs) != 2 {
+		t.Fatalf("SaveLovelaceConfig called %d times, want 2 (patch + correction)", len(savedConfigs))
+	}
+
+	// The correction save (second call) must have the intended view order.
+	corrected := savedConfigs[1]["views"].([]any)
+	wantPaths := []string{"a", "b", "c", "d"}
+	if len(corrected) != len(wantPaths) {
+		t.Fatalf("corrected views len = %d, want %d", len(corrected), len(wantPaths))
+	}
+	for i, v := range corrected {
+		vm, _ := v.(map[string]any)
+		if vm["path"] != wantPaths[i] {
+			t.Errorf("corrected views[%d].path = %v, want %q", i, vm["path"], wantPaths[i])
+		}
+	}
+
+	// Success message must mention the correction.
+	var msgText string
+	for _, cb := range result.Content {
+		msgText += cb.Text
+	}
+	if !strings.Contains(msgText, "reordered") {
+		t.Errorf("success message should mention the reorder correction, got: %q", msgText)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
+	"github.com/zorak1103/ha-mcp/internal/jsonpatch"
 	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
 
@@ -346,12 +347,147 @@ func (h *DashboardHandlers) handlePatch(ctx context.Context, client homeassistan
 		return errorResult(fmt.Sprintf("error saving patched dashboard: %v", err)), nil
 	}
 
+	corrected, warning := h.correctViewOrder(ctx, client, urlPath, patchedMap)
+
 	target := "default dashboard"
 	if urlPath != "" {
 		target = fmt.Sprintf("dashboard '%s'", urlPath)
 	}
 
-	return successResult(fmt.Sprintf("Dashboard patched successfully for %s (%d operations applied)", target, len(ops))), nil
+	msg := fmt.Sprintf("Dashboard patched successfully for %s (%d operations applied)", target, len(ops))
+	if corrected {
+		msg += "\nNote: Home Assistant reordered views after save; order has been automatically restored."
+	}
+	if warning != "" {
+		msg += "\n" + warning
+	}
+	return successResult(msg), nil
+}
+
+// correctViewOrder reads back the saved config from HA and, if the views array
+// is in a different order than intended, applies move ops to restore it.
+// Returns (corrected bool, warningMsg string).
+func (h *DashboardHandlers) correctViewOrder(
+	ctx context.Context,
+	client homeassistant.Client,
+	urlPath string,
+	intended map[string]any,
+) (bool, string) {
+	intendedViews, ok := intended["views"].([]any)
+	if !ok || len(intendedViews) == 0 {
+		return false, ""
+	}
+
+	actual, err := client.GetLovelaceConfig(ctx, urlPath)
+	if err != nil {
+		return false, fmt.Sprintf("(could not verify view order after save: %v)", err)
+	}
+
+	actualViews, ok := actual["views"].([]any)
+	if !ok || len(actualViews) != len(intendedViews) {
+		return false, ""
+	}
+
+	if viewsInOrder(intendedViews, actualViews) {
+		return false, ""
+	}
+
+	moveOps := buildViewMoveOps(intendedViews, actualViews)
+	if len(moveOps) == 0 {
+		return false, ""
+	}
+
+	restored, applyErr := jsonpatch.Apply(actual, moveOps)
+	if applyErr != nil {
+		return false, fmt.Sprintf("(could not build view-order correction: %v)", applyErr)
+	}
+
+	restoredMap, ok := restored.(map[string]any)
+	if !ok {
+		return false, ""
+	}
+
+	if saveErr := client.SaveLovelaceConfig(ctx, urlPath, restoredMap); saveErr != nil {
+		return false, fmt.Sprintf("(view-order correction save failed: %v)", saveErr)
+	}
+
+	return true, ""
+}
+
+// buildViewMoveOps produces RFC 6902 move ops that restore actualViews to
+// the order specified by intendedViews. Works left-to-right using a selection-sort
+// approach, simulating each move on a working copy to keep indices accurate.
+func buildViewMoveOps(intendedViews, actualViews []any) []jsonpatch.Operation {
+	working := make([]any, len(actualViews))
+	copy(working, actualViews)
+
+	var ops []jsonpatch.Operation
+	for i, want := range intendedViews {
+		cur := findViewIndex(working, want, i)
+		if cur == i || cur < 0 {
+			continue
+		}
+		ops = append(ops, jsonpatch.Operation{
+			Op:   "move",
+			From: fmt.Sprintf("/views/%d", cur),
+			Path: fmt.Sprintf("/views/%d", i),
+		})
+		// Simulate the move so subsequent index lookups stay correct.
+		elem := working[cur]
+		working = append(working[:cur], working[cur+1:]...)
+		newSlice := make([]any, len(working)+1)
+		copy(newSlice[:i], working[:i])
+		copy(newSlice[i+1:], working[i:])
+		newSlice[i] = elem
+		working = newSlice
+	}
+	return ops
+}
+
+// viewsInOrder returns true when actual contains the same view identities in
+// the same positions as intended.
+func viewsInOrder(intended, actual []any) bool {
+	for i, want := range intended {
+		if !viewIdentityMatch(want, actual[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// findViewIndex returns the index in working where the view matching want is found,
+// starting the search from startFrom. Returns -1 if not found.
+func findViewIndex(working []any, want any, startFrom int) int {
+	// Prefer exact identity match; fall back to path-or-title match.
+	for i := startFrom; i < len(working); i++ {
+		if viewIdentityMatch(want, working[i]) {
+			return i
+		}
+	}
+	return -1
+}
+
+// viewIdentityMatch returns true when two view objects refer to the same view.
+// Identity is determined by "path" field first (most stable), then "title".
+// If neither is present, falls back to deep JSON equality.
+func viewIdentityMatch(a, b any) bool {
+	am, aOk := a.(map[string]any)
+	bm, bOk := b.(map[string]any)
+	if !aOk || !bOk {
+		return jsonValEqual(a, b)
+	}
+
+	if ap, ok := am["path"].(string); ok && ap != "" {
+		bp, _ := bm["path"].(string)
+		return ap == bp
+	}
+
+	if at, ok := am["title"].(string); ok && at != "" {
+		bt, _ := bm["title"].(string)
+		return at == bt
+	}
+
+	return jsonValEqual(a, b)
 }
 
 // =============================================================================
