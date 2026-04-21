@@ -431,3 +431,95 @@ func (s *DashboardIntegrationTestSuite) TestDashboardCreatedWithSectionLayout() 
 	// Cleanup
 	_ = s.Client().DeleteDashboard(s.Context(), dashboardID)
 }
+
+// TestDashboardPatchPreservesViewOrder is a regression test for issue #66:
+// replace /views/N must not reorder sibling views when HA persists the config.
+func (s *DashboardIntegrationTestSuite) TestDashboardPatchPreservesViewOrder() {
+	urlPath := generateDashboardURLPath("dash-patch-order")
+
+	var dashboardID string
+
+	s.RegisterCleanup(func() {
+		if dashboardID != "" {
+			_ = s.Client().DeleteDashboard(s.Context(), dashboardID)
+		}
+	})
+
+	requireAdmin := false
+	showInSidebar := false
+
+	// Create a test dashboard
+	cfg := homeassistant.DashboardConfig{
+		URLPath:       urlPath,
+		Title:         "Patch Order Test",
+		Mode:          "storage",
+		RequireAdmin:  &requireAdmin,
+		ShowInSidebar: &showInSidebar,
+	}
+
+	created, err := s.Client().CreateDashboard(s.Context(), cfg)
+	s.Require().NoError(err, "Failed to create test dashboard")
+	s.Require().NotNil(created)
+
+	dashboardID = created.ID
+
+	time.Sleep(500 * time.Millisecond)
+
+	// Save a 4-view baseline (matches the real-world reproducer from issue #66)
+	baseline := map[string]any{
+		"views": []any{
+			map[string]any{"title": "Übersicht", "path": "overview"},
+			map[string]any{"title": "Twingo", "path": "twingo"},
+			map[string]any{"title": "IONIQ 6", "path": "ioniq"},
+			map[string]any{"title": "Wallbox", "path": "wallbox"},
+		},
+	}
+
+	err = s.Client().SaveLovelaceConfig(s.Context(), urlPath, baseline)
+	s.Require().NoError(err, "Failed to save baseline config")
+
+	time.Sleep(500 * time.Millisecond)
+
+	// Verify baseline was saved correctly
+	before, err := s.Client().GetLovelaceConfig(s.Context(), urlPath)
+	s.Require().NoError(err, "Failed to retrieve baseline config")
+
+	beforeViews, ok := before["views"].([]any)
+	s.Require().True(ok, "Baseline views should be a slice")
+	s.Require().Len(beforeViews, 4, "Baseline should have 4 views")
+	s.Equal("Übersicht", beforeViews[0].(map[string]any)["title"], "views[0] before patch")
+	s.Equal("Twingo", beforeViews[1].(map[string]any)["title"], "views[1] before patch")
+	s.Equal("IONIQ 6", beforeViews[2].(map[string]any)["title"], "views[2] before patch")
+	s.Equal("Wallbox", beforeViews[3].(map[string]any)["title"], "views[3] before patch")
+
+	// Apply a replace on views[2] — the operation from the issue report
+	patched := map[string]any{
+		"views": []any{
+			beforeViews[0],
+			beforeViews[1],
+			map[string]any{"title": "IONIQ 6 Pro", "path": "ioniq"},
+			beforeViews[3],
+		},
+	}
+
+	err = s.Client().SaveLovelaceConfig(s.Context(), urlPath, patched)
+	s.Require().NoError(err, "Failed to save patched config")
+
+	time.Sleep(500 * time.Millisecond)
+
+	// Read back and verify view order is preserved
+	after, err := s.Client().GetLovelaceConfig(s.Context(), urlPath)
+	s.Require().NoError(err, "Failed to retrieve patched config")
+
+	afterViews, ok := after["views"].([]any)
+	s.Require().True(ok, "Patched views should be a slice")
+	s.Require().Len(afterViews, 4, "Patched config should still have 4 views")
+
+	wantTitles := []string{"Übersicht", "Twingo", "IONIQ 6 Pro", "Wallbox"}
+	for i, v := range afterViews {
+		vm, ok := v.(map[string]any)
+		s.Require().True(ok, "views[%d] should be a map", i)
+		s.Equal(wantTitles[i], vm["title"],
+			"views[%d].title after patch (sibling order must not change)", i)
+	}
+}

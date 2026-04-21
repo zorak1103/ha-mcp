@@ -246,6 +246,88 @@ func TestApply_Replace(t *testing.T) {
 			t.Fatal("expected error for missing key in replace")
 		}
 	})
+
+	// Regression tests for issue #66: replace on /array/N must not reorder siblings.
+
+	t.Run("replace preserves sibling order - whole element", func(t *testing.T) {
+		t.Parallel()
+
+		result := applyJSON(t,
+			`{"views":[
+				{"title":"Übersicht","path":"overview"},
+				{"title":"Twingo","path":"twingo"},
+				{"title":"IONIQ 6","path":"ioniq"},
+				{"title":"Wallbox","path":"wallbox"}
+			]}`,
+			[]Operation{
+				{Op: "replace", Path: "/views/2", Value: map[string]any{
+					"title": "IONIQ 6 updated", "path": "ioniq",
+				}},
+			})
+
+		views := result.(map[string]any)["views"].([]any)
+		want := []string{"Übersicht", "Twingo", "IONIQ 6 updated", "Wallbox"}
+		if len(views) != len(want) {
+			t.Fatalf("len(views) = %d, want %d", len(views), len(want))
+		}
+		for i, v := range views {
+			got := v.(map[string]any)["title"]
+			if got != want[i] {
+				t.Errorf("views[%d].title = %v, want %q", i, got, want[i])
+			}
+		}
+	})
+
+	t.Run("replace preserves sibling order - nested field", func(t *testing.T) {
+		t.Parallel()
+
+		result := applyJSON(t,
+			`{"views":[
+				{"title":"A","path":"a"},
+				{"title":"B","path":"b"},
+				{"title":"C","path":"c"}
+			]}`,
+			[]Operation{
+				{Op: "replace", Path: "/views/2/title", Value: "C updated"},
+			})
+
+		views := result.(map[string]any)["views"].([]any)
+		want := []string{"A", "B", "C updated"}
+		if len(views) != len(want) {
+			t.Fatalf("len(views) = %d, want %d", len(views), len(want))
+		}
+		for i, v := range views {
+			got := v.(map[string]any)["title"]
+			if got != want[i] {
+				t.Errorf("views[%d].title = %v, want %q", i, got, want[i])
+			}
+		}
+	})
+
+	t.Run("replace preserves sibling order - 10 elements", func(t *testing.T) {
+		t.Parallel()
+
+		const n = 10
+		// Build a 10-element array as JSON
+		raw := `{"items":[0,1,2,3,4,5,6,7,8,9]}`
+		result := applyJSON(t, raw, []Operation{
+			{Op: "replace", Path: "/items/5", Value: float64(99)},
+		})
+
+		items := result.(map[string]any)["items"].([]any)
+		if len(items) != n {
+			t.Fatalf("len(items) = %d, want %d", len(items), n)
+		}
+		for i, v := range items {
+			want := float64(i)
+			if i == 5 {
+				want = 99
+			}
+			if v != want {
+				t.Errorf("items[%d] = %v, want %v", i, v, want)
+			}
+		}
+	})
 }
 
 func TestApply_Move(t *testing.T) {

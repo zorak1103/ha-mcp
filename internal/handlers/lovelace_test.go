@@ -737,6 +737,76 @@ func TestHandleManageDashboard_Patch(t *testing.T) {
 	runHandlerTestCases(t, tests, h.handleManageDashboard)
 }
 
+// TestHandleManageDashboard_Patch_ViewOrderPreserved is a dedicated regression
+// test for issue #66: replace /views/N must not reorder sibling views.
+func TestHandleManageDashboard_Patch_ViewOrderPreserved(t *testing.T) {
+	t.Parallel()
+
+	fourViewConfig := map[string]any{
+		"title": "Home",
+		"views": []any{
+			map[string]any{"title": "Übersicht", "path": "overview"},
+			map[string]any{"title": "Twingo", "path": "twingo"},
+			map[string]any{"title": "IONIQ 6", "path": "ioniq"},
+			map[string]any{"title": "Wallbox", "path": "wallbox"},
+		},
+	}
+
+	h := NewDashboardHandlers()
+
+	var savedConfig map[string]any
+	m := &UniversalMockClient{
+		GetLovelaceConfigFn: func(context.Context, string) (map[string]any, error) {
+			return deepCopyMap(fourViewConfig), nil
+		},
+		SaveLovelaceConfigFn: func(_ context.Context, _ string, cfg map[string]any) error {
+			savedConfig = cfg
+			return nil
+		},
+	}
+
+	ctx := context.Background()
+	result, err := h.handleManageDashboard(ctx, m, map[string]any{
+		"action": "patch",
+		"operations": []any{
+			map[string]any{
+				"op":    "replace",
+				"path":  "/views/2",
+				"value": map[string]any{"title": "IONIQ 6 Pro", "path": "ioniq"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("handler returned error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("handler returned nil result")
+	}
+
+	if savedConfig == nil {
+		t.Fatal("SaveLovelaceConfig was not called")
+	}
+
+	views, ok := savedConfig["views"].([]any)
+	if !ok {
+		t.Fatalf("saved config 'views' is not []any, got %T", savedConfig["views"])
+	}
+
+	want := []string{"Übersicht", "Twingo", "IONIQ 6 Pro", "Wallbox"}
+	if len(views) != len(want) {
+		t.Fatalf("len(views) = %d, want %d", len(views), len(want))
+	}
+	for i, v := range views {
+		vm, ok := v.(map[string]any)
+		if !ok {
+			t.Fatalf("views[%d] is not a map, got %T", i, v)
+		}
+		if vm["title"] != want[i] {
+			t.Errorf("views[%d].title = %v, want %q (sibling order changed)", i, vm["title"], want[i])
+		}
+	}
+}
+
 func TestHandleManageDashboard_SemanticPatch(t *testing.T) {
 	t.Parallel()
 
