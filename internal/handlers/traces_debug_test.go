@@ -408,6 +408,90 @@ func TestExtractTriggerEntityIDs(t *testing.T) {
 	}
 }
 
+// TestHandleDebugTrace_StateFromGetState verifies that the automation runtime state
+// is read via GetState (not from GetAutomation, which only returns config).
+// Regression test for issue #74: debug report shows empty State field.
+func TestHandleDebugTrace_StateFromGetState(t *testing.T) {
+	t.Parallel()
+
+	handler := NewTraceHandlers()
+	client := &UniversalMockClient{
+		// GetAutomation returns config only — State is empty, as in the real HA API.
+		GetAutomationFn: func(_ context.Context, _ string) (*homeassistant.Automation, error) {
+			auto := mockAutomationForDebug()
+			auto.State = "" // real HA config endpoint does not populate State
+			return auto, nil
+		},
+		// GetState returns the runtime state — this is the authoritative source.
+		GetStateFn: func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+			return &homeassistant.Entity{
+				EntityID: entityID,
+				State:    "on",
+			}, nil
+		},
+		SendHACSCommandFn: func(_ context.Context, _ string, _ map[string]any) (any, error) {
+			return []any{}, nil
+		},
+		GetLogbookFn: func(_ context.Context, _, _, _ string) ([]homeassistant.LogbookEntry, error) {
+			return []homeassistant.LogbookEntry{}, nil
+		},
+	}
+
+	result, err := handler.HandleManageTrace(context.Background(), client, map[string]any{
+		"action":        "debug",
+		"automation_id": "automation.morning_routine",
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+	}
+
+	text := result.Content[0].Text
+	if !strings.Contains(text, "State: on") {
+		t.Errorf("expected 'State: on' in output (state must come from GetState, not GetAutomation config)\nfull output:\n%s", text)
+	}
+}
+
+// TestHandleDebugTrace_StateGetStateFails verifies that a GetState failure is handled
+// gracefully: State may appear empty but no error is returned (best-effort).
+func TestHandleDebugTrace_StateGetStateFails(t *testing.T) {
+	t.Parallel()
+
+	handler := NewTraceHandlers()
+	client := &UniversalMockClient{
+		GetAutomationFn: func(_ context.Context, _ string) (*homeassistant.Automation, error) {
+			auto := mockAutomationForDebug()
+			auto.State = ""
+			return auto, nil
+		},
+		GetStateFn: func(_ context.Context, _ string) (*homeassistant.Entity, error) {
+			return nil, fmt.Errorf("entity not found")
+		},
+		SendHACSCommandFn: func(_ context.Context, _ string, _ map[string]any) (any, error) {
+			return []any{}, nil
+		},
+		GetLogbookFn: func(_ context.Context, _, _, _ string) ([]homeassistant.LogbookEntry, error) {
+			return []homeassistant.LogbookEntry{}, nil
+		},
+	}
+
+	result, err := handler.HandleManageTrace(context.Background(), client, map[string]any{
+		"action":        "debug",
+		"automation_id": "automation.morning_routine",
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Must not return an error result — GetState failure is best-effort.
+	if result.IsError {
+		t.Errorf("GetState failure should not produce error result: %s", result.Content[0].Text)
+	}
+}
+
 // TestExtractTriggerTypes verifies extraction of deduplicated trigger platform types.
 func TestExtractTriggerTypes(t *testing.T) {
 	t.Parallel()

@@ -127,9 +127,16 @@ func fetchDebugAutomationConfig(ctx context.Context, client homeassistant.Client
 		return nil, nil, fmt.Errorf("automation not found: %w", err)
 	}
 
+	// The HA config endpoint does not return runtime state; fetch it separately.
+	// Best-effort: leave State empty on error rather than failing the whole report.
+	runtimeState := auto.State
+	if entity, stateErr := client.GetState(ctx, entityID); stateErr == nil {
+		runtimeState = entity.State
+	}
+
 	cfg := &AutomationDebugConfig{
 		EntityID:      entityID,
-		State:         auto.State,
+		State:         runtimeState,
 		LastTriggered: auto.LastTriggered,
 	}
 

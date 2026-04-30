@@ -53,7 +53,7 @@ func RegisterTraceTools(registry *mcp.Registry) {
 				},
 				"entity_id": {
 					Type:        "string",
-					Description: "Entity ID (required for 'get' action, e.g., 'automation.morning_routine').",
+					Description: "Entity ID for 'get' action (required) or 'list' action (optional, auto-derives domain and filters traces by item, e.g., 'automation.morning_routine').",
 				},
 				"automation_id": {
 					Type:        "string",
@@ -106,15 +106,43 @@ func (h *TraceHandlers) HandleManageTrace(ctx context.Context, client homeassist
 	}
 }
 
+// resolveTraceListParams derives domain and item_id from entity_id (when provided),
+// validates the prefix, and checks for conflicts with an explicit domain parameter.
+func resolveTraceListParams(entityID, domain string) (resolvedDomain, itemID, errMsg string) {
+	if entityID == "" {
+		return domain, "", ""
+	}
+	dotIdx := strings.Index(entityID, ".")
+	if dotIdx <= 0 {
+		return "", "", fmt.Sprintf("entity_id %q is invalid for list action: must be 'automation.<id>' or 'script.<id>'", entityID)
+	}
+	derived := entityID[:dotIdx]
+	if derived != traceDomainAutomation && derived != traceDomainScript {
+		return "", "", fmt.Sprintf("entity_id prefix %q is not supported for trace list; use 'automation' or 'script'", derived)
+	}
+	if domain != "" && domain != derived {
+		return "", "", fmt.Sprintf("entity_id prefix %q conflicts with explicit domain %q", derived, domain)
+	}
+	return derived, entityID, ""
+}
+
 // handleListTraces lists all traces for a domain.
 func (h *TraceHandlers) handleListTraces(ctx context.Context, client homeassistant.Client, args map[string]any, format string) (*mcp.ToolsCallResult, error) {
-	// Extract domain (optional for list)
 	domain, _ := args["domain"].(string)
+	entityID, _ := args["entity_id"].(string)
+
+	domain, itemID, errMsg := resolveTraceListParams(entityID, domain)
+	if errMsg != "" {
+		return errorResult(errMsg), nil
+	}
 
 	// Build command data
 	data := make(map[string]any)
 	if domain != "" {
 		data["domain"] = domain
+	}
+	if itemID != "" {
+		data["item_id"] = itemID
 	}
 
 	// Call trace/list WebSocket command

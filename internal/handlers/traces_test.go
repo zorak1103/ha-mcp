@@ -256,6 +256,91 @@ func TestManageTrace_Get(t *testing.T) {
 	}
 }
 
+// TestManageTrace_List_EntityIDFilter verifies that passing entity_id to the list
+// action automatically derives the domain and sets item_id for server-side filtering.
+// Regression test for issue #73: entity_id was silently ignored, causing the WS call
+// to omit domain and return "id @ data['domain']. Got None".
+func TestManageTrace_List_EntityIDFilter(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		args        map[string]any
+		wantDomain  string
+		wantItemID  string
+		wantError   bool
+		wantContain string
+	}{
+		{
+			name:       "entity_id automation prefix derives domain and item_id",
+			args:       map[string]any{"action": "list", "entity_id": "automation.ev_charging"},
+			wantDomain: "automation",
+			wantItemID: "automation.ev_charging",
+		},
+		{
+			name:       "entity_id script prefix derives domain and item_id",
+			args:       map[string]any{"action": "list", "entity_id": "script.morning_routine"},
+			wantDomain: "script",
+			wantItemID: "script.morning_routine",
+		},
+		{
+			name:        "entity_id conflicts with explicit domain",
+			args:        map[string]any{"action": "list", "entity_id": "automation.foo", "domain": "script"},
+			wantError:   true,
+			wantContain: "domain",
+		},
+		{
+			name:        "entity_id with unknown prefix returns validation error",
+			args:        map[string]any{"action": "list", "entity_id": "light.living_room"},
+			wantError:   true,
+			wantContain: "entity_id",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var capturedData map[string]any
+			client := &UniversalMockClient{
+				SendHACSCommandFn: func(_ context.Context, cmd string, data map[string]any) (any, error) {
+					if cmd != "trace/list" {
+						return nil, fmt.Errorf("wrong command: %s", cmd)
+					}
+					capturedData = data
+					return []any{}, nil
+				},
+			}
+
+			handler := NewTraceHandlers()
+			result, err := handler.HandleManageTrace(context.Background(), client, tt.args)
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tt.wantError {
+				if !result.IsError {
+					t.Errorf("expected error result, got: %s", result.Content[0].Text)
+				}
+				if tt.wantContain != "" && !contains(result.Content[0].Text, tt.wantContain) {
+					t.Errorf("error text does not contain %q: %s", tt.wantContain, result.Content[0].Text)
+				}
+				return
+			}
+
+			if result.IsError {
+				t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+			}
+			if capturedData["domain"] != tt.wantDomain {
+				t.Errorf("data[domain] = %v, want %q", capturedData["domain"], tt.wantDomain)
+			}
+			if capturedData["item_id"] != tt.wantItemID {
+				t.Errorf("data[item_id] = %v, want %q", capturedData["item_id"], tt.wantItemID)
+			}
+		})
+	}
+}
+
 // TestManageTrace_GetMissingParams verifies validation for get action.
 func TestManageTrace_GetMissingParams(t *testing.T) {
 	t.Parallel()
