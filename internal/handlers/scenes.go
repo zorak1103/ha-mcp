@@ -304,7 +304,8 @@ func (h *SceneHandlers) handleUpdate(ctx context.Context, client homeassistant.C
 
 	// Use configID (without prefix) for REST API
 	if err := client.UpdateScene(ctx, configID, config); err != nil {
-		return errorResult(fmt.Sprintf("Error updating scene: %v", err)), nil
+		msg := fmt.Sprintf("Error updating scene: %v", err)
+		return errorResult(enrichConfigError(msg, err, sceneErrorHints)), nil
 	}
 
 	return successResult(fmt.Sprintf("Scene '%s' updated successfully", sceneID)), nil
@@ -564,7 +565,8 @@ func (h *SceneHandlers) handlePatch(ctx context.Context, client homeassistant.Cl
 	}
 
 	if err := client.UpdateScene(ctx, configID, newConfig); err != nil {
-		return errorResult(fmt.Sprintf("error saving patched scene: %v", err)), nil
+		msg := fmt.Sprintf("error saving patched scene: %v", err)
+		return errorResult(enrichConfigError(msg, err, sceneErrorHints)), nil
 	}
 
 	return successResult(fmt.Sprintf("Scene '%s' patched successfully (%d operations applied)", sceneID, len(ops))), nil

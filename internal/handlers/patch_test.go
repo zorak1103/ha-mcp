@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
@@ -26,7 +27,7 @@ func TestParseOperations(t *testing.T) {
 			name:        "operations not array",
 			args:        map[string]any{"operations": "notarray"},
 			wantNilOps:  true,
-			wantErrFrag: "operations must be an array",
+			wantErrFrag: "operations must be a JSON array",
 		},
 		{
 			name:        "empty operations",
@@ -323,5 +324,126 @@ func TestParseOperations_RoundTrip(t *testing.T) {
 	conditions := resultMap["conditions"].([]any)
 	if len(conditions) != 0 {
 		t.Errorf("len(conditions) = %d, want 0", len(conditions))
+	}
+}
+
+// TestParseOperations_AlternativeInputTypes verifies that parseOperations accepts
+// operations encoded as json.RawMessage or []map[string]any in addition to []any.
+// Regression test for issue #75: MCP clients that pre-encode arguments may deliver
+// the operations array as json.RawMessage, causing a hard type-assertion failure.
+func TestParseOperations_AlternativeInputTypes(t *testing.T) {
+	t.Parallel()
+
+	validOp := map[string]any{"op": "replace", "path": "/mode", "value": "queued"}
+
+	tests := []struct {
+		name         string
+		operations   any
+		wantOpsCount int
+		wantErrFrag  string
+	}{
+		{
+			name:         "json.RawMessage array",
+			operations:   json.RawMessage(`[{"op":"replace","path":"/mode","value":"queued"}]`),
+			wantOpsCount: 1,
+		},
+		{
+			name:         "[]map[string]any",
+			operations:   []map[string]any{{"op": "replace", "path": "/mode", "value": "queued"}},
+			wantOpsCount: 1,
+		},
+		{
+			name:         "[]any (existing happy path still works)",
+			operations:   []any{validOp},
+			wantOpsCount: 1,
+		},
+		{
+			name:        "int - invalid type reports Go type name",
+			operations:  42,
+			wantErrFrag: "int",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ops, errResult := parseOperations(map[string]any{"operations": tt.operations})
+
+			if tt.wantErrFrag != "" {
+				if errResult == nil {
+					t.Fatal("expected error result, got nil")
+				}
+				if !containsStrHandlers(errResult.Content[0].Text, tt.wantErrFrag) {
+					t.Errorf("error %q does not contain %q", errResult.Content[0].Text, tt.wantErrFrag)
+				}
+				return
+			}
+
+			if errResult != nil {
+				t.Fatalf("unexpected error: %s", errResult.Content[0].Text)
+			}
+			if len(ops) != tt.wantOpsCount {
+				t.Errorf("len(ops) = %d, want %d", len(ops), tt.wantOpsCount)
+			}
+			if len(ops) > 0 && ops[0].Op != "replace" {
+				t.Errorf("ops[0].Op = %q, want 'replace'", ops[0].Op)
+			}
+		})
+	}
+}
+
+// TestParseOperations_DeepValueObject verifies that a deeply-nested value (e.g. a
+// full choose block) passes through the parser and round-trips to the engine unchanged.
+// Regression test for issue #75: deep value objects were the reported payload.
+func TestParseOperations_DeepValueObject(t *testing.T) {
+	t.Parallel()
+
+	chooseBlock := map[string]any{
+		"choose": []any{
+			map[string]any{
+				"conditions": []any{
+					map[string]any{"condition": "state", "entity_id": "input_text.ev_vehicle", "state": "Unbekannt"},
+				},
+				"sequence": []any{
+					map[string]any{"action": "script.ioniq6_force_refresh"},
+					map[string]any{"variables": map[string]any{"detected": "{{ 'Ioniq 6' }}"}},
+				},
+			},
+		},
+	}
+
+	args := map[string]any{
+		"operations": []any{
+			map[string]any{"op": "add", "path": "/actions/1", "value": chooseBlock},
+		},
+	}
+
+	ops, errResult := parseOperations(args)
+	if errResult != nil {
+		t.Fatalf("unexpected error parsing deep value: %s", errResult.Content[0].Text)
+	}
+	if len(ops) != 1 {
+		t.Fatalf("expected 1 op, got %d", len(ops))
+	}
+
+	// Verify the value round-trips through the engine.
+	doc := map[string]any{
+		"actions": []any{
+			map[string]any{"action": "light.turn_on"},
+			map[string]any{"action": "light.turn_off"},
+		},
+	}
+	result, err := applyPatchWithSemantics(doc, ops)
+	if err != nil {
+		t.Fatalf("applyPatchWithSemantics error: %v", err)
+	}
+	actions, _ := result["actions"].([]any)
+	if len(actions) != 3 {
+		t.Fatalf("expected 3 actions after insert, got %d", len(actions))
+	}
+	inserted, _ := actions[1].(map[string]any)
+	if _, ok := inserted["choose"]; !ok {
+		t.Errorf("inserted action missing 'choose' key; got: %v", inserted)
 	}
 }

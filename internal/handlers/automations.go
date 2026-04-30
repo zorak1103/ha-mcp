@@ -4,7 +4,6 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -989,51 +988,7 @@ func isValidSlugID(id string) bool {
 }
 
 // enrichAutomationError appends actionable hints when HA returns a 400 validation
-// error for automation create/update/patch operations. Returns the original message
-// unchanged when no matching hint is found.
+// error for automation create/update/patch operations. Delegates to enrichConfigError.
 func enrichAutomationError(msg string, err error) string {
-	var apiErr *homeassistant.APIError
-	if !errors.As(err, &apiErr) || apiErr.StatusCode != 400 {
-		return msg
-	}
-
-	body := strings.ToLower(apiErr.Message)
-
-	for _, hint := range automationErrorHints {
-		if strings.Contains(body, hint.pattern) {
-			return msg + "\n\nHint: " + hint.suggestion
-		}
-	}
-
-	return msg
-}
-
-// automationErrorHint maps a pattern found in HA 400-error bodies to an actionable suggestion.
-type automationErrorHint struct {
-	pattern    string
-	suggestion string
-}
-
-//nolint:gochecknoglobals // static lookup table for error enrichment
-var automationErrorHints = []automationErrorHint{
-	{
-		pattern:    "extra keys not allowed",
-		suggestion: "The config contains an unrecognized key. Common mistakes: (1) 'sun' condition does not exist — use {\"condition\": \"state\", \"entity_id\": \"sun.sun\", \"state\": \"above_horizon\"} instead. (2) Check that trigger/condition/action keys match the HA schema for that type.",
-	},
-	{
-		pattern:    "required key not provided",
-		suggestion: "A required field is missing. Triggers need 'trigger' (type) key; conditions need 'condition' key; actions need 'action' (service) key.",
-	},
-	{
-		pattern:    "expected a list",
-		suggestion: "The 'trigger', 'condition', or 'automation_action' field must be an array (list), not a single object.",
-	},
-	{
-		pattern:    "unable to find action",
-		suggestion: "The service name in 'action' may be wrong. Use 'domain.service' format, e.g. 'light.turn_on', 'notify.mobile_app'. Check available services with call_service tool.",
-	},
-	{
-		pattern:    "invalid template",
-		suggestion: "Template syntax error. HA uses Jinja2: {{ states('sensor.x') }}, {{ is_state('entity', 'on') }}, etc.",
-	},
+	return enrichConfigError(msg, err, automationErrorHints)
 }

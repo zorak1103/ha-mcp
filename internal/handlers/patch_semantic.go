@@ -9,6 +9,13 @@ import (
 	"github.com/zorak1103/ha-mcp/internal/jsonpatch"
 )
 
+// Patch operation type constants used for semantic op validation.
+const (
+	patchOpAdd     = "add"
+	patchOpReplace = "replace"
+	patchOpTest    = "test"
+)
+
 // SemanticOperation extends jsonpatch.Operation with optional property-based addressing.
 // When Match is non-nil, the operation targets elements found by matching properties
 // rather than by numeric index. Path must be empty when Match is set.
@@ -165,7 +172,7 @@ func validateSemanticOp(op SemanticOperation, idx int) error {
 	if op.Op == arrayModeRemove && op.Field != "" {
 		return fmt.Errorf("'field' must be empty for 'remove' operations with semantic match (operation %d)", idx)
 	}
-	needsField := op.Op == "replace" || op.Op == "add" || op.Op == "test"
+	needsField := op.Op == patchOpReplace || op.Op == patchOpAdd || op.Op == patchOpTest
 	if needsField && op.Field == "" {
 		return fmt.Errorf("'field' is required for %q operations with semantic match (operation %d)", op.Op, idx)
 	}

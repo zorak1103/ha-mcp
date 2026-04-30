@@ -2375,13 +2375,14 @@ func TestEnrichAutomationError(t *testing.T) {
 			wantExact: "Error creating automation: server error",
 		},
 		{
+			// data['which'] now matches the specific rule (before the generic "extra keys" rule).
 			name: "extra keys not allowed triggers hint",
 			msg:  "error saving patched automation: Home Assistant API error (status 400): invalid automation config: {\"message\":\"Message malformed: extra keys not allowed @ data['which']\"}",
 			err: &homeassistant.APIError{
 				StatusCode: 400,
 				Message:    "invalid automation config: {\"message\":\"Message malformed: extra keys not allowed @ data['which']\"}",
 			},
-			wantContain: "sun' condition does not exist",
+			wantContain: "'which' is not a valid key for the sun condition",
 		},
 		{
 			name: "required key not provided triggers hint",

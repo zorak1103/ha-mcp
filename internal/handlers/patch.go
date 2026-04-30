@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 
 	"github.com/zorak1103/ha-mcp/internal/jsonpatch"
 	"github.com/zorak1103/ha-mcp/internal/mcp"
@@ -58,6 +59,37 @@ func patchOperationsSchema() mcp.JSONSchema {
 	}
 }
 
+// toAnySlice normalises various slice representations to []any.
+// Accepts []any (standard JSON decode), json.RawMessage (pre-encoded arguments),
+// and any other slice type via JSON round-trip (e.g. []map[string]any).
+func toAnySlice(v any) ([]any, error) {
+	if s, ok := v.([]any); ok {
+		return s, nil
+	}
+	// Pre-encoded JSON bytes from clients that defer argument parsing.
+	if raw, ok := v.(json.RawMessage); ok {
+		var result []any
+		if err := json.Unmarshal(raw, &result); err != nil {
+			return nil, fmt.Errorf("operations must be a JSON array; got json.RawMessage that failed to parse: %w", err)
+		}
+		return result, nil
+	}
+	// Typed slices (e.g. []map[string]any) from internal callers or custom decoders.
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Slice {
+		return nil, fmt.Errorf("operations must be a JSON array; got %T", v)
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, fmt.Errorf("operations must be a JSON array; could not normalise %T: %w", v, err)
+	}
+	var result []any
+	if err := json.Unmarshal(b, &result); err != nil {
+		return nil, fmt.Errorf("operations must be a JSON array; normalisation of %T failed: %w", v, err)
+	}
+	return result, nil
+}
+
 // parseOperations extracts and validates operations from MCP args.
 // Returns nil result on success; returns an error result on validation failure.
 func parseOperations(args map[string]any) ([]SemanticOperation, *mcp.ToolsCallResult) {
@@ -66,9 +98,9 @@ func parseOperations(args map[string]any) ([]SemanticOperation, *mcp.ToolsCallRe
 		return nil, errorResult("operations is required for patch action")
 	}
 
-	rawSlice, ok := raw.([]any)
-	if !ok {
-		return nil, errorResult("operations must be an array")
+	rawSlice, err := toAnySlice(raw)
+	if err != nil {
+		return nil, errorResult(err.Error())
 	}
 	if len(rawSlice) == 0 {
 		return nil, errorResult("operations must contain at least one operation")

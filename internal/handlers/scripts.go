@@ -403,7 +403,8 @@ func (h *ScriptHandlers) handleUpdate(ctx context.Context, client homeassistant.
 
 	// Use configID (without prefix) for REST API
 	if err := client.UpdateScript(ctx, configID, config); err != nil {
-		return errorResult(fmt.Sprintf("Error updating script: %v", err)), nil
+		msg := fmt.Sprintf("Error updating script: %v", err)
+		return errorResult(enrichConfigError(msg, err, scriptErrorHints)), nil
 	}
 
 	return successResult(fmt.Sprintf("Script '%s' updated successfully", scriptID)), nil
@@ -504,7 +505,8 @@ func (h *ScriptHandlers) handlePatch(ctx context.Context, client homeassistant.C
 	}
 
 	if err := client.UpdateScript(ctx, configID, newConfig); err != nil {
-		return errorResult(fmt.Sprintf("error saving patched script: %v", err)), nil
+		msg := fmt.Sprintf("error saving patched script: %v", err)
+		return errorResult(enrichConfigError(msg, err, scriptErrorHints)), nil
 	}
 
 	return successResult(fmt.Sprintf("Script '%s' patched successfully (%d operations applied)", scriptID, len(ops))), nil
