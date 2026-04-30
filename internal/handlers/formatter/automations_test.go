@@ -642,3 +642,150 @@ func TestFormatRepeatAction(t *testing.T) {
 		})
 	}
 }
+
+// TestFormatAction_LegacyEntityIDTarget verifies that the legacy entity_id field at
+// the top level of an action map is used as target when no target block is present.
+// Regression test for issue #60: script.turn_on with top-level entity_id was rendered
+// without any target, making it impossible to verify correctness in natural format.
+func TestFormatAction_LegacyEntityIDTarget(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		action     map[string]any
+		wantTarget string
+	}{
+		{
+			name: "top-level entity_id without target block",
+			action: map[string]any{
+				"service":   "script.turn_on",
+				"entity_id": "script.kitchen_dishwasher_on",
+			},
+			wantTarget: "script.kitchen_dishwasher_on",
+		},
+		{
+			name: "action key with top-level entity_id",
+			action: map[string]any{
+				"action":    "light.turn_on",
+				"entity_id": "light.living_room",
+			},
+			wantTarget: "light.living_room",
+		},
+		{
+			name: "target block takes precedence over top-level entity_id",
+			action: map[string]any{
+				"action": "light.turn_on",
+				"target": map[string]any{
+					"entity_id": "light.kitchen",
+				},
+				"entity_id": "light.living_room", // should be ignored
+			},
+			wantTarget: "light.kitchen",
+		},
+		{
+			name: "data.entity_id used when no target block or top-level entity_id",
+			action: map[string]any{
+				"action": "notify.mobile_app",
+				"data":   map[string]any{"entity_id": "notify.my_phone", "message": "hello"},
+			},
+			wantTarget: "notify.my_phone",
+		},
+	}
+
+	f := NewNaturalAutomationFormatter()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := f.formatAction(tt.action)
+			if !strings.Contains(result, tt.wantTarget) {
+				t.Errorf("action output %q does not contain expected target %q", result, tt.wantTarget)
+			}
+		})
+	}
+}
+
+// TestFormatRepeatAction_ShowsSequenceContent verifies that repeat action output
+// includes the actual actions in the sequence, not just a count.
+// Regression test for issue #72.
+func TestFormatRepeatAction_ShowsSequenceContent(t *testing.T) {
+	t.Parallel()
+
+	f := NewNaturalAutomationFormatter()
+
+	repeatVal := map[string]any{
+		"until": []any{
+			map[string]any{"condition": "template", "value_template": "{{ detected != '' }}"},
+		},
+		"sequence": []any{
+			map[string]any{"action": "button.press", "target": map[string]any{"entity_id": "button.refresh"}},
+			map[string]any{"delay": "00:00:10"},
+			map[string]any{"variables": map[string]any{"detected": "Ioniq 6"}},
+		},
+	}
+
+	action := map[string]any{"repeat": repeatVal}
+	result := f.formatAction(action)
+
+	// The sequence actions must be visible, not just "3 action(s) in sequence".
+	if !strings.Contains(result, "button.press") && !strings.Contains(result, "button.refresh") {
+		t.Errorf("repeat output should show sequence actions, got:\n%s", result)
+	}
+}
+
+// TestFormatChooseAction_ShowsOptionContent verifies that choose action output
+// includes the conditions and sequence of each option.
+// Regression test for issue #72.
+func TestFormatChooseAction_ShowsOptionContent(t *testing.T) {
+	t.Parallel()
+
+	f := NewNaturalAutomationFormatter()
+
+	action := map[string]any{
+		"choose": []any{
+			map[string]any{
+				"conditions": []any{
+					map[string]any{"condition": "state", "entity_id": "sun.sun", "state": "above_horizon"},
+				},
+				"sequence": []any{
+					map[string]any{"action": "light.turn_on", "target": map[string]any{"entity_id": "light.garden"}},
+				},
+			},
+		},
+	}
+
+	result := f.formatAction(action)
+
+	// The option conditions and sequence must appear in the output.
+	if !strings.Contains(result, "sun.sun") && !strings.Contains(result, "light.turn_on") {
+		t.Errorf("choose output should show option conditions/sequence, got:\n%s", result)
+	}
+}
+
+// TestFormatIfAction_ShowsBranches verifies that if/then/else output includes
+// both the condition and the branch actions.
+// Regression test for issue #72.
+func TestFormatIfAction_ShowsBranches(t *testing.T) {
+	t.Parallel()
+
+	f := NewNaturalAutomationFormatter()
+
+	action := map[string]any{
+		"if": []any{
+			map[string]any{"condition": "state", "entity_id": "binary_sensor.door", "state": "on"},
+		},
+		"then": []any{
+			map[string]any{"action": "alarm_control_panel.alarm_arm_away"},
+		},
+		"else": []any{
+			map[string]any{"action": "alarm_control_panel.alarm_disarm"},
+		},
+	}
+
+	result := f.formatAction(action)
+
+	// Both branches must be visible.
+	if !strings.Contains(result, "alarm_arm_away") && !strings.Contains(result, "alarm_disarm") {
+		t.Errorf("if/then/else output should show branch actions, got:\n%s", result)
+	}
+}

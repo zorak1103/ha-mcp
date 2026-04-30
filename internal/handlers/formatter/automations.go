@@ -569,32 +569,30 @@ func (f *NaturalAutomationFormatter) formatNonServiceAction(actionMap map[string
 }
 
 func (f *NaturalAutomationFormatter) formatComplexAction(actionMap map[string]any) string {
-	if _, hasChoose := actionMap["choose"]; hasChoose {
-		choices, _ := actionMap["choose"].([]any)
-		return fmt.Sprintf("choose: %d option(s)", len(choices))
+	if choices, hasChoose := actionMap["choose"]; hasChoose {
+		return f.formatChooseBlock(choices)
 	}
 	if _, hasIf := actionMap["if"]; hasIf {
-		return "conditional: if/then/else"
+		return f.formatIfBlock(actionMap)
 	}
 	if repeatVal, hasRepeat := actionMap["repeat"]; hasRepeat {
-		return formatRepeatAction(repeatVal)
+		return f.formatRepeatBlock(repeatVal)
 	}
-	if _, hasParallel := actionMap["parallel"]; hasParallel {
-		return "parallel actions"
+	if parallelVal, hasParallel := actionMap["parallel"]; hasParallel {
+		return f.formatParallelBlock(parallelVal)
 	}
 	return ""
 }
 
-// formatRepeatAction formats a repeat action with while/count and sequence summary.
+// formatRepeatAction formats a repeat action headline (count summary only).
+// Used by TestFormatRepeatAction which tests the standalone summary format.
 func formatRepeatAction(repeatVal any) string {
 	repeatMap, ok := repeatVal.(map[string]any)
 	if !ok {
 		return "repeat action"
 	}
-
 	seq, _ := repeatMap["sequence"].([]any)
 	seqLen := len(seq)
-
 	if whileVal, hasWhile := repeatMap["while"]; hasWhile {
 		conditions, _ := whileVal.([]any)
 		return fmt.Sprintf("repeat while [%d condition(s)]: %d action(s) in sequence", len(conditions), seqLen)
@@ -609,6 +607,93 @@ func formatRepeatAction(repeatVal any) string {
 	return fmt.Sprintf("repeat: %d action(s) in sequence", seqLen)
 }
 
+// formatRepeatBlock renders a repeat action with its sequence inline.
+func (f *NaturalAutomationFormatter) formatRepeatBlock(repeatVal any) string {
+	repeatMap, ok := repeatVal.(map[string]any)
+	if !ok {
+		return "repeat action"
+	}
+	headline := formatRepeatAction(repeatVal)
+	seq, _ := repeatMap["sequence"].([]any)
+	if len(seq) == 0 {
+		return headline
+	}
+	var b strings.Builder
+	b.WriteString(headline)
+	for _, a := range seq {
+		b.WriteString("\n    - ")
+		b.WriteString(f.formatAction(a))
+	}
+	return b.String()
+}
+
+// formatChooseBlock renders a choose block with each option's conditions and sequence.
+func (f *NaturalAutomationFormatter) formatChooseBlock(choicesVal any) string {
+	choices, _ := choicesVal.([]any)
+	var b strings.Builder
+	fmt.Fprintf(&b, "choose: %d option(s)", len(choices))
+	for i, choice := range choices {
+		cm, ok := choice.(map[string]any)
+		if !ok {
+			continue
+		}
+		fmt.Fprintf(&b, "\n  option %d:", i+1)
+		if conds, ok := cm["conditions"].([]any); ok && len(conds) > 0 {
+			for _, c := range conds {
+				b.WriteString("\n    if: ")
+				b.WriteString(f.formatCondition(c))
+			}
+		}
+		if seq, ok := cm["sequence"].([]any); ok {
+			for _, a := range seq {
+				b.WriteString("\n    then: ")
+				b.WriteString(f.formatAction(a))
+			}
+		}
+	}
+	return b.String()
+}
+
+// formatIfBlock renders an if/then/else block with branch actions.
+func (f *NaturalAutomationFormatter) formatIfBlock(actionMap map[string]any) string {
+	var b strings.Builder
+	b.WriteString("conditional: if/then/else")
+	if conds, ok := actionMap["if"].([]any); ok {
+		for _, c := range conds {
+			b.WriteString("\n  if: ")
+			b.WriteString(f.formatCondition(c))
+		}
+	}
+	if then, ok := actionMap["then"].([]any); ok {
+		for _, a := range then {
+			b.WriteString("\n  then: ")
+			b.WriteString(f.formatAction(a))
+		}
+	}
+	if els, ok := actionMap["else"].([]any); ok {
+		for _, a := range els {
+			b.WriteString("\n  else: ")
+			b.WriteString(f.formatAction(a))
+		}
+	}
+	return b.String()
+}
+
+// formatParallelBlock renders a parallel block with each branch.
+func (f *NaturalAutomationFormatter) formatParallelBlock(parallelVal any) string {
+	items, _ := parallelVal.([]any)
+	if len(items) == 0 {
+		return "parallel actions"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "parallel: %d branch(es)", len(items))
+	for _, item := range items {
+		b.WriteString("\n  - ")
+		b.WriteString(f.formatAction(item))
+	}
+	return b.String()
+}
+
 func (f *NaturalAutomationFormatter) formatServiceAction(service string, actionMap map[string]any) string {
 	target := f.extractActionTarget(actionMap)
 	dataInfo := f.extractDataInfo(actionMap)
@@ -620,21 +705,28 @@ func (f *NaturalAutomationFormatter) formatServiceAction(service string, actionM
 }
 
 func (f *NaturalAutomationFormatter) extractActionTarget(actionMap map[string]any) string {
-	targetMap, ok := actionMap["target"].(map[string]any)
-	if !ok {
-		return ""
+	// 1. target.entity_id (modern HA format)
+	if targetMap, ok := actionMap["target"].(map[string]any); ok {
+		if entityID, ok := targetMap["entity_id"].(string); ok && entityID != "" {
+			return entityID
+		}
+		if entityIDs, ok := targetMap["entity_id"].([]any); ok && len(entityIDs) > 0 {
+			if eid, ok := entityIDs[0].(string); ok {
+				if len(entityIDs) > 1 {
+					return eid + fmt.Sprintf(" (+%d more)", len(entityIDs)-1)
+				}
+				return eid
+			}
+		}
 	}
-
-	if entityID, ok := targetMap["entity_id"].(string); ok {
+	// 2. Top-level entity_id (legacy HA automation format, pre-2022)
+	if entityID, ok := actionMap["entity_id"].(string); ok && entityID != "" {
 		return entityID
 	}
-
-	if entityIDs, ok := targetMap["entity_id"].([]any); ok && len(entityIDs) > 0 {
-		if eid, ok := entityIDs[0].(string); ok {
-			if len(entityIDs) > 1 {
-				return eid + fmt.Sprintf(" (+%d more)", len(entityIDs)-1)
-			}
-			return eid
+	// 3. data.entity_id (some service calls embed the target in the data map)
+	if data, ok := actionMap["data"].(map[string]any); ok {
+		if entityID, ok := data["entity_id"].(string); ok && entityID != "" {
+			return entityID
 		}
 	}
 	return ""
