@@ -734,13 +734,15 @@ func (h *ConsolidatedHelperHandlers) createWSHelper(
 	}
 
 	if needsUpdate {
-		// Restore friendly name via update
+		// Restore display name and re-send full config: HA requires all type-specific
+		// mandatory fields (e.g. min/max for input_number, has_date/has_time for
+		// input_datetime) even in update calls — a name-only payload is rejected.
+		config["name"] = name
 		updateConfig := homeassistant.HelperConfig{
 			Platform: meta.platform,
-			Config:   map[string]any{"name": name},
+			Config:   config,
 		}
 		if updateErr := client.UpdateHelper(ctx, id, updateConfig); updateErr != nil {
-			// Entity created but rename failed - return error with context
 			return "", fmt.Errorf("%s created as %s.%s, but failed to set display name: %w",
 				formatHelperType(helperType), meta.entityPrefix, idSlug, updateErr)
 		}

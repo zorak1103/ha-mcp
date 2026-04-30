@@ -2928,3 +2928,102 @@ func TestHelperCreate_SuccessMessageUsesSlugifiedName(t *testing.T) {
 	h := NewConsolidatedHelperHandlers()
 	runHandlerTestCases(t, tests, h.handleManageHelper)
 }
+
+// TestHelperCreate_FullConfigOnRename verifies that when a WebSocket helper's id
+// differs from the slugified name (triggering the create-then-update path), the
+// internal update call forwards ALL type-specific required fields — not just the
+// display name. Regression test for issues #70 (input_number) and #71 (input_datetime).
+func TestHelperCreate_FullConfigOnRename(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		args          map[string]any
+		requiredField string // field that MUST appear in the UpdateHelper payload
+	}{
+		{
+			name: "input_number rename forwards min and max",
+			args: map[string]any{
+				"action": "create",
+				"type":   "input_number",
+				"id":     "num_ev_start",
+				"name":   "EV Session Energy Start",
+				"min":    float64(0),
+				"max":    float64(9999),
+				"step":   float64(0.001),
+			},
+			requiredField: "min",
+		},
+		{
+			name: "input_datetime rename forwards has_date and has_time",
+			args: map[string]any{
+				"action":   "create",
+				"type":     "input_datetime",
+				"id":       "dt_ev_start",
+				"name":     "EV Session Start Datetime",
+				"has_date": true,
+				"has_time": true,
+			},
+			requiredField: "has_date",
+		},
+		{
+			name: "input_select rename forwards options",
+			args: map[string]any{
+				"action":  "create",
+				"type":    "input_select",
+				"id":      "sel_ev_vehicle",
+				"name":    "EV Session Vehicle Type",
+				"options": []any{"Ioniq 6", "Twingo", "Unbekannt"},
+			},
+			requiredField: "options",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var updatePayload map[string]any
+			m := &UniversalMockClient{}
+			m.CreateHelperFn = func(_ context.Context, _ homeassistant.HelperConfig) error {
+				return nil
+			}
+			m.UpdateHelperFn = func(_ context.Context, _ string, config homeassistant.HelperConfig) error {
+				updatePayload = config.Config
+				return nil
+			}
+
+			h := NewConsolidatedHelperHandlers()
+			result, err := h.handleManageHelper(context.Background(), m, tt.args)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result != nil && result.IsError {
+				text := ""
+				if len(result.Content) > 0 {
+					text = result.Content[0].Text
+				}
+				t.Fatalf("handler returned error result: %s", text)
+			}
+
+			if updatePayload == nil {
+				t.Fatal("UpdateHelper was not called; expected create-then-update path to fire (id != slugified name)")
+			}
+			if _, ok := updatePayload[tt.requiredField]; !ok {
+				t.Errorf("UpdateHelper payload missing required field %q; got keys: %v", tt.requiredField, helperPayloadKeys(updatePayload))
+			}
+			if name, ok := updatePayload["name"].(string); !ok || name != tt.args["name"].(string) {
+				t.Errorf("UpdateHelper payload has wrong name: want %q, got %v", tt.args["name"], updatePayload["name"])
+			}
+		})
+	}
+}
+
+// helperPayloadKeys returns the keys of a config map for diagnostic messages.
+func helperPayloadKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
