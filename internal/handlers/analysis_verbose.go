@@ -22,9 +22,9 @@ func collectEntityExcerpts(config *homeassistant.AutomationConfig, entityID stri
 		name  string
 		items []any
 	}{
-		{"trigger", config.Triggers},
-		{"condition", config.Conditions},
-		{"action", config.Actions},
+		{excerptSectionTrigger, config.Triggers},
+		{excerptConditionState, config.Conditions},
+		{usedInAction, config.Actions},
 	}
 
 	var excerpts []UsageExcerpt
@@ -58,7 +58,7 @@ func collectSequenceExcerpts(sequence []any, entityID string) []UsageExcerpt {
 			continue
 		}
 		excerpts = append(excerpts, UsageExcerpt{
-			Section: "action",
+			Section: usedInAction,
 			Summary: summarizeActionNode(node, entityID),
 		})
 	}

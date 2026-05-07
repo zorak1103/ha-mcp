@@ -51,7 +51,7 @@ func (h *AnalysisHandlers) analyzeEntityTool() mcp.Tool {
 				},
 				"format": {
 					Type:        "string",
-					Enum:        []string{"natural", "json"},
+					Enum:        []string{"natural", formatJSON},
 					Description: "Output format: 'natural' (default) for LLM-optimized text, 'json' for structured data",
 				},
 				"verbose": {
@@ -78,7 +78,7 @@ func (h *AnalysisHandlers) getEntityDependenciesTool() mcp.Tool {
 				},
 				"format": {
 					Type:        "string",
-					Enum:        []string{"natural", "json"},
+					Enum:        []string{"natural", formatJSON},
 					Description: "Output format: 'natural' (default) for LLM-optimized text, 'json' for structured data",
 				},
 			},
@@ -444,7 +444,7 @@ func (h *AnalysisHandlers) findAreaReferencesWithSnapshot(ctx context.Context, c
 			refs.AreaReferences = append(refs.AreaReferences, AreaReference{
 				EntityID: auto.EntityID,
 				Alias:    auto.FriendlyName,
-				Type:     "automation",
+				Type:     traceDomainAutomation,
 				AreaID:   entityArea,
 				UsedIn:   usedIn,
 			})
@@ -471,7 +471,7 @@ func (h *AnalysisHandlers) findAreaReferencesWithSnapshot(ctx context.Context, c
 			refs.AreaReferences = append(refs.AreaReferences, AreaReference{
 				EntityID: script.EntityID,
 				Alias:    fn,
-				Type:     "script",
+				Type:     traceDomainScript,
 				AreaID:   entityArea,
 				UsedIn:   []string{usedInAction},
 			})
@@ -833,13 +833,13 @@ func (h *AnalysisHandlers) recurseIntoNestedStructures(m map[string]any, seen ma
 // shouldRecurseIntoKey determines if a key should be recursively searched for dependencies.
 func (h *AnalysisHandlers) shouldRecurseIntoKey(key string) bool {
 	recursiveKeys := map[string]bool{
-		"data":       true,
-		"choose":     true,
-		"sequence":   true,
-		"conditions": true,
-		"then":       true,
-		"else":       true,
-		"default":    true,
+		"data":               true,
+		"choose":             true,
+		"sequence":           true,
+		targetInfoConditions: true,
+		"then":               true,
+		"else":               true,
+		"default":            true,
 	}
 	return recursiveKeys[key]
 }
@@ -864,7 +864,7 @@ func (h *AnalysisHandlers) extractTriggerType(m map[string]any) string {
 		return t
 	}
 	if _, ok := m["condition"]; ok {
-		return "condition"
+		return excerptConditionState
 	}
 	if _, ok := m["action"].(string); ok {
 		return usedInAction
@@ -877,7 +877,7 @@ func (h *AnalysisHandlers) extractTriggerType(m map[string]any) string {
 
 func (h *AnalysisHandlers) generateTriggerDescription(m map[string]any, triggerType string) string {
 	switch triggerType {
-	case "state":
+	case excerptTriggerState:
 		to := ""
 		from := ""
 		if t, ok := m["to"].(string); ok {
@@ -892,7 +892,7 @@ func (h *AnalysisHandlers) generateTriggerDescription(m map[string]any, triggerT
 			return fmt.Sprintf("State changes to '%s'", to)
 		}
 		return "State trigger"
-	case "numeric_state":
+	case excerptTriggerNumericState:
 		if above, ok := m["above"]; ok {
 			return fmt.Sprintf("Numeric state above %v", above)
 		}

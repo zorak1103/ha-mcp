@@ -123,7 +123,7 @@ func (h *AreaHandlers) buildAreaSchema() mcp.JSONSchema {
 			},
 			"format": {
 				Type:        "string",
-				Enum:        []string{"natural", "json"},
+				Enum:        []string{"natural", formatJSON},
 				Description: "Output format: 'natural' (default) for LLM-optimized text, 'json' for structured data",
 			},
 		},

@@ -87,7 +87,7 @@ Actions:
 				"action": {
 					Type:        "string",
 					Description: "Operation to perform: list, get, create, update, delete, toggle, coverage, patch, schema",
-					Enum:        []string{"list", "get", "create", "update", "delete", "toggle", "coverage", "patch", "schema"},
+					Enum:        []string{"list", "get", "create", "update", "delete", "toggle", automationActionCoverage, "patch", "schema"},
 				},
 				"automation_id": {
 					Type:        "string",
@@ -147,7 +147,7 @@ Actions:
 				},
 				"format": {
 					Type:        "string",
-					Enum:        []string{"natural", "json"},
+					Enum:        []string{"natural", formatJSON},
 					Description: "Output format: 'natural' (default) for LLM-optimized text, 'json' for structured data",
 				},
 				"operations": patchOperationsSchema(),
