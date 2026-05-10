@@ -1,6 +1,6 @@
 # GitHub Actions CI/CD Pipeline for ha-mcp
 # Home Assistant MCP Server
-# Go Version: 1.26.2
+# Go Version: 1.26.3
 
 name: CI
 
@@ -11,7 +11,8 @@ on:
     branches: [main]
 
 env:
-  GO_VERSION: "1.26.2"
+  # renovate: datasource=golang-version depName=golang
+  GO_VERSION: "1.26.3"
   CGO_ENABLED: "0"
 
 jobs:
