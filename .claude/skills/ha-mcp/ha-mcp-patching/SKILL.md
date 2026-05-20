@@ -1,0 +1,114 @@
+---
+name: ha-mcp-patching
+description: "Use when editing an existing automation, script, scene, or dashboard with `action: patch`. Examples: \"add a trigger\", \"replace a dashboard card\", \"remove a condition\", \"change automation mode\", \"add delay to trigger\"."
+---
+
+# ha-mcp Patching (JSON Patch + Semantic Patch)
+
+Applies to: `manage_automation`, `manage_script`, `manage_scene`, `manage_dashboard`.
+
+## When to Patch vs. Update
+
+- **Patch**: changing 1-3 fields, modifying array elements (triggers/conditions/actions/views), adding/removing items. Atomic — all ops succeed or none apply.
+- **Update**: rewriting the whole config (major restructure, >5 field changes, or replacing the full action sequence).
+
+## Pre-flight
+
+<EXTREMELY-IMPORTANT>
+Always call `manage_*:get` before patching. `list` does not populate the Config field. Without the full config as reference, your ops have no verified base and may target stale indexes.
+</EXTREMELY-IMPORTANT>
+
+## Standard Ops (RFC 6902 — path-based)
+
+Use `path` as a JSON Pointer (forward-slash syntax). Mutually exclusive with `match`.
+
+| Op        | Effect                                   | Example path                  |
+| --------- | ---------------------------------------- | ----------------------------- |
+| `replace` | Overwrite a field                        | `/mode`, `/alias`             |
+| `add`     | Insert or append                         | `/actions/-` (append to end)  |
+| `remove`  | Delete element or field                  | `/conditions/0`               |
+| `test`    | Assert value (fail if mismatch)          | `/alias`                      |
+| `move`    | Move element (path → to)                | `/triggers/0` → `/triggers/2` |
+| `copy`    | Copy element (path → to)                | `/actions/0` → `/actions/-`   |
+
+```json
+[
+  {"op": "replace", "path": "/mode", "value": "queued"},
+  {"op": "add", "path": "/actions/-", "value": {"service": "notify.mobile_app", "data": {"message": "Done"}}},
+  {"op": "remove", "path": "/conditions/0"}
+]
+```
+
+## Semantic Ops (property-addressed)
+
+Use when array indexes are unreliable — re-ordered, unknown position, or after a previous remove in the same call. Mutually exclusive with `path`.
+
+| Field         | Purpose                                                                      |
+| ------------- | ---------------------------------------------------------------------------- |
+| `match`       | Key-value pairs identifying the target element(s) in the section             |
+| `section`     | Array to search: `triggers`, `conditions`, `actions`, `sequence`, `views`, … |
+| `field`       | Field within the matched element; omit for `remove` (deletes whole element)  |
+| `match_index` | 0-based index when multiple elements match (default: first match)            |
+
+```json
+[
+  {
+    "op": "add",
+    "match": {"entity_id": "binary_sensor.motion", "to": "on"},
+    "section": "triggers",
+    "field": "for",
+    "value": "00:02:00"
+  }
+]
+```
+
+## Worked Snippets
+
+**Replace automation mode:**
+```json
+[{"op": "replace", "path": "/mode", "value": "queued"}]
+```
+
+**Append a new action:**
+```json
+[{"op": "add", "path": "/actions/-", "value": {"service": "light.turn_on", "target": {"entity_id": "light.living_room"}}}]
+```
+
+**Add `for:` delay to a trigger matched by entity_id:**
+```json
+[{"op": "add", "match": {"entity_id": "binary_sensor.door"}, "section": "triggers", "field": "for", "value": "00:05:00"}]
+```
+
+**Remove a condition by match (no `field` = delete whole element):**
+```json
+[{"op": "remove", "match": {"condition": "state", "entity_id": "input_boolean.guest_mode"}, "section": "conditions"}]
+```
+
+**Replace a dashboard view's cards by title:**
+```json
+[{"op": "replace", "match": {"title": "Weather"}, "section": "views", "field": "cards", "value": []}]
+```
+
+**Bulk-replace entity_id across actions:**
+```json
+[{"op": "replace", "match": {"entity_id": "light.old"}, "section": "actions", "field": "entity_id", "value": "light.new"}]
+```
+
+## Atomicity & Ordering
+
+- All operations run as a unit — first failure rolls back all changes.
+- Semantic `remove` ops are automatically sorted descending by index per section — safe to submit multiple removes without index shifting.
+- For standard `path`-based removes, sort descending manually when issuing multiple removes in one call.
+
+## Anti-Patterns
+
+| Instead of…                                          | Do this                                                |
+| ---------------------------------------------------- | ------------------------------------------------------ |
+| Full `update` to change 1-2 fields                   | `patch` with `replace` ops on those fields             |
+| Using `path` index after a remove in the same call   | Use semantic `match` to address elements by property   |
+| Patching without calling `get` first                 | Always `get` first — `list` does not populate Config   |
+| Using both `match` and `path` in the same op         | They are mutually exclusive — pick one per op          |
+
+## Source for Maintenance
+
+`internal/jsonpatch/`, `internal/handlers/patch_semantic.go`, CLAUDE.md section "JSON Patch (RFC 6902) + Semantic Patch".

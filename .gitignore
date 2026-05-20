@@ -77,8 +77,9 @@ tmp/
 *.prof
 *.pprof
 
-.claude/
+.claude/settings.json
+.claude/settings.local.json
+.claude/skills/gitnexus/
 AGENTS.md
 .mcp.json
-CLAUDE.md
 .reports/
