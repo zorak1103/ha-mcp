@@ -789,3 +789,49 @@ func TestFormatIfAction_ShowsBranches(t *testing.T) {
 		t.Errorf("if/then/else output should show branch actions, got:\n%s", result)
 	}
 }
+
+func TestNaturalAutomationFormatter_FormatDetail_Max(t *testing.T) {
+	ctx := context.Background()
+	f := NewNaturalAutomationFormatter()
+
+	t.Run("max shown for parallel mode", func(t *testing.T) {
+		automation := homeassistant.Automation{
+			EntityID: "automation.parallel_test",
+			State:    "on",
+			Config: &homeassistant.AutomationConfig{
+				ID:       "parallel_test",
+				Alias:    "Parallel Test",
+				Mode:     "parallel",
+				Max:      5,
+				Triggers: []any{},
+				Actions:  []any{},
+			},
+		}
+		result, err := f.FormatDetail(ctx, automation)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(result, "(max: 5)") {
+			t.Errorf("expected '(max: 5)' in output, got: %s", result)
+		}
+	})
+
+	t.Run("max not shown when zero", func(t *testing.T) {
+		automation := homeassistant.Automation{
+			EntityID: "automation.single_test",
+			State:    "on",
+			Config: &homeassistant.AutomationConfig{
+				ID:    "single_test",
+				Alias: "Single Test",
+				Mode:  "single",
+			},
+		}
+		result, err := f.FormatDetail(ctx, automation)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if strings.Contains(result, "max:") || strings.Contains(result, "(max") {
+			t.Errorf("expected no max in output for zero Max, got: %s", result)
+		}
+	})
+}

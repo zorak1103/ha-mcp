@@ -146,7 +146,11 @@ func (f *NaturalAutomationFormatter) FormatDetail(
 		if mode == "" {
 			mode = modeSingle
 		}
-		result.WriteString("Mode: " + mode)
+		modeStr := mode
+		if automation.Config.Max > 0 {
+			modeStr = fmt.Sprintf("%s (max: %d)", mode, automation.Config.Max)
+		}
+		result.WriteString("Mode: " + modeStr)
 	}
 
 	if automation.LastTriggered != "" {
