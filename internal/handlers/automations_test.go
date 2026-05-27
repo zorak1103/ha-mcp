@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 	"github.com/zorak1103/ha-mcp/internal/mcp"
@@ -40,6 +41,7 @@ type mockAutomationClient struct {
 	lastDeleteID      string
 	lastToggleID      string
 	lastCreatedConfig *homeassistant.AutomationConfig
+	lastUpdatedConfig *homeassistant.AutomationConfig
 
 	// entityExists tracks whether the mock entity is currently "visible".
 	// Set to true after successful CreateAutomation, false after successful DeleteAutomation.
@@ -80,9 +82,11 @@ func (m *mockAutomationClient) CreateAutomation(_ context.Context, config homeas
 	return m.createErr
 }
 
-func (m *mockAutomationClient) UpdateAutomation(_ context.Context, automationID string, _ homeassistant.AutomationConfig) error {
+func (m *mockAutomationClient) UpdateAutomation(_ context.Context, automationID string, config homeassistant.AutomationConfig) error {
 	m.lastUpdateID = automationID
 	m.updateCalled = true
+	configCopy := config
+	m.lastUpdatedConfig = &configCopy
 	return m.updateErr
 }
 
@@ -159,7 +163,7 @@ func TestManageAutomationTool_Schema(t *testing.T) {
 	}
 
 	// Check expected properties exist
-	expectedProps := []string{"action", "automation_id", "alias", "trigger", "condition", "automation_action", "mode", "enabled", "state", "verbose", "limit", "cursor", "format"}
+	expectedProps := []string{"action", "automation_id", "alias", "trigger", "condition", "automation_action", "mode", "max", "enabled", "state", "verbose", "limit", "cursor", "format"}
 	for _, prop := range expectedProps {
 		if _, ok := tool.InputSchema.Properties[prop]; !ok {
 			t.Errorf("Expected property %q in input schema", prop)
@@ -2515,5 +2519,107 @@ func TestManageAutomation_PatchDryRun(t *testing.T) {
 	// Must NOT have called UpdateAutomation
 	if client.updateCalled {
 		t.Error("UpdateAutomation should NOT be called during dry-run")
+	}
+}
+
+func TestManageAutomation_Create_MaxField(t *testing.T) {
+	t.Parallel()
+
+	client := &mockAutomationClient{}
+	h := &AutomationHandlers{}
+	args := map[string]any{
+		"action":            "create",
+		"alias":             "Parallel Test",
+		"mode":              "parallel",
+		"max":               float64(5),
+		"trigger":           []any{map[string]any{"platform": "state"}},
+		"automation_action": []any{map[string]any{"service": "light.turn_on"}},
+	}
+	ctx := mcp.WithWaitConfig(context.Background(), mcp.WaitConfig{Timeout: 50 * time.Millisecond, PollInterval: 5 * time.Millisecond})
+
+	result, err := h.handleManageAutomation(ctx, client, args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got error: %s", result.Content[0].Text)
+	}
+	if client.lastCreatedConfig == nil {
+		t.Fatal("expected CreateAutomation to be called")
+	}
+	if client.lastCreatedConfig.Max != 5 {
+		t.Errorf("Max = %d, want 5", client.lastCreatedConfig.Max)
+	}
+}
+
+func TestManageAutomation_Update_MaxPreservation(t *testing.T) {
+	t.Parallel()
+
+	// Existing automation has Max:10; update changes only the alias.
+	// The updated config sent to HA must still have Max:10.
+	existing := &homeassistant.Automation{
+		EntityID: "automation.test",
+		State:    "on",
+		Config: &homeassistant.AutomationConfig{
+			ID:    "test",
+			Alias: "Old Alias",
+			Mode:  "parallel",
+			Max:   10,
+		},
+	}
+	client := &mockAutomationClient{automation: existing}
+	h := &AutomationHandlers{}
+	args := map[string]any{
+		"action":        "update",
+		"automation_id": "test",
+		"alias":         "New Alias",
+		// deliberately no "max" arg — regression test for silent data loss
+	}
+	ctx := mcp.WithWaitConfig(context.Background(), mcp.WaitConfig{Timeout: 50 * time.Millisecond, PollInterval: 5 * time.Millisecond})
+
+	result, err := h.handleManageAutomation(ctx, client, args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got error: %s", result.Content[0].Text)
+	}
+	if client.lastUpdatedConfig == nil {
+		t.Fatal("expected UpdateAutomation to be called")
+	}
+	if client.lastUpdatedConfig.Max != 10 {
+		t.Errorf("Max = %d, want 10 (field must be preserved when not in args)", client.lastUpdatedConfig.Max)
+	}
+}
+
+func TestManageAutomation_Update_MaxSet(t *testing.T) {
+	t.Parallel()
+
+	existing := &homeassistant.Automation{
+		EntityID: "automation.test",
+		State:    "on",
+		Config:   &homeassistant.AutomationConfig{ID: "test", Alias: "Test", Mode: "parallel", Max: 10},
+	}
+	client := &mockAutomationClient{automation: existing}
+	h := &AutomationHandlers{}
+	args := map[string]any{
+		"action":        "update",
+		"automation_id": "test",
+		"max":           float64(3),
+	}
+	ctx := mcp.WithWaitConfig(context.Background(), mcp.WaitConfig{Timeout: 50 * time.Millisecond, PollInterval: 5 * time.Millisecond})
+
+	result, err := h.handleManageAutomation(ctx, client, args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got error: %s", result.Content[0].Text)
+	}
+	if client.lastUpdatedConfig == nil {
+		t.Fatal("expected UpdateAutomation to be called")
+	}
+	if client.lastUpdatedConfig.Max != 3 {
+		t.Errorf("Max = %d, want 3", client.lastUpdatedConfig.Max)
 	}
 }
