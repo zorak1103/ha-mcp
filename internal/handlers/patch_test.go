@@ -160,7 +160,8 @@ func TestConfigToMap(t *testing.T) {
 		ID:          "morning_routine",
 		Alias:       "Morning Routine",
 		Description: "Turn on lights",
-		Mode:        "single",
+		Mode:        "parallel",
+		Max:         5,
 		Triggers:    []any{map[string]any{"trigger": "time"}},
 	}
 
@@ -175,8 +176,11 @@ func TestConfigToMap(t *testing.T) {
 	if m["alias"] != "Morning Routine" {
 		t.Errorf("alias = %v, want 'Morning Routine'", m["alias"])
 	}
-	if m["mode"] != "single" {
-		t.Errorf("mode = %v, want 'single'", m["mode"])
+	if m["max"] != float64(5) {
+		t.Errorf("max = %v, want float64(5)", m["max"])
+	}
+	if m["mode"] != "parallel" {
+		t.Errorf("mode = %v, want 'parallel'", m["mode"])
 	}
 }
 
@@ -187,6 +191,7 @@ func TestMapToStruct(t *testing.T) {
 		"id":    "morning_routine",
 		"alias": "Morning Routine",
 		"mode":  "queued",
+		"max":   float64(7),
 	}
 
 	var config homeassistant.AutomationConfig
@@ -202,6 +207,9 @@ func TestMapToStruct(t *testing.T) {
 	}
 	if config.Mode != "queued" {
 		t.Errorf("Mode = %v, want 'queued'", config.Mode)
+	}
+	if config.Max != 7 {
+		t.Errorf("Max = %d, want 7", config.Max)
 	}
 }
 
