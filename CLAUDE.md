@@ -152,6 +152,7 @@ Use `normalize*ID(input)` helpers that return `(entityID, configID)`:
 - Prevents double-prefix bugs: `script.` + `script.xyz` → `script.script.xyz` ❌
 
 UI-created automations have numeric config IDs differing from entity_id suffix. Always fetch via `GetAutomation()` first, then use `current.Config.ID` for REST operations. Scripts: always use `GetScript()` for updates (returns full config), never `GetState()` (returns only state + friendly_name, causes data loss).
+- **Script client method ID asymmetry**: `CreateScript(ctx, scriptID, cfg)` and `DeleteScript(ctx, scriptID)` take the bare ID (e.g. `morning_routine`); `GetScript(ctx, entityID)` and `UpdateScript(ctx, entityID, cfg)` take the full entity ID (e.g. `script.morning_routine`). Integration tests: derive both with `scriptID := GenerateTestID("x")` and `scriptEntityID := BuildEntityID("script", scriptID)`.
 
 **Consolidated Tools (action-based):**
 
@@ -315,6 +316,8 @@ set -a && source .env.integration && set +a && go test -tags=integration -v ./in
 ```
 
 **Safety:** All test entities use `mcptest_<uuid>_<name>` prefix. Tests are skipped if environment variables are not set.
+
+**Integration test suite helpers**: `GenerateTestID("suffix")` → `mcptest_<uuid>_suffix`; `BuildEntityID("domain", "id")` → `domain.id`; `s.RegisterCleanup(func(){...})` for teardown (suite-lifecycle-aware, preferred over raw `defer`). Wait helpers: `s.WaitForAutomation(configID, timeout)` polls `ListAutomations`; `s.WaitForEntity(entityID, timeout)` polls `GetState`.
 
 **4-pattern for registry CRUD**: Each registry type (labels, floors, tags, areas) needs 4 tests (lifecycle, all fields, partial update, multiple items), 3 cleanup functions (cleanupTestX, deleteXWithRetry, CountTestX), FindXByID suite helper, and TearDownSuite verification block
 
