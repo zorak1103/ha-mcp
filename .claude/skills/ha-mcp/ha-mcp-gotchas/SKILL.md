@@ -28,6 +28,16 @@ Look up by symptom. Fix is actionable.
 | Script `update` loses fields (sequence, fields, etc.)     | `get_state` returns only state + friendly_name, not full script config     | Always call `manage_script:get` (uses `GetScript()`), never derive config from a state call.                    |
 | Coverage action returns empty even for active automations | Requires at least one automation with triggers using the target entity     | Expected behavior — no coverage data = target not referenced.                                                   |
 
+## max field silently dropped on automation/script update (pre-fix)
+
+**Symptom:** Parallel automations/scripts lose their `max` concurrency setting after any update through ha-mcp.
+
+**Root cause:** `AutomationConfig.UnmarshalJSON` explicitly enumerates all fields. Before the fix, `max` had no branch, so it was silently dropped every time HA's GetAutomation response was decoded. The zero value was then written back on update.
+
+**Fix:** Both `AutomationConfig` and `ScriptConfig` now declare `Max int` with a proper unmarshal branch. `ScriptConfig` uses default unmarshalling so only needed the struct field.
+
+**If you see it after the fix:** Verify you're running the patched version; the UnmarshalJSON branch is required (adding the struct field alone is insufficient for AutomationConfig).
+
 ## Helper ID Rules
 
 | Helper types                                                                                                                                                               | entity_id controlled by                      |

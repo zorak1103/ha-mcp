@@ -253,6 +253,7 @@ Key environment variables:
 - **Format parameter constants**: Always use existing `formatNatural` (entities_manage.go) and `formatJSON` (areas.go) constants in new tools — avoid hardcoded strings (goconst linter)
 - **MCP Registry API**: Use `registry.RegisterTool(tool, handler)` NOT `registry.AddTool(tool)` (method doesn't exist)
 - **InputSchema type**: Use `mcp.JSONSchema` with `Properties: map[string]mcp.JSONSchema`, NOT `map[string]any`
+- **AutomationConfig.UnmarshalJSON field enumeration:** The custom UnmarshalJSON (types.go:165) explicitly handles each field. Any new field added to `AutomationConfig` MUST also get an unmarshal branch — otherwise the value is silently dropped when reading from HA's API. `ScriptConfig` uses default unmarshalling and only needs the struct field.
 
 ### Pattern Reference
 

@@ -76,6 +76,23 @@ description: "Use when choosing which ha-mcp tool or action to call. Examples: \
 | `get_logbook`         | entries, correlation                             | (none)                                          |
 | `helper_action`       | (contextual)                                     | toggle, set, increment, decrement, reset, calibrate, start, pause, cancel, finish, change, press, select, set_options, reload, add_entities, remove_entities |
 
+## manage_automation / manage_script — create/update Parameters
+
+Key non-obvious parameters for `create` and `update` actions:
+
+**manage_automation:**
+- alias (string, required on create): human-readable name; HA slugifies it to derive entity_id
+- automation_id (string, optional on create): override the auto-generated slug (needed for non-ASCII aliases)
+- mode (string, optional): `single` | `restart` | `queued` | `parallel` (HA default: single)
+- max (integer, optional): concurrent run limit; only for mode=parallel|queued (HA default 10)
+- triggers, conditions, actions (arrays): automation body
+
+**manage_script:**
+- alias (string, required on create): human-readable name; HA slugifies it to derive entity_id
+- mode (string, optional): `single` | `restart` | `queued` | `parallel` (HA default: single)
+- max (integer, optional): concurrent run limit; only for mode=parallel|queued (HA default 10)
+- sequence (array): script steps
+
 ## Read vs. Write
 
 Access control filter syntax (for `HA_MCP_TOOL_FILTER_WHITELIST` / `_BLACKLIST`):

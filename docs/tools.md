@@ -63,6 +63,14 @@ Authorization: Bearer <your-ha-access-token>
 - `field`: field within matched element(s) to modify (omit for `remove` to delete the whole element)
 - `match_index`: optional 0-based index to select a specific match when multiple elements match
 
+**Key Parameters (create/update):**
+
+| Parameter    | Type    | Required | Description                                                                                     |
+| ------------ | ------- | -------- | ----------------------------------------------------------------------------------------------- |
+| alias        | string  | Yes      | Human-readable automation name (used to derive entity_id)                                       |
+| mode         | string  | No       | Run mode: `single` (default), `restart`, `queued`, `parallel`                                   |
+| max          | integer | No       | Concurrent run limit (min 1, HA default 10). Only applies when mode is `parallel` or `queued`. |
+
 ### Helper Tools
 
 ha-mcp provides comprehensive support for all 26 Home Assistant helper types through two consolidated tools.
@@ -132,6 +140,14 @@ Universal tool for runtime helper operations:
 **Flexible ID Lookup**: The `script_id` parameter accepts multiple formats:
 - Entity ID: `script.morning_routine`
 - Alias or friendly name: `morning routine` (case-insensitive partial match)
+
+**Key Parameters (create/update):**
+
+| Parameter    | Type    | Required | Description                                                                                     |
+| ------------ | ------- | -------- | ----------------------------------------------------------------------------------------------- |
+| alias        | string  | Yes      | Human-readable script name (used to derive entity_id)                                          |
+| mode         | string  | No       | Run mode: `single` (default), `restart`, `queued`, `parallel`                                   |
+| max          | integer | No       | Concurrent run limit (min 1, HA default 10). Only applies when mode is `parallel` or `queued`. |
 
 ### Scene Tools
 
