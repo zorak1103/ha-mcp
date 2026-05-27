@@ -139,6 +139,10 @@ type UniversalMockClient struct {
 	// Logbook operations
 	GetLogbookFn func(ctx context.Context, startTime, endTime, entityID string) ([]homeassistant.LogbookEntry, error)
 
+	// System log operations
+	GetSystemLogFn  func(ctx context.Context) ([]homeassistant.SystemLogEntry, error)
+	ClearSystemLogFn func(ctx context.Context) error
+
 	// Configuration validation operations
 	CheckConfigFn func(ctx context.Context) (*homeassistant.ConfigCheckResult, error)
 
@@ -763,6 +767,22 @@ func (m *UniversalMockClient) GetLogbook(ctx context.Context, startTime, endTime
 		return m.GetLogbookFn(ctx, startTime, endTime, entityID)
 	}
 	return []homeassistant.LogbookEntry{}, nil
+}
+
+// System log operations implementation
+
+func (m *UniversalMockClient) GetSystemLog(ctx context.Context) ([]homeassistant.SystemLogEntry, error) {
+	if m.GetSystemLogFn != nil {
+		return m.GetSystemLogFn(ctx)
+	}
+	return []homeassistant.SystemLogEntry{}, nil
+}
+
+func (m *UniversalMockClient) ClearSystemLog(ctx context.Context) error {
+	if m.ClearSystemLogFn != nil {
+		return m.ClearSystemLogFn(ctx)
+	}
+	return nil
 }
 
 // Configuration validation operations implementation

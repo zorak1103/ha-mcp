@@ -1854,6 +1854,34 @@ func (c *wsClientImpl) GetCalendars(_ context.Context) ([]CalendarEntry, error) 
 	return nil, fmt.Errorf("GetCalendars not supported via WebSocket API, use REST API or HybridClient")
 }
 
+// =============================================================================
+// System Log Operations (WebSocket-only)
+// =============================================================================
+
+// GetSystemLog retrieves the system log entries from the Home Assistant ring buffer.
+func (c *wsClientImpl) GetSystemLog(ctx context.Context) ([]SystemLogEntry, error) {
+	result, err := c.ws.SendCommand(ctx, "system_log/list", nil)
+	if err != nil {
+		return nil, fmt.Errorf("get system log failed: %w", err)
+	}
+
+	var entries []SystemLogEntry
+	if err := json.Unmarshal(result.Result, &entries); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal system log: %w", err)
+	}
+
+	return entries, nil
+}
+
+// ClearSystemLog clears the Home Assistant system log ring buffer.
+func (c *wsClientImpl) ClearSystemLog(ctx context.Context) error {
+	_, err := c.ws.SendCommand(ctx, "system_log/clear", nil)
+	if err != nil {
+		return fmt.Errorf("clear system log failed: %w", err)
+	}
+	return nil
+}
+
 // GetCalendarEvents retrieves calendar events.
 // Note: This operation is only available via REST API. Use HybridClient for full functionality.
 func (c *wsClientImpl) GetCalendarEvents(_ context.Context, _, _, _ string) ([]CalendarEvent, error) {

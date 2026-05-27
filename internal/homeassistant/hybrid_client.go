@@ -143,6 +143,10 @@ type WSOperations interface {
 	GetConfigEntries(ctx context.Context, domain string) ([]ConfigEntryFull, error)
 	GetConfigEntry(ctx context.Context, entryID string) (*ConfigEntryFull, error)
 	SendHACSCommand(ctx context.Context, command string, data map[string]any) (any, error)
+
+	// System log operations (WebSocket-native)
+	GetSystemLog(ctx context.Context) ([]SystemLogEntry, error)
+	ClearSystemLog(ctx context.Context) error
 }
 
 // RESTOperations is an interface for REST client operations.
@@ -1386,6 +1390,20 @@ func (c *HybridClient) GetCameraSnapshot(ctx context.Context, entityID string) (
 // SendHACSCommand sends a generic HACS WebSocket command.
 func (c *HybridClient) SendHACSCommand(ctx context.Context, command string, data map[string]any) (any, error) {
 	return c.ws.SendHACSCommand(ctx, command, data)
+}
+
+// =============================================================================
+// System Log Operations (delegated to WebSocket)
+// =============================================================================
+
+// GetSystemLog retrieves system log entries from the Home Assistant ring buffer.
+func (c *HybridClient) GetSystemLog(ctx context.Context) ([]SystemLogEntry, error) {
+	return c.ws.GetSystemLog(ctx)
+}
+
+// ClearSystemLog clears the Home Assistant system log ring buffer.
+func (c *HybridClient) ClearSystemLog(ctx context.Context) error {
+	return c.ws.ClearSystemLog(ctx)
 }
 
 // =============================================================================

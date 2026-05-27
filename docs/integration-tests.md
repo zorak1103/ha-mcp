@@ -108,7 +108,8 @@ go test -tags=integration -v ./internal/handlers/integration/... 2>&1 | tee test
 | `TestCalendarIntegration` | list, get_events, create_event (datetime + all-day), delete_event (with writable calendar detection) |
 | `TestTraceIntegration` | list automation traces, list script traces (execution history) |
 | `TestUpdateBlueprintIntegration` | list updates (pending filter), release_notes, list blueprints (automation/script) |
-| `TestCameraIntegration` | list cameras, stream (HLS URL via manage_camera), get_snapshot (binary image data) |
+| `TestCameraIntegration`    | list cameras, stream (HLS URL via manage_camera), get_snapshot (binary image data)                  |
+| `TestSystemLogIntegration` | GetSystemLog (list), ClearSystemLog (clear + verify empty)                                           |
 
 **Note:** Read-only tests (traces, updates, blueprints, cameras) verify API integration and response parsing. They skip gracefully if no entities exist or features are unavailable.
 

@@ -122,6 +122,7 @@ ha-mcp/
 │   │   ├── templates.go         # Template rendering handler
 │   │   ├── logbook.go           # Logbook access handler (entries/correlation modes)
 │   │   ├── logbook_correlation.go # Logbook correlation analysis
+│   │   ├── system_log.go        # System log handler (manage_system_log: list/clear)
 │   │   ├── config.go            # Configuration validation handler
 │   │   ├── hacs.go              # HACS (Community Store) management handler
 │   │   ├── traces.go            # Trace viewing handler (automation/script execution traces)

@@ -432,6 +432,11 @@ func (m *mockNonCloserClient) GetLogbook(_ context.Context, _, _, _ string) ([]L
 	return []LogbookEntry{}, nil
 }
 
+func (m *mockNonCloserClient) GetSystemLog(context.Context) ([]SystemLogEntry, error) {
+	return nil, nil
+}
+func (m *mockNonCloserClient) ClearSystemLog(context.Context) error { return nil }
+
 func (m *mockNonCloserClient) CheckConfig(_ context.Context) (*ConfigCheckResult, error) {
 	return &ConfigCheckResult{Result: "valid"}, nil
 }

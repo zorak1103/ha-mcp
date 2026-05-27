@@ -162,6 +162,10 @@ type Client interface {
 
 	// Camera operations
 	GetCameraSnapshot(ctx context.Context, entityID string) ([]byte, string, error)
+
+	// System log operations
+	GetSystemLog(ctx context.Context) ([]SystemLogEntry, error)
+	ClearSystemLog(ctx context.Context) error
 }
 
 // APIError represents an error response from the Home Assistant API.

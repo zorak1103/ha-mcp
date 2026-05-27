@@ -367,6 +367,12 @@ func (m *mockHAClient) SendHACSCommand(_ context.Context, _ string, _ map[string
 	return nil, nil
 }
 
+func (m *mockHAClient) GetSystemLog(context.Context) ([]homeassistant.SystemLogEntry, error) {
+	return nil, nil
+}
+
+func (m *mockHAClient) ClearSystemLog(context.Context) error { return nil }
+
 func TestNewServer(t *testing.T) {
 	t.Parallel()
 

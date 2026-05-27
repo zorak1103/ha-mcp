@@ -933,6 +933,16 @@ func (c *CachedClient) GetCameraSnapshot(ctx context.Context, entityID string) (
 }
 
 //nolint:revive // Delegated method
+func (c *CachedClient) GetSystemLog(ctx context.Context) ([]SystemLogEntry, error) {
+	return c.client.GetSystemLog(ctx)
+}
+
+//nolint:revive // Delegated method
+func (c *CachedClient) ClearSystemLog(ctx context.Context) error {
+	return c.client.ClearSystemLog(ctx)
+}
+
+//nolint:revive // Delegated method
 func (c *CachedClient) GetConfigEntries(ctx context.Context, domain string) ([]ConfigEntryFull, error) {
 	return c.client.GetConfigEntries(ctx, domain)
 }

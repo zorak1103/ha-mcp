@@ -45,6 +45,8 @@ description: "Use when choosing which ha-mcp tool or action to call. Examples: \
 | Check for HA / add-on updates                        | `manage_update` action=list (pending_only=true)                        |
 | Manage todo list items                               | `manage_todo`                                                          |
 | Manage calendar events                               | `manage_calendar`                                                      |
+| Read HA error/warning logs                           | `manage_system_log` action=list                                        |
+| Clear the HA system log buffer                       | `manage_system_log` action=clear                                       |
 
 ## Consolidated Tool Action Reference
 
@@ -70,6 +72,7 @@ description: "Use when choosing which ha-mcp tool or action to call. Examples: \
 | `manage_update`       | list, release_notes                              | install, skip                                   |
 | `manage_todo`         | list, get_items                                  | add_item, update_item, remove_item              |
 | `manage_calendar`     | list, get_events                                 | create_event, delete_event                      |
+| `manage_system_log`   | list                                             | clear                                           |
 | `query_entities`      | current, history, statistics, domains, presence, health | (none)                                   |
 | `query_devices`       | health                                           | (none)                                          |
 | `analyze_target`      | all, triggers, conditions, services, entities    | (none)                                          |

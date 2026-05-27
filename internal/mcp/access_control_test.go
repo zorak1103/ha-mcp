@@ -47,6 +47,7 @@ func TestAccessControlMapCompleteness(t *testing.T) {
 		"manage_todo",
 		"manage_calendar",
 		"manage_camera",
+		"manage_system_log",
 
 		// Media and rendering
 		"render_template",
@@ -221,6 +222,12 @@ func TestManagedToolsActions(t *testing.T) {
 			paramName:    "action",
 			readActions:  []string{"list", "get"},
 			writeActions: []string{},
+		},
+		{
+			tool:         "manage_system_log",
+			paramName:    "action",
+			readActions:  []string{"list"},
+			writeActions: []string{"clear"},
 		},
 	}
 

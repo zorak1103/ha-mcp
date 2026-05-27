@@ -256,6 +256,19 @@ Universal tool for runtime helper operations:
 | ---------------- | ------------------------------------------------------------------------------------------------ |
 | `manage_camera`  | Access camera snapshots and streams (actions: snapshot returns image, stream returns URL)        |
 
+### System Log Tools
+
+| Tool                 | Description                                                                                                                                                                           |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `manage_system_log`  | Read or clear the Home Assistant system log ring buffer (actions: list, clear). Supports level/integration/limit/include_exception/format filters. Uses `system_log/list` WebSocket command. |
+
+**Actions:**
+
+| Action  | Access | Description                                          | Key params                                              |
+| ------- | ------ | ---------------------------------------------------- | ------------------------------------------------------- |
+| `list`  | read   | Fetch recent WARNING/ERROR entries (~50 max by default) | `level`, `integration`, `limit`, `include_exception`, `format` |
+| `clear` | write  | Empty the in-memory ring buffer                      | —                                                       |
+
 ## Output Formats
 
 Most tools support two output formats via the `format` parameter:

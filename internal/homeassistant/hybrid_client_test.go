@@ -490,6 +490,8 @@ type mockWSOperations struct {
 	getConfigEntriesFunc        func(ctx context.Context, domain string) ([]ConfigEntryFull, error)
 	getConfigEntryFunc          func(ctx context.Context, entryID string) (*ConfigEntryFull, error)
 	sendHACSCommandFunc         func(ctx context.Context, command string, data map[string]any) (any, error)
+	getSystemLogFunc            func(ctx context.Context) ([]SystemLogEntry, error)
+	clearSystemLogFunc          func(ctx context.Context) error
 }
 
 func (m *mockWSOperations) GetStates(ctx context.Context) ([]Entity, error) {
@@ -975,6 +977,20 @@ func (m *mockWSOperations) SendHACSCommand(ctx context.Context, command string, 
 		return m.sendHACSCommandFunc(ctx, command, data)
 	}
 	return nil, nil
+}
+
+func (m *mockWSOperations) GetSystemLog(ctx context.Context) ([]SystemLogEntry, error) {
+	if m.getSystemLogFunc != nil {
+		return m.getSystemLogFunc(ctx)
+	}
+	return nil, nil
+}
+
+func (m *mockWSOperations) ClearSystemLog(ctx context.Context) error {
+	if m.clearSystemLogFunc != nil {
+		return m.clearSystemLogFunc(ctx)
+	}
+	return nil
 }
 
 // mockRESTOperations implements RESTOperations for testing.

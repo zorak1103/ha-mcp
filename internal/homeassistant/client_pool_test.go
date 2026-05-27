@@ -351,6 +351,8 @@ func (m *mockClientForPool) RenderTemplate(_ context.Context, _ string) (string,
 func (m *mockClientForPool) GetLogbook(_ context.Context, _, _, _ string) ([]LogbookEntry, error) {
 	return nil, nil
 }
+func (m *mockClientForPool) GetSystemLog(context.Context) ([]SystemLogEntry, error) { return nil, nil }
+func (m *mockClientForPool) ClearSystemLog(context.Context) error                   { return nil }
 func (m *mockClientForPool) CheckConfig(_ context.Context) (*ConfigCheckResult, error) {
 	return nil, nil
 }

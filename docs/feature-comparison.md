@@ -8,7 +8,7 @@ Three MCP server projects expose Home Assistant functionality to AI assistants:
 
 | Project | Description |
 | ------- | ----------- |
-| **ha-mcp** (this project) | Go binary, 38 specialized tools, HTTP JSON-RPC transport |
+| **ha-mcp** (this project) | Go binary, 39 specialized tools, HTTP JSON-RPC transport |
 | **Community ha-mcp** ([homeassistant-ai/ha-mcp](https://github.com/homeassistant-ai/ha-mcp)) | Python/FastMCP package, 95+ tools, stdio/SSE/HTTP/WebSocket transport |
 | **Official HA MCP Server** (built-in integration) | HA integration, ~10 intent-based tools, Streamable HTTP |
 
@@ -21,7 +21,7 @@ Three MCP server projects expose Home Assistant functionality to AI assistants:
 | **Type**             | Standalone Go binary (external server)     | Python package (pip/uvx/Docker/Add-on)                       | HA integration (built-in)                                   |
 | **Transport**        | HTTP JSON-RPC                              | stdio, SSE, HTTP, WebSocket                                  | Streamable HTTP                                             |
 | **HA Communication** | WebSocket + REST API (Hybrid)              | WebSocket + REST API                                         | Direct Python API (internal)                                |
-| **Tool Design**      | 38 specialized tools with granular control | 95+ specialized tools                                        | Dynamically generated tools from Assist API (~10 tools)     |
+| **Tool Design**      | 39 specialized tools with granular control | 95+ specialized tools                                        | Dynamically generated tools from Assist API (~10 tools)     |
 | **Authentication**   | Long-Lived Access Token                    | Long-Lived Token + OAuth (beta)                              | OAuth (IndieAuth) + Long-Lived Token                        |
 | **Access Control**   | Tool-level filtering (read-only, whitelist/blacklist, action-level) | Entity/Service allow/deny lists with wildcard patterns | Entity-level exposure (Voice Assistant Exposure) |
 

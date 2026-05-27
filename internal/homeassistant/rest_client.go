@@ -1336,3 +1336,13 @@ func (c *RESTClient) GetCameraSnapshot(ctx context.Context, entityID string) ([]
 
 	return imageData, contentType, nil
 }
+
+// GetSystemLog is not supported via REST API.
+func (c *RESTClient) GetSystemLog(_ context.Context) ([]SystemLogEntry, error) {
+	return nil, fmt.Errorf("GetSystemLog not supported via REST API, use WebSocket or HybridClient")
+}
+
+// ClearSystemLog is not supported via REST API.
+func (c *RESTClient) ClearSystemLog(_ context.Context) error {
+	return fmt.Errorf("ClearSystemLog not supported via REST API, use WebSocket or HybridClient")
+}

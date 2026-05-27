@@ -608,6 +608,18 @@ type LogbookEntry struct {
 	ContextUserID *string `json:"context_user_id,omitempty"`
 }
 
+// SystemLogEntry represents a single entry in the Home Assistant system log ring buffer.
+type SystemLogEntry struct {
+	Name          string  `json:"name"`
+	Message       []string `json:"message"`
+	Level         string  `json:"level"`
+	Source        []any   `json:"source"` // [filename, line_number] — heterogeneous tuple
+	Timestamp     float64 `json:"timestamp"`
+	Exception     string  `json:"exception"`
+	Count         int     `json:"count"`
+	FirstOccurred float64 `json:"first_occurred"`
+}
+
 // ConfigCheckResult represents the result of a configuration validation check.
 type ConfigCheckResult struct {
 	Result string  `json:"result"` // "valid" or "invalid"
