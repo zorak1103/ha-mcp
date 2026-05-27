@@ -141,6 +141,7 @@ type AutomationConfig struct {
 	Alias       string         `json:"alias,omitempty"`
 	Description string         `json:"description,omitempty"`
 	Mode        string         `json:"mode,omitempty"` // single, restart, queued, parallel
+	Max         int            `json:"max,omitempty"`  // concurrent run limit; only meaningful for mode=parallel|queued (HA default: 10)
 	Triggers    []any          `json:"triggers,omitempty"`
 	Conditions  []any          `json:"conditions,omitempty"`
 	Actions     []any          `json:"actions,omitempty"`
@@ -188,6 +189,11 @@ func (c *AutomationConfig) UnmarshalJSON(data []byte) error {
 			return err
 		}
 	}
+	if v, ok := raw["max"]; ok {
+		if err := json.Unmarshal(v, &c.Max); err != nil {
+			return err
+		}
+	}
 	if v, ok := raw["variables"]; ok {
 		if err := json.Unmarshal(v, &c.Variables); err != nil {
 			return err
@@ -226,6 +232,7 @@ type ScriptConfig struct {
 	Alias       string         `json:"alias,omitempty"`
 	Description string         `json:"description,omitempty"`
 	Mode        string         `json:"mode,omitempty"` // single, restart, queued, parallel
+	Max         int            `json:"max,omitempty"`  // concurrent run limit; only meaningful for mode=parallel|queued (HA default: 10)
 	Icon        string         `json:"icon,omitempty"`
 	Fields      map[string]any `json:"fields,omitempty"`
 	Variables   map[string]any `json:"variables,omitempty"`

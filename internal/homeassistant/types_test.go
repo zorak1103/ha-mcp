@@ -1560,6 +1560,108 @@ func TestAutomationConfig_Marshal_OmitsEmptySlices(t *testing.T) {
 	}
 }
 
+func TestAutomationConfig_Max_UnmarshalJSON(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		input   string
+		wantMax int
+	}{
+		{
+			name:    "max field is preserved when set",
+			input:   `{"id":"a1","mode":"parallel","max":5}`,
+			wantMax: 5,
+		},
+		{
+			name:    "max defaults to zero when absent",
+			input:   `{"id":"a2","mode":"parallel"}`,
+			wantMax: 0,
+		},
+		{
+			name:    "max preserved with singular keys (WebSocket format)",
+			input:   `{"id":"a3","mode":"queued","max":3,"trigger":[],"condition":[],"action":[]}`,
+			wantMax: 3,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var cfg AutomationConfig
+			if err := json.Unmarshal([]byte(tt.input), &cfg); err != nil {
+				t.Fatalf("Unmarshal() error = %v", err)
+			}
+			if cfg.Max != tt.wantMax {
+				t.Errorf("Max = %d, want %d", cfg.Max, tt.wantMax)
+			}
+		})
+	}
+}
+
+func TestAutomationConfig_Max_MarshalJSON(t *testing.T) {
+	t.Parallel()
+
+	t.Run("max is included when non-zero", func(t *testing.T) {
+		t.Parallel()
+		cfg := AutomationConfig{ID: "a1", Mode: "parallel", Max: 5}
+		data, err := json.Marshal(cfg)
+		if err != nil {
+			t.Fatalf("Marshal() error = %v", err)
+		}
+		if !strings.Contains(string(data), `"max":5`) {
+			t.Errorf("expected JSON to contain max:5, got: %s", data)
+		}
+	})
+
+	t.Run("max is omitted when zero", func(t *testing.T) {
+		t.Parallel()
+		cfg := AutomationConfig{ID: "a2", Mode: "single"}
+		data, err := json.Marshal(cfg)
+		if err != nil {
+			t.Fatalf("Marshal() error = %v", err)
+		}
+		if strings.Contains(string(data), `"max"`) {
+			t.Errorf("expected JSON to omit max, got: %s", data)
+		}
+	})
+}
+
+func TestScriptConfig_Max_RoundTrip(t *testing.T) {
+	t.Parallel()
+
+	t.Run("max is preserved through marshal/unmarshal", func(t *testing.T) {
+		t.Parallel()
+		original := ScriptConfig{Alias: "My Script", Mode: "parallel", Max: 7}
+		data, err := json.Marshal(original)
+		if err != nil {
+			t.Fatalf("Marshal() error = %v", err)
+		}
+		if !strings.Contains(string(data), `"max":7`) {
+			t.Errorf("expected JSON to contain max:7, got: %s", data)
+		}
+
+		var restored ScriptConfig
+		if err := json.Unmarshal(data, &restored); err != nil {
+			t.Fatalf("Unmarshal() error = %v", err)
+		}
+		if restored.Max != 7 {
+			t.Errorf("Max = %d, want 7", restored.Max)
+		}
+	})
+
+	t.Run("max is omitted when zero", func(t *testing.T) {
+		t.Parallel()
+		cfg := ScriptConfig{Alias: "My Script", Mode: "single"}
+		data, err := json.Marshal(cfg)
+		if err != nil {
+			t.Fatalf("Marshal() error = %v", err)
+		}
+		if strings.Contains(string(data), `"max"`) {
+			t.Errorf("expected JSON to omit max, got: %s", data)
+		}
+	})
+}
+
 func TestStatisticsResult_StartTime(t *testing.T) {
 	t.Parallel()
 
