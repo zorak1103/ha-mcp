@@ -283,3 +283,47 @@ func TestNewScriptFormatter(t *testing.T) {
 		t.Errorf("expected NaturalScriptFormatter for empty format")
 	}
 }
+
+func TestNaturalScriptFormatter_FormatDetail_Max(t *testing.T) {
+	ctx := context.Background()
+	f := NewNaturalScriptFormatter()
+
+	t.Run("max shown for parallel mode", func(t *testing.T) {
+		script := homeassistant.Script{
+			EntityID: "script.parallel_test",
+			State:    "on",
+			Config: &homeassistant.ScriptConfig{
+				Alias:    "Parallel Test",
+				Mode:     "parallel",
+				Max:      3,
+				Sequence: []any{},
+			},
+		}
+		result, err := f.FormatDetail(ctx, script)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(result, "(max: 3)") {
+			t.Errorf("expected '(max: 3)' in output, got: %s", result)
+		}
+	})
+
+	t.Run("max not shown when zero", func(t *testing.T) {
+		script := homeassistant.Script{
+			EntityID: "script.single_test",
+			State:    "on",
+			Config: &homeassistant.ScriptConfig{
+				Alias:    "Single Test",
+				Mode:     "single",
+				Sequence: []any{},
+			},
+		}
+		result, err := f.FormatDetail(ctx, script)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if strings.Contains(result, "max:") || strings.Contains(result, "(max") {
+			t.Errorf("expected no max in output for zero Max, got: %s", result)
+		}
+	})
+}

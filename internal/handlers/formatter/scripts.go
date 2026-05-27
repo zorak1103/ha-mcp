@@ -109,7 +109,11 @@ func (f *NaturalScriptFormatter) FormatDetail(
 		if mode == "" {
 			mode = "single"
 		}
-		result.WriteString("Mode: " + mode)
+		modeStr := mode
+		if script.Config.Max > 0 {
+			modeStr = fmt.Sprintf("%s (max: %d)", mode, script.Config.Max)
+		}
+		result.WriteString("Mode: " + modeStr)
 	}
 
 	if script.LastTriggered != "" {
