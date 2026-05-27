@@ -121,6 +121,10 @@ Actions:
 					Description: "Automation mode: single, restart, queued, parallel",
 					Enum:        []string{"single", "restart", "queued", "parallel"},
 				},
+				"max": {
+					Type:        "integer",
+					Description: "Concurrent run limit (minimum 1, HA default 10). Only applies when mode is 'parallel' or 'queued'.",
+				},
 				"enabled": {
 					Type:        "boolean",
 					Description: "Whether the automation should be enabled (for toggle action)",
@@ -353,6 +357,7 @@ func (h *AutomationHandlers) handleCreate(ctx context.Context, client homeassist
 		Conditions:  getSlice(args, "condition"),
 		Actions:     automationAction,
 		Mode:        getString(args, "mode"),
+		Max:         getInt(args, "max"),
 	}
 
 	if err := client.CreateAutomation(ctx, config); err != nil {
@@ -825,6 +830,9 @@ func applyAutomationConfigUpdates(config *homeassistant.AutomationConfig, args m
 	if mode, ok := args["mode"].(string); ok && mode != "" {
 		config.Mode = mode
 	}
+	if maxVal, ok := args["max"].(float64); ok {
+		config.Max = int(maxVal)
+	}
 }
 
 // getString safely extracts a string value from a map of arguments.
@@ -833,6 +841,15 @@ func getString(args map[string]any, key string) string {
 		return v
 	}
 	return ""
+}
+
+// getInt safely extracts an integer value from a map of arguments.
+// MCP JSON-RPC decodes all numbers as float64.
+func getInt(args map[string]any, key string) int {
+	if v, ok := args[key].(float64); ok {
+		return int(v)
+	}
+	return 0
 }
 
 // getSlice safely extracts a slice value from a map of arguments.
