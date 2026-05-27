@@ -82,6 +82,10 @@ Actions:
 					Enum:        []string{"single", "restart", "queued", "parallel"},
 					Default:     "single",
 				},
+				"max": {
+					Type:        "integer",
+					Description: "Concurrent run limit (minimum 1, HA default 10). Only applies when mode is 'parallel' or 'queued'.",
+				},
 				"icon": {
 					Type:        "string",
 					Description: "Icon for the script (e.g., mdi:script)",
@@ -337,6 +341,9 @@ func (h *ScriptHandlers) handleCreate(ctx context.Context, client homeassistant.
 	if mode, ok := args["mode"].(string); ok {
 		config.Mode = mode
 	}
+	if maxVal, ok := args["max"].(float64); ok {
+		config.Max = int(maxVal)
+	}
 	if icon, ok := args["icon"].(string); ok {
 		config.Icon = icon
 	}
@@ -390,6 +397,9 @@ func (h *ScriptHandlers) handleUpdate(ctx context.Context, client homeassistant.
 	}
 	if mode, ok := args["mode"].(string); ok {
 		config.Mode = mode
+	}
+	if maxVal, ok := args["max"].(float64); ok {
+		config.Max = int(maxVal)
 	}
 	if icon, ok := args["icon"].(string); ok {
 		config.Icon = icon

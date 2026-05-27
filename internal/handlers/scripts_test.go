@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 	"github.com/zorak1103/ha-mcp/internal/mcp"
@@ -1651,5 +1652,96 @@ func TestScriptHandlers_UpdateDataPreservation(t *testing.T) {
 	// Check that the alias was updated
 	if client.lastUpdateConfig.Alias != "Updated Name" {
 		t.Errorf("Alias not updated: got %q, want %q", client.lastUpdateConfig.Alias, "Updated Name")
+	}
+}
+
+func TestManageScript_Schema(t *testing.T) {
+	t.Parallel()
+	h := NewScriptHandlers()
+	tool := h.manageScriptTool()
+	expectedProps := []string{"action", "script_id", "alias", "description", "mode", "max", "icon", "sequence", "fields", "variables", "format"}
+	for _, prop := range expectedProps {
+		if _, ok := tool.InputSchema.Properties[prop]; !ok {
+			t.Errorf("expected property %q in script tool schema", prop)
+		}
+	}
+}
+
+func TestManageScript_Create_MaxField(t *testing.T) {
+	t.Parallel()
+
+	var capturedConfig *homeassistant.ScriptConfig
+	client := &mockScriptClient{
+		createScriptFn: func(_ context.Context, _ string, config homeassistant.ScriptConfig) error {
+			configCopy := config
+			capturedConfig = &configCopy
+			return nil
+		},
+	}
+	h := &ScriptHandlers{}
+	args := map[string]any{
+		"action":    "create",
+		"script_id": "parallel_script",
+		"alias":     "Parallel Script",
+		"mode":      "parallel",
+		"max":       float64(4),
+		"sequence":  []any{map[string]any{"service": "light.turn_on"}},
+	}
+	ctx := mcp.WithWaitConfig(context.Background(), mcp.WaitConfig{Timeout: 50 * time.Millisecond, PollInterval: 5 * time.Millisecond})
+
+	result, err := h.handleManageScript(ctx, client, args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got: %s", result.Content[0].Text)
+	}
+	if capturedConfig == nil {
+		t.Fatal("expected CreateScript to be called")
+	}
+	if capturedConfig.Max != 4 {
+		t.Errorf("Max = %d, want 4", capturedConfig.Max)
+	}
+}
+
+func TestManageScript_Update_MaxPreservation(t *testing.T) {
+	t.Parallel()
+
+	// Script update starts from *current.Config, so Max is preserved automatically
+	// once the struct field exists. This test confirms the contract holds.
+	client := &mockScriptClient{
+		getScriptFn: func(_ context.Context, _ string) (*homeassistant.Script, error) {
+			return &homeassistant.Script{
+				EntityID: "script.test_script",
+				Config: &homeassistant.ScriptConfig{
+					Alias:    "Test Script",
+					Mode:     "parallel",
+					Max:      8,
+					Sequence: []any{map[string]any{"service": "light.turn_on"}},
+				},
+			}, nil
+		},
+	}
+	h := &ScriptHandlers{}
+	args := map[string]any{
+		"action":    "update",
+		"script_id": "test_script",
+		"alias":     "Updated Script",
+		// deliberately no "max" arg
+	}
+	ctx := mcp.WithWaitConfig(context.Background(), mcp.WaitConfig{Timeout: 50 * time.Millisecond, PollInterval: 5 * time.Millisecond})
+
+	result, err := h.handleManageScript(ctx, client, args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got: %s", result.Content[0].Text)
+	}
+	if client.lastUpdateConfig == nil {
+		t.Fatal("expected UpdateScript to be called")
+	}
+	if client.lastUpdateConfig.Max != 8 {
+		t.Errorf("Max = %d, want 8 (must be preserved when not in args)", client.lastUpdateConfig.Max)
 	}
 }
