@@ -317,8 +317,8 @@ func (m *mockClient) RenderTemplate(ctx context.Context, template string) (strin
 func (m *mockClient) GetLogbook(ctx context.Context, startTime, endTime, entityID string) ([]LogbookEntry, error) {
 	return nil, nil
 }
-func (m *mockClient) GetSystemLog(context.Context) ([]SystemLogEntry, error) { return nil, nil }
-func (m *mockClient) ClearSystemLog(context.Context) error                   { return nil }
+func (m *mockClient) GetSystemLog(context.Context) ([]SystemLogEntry, error)      { return nil, nil }
+func (m *mockClient) ClearSystemLog(context.Context) error                        { return nil }
 func (m *mockClient) CheckConfig(ctx context.Context) (*ConfigCheckResult, error) { return nil, nil }
 func (m *mockClient) GetConfigEntries(ctx context.Context, domain string) ([]ConfigEntryFull, error) {
 	return nil, nil

@@ -95,3 +95,13 @@ tasks:
     desc: Build a local snapshot release (does not publish)
     cmds:
       - goreleaser release --snapshot --clean --skip=publish
+
+  # ──────────────────────────────────────────────
+  # Setup
+  # ──────────────────────────────────────────────
+  install-hooks:
+    desc: Install git hooks (run once after cloning)
+    cmds:
+      - git config core.hooksPath .githooks
+      - chmod +x .githooks/pre-commit || true
+      - echo "Git hooks installed. Pre-commit hook auto-fixes gofmt on every commit."

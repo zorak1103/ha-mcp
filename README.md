@@ -61,6 +61,7 @@ Requires Go 1.26 or later.
 ```bash
 git clone https://github.com/zorak1103/ha-mcp.git
 cd ha-mcp
+task install-hooks  # install git pre-commit hook (auto-fixes gofmt on every commit)
 go build -o ha-mcp ./cmd/ha-mcp
 ```
 

@@ -35,6 +35,9 @@ task lint:integration       # golangci-lint run --timeout=5m --build-tags=integr
 task fmt                    # gofmt -l . (check)
 task fmt:fix                # gofmt -w . (auto-fix)
 
+# Git hooks (run once after cloning)
+task install-hooks          # git config core.hooksPath .githooks (pre-commit: auto-fix gofmt)
+
 # Security & analysis
 task vulncheck              # govulncheck ./...
 task deadcode               # deadcode -test ./...  (install: go install golang.org/x/tools/cmd/deadcode@latest)
