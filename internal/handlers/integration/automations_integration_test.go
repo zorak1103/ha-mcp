@@ -243,6 +243,54 @@ func (s *AutomationIntegrationTestSuite) TestAutomationUpdate() {
 	_ = s.Client().DeleteHelper(s.Context(), targetEntityID)
 }
 
+func (s *AutomationIntegrationTestSuite) TestAutomationMaxFieldPreservation() {
+	automationID := GenerateTestID("auto_max")
+	automationEntityID := BuildEntityID("automation", automationID)
+
+	s.RegisterCleanup(func() {
+		_ = s.Client().DeleteAutomation(s.Context(), automationID)
+	})
+
+	// Create a parallel automation with max:5
+	// Alias must equal ID so HA slugifies it to the same entity ID (project convention)
+	cfg := homeassistant.AutomationConfig{
+		ID:    automationID,
+		Alias: automationID,
+		Mode:  "parallel",
+		Max:   5,
+		Triggers: []any{
+			map[string]any{"platform": "event", "event_type": "test_event"},
+		},
+		Actions: []any{
+			map[string]any{"delay": map[string]any{"seconds": 1}},
+		},
+	}
+	err := s.Client().CreateAutomation(s.Context(), cfg)
+	s.Require().NoError(err, "failed to create parallel automation")
+
+	_, err = s.WaitForAutomation(automationID, 30*time.Second)
+	s.Require().NoError(err, "automation did not appear after create")
+	_ = automationEntityID
+
+	// Fetch and verify Max was stored
+	fetched, err := s.Client().GetAutomation(s.Context(), automationID)
+	s.Require().NoError(err)
+	s.Require().NotNil(fetched.Config, "GetAutomation must return Config")
+	s.Equal(5, fetched.Config.Max, "Max should be 5 after create")
+
+	// Update changing only the description (no max arg — regression test)
+	updatedCfg := *fetched.Config
+	updatedCfg.Description = "updated description"
+	err = s.Client().UpdateAutomation(s.Context(), automationID, updatedCfg)
+	s.Require().NoError(err, "failed to update automation")
+
+	// Fetch again and confirm Max is still 5 (not silently erased)
+	afterUpdate, err := s.Client().GetAutomation(s.Context(), automationID)
+	s.Require().NoError(err)
+	s.Require().NotNil(afterUpdate.Config)
+	s.Equal(5, afterUpdate.Config.Max, "Max must survive an update that doesn't change it")
+}
+
 func (s *AutomationIntegrationTestSuite) TestAutomationWithCondition() {
 	targetName := GenerateTestID("auto_cond_tgt")
 	targetEntityID := BuildEntityID("input_boolean", targetName)

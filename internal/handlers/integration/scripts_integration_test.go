@@ -94,6 +94,47 @@ func (s *ScriptIntegrationTestSuite) TestScriptLifecycle() {
 	_ = s.Client().DeleteHelper(s.Context(), targetEntityID)
 }
 
+func (s *ScriptIntegrationTestSuite) TestScriptMaxFieldPreservation() {
+	scriptID := GenerateTestID("script_max")
+	scriptEntityID := BuildEntityID("script", scriptID)
+
+	s.RegisterCleanup(func() {
+		_ = s.Client().DeleteScript(s.Context(), scriptID)
+	})
+
+	// Create a parallel script with max:4
+	cfg := homeassistant.ScriptConfig{
+		Alias:    scriptID, // Alias drives the entity ID slug
+		Mode:     "parallel",
+		Max:      4,
+		Sequence: []any{map[string]any{"delay": map[string]any{"seconds": 1}}},
+	}
+	err := s.Client().CreateScript(s.Context(), scriptID, cfg)
+	s.Require().NoError(err, "failed to create parallel script")
+
+	_, err = s.WaitForEntity(scriptEntityID, 30*time.Second)
+	s.Require().NoError(err, "script entity did not appear after create")
+
+	// Fetch and verify Max
+	fetched, err := s.Client().GetScript(s.Context(), scriptEntityID)
+	s.Require().NoError(err)
+	s.Require().NotNil(fetched.Config, "GetScript must return Config")
+	s.Equal(4, fetched.Config.Max, "Max should be 4 after create")
+
+	// Update description only (no max arg — the round-trip preservation test)
+	// UpdateScript expects bare scriptID, not the entity ID with "script." prefix
+	updatedCfg := *fetched.Config
+	updatedCfg.Description = "updated description"
+	err = s.Client().UpdateScript(s.Context(), scriptID, updatedCfg)
+	s.Require().NoError(err, "failed to update script")
+
+	// Confirm Max survived
+	afterUpdate, err := s.Client().GetScript(s.Context(), scriptEntityID)
+	s.Require().NoError(err)
+	s.Require().NotNil(afterUpdate.Config)
+	s.Equal(4, afterUpdate.Config.Max, "Max must survive an update that doesn't change it")
+}
+
 func (s *ScriptIntegrationTestSuite) TestScriptWithVariables() {
 	// Create an input_number for the script to control
 	targetName := GenerateTestID("script_var_tgt")
