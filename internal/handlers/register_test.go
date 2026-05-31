@@ -152,6 +152,22 @@ func TestRegisterDeviceManageTools(t *testing.T) {
 	}
 }
 
+func TestRegisterSkillTools(t *testing.T) {
+	t.Parallel()
+
+	registry := mcp.NewRegistry()
+	RegisterSkillTools(registry)
+
+	tools := registry.ListTools()
+	if len(tools) != 1 {
+		t.Errorf("RegisterSkillTools() registered %d tools, want 1", len(tools))
+	}
+
+	if len(tools) > 0 && tools[0].Name != "get_skill" {
+		t.Errorf("RegisterSkillTools() registered %q, want get_skill", tools[0].Name)
+	}
+}
+
 func TestRegisterAllTools(t *testing.T) {
 	t.Parallel()
 
@@ -197,6 +213,8 @@ func TestRegisterAllTools(t *testing.T) {
 		"get_datetime",
 		// Config entries (consolidated)
 		"manage_config_entry",
+		// Skill guidance (tool-only client fallback)
+		"get_skill",
 	}
 
 	toolMap := make(map[string]bool)
