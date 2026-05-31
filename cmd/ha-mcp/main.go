@@ -347,8 +347,10 @@ func (a *App) initMCPServer(
 ) (*mcp.Server, error) {
 	registry := mcp.NewRegistry()
 	handlers.RegisterAllTools(registry)
+	handlers.RegisterAllResources(registry)
 
 	logger.Info("Registered MCP tools", "count", registry.ToolCount())
+	logger.Info("Registered MCP resources", "count", registry.ResourceCount())
 	registry.LogRegisteredTools(logger)
 
 	filterCfg := mcp.ToolFilterConfig{

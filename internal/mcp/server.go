@@ -44,7 +44,9 @@ Useful patterns:
 - manage_script(action="get", format="json") to view full script config including sequence
 - query_entities(mode="health") to find stale, unavailable, or orphaned entities
 - query_devices(mode="health") to find disabled or orphaned devices
-- analyze_entity to trace entity usage across automations, scripts, and scenes`
+- analyze_entity to trace entity usage across automations, scripts, and scenes
+
+Guidance resources are available as skill:// MCP resources (use resources/list then resources/read with a skill://ha-mcp/<slug> URI) and via the get_skill tool (action=list to discover topics, action=read to fetch guidance).`
 
 // HTTP server timeout constants.
 const (

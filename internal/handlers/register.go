@@ -144,6 +144,12 @@ func RegisterDeviceManageTools(registry *mcp.Registry) {
 	h.RegisterTools(registry)
 }
 
+// RegisterSkillTools registers the get_skill tool (fallback for tool-only MCP clients).
+func RegisterSkillTools(registry *mcp.Registry) {
+	h := NewSkillHandlers()
+	h.RegisterTools(registry)
+}
+
 // RegisterAllTools registers all available tool handlers with the registry.
 // All handlers use the WebSocket API for communication with Home Assistant.
 func RegisterAllTools(registry *mcp.Registry) {
@@ -232,4 +238,7 @@ func RegisterAllTools(registry *mcp.Registry) {
 
 	// Camera tools (snapshot and stream access)
 	RegisterCameraTools(registry)
+
+	// Skill tool — fallback for tool-only clients that cannot access skill:// resources
+	RegisterSkillTools(registry)
 }

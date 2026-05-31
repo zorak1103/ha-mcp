@@ -52,6 +52,9 @@ func TestAccessControlMapCompleteness(t *testing.T) {
 		// Media and rendering
 		"render_template",
 		"validate_config",
+
+		// Skill guidance (tool-only client fallback)
+		"get_skill",
 	}
 
 	accessMap := buildAccessControlMap()
@@ -80,6 +83,7 @@ func TestPureReadTools(t *testing.T) {
 		"get_datetime",
 		"validate_config",
 		"render_template",
+		"get_skill",
 	}
 
 	for _, toolName := range pureReadTools {

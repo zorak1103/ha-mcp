@@ -67,6 +67,9 @@ func buildPureTools() map[string]ToolClassification {
 		"render_template": {
 			PureCategory: CategoryRead,
 		},
+		"get_skill": {
+			PureCategory: CategoryRead,
+		},
 
 		// Pure write tools
 		"call_service": {
