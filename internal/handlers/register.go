@@ -238,7 +238,5 @@ func RegisterAllTools(registry *mcp.Registry) {
 
 	// Camera tools (snapshot and stream access)
 	RegisterCameraTools(registry)
-
-	// Skill tool — fallback for tool-only clients that cannot access skill:// resources
 	RegisterSkillTools(registry)
 }
