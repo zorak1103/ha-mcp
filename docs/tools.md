@@ -269,6 +269,28 @@ Universal tool for runtime helper operations:
 | `list`  | read   | Fetch recent WARNING/ERROR entries (~50 max by default) | `level`, `integration`, `limit`, `include_exception`, `format` |
 | `clear` | write  | Empty the in-memory ring buffer                      | —                                                       |
 
+### Guidance Tools
+
+| Tool        | Actions    | Description                                                                                                                                                                                  |
+| ----------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `get_skill` | list, read | Retrieve embedded skill guidance topics. `action=list` shows all available skills; `action=read` with `skill=<slug>` fetches full guidance. Fallback for tool-only clients; resource-aware clients use `skill://ha-mcp/*` resources. |
+
+## Guidance Resources (`skill://`)
+
+ha-mcp exposes 7 embedded guidance documents as MCP resources under the `skill://ha-mcp/` URI prefix.
+Resource-aware clients (Claude Desktop, Cline, etc.) can discover them via `resources/list` and fetch with `resources/read`.
+Tool-only clients (claude.ai web) can use `get_skill` instead.
+
+| URI                                    | Topic                | Covers                                                      |
+| -------------------------------------- | -------------------- | ----------------------------------------------------------- |
+| `skill://ha-mcp/format-selection`      | Format Selection     | When to use natural vs. json format                         |
+| `skill://ha-mcp/automation-patterns`   | Automation Patterns  | Modes, trigger IDs, motion+timer, conditions vs. templates  |
+| `skill://ha-mcp/template-resilience`   | Template Resilience  | has_value() guards, unavailable handling, render_template   |
+| `skill://ha-mcp/helper-selection`      | Helper Selection     | 26-type decision matrix; id vs. name rules                  |
+| `skill://ha-mcp/dashboard-safety`      | Dashboard Safety     | Backup-first, truncation risk, patch workflow               |
+| `skill://ha-mcp/entity-renaming`       | Entity Renaming      | Safe rename workflow, slugify traps, area/label modes       |
+| `skill://ha-mcp/debugging-workflow`    | Debugging Workflow   | Logbook correlation, trace inspection, system log triage    |
+
 ## Output Formats
 
 Most tools support two output formats via the `format` parameter:

@@ -111,6 +111,12 @@ go test -tags=integration -v ./internal/handlers/integration/... 2>&1 | tee test
 | `TestCameraIntegration`    | list cameras, stream (HLS URL via manage_camera), get_snapshot (binary image data)                  |
 | `TestSystemLogIntegration` | GetSystemLog (list), ClearSystemLog (clear + verify empty)                                           |
 
+**Documented Exception (unit tests only):**
+
+| Tool        | Scope           | Reason                                                                                                                                     |
+| ----------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `get_skill` | Unit tests only | No HA interaction — content is embedded markdown; integration test not technically applicable (documented exception per CLAUDE.md policy). |
+
 **Note:** Read-only tests (traces, updates, blueprints, cameras) verify API integration and response parsing. They skip gracefully if no entities exist or features are unavailable.
 
 ## Test Entity Naming Convention

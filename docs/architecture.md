@@ -132,6 +132,9 @@ ha-mcp/
 │   │   ├── calendars.go         # Calendar management handler (list/get_events/create_event/delete_event)
 │   │   ├── cameras.go           # Camera handler (snapshot/stream)
 │   │   ├── waiter.go             # Post-mutation wait utilities (state diff detection)
+│   │   ├── skill.go             # get_skill tool + RegisterAllResources (7 skill:// resources)
+│   │   ├── skills/              # Embedded skill markdown content + catalog (go:embed)
+│   │   │   └── catalog.go       # Skill catalog; add slug here + .md file when adding a skill
 │   │   └── register.go          # Handler registration
 │   └── logging/
 │       └── logger.go            # Structured logging

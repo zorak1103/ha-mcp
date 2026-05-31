@@ -15,7 +15,7 @@ A Model Context Protocol (MCP) server that provides AI assistants with access to
 
 ## Features
 
-- **39 Specialized Tools**: Entity queries, automation CRUD, helper management, scripts, scenes, devices, areas, labels, floors, zones, persons, tags, traces, blueprints, updates, todos, calendars, cameras, dashboards, system log, and more
+- **40 Specialized Tools**: Entity queries, automation CRUD, helper management, scripts, scenes, devices, areas, labels, floors, zones, persons, tags, traces, blueprints, updates, todos, calendars, cameras, dashboards, system log, and more
 - **Hybrid Architecture**: WebSocket for most operations, REST API for automation/script/scene CRUD
 - **Complete CRUD**: Create, read, update, delete automations/scripts/scenes/helpers
 - **Deep System Access**: Query registries, analyze dependencies, access logbook, validate config
@@ -33,7 +33,7 @@ Choose ha-mcp if you need:
 - Advanced analysis (dependencies, cross-references, automation coverage)
 - System administration (registry queries, config validation, logbook, history)
 - Media management (browser, camera streams), HACS, and dashboard access
-- Reliable LLM tool selection — 39 consolidated tools reduce selection errors compared to 95+ fine-grained alternatives
+- Reliable LLM tool selection — 40 consolidated tools reduce selection errors compared to 95+ fine-grained alternatives
 
 Choose the official integration if you need entity-level security or no external infrastructure.
 
@@ -127,7 +127,9 @@ See [docs/configuration.md](docs/configuration.md) for Cline, opencode, and othe
 
 ## Available Tools
 
-39 tools organized by domain. Full reference at [docs/tools.md](docs/tools.md).
+40 tools organized by domain. Full reference at [docs/tools.md](docs/tools.md).
+
+Seven guidance topics are also available as MCP resources under `skill://ha-mcp/<slug>` URIs (format-selection, automation-patterns, template-resilience, helper-selection, dashboard-safety, entity-renaming, debugging-workflow).
 
 | Category          | Count | Highlights                                                                  |
 | ----------------- | ----- | --------------------------------------------------------------------------- |
@@ -144,6 +146,7 @@ See [docs/configuration.md](docs/configuration.md) for Cline, opencode, and othe
 | System/Admin      | 7     | `get_system_info`, `validate_config`, `manage_update`, `manage_blueprint`   |
 | Logs              | 1     | `manage_system_log` (list WARN/ERROR entries, clear ring buffer)            |
 | HACS              | 1     | `manage_hacs` (list, download, install, custom repos)                       |
+| Guidance          | 1     | `get_skill` (action=list to discover skills, action=read to fetch content)  |
 
 ## Access Control
 

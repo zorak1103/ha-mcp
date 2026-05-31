@@ -8,7 +8,7 @@ Three MCP server projects expose Home Assistant functionality to AI assistants:
 
 | Project | Description |
 | ------- | ----------- |
-| **ha-mcp** (this project) | Go binary, 39 specialized tools, HTTP JSON-RPC transport |
+| **ha-mcp** (this project) | Go binary, 40 specialized tools, HTTP JSON-RPC transport |
 | **Community ha-mcp** ([homeassistant-ai/ha-mcp](https://github.com/homeassistant-ai/ha-mcp)) | Python/FastMCP package, 95+ tools, stdio/SSE/HTTP/WebSocket transport |
 | **Official HA MCP Server** (built-in integration) | HA integration, ~10 intent-based tools, Streamable HTTP |
 
@@ -21,7 +21,7 @@ Three MCP server projects expose Home Assistant functionality to AI assistants:
 | **Type**             | Standalone Go binary (external server)     | Python package (pip/uvx/Docker/Add-on)                       | HA integration (built-in)                                   |
 | **Transport**        | HTTP JSON-RPC                              | stdio, SSE, HTTP, WebSocket                                  | Streamable HTTP                                             |
 | **HA Communication** | WebSocket + REST API (Hybrid)              | WebSocket + REST API                                         | Direct Python API (internal)                                |
-| **Tool Design**      | 39 specialized tools with granular control | 95+ specialized tools                                        | Dynamically generated tools from Assist API (~10 tools)     |
+| **Tool Design**      | 40 specialized tools with granular control | 95+ specialized tools                                        | Dynamically generated tools from Assist API (~10 tools)     |
 | **Authentication**   | Long-Lived Access Token                    | Long-Lived Token + OAuth (beta)                              | OAuth (IndieAuth) + Long-Lived Token                        |
 | **Access Control**   | Tool-level filtering (read-only, whitelist/blacklist, action-level) | Entity/Service allow/deny lists with wildcard patterns | Entity-level exposure (Voice Assistant Exposure) |
 
@@ -248,14 +248,14 @@ Three MCP server projects expose Home Assistant functionality to AI assistants:
 
 | Function                    | ha-mcp   | Community ha-mcp                                                         | Official HA MCP |
 | --------------------------- | -------- | ------------------------------------------------------------------------ | --------------- |
-| Bundled domain knowledge    | ---      | MCP resources via `skill://` URIs (HA domain-specific guidance for AI)   | ---             |
+| Bundled domain knowledge    | `get_skill` tool + `skill://ha-mcp/*` resources (7 topics)          | MCP resources via `skill://` URIs (HA domain-specific guidance for AI)   | ---             |
 
 ---
 
 ## Summary
 
 ### ha-mcp Strengths:
-- **LLM-Optimised Tool Architecture**: 38 consolidated tools with `action` parameters reduce tool-selection errors. LLM benchmarks show accuracy degrades significantly above ~40 parallel tools; the `tool + action` two-level hierarchy is easier to reason over than 95+ equally-ranked options
+- **LLM-Optimised Tool Architecture**: 39 consolidated tools with `action` parameters reduce tool-selection errors. LLM benchmarks show accuracy degrades significantly above ~40 parallel tools; the `tool + action` two-level hierarchy is easier to reason over than 95+ equally-ranked options
 - **CRUD Operations**: Complete create/edit/delete for automations, scripts, scenes, and helpers
 - **Registry Access**: Detailed access to entity, device, and area registries
 - **Analysis**: Entity dependencies, automation targets, cross-references — unique to this project
@@ -309,6 +309,6 @@ Three MCP server projects expose Home Assistant functionality to AI assistants:
 | Read-only mode | ✅ | ❌ | ❌ |
 | Camera stream (HLS) | ✅ | ❌ | ❌ |
 | Media browser | ✅ | ❌ | ❌ |
-| MCP resources / skill URIs | ❌ | ✅ | ❌ |
+| MCP resources / skill URIs | ✅ | ✅ | ❌ |
 | No external server needed | ❌ | ❌ | ✅ |
 | Standards OAuth (IndieAuth) | ❌ | ❌ (beta only) | ✅ |

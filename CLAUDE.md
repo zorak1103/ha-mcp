@@ -92,6 +92,8 @@ AI Client (Claude, Cline)
 - `entities_consolidated.go` → `query_entities`; `devices_consolidated.go` → `query_devices`
 - `targets_consolidated.go` → `analyze_target`; `registry_consolidated.go` → `get_registry`
 - `entities_manage.go` → `manage_entity`; `devices_manage.go` → `manage_device`
+- `skill.go` → `get_skill` tool + `RegisterAllResources` (wires 7 skill:// resources)
+- `skills/catalog.go` → embedded markdown catalog; add slug here + .md file when adding a skill
 
 Extended logic in dedicated `*_coverage.go`, `*_presence.go`, `*_correlation.go`, `*_health.go` files.
 
@@ -101,6 +103,8 @@ Each handler domain follows this pattern:
 1. Create handler struct with `New*Handlers()` factory
 2. Implement `RegisterTools(registry *mcp.Registry)` method
 3. Register in `internal/handlers/register.go` via `RegisterAllTools()`
+
+`RegisterAllResources(registry)` registers 7 MCP resources (skill:// URI scheme). Called from `initMCPServer` in `cmd/ha-mcp/main.go` after `RegisterAllTools`.
 
 Tool handlers have signature:
 ```go
@@ -165,6 +169,7 @@ Tool actions and parameters are defined in the handler schemas. Non-obvious aspe
 - `manage_helper` — 26 types. **WebSocket helpers** (input_*, counter, timer, schedule): `id` controls entity_id via create-then-update; **Config Entry helpers** (threshold, derivative, integral, group, template_*, utility_meter, min_max, statistics, trend, random_*, filter, tod, generic_thermostat, switch_as_x, generic_hygrostat): `name` controls entity_id. Multi-step flows: statistics=3, filter=2, trend settings excludes name
 - `manage_hacs` — actions: list, info, get, releases, release_notes, critical, download, uninstall, add_repository, remove_repository, refresh, toggle_beta. All list filters (search, category, installed_only, pending_update) are client-side
 - `manage_system_log` — actions: list, clear. Uses `system_log/list` WS command (bounded to ~50 entries, no HA-side filter params — all filtering is client-side post-fetch). `clear` uses `system_log/clear`. No caching (logs are volatile). Handler: `internal/handlers/system_log.go`
+- `get_skill` — actions: list, read. Fallback for tool-only clients; same content served as skill://ha-mcp/* resources. Handler: `internal/handlers/skill.go`
 - All `manage_*` CRUD tools support Smart Wait (post-mutation polling, see below)
 
 **Label/Alias Array Mode (manage_entity, manage_device, manage_area, manage_floor):**
