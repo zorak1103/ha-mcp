@@ -36,7 +36,7 @@ func TestRegisterAllResources_URIsAndMimeType(t *testing.T) {
 		if !strings.HasPrefix(r.URI, skills.URIPrefix) {
 			t.Errorf("resource URI %q does not start with %q", r.URI, skills.URIPrefix)
 		}
-		if r.MimeType != "text/markdown" {
+		if r.MimeType != skillMimeType {
 			t.Errorf("resource %q MimeType = %q, want text/markdown", r.URI, r.MimeType)
 		}
 		if r.Name == "" {
@@ -73,7 +73,7 @@ func TestRegisterAllResources_HandlersReturnContent(t *testing.T) {
 		if result.Contents[0].URI != r.URI {
 			t.Errorf("handler for %q returned content with URI %q, want %q", r.URI, result.Contents[0].URI, r.URI)
 		}
-		if result.Contents[0].MimeType != "text/markdown" {
+		if result.Contents[0].MimeType != skillMimeType {
 			t.Errorf("handler for %q returned content MimeType %q, want text/markdown", r.URI, result.Contents[0].MimeType)
 		}
 	}

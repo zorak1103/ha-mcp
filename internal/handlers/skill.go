@@ -190,6 +190,12 @@ func (h *SkillHandlers) handleSkillReadJSON(slug, body string) (*mcp.ToolsCallRe
 			break
 		}
 	}
+	if meta.Slug == "" {
+		return &mcp.ToolsCallResult{
+			Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("internal: no catalog entry for slug %q", slug))},
+			IsError: true,
+		}, nil
+	}
 	type result struct {
 		Slug        string `json:"slug"`
 		Name        string `json:"name"`
