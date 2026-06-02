@@ -45,7 +45,7 @@ linters:
       # (stops the goroutine) but staticcheck doesn't always model this as a
       # nil-safe terminator on Windows, flagging "if ptr==nil { t.Fatal } / ptr.X".
       - path: '(.+)_test\.go'
-        text: "SA5011:"
+        text: "SA5011"
       
       # Exclude long lines with go:generate
       - linters:
