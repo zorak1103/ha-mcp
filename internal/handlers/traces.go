@@ -73,6 +73,10 @@ func RegisterTraceTools(registry *mcp.Registry) {
 					Enum:        []string{"natural", "json"},
 					Default:     "natural",
 				},
+				"wait": {
+					Type:        "boolean",
+					Description: "If true and no traces are found immediately, poll until a trace appears or the wait timeout expires. Use after triggering an automation to give Home Assistant time to record the trace asynchronously. Default: false.",
+				},
 			},
 			Required: []string{"action"},
 		},
@@ -130,6 +134,7 @@ func resolveTraceListParams(entityID, domain string) (resolvedDomain, itemID, er
 func (h *TraceHandlers) handleListTraces(ctx context.Context, client homeassistant.Client, args map[string]any, format string) (*mcp.ToolsCallResult, error) {
 	domain, _ := args["domain"].(string)
 	entityID, _ := args["entity_id"].(string)
+	wait, _ := args["wait"].(bool)
 
 	domain, itemID, errMsg := resolveTraceListParams(entityID, domain)
 	if errMsg != "" {
@@ -152,20 +157,12 @@ func (h *TraceHandlers) handleListTraces(ctx context.Context, client homeassista
 	}
 
 	// Parse response - convert to []any for consistent handling
-	var traces []any
-	switch v := response.(type) {
-	case []any:
-		traces = v
-	case []map[string]any:
-		// Convert []map[string]any to []any
-		traces = make([]any, len(v))
-		for i, item := range v {
-			traces[i] = item
-		}
-	case map[string]any:
-		// Response might be wrapped
-		if traceData, ok := v["traces"].([]any); ok {
-			traces = traceData
+	traces := parseTraceListResponse(response)
+
+	// Opt-in polling: if wait=true and no traces returned yet, poll until traces appear
+	if wait && len(traces) == 0 {
+		if polled, found := waitForTraces(ctx, client, data); found {
+			traces = polled
 		}
 	}
 
@@ -175,11 +172,39 @@ func (h *TraceHandlers) handleListTraces(ctx context.Context, client homeassista
 		if err != nil {
 			return errorResult(fmt.Sprintf("failed to marshal traces: %v", err)), nil
 		}
+		// If wait found traces, marshal them instead of the original empty response
+		if wait && len(traces) > 0 {
+			jsonData, err = json.MarshalIndent(traces, "", "  ")
+			if err != nil {
+				return errorResult(fmt.Sprintf("failed to marshal traces: %v", err)), nil
+			}
+		}
 		return successResult(string(jsonData)), nil
 	}
 
 	// Natural format
 	return successResult(h.formatTracesNatural(traces)), nil
+}
+
+// parseTraceListResponse converts a trace/list WebSocket response to []any.
+func parseTraceListResponse(response any) []any {
+	switch v := response.(type) {
+	case []any:
+		return v
+	case []map[string]any:
+		// Convert []map[string]any to []any
+		traces := make([]any, len(v))
+		for i, item := range v {
+			traces[i] = item
+		}
+		return traces
+	case map[string]any:
+		// Response might be wrapped
+		if traceData, ok := v["traces"].([]any); ok {
+			return traceData
+		}
+	}
+	return nil
 }
 
 // handleGetTrace retrieves a specific trace by entity_id and run_id.
@@ -229,7 +254,7 @@ func (h *TraceHandlers) handleGetTrace(ctx context.Context, client homeassistant
 // formatTracesNatural formats a list of traces in natural language.
 func (h *TraceHandlers) formatTracesNatural(traces []any) string {
 	if len(traces) == 0 {
-		return "No traces found."
+		return "No traces found. Home Assistant records traces asynchronously — if you just triggered an automation, traces may not be available yet. Try again in a moment, or pass wait=true to poll automatically."
 	}
 
 	var parts []string

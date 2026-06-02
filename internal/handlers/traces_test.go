@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
@@ -74,6 +75,11 @@ func TestManageTraceSchema(t *testing.T) {
 	}
 	if len(formatSchema.Enum) != 2 {
 		t.Errorf("format enum count = %d, want 2", len(formatSchema.Enum))
+	}
+
+	// Check wait field (opt-in polling for async trace recording)
+	if _, ok := props["wait"]; !ok {
+		t.Error("wait property missing from schema")
 	}
 
 	// Check required fields
@@ -394,5 +400,89 @@ func TestManageTrace_GetMissingParams(t *testing.T) {
 				t.Error("expected IsError to be true")
 			}
 		})
+	}
+}
+
+// TestManageTrace_List_EmptyMessage verifies that the empty-traces message
+// informs the user that traces may not be immediately available.
+func TestManageTrace_List_EmptyMessage(t *testing.T) {
+	t.Parallel()
+
+	client := &UniversalMockClient{
+		SendHACSCommandFn: func(_ context.Context, cmd string, _ map[string]any) (any, error) {
+			if cmd == "trace/list" {
+				return []any{}, nil // empty list
+			}
+			return nil, fmt.Errorf("wrong command: %s", cmd)
+		},
+	}
+
+	handler := NewTraceHandlers()
+	result, err := handler.HandleManageTrace(context.Background(), client, map[string]any{
+		"action": "list",
+		"domain": "automation",
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil || len(result.Content) == 0 {
+		t.Fatal("expected result content")
+	}
+
+	text := result.Content[0].Text
+	// Message must mention async lag or suggest retry / wait param
+	if !contains(text, "async") && !contains(text, "wait") && !contains(text, "available") {
+		t.Errorf("empty trace message should mention async lag or wait param, got: %s", text)
+	}
+}
+
+// TestManageTrace_List_WaitPolls verifies that wait=true polls trace/list until
+// traces appear, returning the non-empty result.
+func TestManageTrace_List_WaitPolls(t *testing.T) {
+	t.Parallel()
+
+	callCount := 0
+	client := &UniversalMockClient{
+		SendHACSCommandFn: func(_ context.Context, cmd string, _ map[string]any) (any, error) {
+			if cmd != "trace/list" {
+				return nil, fmt.Errorf("wrong command: %s", cmd)
+			}
+			callCount++
+			if callCount < 3 {
+				return []any{}, nil // empty on first two calls
+			}
+			return []any{
+				map[string]any{"run_id": "trace999", "state": "stopped"},
+			}, nil
+		},
+	}
+
+	// Inject short WaitConfig so the test doesn't take 5s
+	ctx := mcp.WithWaitConfig(context.Background(), mcp.WaitConfig{
+		Timeout:      200 * time.Millisecond,
+		PollInterval: 10 * time.Millisecond,
+	})
+
+	handler := NewTraceHandlers()
+	result, err := handler.HandleManageTrace(ctx, client, map[string]any{
+		"action": "list",
+		"domain": "automation",
+		"wait":   true,
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil || len(result.Content) == 0 {
+		t.Fatal("expected result content")
+	}
+
+	text := result.Content[0].Text
+	if !contains(text, "trace999") {
+		t.Errorf("expected trace999 in wait=true result, got: %s", text)
+	}
+	if callCount < 3 {
+		t.Errorf("expected at least 3 poll calls, got %d", callCount)
 	}
 }

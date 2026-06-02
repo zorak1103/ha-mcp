@@ -146,6 +146,44 @@ func reloadAndWaitForEntity(ctx context.Context, client homeassistant.Client, do
 	return waitForEntityAppear(ctx, client, entityID)
 }
 
+// waitForTraces polls trace/list until at least one trace is returned or the timeout expires.
+// Returns the trace list and whether any were found before the timeout.
+// Used when wait=true on manage_trace:list to handle async trace recording.
+func waitForTraces(ctx context.Context, client homeassistant.Client, data map[string]any) ([]any, bool) {
+	cfg := pollerConfigFromContext(ctx)
+	pollCtx, cancel := context.WithTimeout(ctx, cfg.Timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(cfg.PollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-pollCtx.Done():
+			return nil, false
+		case <-ticker.C:
+			response, err := client.SendHACSCommand(pollCtx, "trace/list", data)
+			if err != nil {
+				continue
+			}
+			switch v := response.(type) {
+			case []any:
+				if len(v) > 0 {
+					return v, true
+				}
+			case []map[string]any:
+				if len(v) > 0 {
+					traces := make([]any, len(v))
+					for i, item := range v {
+						traces[i] = item
+					}
+					return traces, true
+				}
+			}
+		}
+	}
+}
+
 // pollerConfigFromContext converts the MCP WaitConfig from the context into an EntityPollerConfig.
 func pollerConfigFromContext(ctx context.Context) homeassistant.EntityPollerConfig {
 	wc := mcp.WaitConfigFromContext(ctx)
