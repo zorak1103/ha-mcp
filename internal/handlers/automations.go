@@ -130,7 +130,7 @@ Actions:
 				},
 				"alias": {
 					Type:        "string",
-					Description: "Human-readable name for the automation (required for create, filter for list)",
+					Description: "Human-readable name for the automation (required for create, filter for list). This becomes the display name unless overridden by a registry custom name set via manage_entity(name=). Registry name takes precedence over alias.",
 				},
 				"description": {
 					Type:        "string",

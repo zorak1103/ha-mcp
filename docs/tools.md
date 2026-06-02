@@ -33,7 +33,7 @@ Authorization: Bearer <your-ha-access-token>
 | `manage_zone`         | Consolidated zone management (actions: list, get, create, update, delete; format: natural/json for list/get)                                                            |
 | `manage_person`       | Consolidated person management (actions: list, get, create, update, delete; format: natural/json for list/get)                                                          |
 | `manage_tag`          | Consolidated tag management (actions: list, get, create, update, delete; format: natural/json for list/get)                                                             |
-| `manage_entity`       | Entity registry management (actions: get, update, delete; update fields: name, icon, area_id, disabled_by, hidden_by, labels, aliases, new_entity_id; update supports label_mode/alias_mode: add/remove/replace; format: natural/json) |
+| `manage_entity`       | Entity registry management (actions: get, update, delete; update fields: name, icon, area_id, disabled_by, hidden_by, labels, aliases, new_entity_id; update supports label_mode/alias_mode: add/remove/replace; format: natural/json). **Friendly-name hierarchy:** registry `name` > automation `alias` > auto-slug. `name=""` clears the registry override and falls back to the auto-slug (not the alias). |
 | `manage_device`       | Device registry management (actions: get, update, delete; update fields: name_by_user, area_id, disabled_by, labels; update supports label_mode: add/remove/replace; format: natural/json)                                              |
 | `manage_config_entry` | Consolidated config entry management (actions: list, get; list: optional domain filter; get: requires entry_id; format: natural/json) |
 

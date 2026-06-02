@@ -48,7 +48,9 @@ Actions:
 - delete: Delete entity from registry (requires entity_id)
 
 Safe fields that can be updated:
-- name: Custom display name (empty string removes override)
+- name: Custom display name. Precedence: registry name (this field) > automation alias > auto-generated slug.
+  Empty string removes the registry override — HA falls back to the auto-slug, NOT the automation alias.
+  When renaming via new_entity_id, always set name= in the same call to avoid the slug flashing as the display name.
 - icon: Custom icon like 'mdi:lightbulb' (empty string removes override)
 - area_id: Area assignment (empty string removes)
 - disabled_by: 'user' to disable, 'none' to enable
@@ -78,7 +80,7 @@ func (h *EntityManageHandlers) buildEntityManageSchema() mcp.JSONSchema {
 			},
 			"name": {
 				Type:        "string",
-				Description: "Custom display name (update only, empty string removes override)",
+				Description: "Custom display name (update only). Takes highest precedence: registry name > automation alias > auto-slug. Empty string removes override — falls back to auto-slug, not alias. Set alongside new_entity_id to avoid slug flashing as display name.",
 			},
 			"icon": {
 				Type:        "string",
