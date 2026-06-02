@@ -368,7 +368,7 @@ func TestQueryEntities_Current_FormatNatural(t *testing.T) {
 
 	tests := []handlerTestCase{
 		{
-			name: "natural format grouped by domain",
+			name: "natural format compact list (default non-verbose)",
 			args: map[string]any{"mode": modeCurrent, "format": "natural"},
 			setupMock: func(m *UniversalMockClient) {
 				m.GetStatesFn = func(_ context.Context) ([]homeassistant.Entity, error) {
@@ -376,7 +376,7 @@ func TestQueryEntities_Current_FormatNatural(t *testing.T) {
 				}
 			},
 			wantError:    false,
-			wantContains: []string{"light", "2", "entities"},
+			wantContains: []string{"light", "2", "entities", "light.living_room", "light.bedroom"},
 		},
 		{
 			name: "natural format verbose mode",

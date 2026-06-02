@@ -615,7 +615,7 @@ func queryEntitiesProperties() map[string]mcp.JSONSchema {
 		// Common parameters
 		"verbose": {
 			Type:        "boolean",
-			Description: "If true, return full details. Default: false (compact output)",
+			Description: "If true, return full details per entity. Default: false — non-verbose mode returns a compact list (entity_id, friendly name, state) capped at 50 entities, with a pagination note if more exist.",
 		},
 		"limit": {
 			Type:        "integer",
@@ -740,7 +740,8 @@ func (h *ConsolidatedEntityQueryHandlers) formatStatesNatural(
 	opts := formatter.EntityListOptions{
 		Verbose:        params.verbose,
 		IncludeSummary: true,
-		GroupByDomain:  params.groupBy == "domain", // Group by domain when explicitly requested
+		GroupByDomain:  params.groupBy == "domain",                    // Group by domain when explicitly requested
+		CompactList:    !params.verbose && params.groupBy != "domain", // Show entity_ids in non-verbose ungrouped output
 	}
 
 	output, err := f.FormatEntities(ctx, paginated.Items, opts)

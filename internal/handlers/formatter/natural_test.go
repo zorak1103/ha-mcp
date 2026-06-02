@@ -550,3 +550,90 @@ func TestNaturalFormatter_ClimateOff(t *testing.T) {
 		t.Errorf("FormatEntity() = %q, want to contain %q", result, "is off")
 	}
 }
+
+func TestNaturalFormatter_FormatEntities_CompactList(t *testing.T) {
+	f := NewNaturalFormatter()
+
+	entities := []homeassistant.Entity{
+		{EntityID: "light.living_room", State: "on", Attributes: map[string]any{"friendly_name": "Living Room"}},
+		{EntityID: "light.bedroom", State: "off", Attributes: map[string]any{"friendly_name": "Bedroom"}},
+	}
+
+	result, err := f.FormatEntities(context.Background(), entities, EntityListOptions{
+		CompactList: true,
+	})
+	if err != nil {
+		t.Fatalf("FormatEntities(CompactList=true) error = %v", err)
+	}
+
+	// Should include entity_ids
+	if !strings.Contains(result, "light.living_room") {
+		t.Errorf("FormatEntities(CompactList=true) should contain entity_id, got %q", result)
+	}
+	if !strings.Contains(result, "light.bedroom") {
+		t.Errorf("FormatEntities(CompactList=true) should contain entity_id, got %q", result)
+	}
+
+	// Should include friendly names
+	if !strings.Contains(result, "Living Room") {
+		t.Errorf("FormatEntities(CompactList=true) should contain friendly name, got %q", result)
+	}
+
+	// Should still include summary
+	if !strings.Contains(result, "2 entities") {
+		t.Errorf("FormatEntities(CompactList=true) should contain entity count, got %q", result)
+	}
+}
+
+func TestNaturalFormatter_FormatEntities_CompactListCap(t *testing.T) {
+	f := NewNaturalFormatter()
+
+	// Build more than compactListCap entities
+	entities := make([]homeassistant.Entity, compactListCap+5)
+	for i := range entities {
+		entities[i] = homeassistant.Entity{
+			EntityID:   fmt.Sprintf("light.room_%03d", i),
+			State:      "on",
+			Attributes: map[string]any{"friendly_name": fmt.Sprintf("Room %d", i)},
+		}
+	}
+
+	result, err := f.FormatEntities(context.Background(), entities, EntityListOptions{
+		CompactList: true,
+	})
+	if err != nil {
+		t.Fatalf("FormatEntities(CompactList=true, over cap) error = %v", err)
+	}
+
+	// Should include an overflow note mentioning "more"
+	if !strings.Contains(result, "more") {
+		t.Errorf("FormatEntities(CompactList=true, over cap) should contain overflow note, got %q", result)
+	}
+
+	// Should NOT list all entities (room_055 would be above cap)
+	if strings.Contains(result, "light.room_055") {
+		t.Errorf("FormatEntities(CompactList=true, over cap) should not list entities beyond cap, got %q", result)
+	}
+}
+
+func TestNaturalFormatter_FormatEntities_CompactListNotVerbose(t *testing.T) {
+	// CompactList=false and Verbose=false should NOT list entity_ids (existing behavior)
+	f := NewNaturalFormatter()
+
+	entities := []homeassistant.Entity{
+		{EntityID: "light.living_room", State: "on", Attributes: map[string]any{"friendly_name": "Living Room"}},
+		{EntityID: "light.bedroom", State: "off", Attributes: map[string]any{"friendly_name": "Bedroom"}},
+	}
+
+	result, err := f.FormatEntities(context.Background(), entities, EntityListOptions{
+		IncludeSummary: true,
+	})
+	if err != nil {
+		t.Fatalf("FormatEntities() error = %v", err)
+	}
+
+	// Summary-only should NOT include entity_ids (backward compat for non-query_entities callers)
+	if strings.Contains(result, "light.living_room") {
+		t.Errorf("FormatEntities(default/summary-only) should NOT contain entity_ids, got %q", result)
+	}
+}

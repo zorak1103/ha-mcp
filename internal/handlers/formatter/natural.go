@@ -15,6 +15,10 @@ const (
 	domainLight = "light"
 )
 
+// compactListCap is the maximum number of entities shown in CompactList mode before
+// an overflow note is appended. Keeps non-verbose output token-bounded (~3k chars max).
+const compactListCap = 50
+
 // State constants
 const (
 	stateUnknown = "unknown"
@@ -60,13 +64,38 @@ func (f *NaturalFormatter) FormatEntities(_ context.Context, entities []homeassi
 	if opts.GroupByDomain {
 		parts = append(parts, f.formatEntitiesByDomain(entities, opts.Verbose))
 	} else if opts.Verbose {
-		// List all entities
+		// List all entities with full detail
 		for _, e := range entities {
 			parts = append(parts, "- "+f.formatEntityNL(e, false))
 		}
+	} else if opts.CompactList {
+		// Compact per-entity list capped at compactListCap — makes non-verbose output actionable
+		capped := entities
+		if len(capped) > compactListCap {
+			capped = capped[:compactListCap]
+		}
+		lines := make([]string, 0, len(capped)+1)
+		for _, e := range capped {
+			lines = append(lines, f.formatEntityCompact(e))
+		}
+		if len(entities) > compactListCap {
+			lines = append(lines, fmt.Sprintf("... and %d more (use pagination or verbose=true for full list)", len(entities)-compactListCap))
+		}
+		parts = append(parts, strings.Join(lines, "\n"))
 	}
 
 	return strings.Join(parts, "\n\n"), nil
+}
+
+// formatEntityCompact returns a compact single-line summary of an entity:
+// "- entity_id (Friendly Name) — state".
+func (f *NaturalFormatter) formatEntityCompact(e homeassistant.Entity) string {
+	name := GetFriendlyName(e.EntityID, e.Attributes)
+	if name == e.EntityID {
+		// No distinct friendly name — omit the redundant parens
+		return fmt.Sprintf("- %s — %s", e.EntityID, e.State)
+	}
+	return fmt.Sprintf("- %s (%s) — %s", e.EntityID, name, e.State)
 }
 
 // FormatHistory formats history entries in natural language.
