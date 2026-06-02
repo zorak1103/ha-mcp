@@ -666,7 +666,7 @@ func TestHandleManageArea(t *testing.T) {
 				}
 			},
 			wantErr:     false,
-			wantContain: "Automations Referencing Area",
+			wantContain: "Automations Referencing Area Entities",
 		},
 		{
 			name: "get - include_automations no match",
@@ -835,5 +835,93 @@ func TestHandleManageArea(t *testing.T) {
 				t.Errorf("result does not contain %q, got: %s", tt.wantContain, resultText)
 			}
 		})
+	}
+}
+
+// TestManageArea_AssignedAutomations tests that include_automations shows both
+// automations assigned to the area (via entity registry area_id) and automations
+// referencing entities in the area, as separate clearly-labeled sections.
+func TestManageArea_AssignedAutomations(t *testing.T) {
+	t.Parallel()
+
+	handler := NewAreaHandlers()
+
+	mockClient := &UniversalMockClient{
+		GetAreaRegistryFn: func(context.Context) ([]homeassistant.AreaRegistryEntry, error) {
+			return []homeassistant.AreaRegistryEntry{
+				{AreaID: "living_room", Name: "Living Room"},
+			}, nil
+		},
+		// automation.assigned is directly assigned to living_room via entity registry
+		// automation.referencing is assigned to kitchen but references a living_room entity
+		GetEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+			return []homeassistant.EntityRegistryEntry{
+				{EntityID: "light.living_room", AreaID: "living_room"},
+				{EntityID: "automation.assigned", AreaID: "living_room"},
+				{EntityID: "automation.referencing", AreaID: "kitchen"},
+			}, nil
+		},
+		GetDeviceRegistryFn: func(context.Context) ([]homeassistant.DeviceRegistryEntry, error) {
+			return []homeassistant.DeviceRegistryEntry{}, nil
+		},
+		ListAutomationsFn: func(context.Context) ([]homeassistant.Automation, error) {
+			return []homeassistant.Automation{
+				{EntityID: "automation.assigned", FriendlyName: "Assigned Auto", State: "on"},
+				{EntityID: "automation.referencing", FriendlyName: "Referencing Auto", State: "on"},
+			}, nil
+		},
+		GetAutomationFn: func(_ context.Context, automationID string) (*homeassistant.Automation, error) {
+			switch automationID {
+			case "automation.assigned":
+				// Does not reference any living_room entity
+				return &homeassistant.Automation{
+					EntityID: automationID,
+					Config:   &homeassistant.AutomationConfig{Actions: []any{}},
+				}, nil
+			case "automation.referencing":
+				// References light.living_room (an entity in living_room)
+				return &homeassistant.Automation{
+					EntityID: automationID,
+					Config: &homeassistant.AutomationConfig{
+						Actions: []any{map[string]any{"entity_id": "light.living_room"}},
+					},
+				}, nil
+			}
+			return nil, fmt.Errorf("automation not found: %s", automationID)
+		},
+	}
+
+	result, err := handler.handleManageArea(context.Background(), mockClient, map[string]any{
+		"action":              "get",
+		"area_id":             "living_room",
+		"include_automations": true,
+		"format":              "natural",
+	})
+	if err != nil {
+		t.Fatalf("handleManageArea() error = %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+
+	text := ""
+	if len(result.Content) > 0 {
+		text = result.Content[0].Text
+	}
+
+	// Should show assigned automations section
+	if !strings.Contains(text, "Automations Assigned to Area") {
+		t.Errorf("expected 'Automations Assigned to Area' section, got:\n%s", text)
+	}
+	if !strings.Contains(text, "automation.assigned") {
+		t.Errorf("expected automation.assigned in output, got:\n%s", text)
+	}
+
+	// Should show relabelled referencing section
+	if !strings.Contains(text, "Automations Referencing Area Entities") {
+		t.Errorf("expected 'Automations Referencing Area Entities' section, got:\n%s", text)
+	}
+	if !strings.Contains(text, "automation.referencing") {
+		t.Errorf("expected automation.referencing in referencing section, got:\n%s", text)
 	}
 }

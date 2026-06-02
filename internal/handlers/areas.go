@@ -24,8 +24,17 @@ const (
 
 // areaDetailEnrichment holds optional enrichment data for area get requests.
 type areaDetailEnrichment struct {
-	entities    []compactEntityState
-	automations []areaAutomationMatch
+	entities            []compactEntityState
+	assignedAutomations []areaAssignedAutomation
+	automations         []areaAutomationMatch
+}
+
+// areaAssignedAutomation represents an automation directly assigned to an area
+// via its entity registry area_id.
+type areaAssignedAutomation struct {
+	EntityID     string `json:"entity_id"`
+	FriendlyName string `json:"friendly_name,omitempty"`
+	State        string `json:"state"`
 }
 
 // areaAutomationMatch represents an automation that references entities in an area.
@@ -119,7 +128,7 @@ func (h *AreaHandlers) buildAreaSchema() mcp.JSONSchema {
 			},
 			"include_automations": {
 				Type:        "boolean",
-				Description: "Include automations that reference any entity in the area. Only for get action.",
+				Description: "Include automation sections for this area. Only for get action. Returns two sections: 'Assigned to Area' (automations whose entity registry area_id matches this area) and 'Referencing Area Entities' (automations that reference entities located in this area).",
 			},
 			"format": {
 				Type:        "string",
@@ -442,6 +451,7 @@ func (h *AreaHandlers) buildAreaEnrichment(
 		enrichment.entities = collectAreaEntities(ctx, client, entityIDsInArea)
 	}
 	if includeAutomations {
+		enrichment.assignedAutomations = findAssignedAutomations(ctx, client, areaID)
 		enrichment.automations = findAreaAutomations(ctx, client, entityIDsInArea)
 	}
 
@@ -482,6 +492,45 @@ func collectAreaEntities(ctx context.Context, client homeassistant.Client, entit
 			entry.FriendlyName = fn
 		}
 		result = append(result, entry)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].EntityID < result[j].EntityID
+	})
+	return result
+}
+
+// findAssignedAutomations returns automations directly assigned to the area via
+// entity registry area_id (automation.* entries whose AreaID == areaID).
+func findAssignedAutomations(ctx context.Context, client homeassistant.Client, areaID string) []areaAssignedAutomation {
+	entries, err := client.GetEntityRegistry(ctx)
+	if err != nil {
+		return nil
+	}
+	// Collect the entity_ids of automation.* entries assigned to this area.
+	assignedIDs := make(map[string]bool)
+	for _, e := range entries {
+		if strings.HasPrefix(e.EntityID, "automation.") && e.AreaID == areaID {
+			assignedIDs[e.EntityID] = true
+		}
+	}
+	if len(assignedIDs) == 0 {
+		return nil
+	}
+	// Fetch live states to get FriendlyName + State.
+	automations, err := client.ListAutomations(ctx)
+	if err != nil {
+		return nil
+	}
+	var result []areaAssignedAutomation
+	for _, a := range automations {
+		if !assignedIDs[a.EntityID] {
+			continue
+		}
+		result = append(result, areaAssignedAutomation{
+			EntityID:     a.EntityID,
+			FriendlyName: a.FriendlyName,
+			State:        a.State,
+		})
 	}
 	sort.Slice(result, func(i, j int) bool {
 		return result[i].EntityID < result[j].EntityID
@@ -595,6 +644,9 @@ func (h *AreaHandlers) formatDetailJSON(area homeassistant.AreaRegistryEntry, de
 		if enrichment.entities != nil {
 			result["entities"] = enrichment.entities
 		}
+		if enrichment.assignedAutomations != nil {
+			result["assigned_automations"] = enrichment.assignedAutomations
+		}
 		if enrichment.automations != nil {
 			result["automations"] = enrichment.automations
 		}
@@ -644,10 +696,16 @@ func (h *AreaHandlers) writeEnrichmentNatural(output *strings.Builder, enrichmen
 			fmt.Fprintf(output, "  - %s (%s) [%s]\n", e.EntityID, e.FriendlyName, e.State)
 		}
 	}
+	if len(enrichment.assignedAutomations) > 0 {
+		fmt.Fprintf(output, "\nAutomations Assigned to Area (%d):\n", len(enrichment.assignedAutomations))
+		for _, a := range enrichment.assignedAutomations {
+			fmt.Fprintf(output, "  - %s [%s]\n", a.EntityID, a.State)
+		}
+	}
 	if len(enrichment.automations) > 0 {
-		fmt.Fprintf(output, "\nAutomations Referencing Area (%d):\n", len(enrichment.automations))
+		fmt.Fprintf(output, "\nAutomations Referencing Area Entities (%d):\n", len(enrichment.automations))
 		for _, a := range enrichment.automations {
-			fmt.Fprintf(output, "  - %s [%s] (matches: %s)\n", a.FriendlyName, a.State, strings.Join(a.MatchedEntities, ", "))
+			fmt.Fprintf(output, "  - %s [%s] (matches: %s)\n", a.EntityID, a.State, strings.Join(a.MatchedEntities, ", "))
 		}
 	}
 }

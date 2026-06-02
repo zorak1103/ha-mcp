@@ -61,14 +61,15 @@ func (f *NaturalFormatter) FormatEntities(_ context.Context, entities []homeassi
 	}
 
 	// Group by domain or list entities
-	if opts.GroupByDomain {
+	switch {
+	case opts.GroupByDomain:
 		parts = append(parts, f.formatEntitiesByDomain(entities, opts.Verbose))
-	} else if opts.Verbose {
+	case opts.Verbose:
 		// List all entities with full detail
 		for _, e := range entities {
 			parts = append(parts, "- "+f.formatEntityNL(e, false))
 		}
-	} else if opts.CompactList {
+	case opts.CompactList:
 		// Compact per-entity list capped at compactListCap — makes non-verbose output actionable
 		capped := entities
 		if len(capped) > compactListCap {
