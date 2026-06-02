@@ -275,7 +275,8 @@ func fetchDebugLogbook(ctx context.Context, client homeassistant.Client, entityI
 }
 
 // extractTriggerEntityIDs walks the trigger slice and extracts entity_id + trigger platform.
-// Deduplicates entity IDs to avoid redundant GetState calls.
+// Handles both string and []any entity_id values, and both legacy "platform" and modern
+// "trigger" keys (HA 2024.10+). Deduplicates entity IDs to avoid redundant GetState calls.
 func extractTriggerEntityIDs(triggers []any) []triggerEntityInfo {
 	seen := make(map[string]bool)
 	var result []triggerEntityInfo
@@ -285,20 +286,22 @@ func extractTriggerEntityIDs(triggers []any) []triggerEntityInfo {
 		if !ok {
 			continue
 		}
-		triggerType := getMapString(tMap, "platform", "")
-		entityID := getMapString(tMap, configKeyEntityID, "")
-		if entityID != "" && !seen[entityID] {
-			seen[entityID] = true
-			result = append(result, triggerEntityInfo{
-				entityID:    entityID,
-				triggerType: triggerType,
-			})
+		triggerType := triggerPlatformKey(tMap)
+		for _, entityID := range triggerEntityIDList(tMap) {
+			if !seen[entityID] {
+				seen[entityID] = true
+				result = append(result, triggerEntityInfo{
+					entityID:    entityID,
+					triggerType: triggerType,
+				})
+			}
 		}
 	}
 	return result
 }
 
 // extractTriggerTypes returns deduplicated list of trigger platform types.
+// Reads the modern "trigger" key first, then falls back to legacy "platform".
 func extractTriggerTypes(triggers []any) []string {
 	seen := make(map[string]bool)
 	var types []string
@@ -308,13 +311,42 @@ func extractTriggerTypes(triggers []any) []string {
 		if !ok {
 			continue
 		}
-		platform := getMapString(tMap, "platform", "")
+		platform := triggerPlatformKey(tMap)
 		if platform != "" && !seen[platform] {
 			seen[platform] = true
 			types = append(types, platform)
 		}
 	}
 	return types
+}
+
+// triggerPlatformKey returns the trigger platform type from a trigger map, reading the
+// modern "trigger" key (HA 2024.10+) first and falling back to the legacy "platform" key.
+func triggerPlatformKey(tMap map[string]any) string {
+	if v, ok := tMap["trigger"].(string); ok && v != "" {
+		return v
+	}
+	return getMapString(tMap, "platform", "")
+}
+
+// triggerEntityIDList returns the entity IDs from a trigger map, supporting both a single
+// string and a []any array. Non-string array elements are silently skipped.
+func triggerEntityIDList(tMap map[string]any) []string {
+	switch v := tMap[configKeyEntityID].(type) {
+	case string:
+		if v != "" {
+			return []string{v}
+		}
+	case []any:
+		var ids []string
+		for _, elem := range v {
+			if s, ok := elem.(string); ok && s != "" {
+				ids = append(ids, s)
+			}
+		}
+		return ids
+	}
+	return nil
 }
 
 // formatDebugNatural formats the debug report as a multi-section natural language string.

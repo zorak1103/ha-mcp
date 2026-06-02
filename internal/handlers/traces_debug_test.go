@@ -345,6 +345,93 @@ func TestHandleDebugTrace_CustomHours(t *testing.T) {
 	}
 }
 
+// TestHandleDebugTrace_ArrayEntityTriggers is a regression test for issue #99:
+// automations with array entity_id and the modern `trigger:` key must populate the
+// Trigger Entity States section instead of reporting "No entity-based triggers found".
+func TestHandleDebugTrace_ArrayEntityTriggers(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	handler := NewTraceHandlers()
+	client := &UniversalMockClient{
+		GetAutomationFn: func(_ context.Context, _ string) (*homeassistant.Automation, error) {
+			// Exact config from the issue report (HA 2024.10+ trigger: key, array entity_id).
+			return &homeassistant.Automation{
+				EntityID:     "automation.example",
+				State:        "on",
+				FriendlyName: "Example",
+				Config: &homeassistant.AutomationConfig{
+					Alias: "Example",
+					Mode:  "single",
+					Triggers: []any{
+						map[string]any{
+							"trigger":   "state",
+							"entity_id": []any{"binary_sensor.example_sensor_a", "binary_sensor.example_sensor_b"},
+							"to":        "on",
+						},
+						map[string]any{
+							"trigger":   "state",
+							"entity_id": []any{"binary_sensor.example_sensor_a", "binary_sensor.example_sensor_b"},
+							"to":        []any{"off", "unavailable", "unknown"},
+							"for":       map[string]any{"minutes": 15},
+						},
+					},
+					Conditions: []any{},
+					Actions:    []any{},
+				},
+			}, nil
+		},
+		SendHACSCommandFn: func(_ context.Context, _ string, _ map[string]any) (any, error) {
+			return []any{}, nil
+		},
+		GetStateFn: func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+			stateMap := map[string]string{
+				"binary_sensor.example_sensor_a": "off",
+				"binary_sensor.example_sensor_b": "unavailable",
+			}
+			s, ok := stateMap[entityID]
+			if !ok {
+				return nil, fmt.Errorf("entity not found: %s", entityID)
+			}
+			return &homeassistant.Entity{
+				EntityID:    entityID,
+				State:       s,
+				LastChanged: now.Add(-15 * time.Minute),
+			}, nil
+		},
+		GetLogbookFn: func(_ context.Context, _, _, _ string) ([]homeassistant.LogbookEntry, error) {
+			return []homeassistant.LogbookEntry{}, nil
+		},
+	}
+
+	result, err := handler.HandleManageTrace(context.Background(), client, map[string]any{
+		"action":        "debug",
+		"automation_id": "automation.example",
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+	}
+
+	text := result.Content[0].Text
+
+	// Both entities from the array triggers must appear, each with their state.
+	for _, want := range []string{
+		"binary_sensor.example_sensor_a",
+		"binary_sensor.example_sensor_b",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("Trigger Entity States section missing %q\nfull output:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "No entity-based triggers found") {
+		t.Errorf("got 'No entity-based triggers found' but entity triggers exist\nfull output:\n%s", text)
+	}
+}
+
 // TestExtractTriggerEntityIDs verifies extraction of entity IDs from trigger configurations.
 func TestExtractTriggerEntityIDs(t *testing.T) {
 	t.Parallel()
@@ -384,6 +471,48 @@ func TestExtractTriggerEntityIDs(t *testing.T) {
 			name:     "empty triggers",
 			triggers: nil,
 			wantIDs:  nil,
+		},
+		// Regression cases for issue #99 ─────────────────────────────────────────
+		{
+			name: "array entity_id with modern trigger key",
+			triggers: []any{
+				map[string]any{
+					"trigger":   "state",
+					"entity_id": []any{"binary_sensor.a", "binary_sensor.b"},
+					"to":        "on",
+				},
+			},
+			wantIDs:   []string{"binary_sensor.a", "binary_sensor.b"},
+			wantTypes: []string{"state", "state"},
+		},
+		{
+			name: "modern trigger key for type (no platform key)",
+			triggers: []any{
+				map[string]any{"trigger": "state", "entity_id": "sensor.motion"},
+			},
+			wantIDs:   []string{"sensor.motion"},
+			wantTypes: []string{"state"},
+		},
+		{
+			name: "dedup across array and scalar trigger",
+			triggers: []any{
+				map[string]any{"trigger": "state", "entity_id": []any{"sensor.a", "sensor.b"}},
+				map[string]any{"trigger": "state", "entity_id": "sensor.a"}, // duplicate
+				map[string]any{"trigger": "state", "entity_id": "sensor.c"},
+			},
+			wantIDs:   []string{"sensor.a", "sensor.b", "sensor.c"},
+			wantTypes: []string{"state", "state", "state"},
+		},
+		{
+			name: "array entity_id with non-string elements skipped",
+			triggers: []any{
+				map[string]any{
+					"trigger":   "state",
+					"entity_id": []any{"sensor.good", 42, nil, "sensor.also_good"},
+				},
+			},
+			wantIDs:   []string{"sensor.good", "sensor.also_good"},
+			wantTypes: []string{"state", "state"},
 		},
 	}
 
@@ -528,6 +657,16 @@ func TestExtractTriggerTypes(t *testing.T) {
 				map[string]any{"at": "06:30:00"},
 			},
 			want: nil,
+		},
+		// Regression case for issue #99: modern `trigger:` key (HA 2024.10+)
+		{
+			name: "modern trigger key (no platform key)",
+			triggers: []any{
+				map[string]any{"trigger": "state"},
+				map[string]any{"trigger": "time"},
+				map[string]any{"trigger": "state"}, // duplicate
+			},
+			want: []string{"state", "time"},
 		},
 	}
 
