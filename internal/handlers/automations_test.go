@@ -2623,3 +2623,249 @@ func TestManageAutomation_Update_MaxSet(t *testing.T) {
 		t.Errorf("Max = %d, want 3", client.lastUpdatedConfig.Max)
 	}
 }
+
+// TestTriggersHaveForTimer verifies the helper that detects "for:" duration fields in triggers.
+func TestTriggersHaveForTimer(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		triggers []any
+		want     bool
+	}{
+		{"empty slice", []any{}, false},
+		{"nil slice", nil, false},
+		{"no for field", []any{map[string]any{"trigger": "state", "entity_id": "binary_sensor.x"}}, false},
+		{"string for non-empty", []any{map[string]any{"trigger": "state", "for": "00:15:00"}}, true},
+		{"map for with minutes", []any{map[string]any{"trigger": "state", "for": map[string]any{"minutes": float64(15)}}}, true},
+		{"empty-string for is ignored", []any{map[string]any{"trigger": "state", "for": ""}}, false},
+		{"empty-map for is ignored", []any{map[string]any{"trigger": "state", "for": map[string]any{}}}, false},
+		{"non-map trigger element is skipped", []any{"not a map"}, false},
+		{"second trigger has for", []any{
+			map[string]any{"trigger": "time", "at": "07:00"},
+			map[string]any{"trigger": "state", "for": "00:05:00"},
+		}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := triggersHaveForTimer(tt.triggers); got != tt.want {
+				t.Errorf("triggersHaveForTimer() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestManageAutomation_PatchForTimerWarning verifies the for: reload warning is included
+// when a patch is applied to an automation that uses for: trigger timers.
+func TestManageAutomation_PatchForTimerWarning(t *testing.T) {
+	t.Parallel()
+
+	withForTrigger := &homeassistant.AutomationConfig{
+		ID:    "motion_lights",
+		Alias: "Motion Lights",
+		Mode:  "single",
+		Triggers: []any{
+			map[string]any{"trigger": "state", "entity_id": "binary_sensor.motion", "to": "off", "for": "00:15:00"},
+		},
+		Actions: []any{map[string]any{"action": "light.turn_off"}},
+	}
+
+	withoutForTrigger := &homeassistant.AutomationConfig{
+		ID:    "simple",
+		Alias: "Simple",
+		Mode:  "single",
+		Triggers: []any{
+			map[string]any{"trigger": "state", "entity_id": "input_boolean.flag", "to": "on"},
+		},
+		Actions: []any{map[string]any{"action": "light.turn_on"}},
+	}
+
+	h := &AutomationHandlers{}
+
+	tests := []handlerTestCase{
+		{
+			name: "patch with for: trigger includes reload warning",
+			args: map[string]any{
+				"action":        "patch",
+				"automation_id": "automation.motion_lights",
+				"operations": []any{
+					map[string]any{"op": "replace", "path": "/mode", "value": "restart"},
+				},
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetAutomationFn = func(_ context.Context, _ string) (*homeassistant.Automation, error) {
+					cfg := *withForTrigger
+					return &homeassistant.Automation{EntityID: "automation.motion_lights", Config: &cfg}, nil
+				}
+				m.UpdateAutomationFn = func(_ context.Context, _ string, _ homeassistant.AutomationConfig) error { return nil }
+			},
+			wantError:    false,
+			wantContains: []string{"patched successfully", "timer"},
+		},
+		{
+			name: "patch without for: trigger omits timer warning",
+			args: map[string]any{
+				"action":        "patch",
+				"automation_id": "automation.simple",
+				"operations": []any{
+					map[string]any{"op": "replace", "path": "/mode", "value": "restart"},
+				},
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetAutomationFn = func(_ context.Context, _ string) (*homeassistant.Automation, error) {
+					cfg := *withoutForTrigger
+					return &homeassistant.Automation{EntityID: "automation.simple", Config: &cfg}, nil
+				}
+				m.UpdateAutomationFn = func(_ context.Context, _ string, _ homeassistant.AutomationConfig) error { return nil }
+			},
+			wantError:       false,
+			wantContains:    []string{"patched successfully"},
+			wantNotContains: []string{"timer"},
+		},
+		{
+			name: "patch removing the only for: trigger still warns (timer may have been active at save time)",
+			args: map[string]any{
+				"action":        "patch",
+				"automation_id": "automation.motion_lights",
+				"operations": []any{
+					map[string]any{"op": "remove", "path": "/triggers/0"},
+				},
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetAutomationFn = func(_ context.Context, _ string) (*homeassistant.Automation, error) {
+					cfg := *withForTrigger
+					return &homeassistant.Automation{EntityID: "automation.motion_lights", Config: &cfg}, nil
+				}
+				m.UpdateAutomationFn = func(_ context.Context, _ string, _ homeassistant.AutomationConfig) error { return nil }
+			},
+			wantError:    false,
+			wantContains: []string{"patched successfully", "timer"},
+		},
+	}
+
+	runHandlerTestCases(t, tests, h.handleManageAutomation)
+}
+
+// TestManageAutomation_PatchNoOp verifies that a patch producing no config change
+// does not call UpdateAutomation, preventing a needless reload and for: timer reset.
+func TestManageAutomation_PatchNoOp(t *testing.T) {
+	t.Parallel()
+
+	baseConfig := &homeassistant.AutomationConfig{
+		ID:    "motion_lights",
+		Alias: "Motion Lights",
+		Mode:  "single",
+		Triggers: []any{
+			map[string]any{"trigger": "state", "entity_id": "binary_sensor.motion", "to": "off", "for": "00:15:00"},
+		},
+		Actions: []any{map[string]any{"action": "light.turn_off"}},
+	}
+
+	updateCalled := false
+	client := &UniversalMockClient{}
+	client.GetAutomationFn = func(_ context.Context, _ string) (*homeassistant.Automation, error) {
+		cfg := *baseConfig
+		return &homeassistant.Automation{EntityID: "automation.motion_lights", Config: &cfg}, nil
+	}
+	client.UpdateAutomationFn = func(_ context.Context, _ string, _ homeassistant.AutomationConfig) error {
+		updateCalled = true
+		return nil
+	}
+
+	h := &AutomationHandlers{}
+	args := map[string]any{
+		"action":        "patch",
+		"automation_id": "automation.motion_lights",
+		// replace mode with the same value it already has — net-zero change
+		"operations": []any{
+			map[string]any{"op": "replace", "path": "/mode", "value": "single"},
+		},
+	}
+
+	ctx := mcp.WithWaitConfig(context.Background(), mcp.WaitConfig{Timeout: 50 * time.Millisecond, PollInterval: 5 * time.Millisecond})
+	result, err := h.handleManageAutomation(ctx, client, args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got error: %s", result.Content[0].Text)
+	}
+	if updateCalled {
+		t.Error("UpdateAutomation must NOT be called for a no-op patch (would cause a needless reload and for: timer reset)")
+	}
+	if !strings.Contains(result.Content[0].Text, "no changes") {
+		t.Errorf("expected 'no changes' in response, got: %s", result.Content[0].Text)
+	}
+}
+
+// TestManageAutomation_UpdateForTimerWarning verifies that update warns about for: timer
+// resets and skips writing when the resulting config is unchanged.
+func TestManageAutomation_UpdateForTimerWarning(t *testing.T) {
+	t.Parallel()
+
+	makeAuto := func() *homeassistant.Automation {
+		return &homeassistant.Automation{
+			EntityID: "automation.motion_lights",
+			State:    "on",
+			Config: &homeassistant.AutomationConfig{
+				ID:    "motion_lights",
+				Alias: "Motion Lights",
+				Mode:  "single",
+				Triggers: []any{
+					map[string]any{"trigger": "state", "entity_id": "binary_sensor.motion", "to": "off", "for": "00:15:00"},
+				},
+				Actions: []any{map[string]any{"action": "light.turn_off"}},
+			},
+		}
+	}
+
+	t.Run("update with for: trigger warns about timer reset", func(t *testing.T) {
+		t.Parallel()
+		h := &AutomationHandlers{}
+		client := &mockAutomationClient{automation: makeAuto()}
+		args := map[string]any{
+			"action":        "update",
+			"automation_id": "motion_lights",
+			"alias":         "Motion Lights (updated)",
+		}
+		ctx := mcp.WithWaitConfig(context.Background(), mcp.WaitConfig{Timeout: 50 * time.Millisecond, PollInterval: 5 * time.Millisecond})
+		result, err := h.handleManageAutomation(ctx, client, args)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("expected success, got error: %s", result.Content[0].Text)
+		}
+		if !strings.Contains(result.Content[0].Text, "timer") {
+			t.Errorf("expected for: timer warning in response, got: %s", result.Content[0].Text)
+		}
+	})
+
+	t.Run("update no-op skips UpdateAutomation", func(t *testing.T) {
+		t.Parallel()
+		h := &AutomationHandlers{}
+		// resubmit the exact same alias — no net change to the config
+		client := &mockAutomationClient{automation: makeAuto()}
+		args := map[string]any{
+			"action":        "update",
+			"automation_id": "motion_lights",
+			"alias":         "Motion Lights", // same as existing
+		}
+		ctx := mcp.WithWaitConfig(context.Background(), mcp.WaitConfig{Timeout: 50 * time.Millisecond, PollInterval: 5 * time.Millisecond})
+		result, err := h.handleManageAutomation(ctx, client, args)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("expected success, got error: %s", result.Content[0].Text)
+		}
+		if client.updateCalled {
+			t.Error("UpdateAutomation must NOT be called for a no-op update (would cause a needless reload and for: timer reset)")
+		}
+		if !strings.Contains(result.Content[0].Text, "no changes") {
+			t.Errorf("expected 'no changes' in response, got: %s", result.Content[0].Text)
+		}
+	})
+}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"unicode"
@@ -29,9 +30,43 @@ const (
 	automationActionSchema   = "schema"
 )
 
+// automationForTimerReloadWarning is appended to patch/update success messages when the
+// automation has triggers with a "for:" duration. Home Assistant reloads the automation on
+// every config write, which tears down trigger runtime state (including in-flight "for:" timers).
+// If the monitored entity is already in the target state, no new transition occurs and the
+// timer never re-fires — leaving actuators stuck until the next full state cycle.
+const automationForTimerReloadWarning = " (warning: saving reloads the automation in Home Assistant, " +
+	"which resets any in-flight 'for:' trigger timer; if the monitored entity is already in the " +
+	"target state the trigger will not re-fire until the next state transition — verify dependent " +
+	"actuators after this change)"
+
 // manualOnlyTrigger is a placeholder trigger for manual-only automations.
 var manualOnlyTrigger = []any{
 	map[string]any{"trigger": "event", "event_type": "ha_mcp_manual_only_placeholder"},
+}
+
+// triggersHaveForTimer reports whether any trigger in the slice defines a non-empty "for:" duration.
+// Both string form ("00:15:00") and map form ({"minutes": 15}) are accepted.
+// A for: duration means that HA resets an active countdown whenever the automation reloads,
+// which happens on every config write — even a no-op write.
+func triggersHaveForTimer(triggers []any) bool {
+	for _, t := range triggers {
+		tm, ok := t.(map[string]any)
+		if !ok {
+			continue
+		}
+		switch v := tm["for"].(type) {
+		case string:
+			if v != "" {
+				return true
+			}
+		case map[string]any:
+			if len(v) > 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // resolveAutomationTriggers resolves trigger array from args, returning placeholder for empty arrays.
@@ -400,7 +435,16 @@ func (h *AutomationHandlers) handleUpdate(ctx context.Context, client homeassist
 	if current.Config == nil {
 		current.Config = &homeassistant.AutomationConfig{ID: configID}
 	}
+
+	// Snapshot config before mutation so we can detect no-op updates.
+	// No-op writes cause a needless HA reload that resets in-flight "for:" trigger timers.
+	beforeMap, _ := configToMap(current.Config)
 	applyAutomationConfigUpdates(current.Config, args)
+	afterMap, _ := configToMap(current.Config)
+
+	if reflect.DeepEqual(beforeMap, afterMap) {
+		return successResult(fmt.Sprintf("Automation '%s': no changes detected, skipping write (reload and for: timer reset avoided)", automationID)), nil
+	}
 
 	// Resolve actual config ID for REST API (may differ from entity_id suffix)
 	actualConfigID := configID
@@ -412,7 +456,11 @@ func (h *AutomationHandlers) handleUpdate(ctx context.Context, client homeassist
 		return errorResult(enrichAutomationError(fmt.Sprintf("Error updating automation: %v", err), err)), nil
 	}
 
-	return successResult(fmt.Sprintf("Automation '%s' updated successfully", automationID)), nil
+	successMsg := fmt.Sprintf("Automation '%s' updated successfully", automationID)
+	if triggersHaveForTimer(current.Config.Triggers) {
+		successMsg += automationForTimerReloadWarning
+	}
+	return successResult(successMsg), nil
 }
 
 func (h *AutomationHandlers) handleDelete(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
@@ -518,21 +566,47 @@ func (h *AutomationHandlers) handlePatch(ctx context.Context, client homeassista
 		return dryRunPatchResult(patchedMap, "automation", automationID, len(ops))
 	}
 
-	var newConfig homeassistant.AutomationConfig
-	if err := mapToStruct(patchedMap, &newConfig); err != nil {
-		return errorResult(fmt.Sprintf("error parsing patched config: %v", err)), nil
-	}
-
 	actualConfigID := configID
 	if current.Config.ID != "" && current.Config.ID != configID {
 		actualConfigID = current.Config.ID
+	}
+
+	return applyPatchedAutomationWrite(ctx, client, automationID, actualConfigID, configMap, patchedMap, current.Config.Triggers, len(ops))
+}
+
+// applyPatchedAutomationWrite writes the patched config to HA and returns the success result.
+// It skips the write entirely when configMap and patchedMap are deep-equal: every write to
+// /api/config/automation/config/{id} causes HA to reload the automation, discarding any in-flight
+// "for:" trigger timers — so a no-op write must never reach the REST API.
+// When the write does happen, the success message includes a for: timer warning when relevant.
+func applyPatchedAutomationWrite(
+	ctx context.Context,
+	client homeassistant.Client,
+	automationID, actualConfigID string,
+	configMap, patchedMap map[string]any,
+	oldTriggers []any,
+	numOps int,
+) (*mcp.ToolsCallResult, error) {
+	if reflect.DeepEqual(configMap, patchedMap) {
+		return successResult(fmt.Sprintf("Automation '%s': no changes detected, skipping write (reload and for: timer reset avoided)", automationID)), nil
+	}
+
+	var newConfig homeassistant.AutomationConfig
+	if err := mapToStruct(patchedMap, &newConfig); err != nil {
+		return errorResult(fmt.Sprintf("error parsing patched config: %v", err)), nil
 	}
 
 	if err := client.UpdateAutomation(ctx, actualConfigID, newConfig); err != nil {
 		return errorResult(enrichAutomationError(fmt.Sprintf("error saving patched automation: %v", err), err)), nil
 	}
 
-	return successResult(fmt.Sprintf("Automation '%s' patched successfully (%d operations applied)", automationID, len(ops))), nil
+	successMsg := fmt.Sprintf("Automation '%s' patched successfully (%d operations applied)", automationID, numOps)
+	// Warn when either the old or the new config uses "for:" triggers — the reload resets any
+	// countdown that was already running at the moment of the write.
+	if triggersHaveForTimer(newConfig.Triggers) || triggersHaveForTimer(oldTriggers) {
+		successMsg += automationForTimerReloadWarning
+	}
+	return successResult(successMsg), nil
 }
 
 // =============================================================================

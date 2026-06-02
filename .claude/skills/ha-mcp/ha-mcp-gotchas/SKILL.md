@@ -27,6 +27,7 @@ Look up by symptom. Fix is actionable.
 | Entity ID doesn't match alias/name after create           | HA slugifies `alias`/`name` to derive entity_id; strips non-ASCII chars   | Use ASCII alias, or pass `automation_id` to override the slug explicitly.                                       |
 | Script `update` loses fields (sequence, fields, etc.)     | `get_state` returns only state + friendly_name, not full script config     | Always call `manage_script:get` (uses `GetScript()`), never derive config from a state call.                    |
 | Coverage action returns empty even for active automations | Requires at least one automation with triggers using the target entity     | Expected behavior — no coverage data = target not referenced.                                                   |
+| Light (or actuator) stays on indefinitely after patching an automation | `patch`/`update` writes via REST, causing HA to reload the automation and reset in-flight `for:` trigger timers. If the sensor is already in the target state, no new state transition fires. | Tool now warns when `for:` triggers are present. Verify actuators manually after the call. Identical (no-op) patches are skipped automatically to avoid a needless reload. |
 
 ## Helper ID Rules
 
