@@ -194,6 +194,47 @@ func TestGet(t *testing.T) {
 	}
 }
 
+func TestEscapeSegment(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"plain segment", "entity_id", "entity_id"},
+		{"slash in key", "a/b", "a~1b"},
+		{"tilde in key", "a~b", "a~0b"},
+		{"tilde-slash combo", "a~/b", "a~0~1b"},
+		{"empty string", "", ""},
+		{"numeric", "42", "42"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := EscapeSegment(tt.in)
+			if got != tt.want {
+				t.Errorf("EscapeSegment(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEscapeSegmentRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	cases := []string{"entity_id", "a/b", "a~b", "a~/b", "target", "~1crazy~0key"}
+	for _, s := range cases {
+		escaped := EscapeSegment(s)
+		roundtripped := unescapeSegment(escaped)
+		if roundtripped != s {
+			t.Errorf("round-trip failed for %q: EscapeSegment → %q → unescapeSegment → %q", s, escaped, roundtripped)
+		}
+	}
+}
+
 func TestParseIndex(t *testing.T) {
 	t.Parallel()
 

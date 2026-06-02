@@ -18,7 +18,7 @@ description: "Use when choosing which ha-mcp tool or action to call. Examples: \
 | Aggregated stats (min/max/mean) for a sensor         | `query_entities` mode=statistics                                       |
 | Which entity domains exist in this HA instance?      | `query_entities` mode=domains                                          |
 | Device health (orphaned / config errors)             | `query_devices` mode=health                                            |
-| Where is entity X used? (automations, scripts)       | `analyze_entity`                                                       |
+| Where is entity X used? (automations, scripts)       | `analyze_entity` — returns RFC 6901 paths to each reference location  |
 | Which entities does automation X depend on?          | `get_entity_dependencies`                                              |
 | Create / edit / delete an automation                 | `manage_automation` action=create/update/delete                        |
 | Toggle / enable / disable an automation              | `manage_automation` action=toggle                                       |

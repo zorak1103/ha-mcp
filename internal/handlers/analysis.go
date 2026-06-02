@@ -145,20 +145,22 @@ type UsageExcerpt struct {
 
 // AutomationReference describes how an automation references an entity.
 type AutomationReference struct {
-	EntityID      string         `json:"entity_id"`
-	Alias         string         `json:"alias,omitempty"`
-	State         string         `json:"state"`
-	LastTriggered string         `json:"last_triggered,omitempty"`
-	UsedIn        []string       `json:"used_in"` // "trigger", "condition", "action"
-	Excerpts      []UsageExcerpt `json:"excerpts,omitempty"`
+	EntityID      string          `json:"entity_id"`
+	Alias         string          `json:"alias,omitempty"`
+	State         string          `json:"state"`
+	LastTriggered string          `json:"last_triggered,omitempty"`
+	UsedIn        []string        `json:"used_in"` // "trigger", "condition", "action"
+	Paths         []ReferencePath `json:"paths,omitempty"`
+	Excerpts      []UsageExcerpt  `json:"excerpts,omitempty"`
 }
 
 // ScriptReference describes how a script references an entity.
 type ScriptReference struct {
-	EntityID     string         `json:"entity_id"`
-	FriendlyName string         `json:"friendly_name,omitempty"`
-	UsedIn       string         `json:"used_in"` // "action"
-	Excerpts     []UsageExcerpt `json:"excerpts,omitempty"`
+	EntityID     string          `json:"entity_id"`
+	FriendlyName string          `json:"friendly_name,omitempty"`
+	UsedIn       string          `json:"used_in"` // "action"
+	Paths        []ReferencePath `json:"paths,omitempty"`
+	Excerpts     []UsageExcerpt  `json:"excerpts,omitempty"`
 }
 
 // SceneReference describes how a scene references an entity.
@@ -329,6 +331,7 @@ func (h *AnalysisHandlers) findAutomationReferences(ctx context.Context, client 
 				LastTriggered: auto.LastTriggered,
 				UsedIn:        usedIn,
 			}
+			ref.Paths = collectAutomationReferencePaths(fullAuto.Config, entityID)
 			if verbose {
 				ref.Excerpts = collectEntityExcerpts(fullAuto.Config, entityID)
 			}
@@ -358,6 +361,7 @@ func (h *AnalysisHandlers) findScriptReferences(ctx context.Context, client home
 			FriendlyName: fn,
 			UsedIn:       usedInAction,
 		}
+		ref.Paths = collectSectionReferencePaths(sequence, "sequence", "action", entityID)
 		if verbose {
 			ref.Excerpts = collectSequenceExcerpts(sequence, entityID)
 		}
@@ -1288,6 +1292,9 @@ func (h *AnalysisHandlers) formatAutomationRefs(parts []string, autos []Automati
 			name = auto.EntityID
 		}
 		parts = append(parts, fmt.Sprintf("  • %s (%s, %s)", name, auto.State, strings.Join(auto.UsedIn, "+")))
+		for _, rp := range auto.Paths {
+			parts = append(parts, formatReferencePath(rp))
+		}
 		if verbose {
 			for _, ex := range auto.Excerpts {
 				parts = append(parts, fmt.Sprintf("    %s: %s", ex.Section, ex.Summary))
@@ -1308,6 +1315,9 @@ func (h *AnalysisHandlers) formatScriptRefs(parts []string, scripts []ScriptRefe
 			name = script.EntityID
 		}
 		parts = append(parts, fmt.Sprintf("  • %s (%s)", name, script.UsedIn))
+		for _, rp := range script.Paths {
+			parts = append(parts, formatReferencePath(rp))
+		}
 		if verbose {
 			for _, ex := range script.Excerpts {
 				parts = append(parts, fmt.Sprintf("    %s: %s", ex.Section, ex.Summary))
@@ -1315,6 +1325,14 @@ func (h *AnalysisHandlers) formatScriptRefs(parts []string, scripts []ScriptRefe
 		}
 	}
 	return parts
+}
+
+// formatReferencePath formats a single ReferencePath as an indented line.
+func formatReferencePath(rp ReferencePath) string {
+	if rp.Context != "" {
+		return fmt.Sprintf("    %s  (%s)", rp.Path, rp.Context)
+	}
+	return fmt.Sprintf("    %s", rp.Path)
 }
 
 func (h *AnalysisHandlers) formatHistory(parts []string, history []HistoryEntry) []string {

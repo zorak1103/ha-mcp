@@ -2336,14 +2336,171 @@ func TestAnalysisHandlers_verbose_mode(t *testing.T) {
 		t.Errorf("verbose=true should include 'on' in trigger excerpt, got:\n%s", text)
 	}
 
-	// Test verbose=false (default) — should NOT include excerpt lines
+	// Test verbose=false (default) — should NOT include full excerpt lines.
+	// Paths are always shown (e.g. "trigger: state" appears as path context), but
+	// full excerpt summaries like 'state binary_sensor.motion → "on"' are verbose-only.
 	args2 := map[string]any{"entity_id": entityID, "format": "natural"}
 	result2, err := h.handleAnalyzeEntity(context.Background(), client, args2)
 	if err != nil {
 		t.Fatalf("handleAnalyzeEntity() error = %v", err)
 	}
 	text2 := result2.Content[0].Text
-	if strings.Contains(text2, "trigger: state") {
-		t.Errorf("verbose=false should not include trigger excerpt, got:\n%s", text2)
+	// The verbose excerpt contains the exact state value in quotes (e.g. → "on").
+	// Path context only shows the trigger type ("trigger: state"), not state values.
+	if strings.Contains(text2, `→ "on"`) {
+		t.Errorf("verbose=false should not include full trigger excerpt with state value, got:\n%s", text2)
+	}
+}
+
+// --- Reference path formatting tests ---
+
+// TestFormatScriptRefs_ShowsPaths verifies that formatScriptRefs includes RFC 6901
+// path lines when the ScriptReference has Paths populated.
+func TestFormatScriptRefs_ShowsPaths(t *testing.T) {
+	t.Parallel()
+
+	h := NewAnalysisHandlers()
+	scripts := []ScriptReference{
+		{
+			EntityID:     "script.morning",
+			FriendlyName: "Morning Script",
+			UsedIn:       "action",
+			Paths: []ReferencePath{
+				{Path: "/sequence/0/target/entity_id", Context: "action: automation.turn_off"},
+				{Path: "/sequence/3/target/entity_id", Context: "action: automation.turn_on"},
+			},
+		},
+	}
+
+	var parts []string
+	parts = h.formatScriptRefs(parts, scripts, false)
+	result := strings.Join(parts, "\n")
+
+	if !strings.Contains(result, "Morning Script") {
+		t.Errorf("should contain script name, got:\n%s", result)
+	}
+	if !strings.Contains(result, "/sequence/0/target/entity_id") {
+		t.Errorf("should contain first path, got:\n%s", result)
+	}
+	if !strings.Contains(result, "/sequence/3/target/entity_id") {
+		t.Errorf("should contain second path, got:\n%s", result)
+	}
+	if !strings.Contains(result, "action: automation.turn_off") {
+		t.Errorf("should contain context label, got:\n%s", result)
+	}
+}
+
+// TestFormatScriptRefs_NoPaths verifies that formatScriptRefs still works
+// cleanly when no Paths are populated (e.g. for scripts with no found references).
+func TestFormatScriptRefs_NoPaths(t *testing.T) {
+	t.Parallel()
+
+	h := NewAnalysisHandlers()
+	scripts := []ScriptReference{
+		{
+			EntityID:     "script.morning",
+			FriendlyName: "Morning Script",
+			UsedIn:       "action",
+		},
+	}
+
+	var parts []string
+	parts = h.formatScriptRefs(parts, scripts, false)
+	result := strings.Join(parts, "\n")
+
+	if !strings.Contains(result, "Morning Script") {
+		t.Errorf("should contain script name, got:\n%s", result)
+	}
+	// No path lines should appear.
+	if strings.Contains(result, "/sequence") {
+		t.Errorf("should not contain path segments when Paths is empty, got:\n%s", result)
+	}
+}
+
+// TestFormatAutomationRefs_ShowsPaths verifies that formatAutomationRefs includes
+// RFC 6901 path lines when the AutomationReference has Paths populated.
+func TestFormatAutomationRefs_ShowsPaths(t *testing.T) {
+	t.Parallel()
+
+	h := NewAnalysisHandlers()
+	autos := []AutomationReference{
+		{
+			EntityID: "automation.lights",
+			Alias:    "Turn on Lights",
+			State:    "on",
+			UsedIn:   []string{"trigger"},
+			Paths: []ReferencePath{
+				{Path: "/triggers/0/entity_id", Context: "trigger: state"},
+			},
+		},
+	}
+
+	var parts []string
+	parts = h.formatAutomationRefs(parts, autos, false)
+	result := strings.Join(parts, "\n")
+
+	if !strings.Contains(result, "Turn on Lights") {
+		t.Errorf("should contain automation alias, got:\n%s", result)
+	}
+	if !strings.Contains(result, "/triggers/0/entity_id") {
+		t.Errorf("should contain path, got:\n%s", result)
+	}
+	if !strings.Contains(result, "trigger: state") {
+		t.Errorf("should contain context, got:\n%s", result)
+	}
+}
+
+// TestHandleAnalyzeEntity_ScriptPathsInOutput is an integration-level unit test
+// that verifies the full handleAnalyzeEntity call populates and formats Paths.
+func TestHandleAnalyzeEntity_ScriptPathsInOutput(t *testing.T) {
+	t.Parallel()
+
+	const entityID = "automation.example"
+
+	// Build a script whose sequence contains the target entity_id.
+	sequence := []any{
+		map[string]any{
+			"action": "automation.turn_off",
+			"target": map[string]any{"entity_id": entityID},
+		},
+	}
+
+	client := &mockAnalysisClient{
+		GetStateFn: func(_ context.Context, eid string) (*homeassistant.Entity, error) {
+			return &homeassistant.Entity{EntityID: eid, State: "on"}, nil
+		},
+		ListAutomationsFn: func(context.Context) ([]homeassistant.Automation, error) {
+			return nil, nil
+		},
+		ListScriptsFn: func(context.Context) ([]homeassistant.Entity, error) {
+			return []homeassistant.Entity{
+				{
+					EntityID: "script.example_script",
+					State:    "off",
+					Attributes: map[string]any{
+						"friendly_name": "Example Script",
+						"sequence":      sequence,
+					},
+				},
+			}, nil
+		},
+	}
+
+	h := NewAnalysisHandlers()
+	args := map[string]any{"entity_id": entityID, "format": "natural"}
+	result, err := h.handleAnalyzeEntity(context.Background(), client, args)
+	if err != nil {
+		t.Fatalf("handleAnalyzeEntity() error = %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("handleAnalyzeEntity() returned error result: %v", result.Content)
+	}
+
+	text := result.Content[0].Text
+	if !strings.Contains(text, "/sequence/0/target/entity_id") {
+		t.Errorf("output should contain path to entity reference, got:\n%s", text)
+	}
+	if !strings.Contains(text, "action: automation.turn_off") {
+		t.Errorf("output should contain action context, got:\n%s", text)
 	}
 }

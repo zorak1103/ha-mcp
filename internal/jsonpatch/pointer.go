@@ -33,6 +33,14 @@ func unescapeSegment(s string) string {
 	return s
 }
 
+// EscapeSegment applies RFC 6901 escape encoding to a single path segment:
+// ~ → ~0, / → ~1 (in that order — inverse of unescapeSegment).
+func EscapeSegment(s string) string {
+	s = strings.ReplaceAll(s, "~", "~0")
+	s = strings.ReplaceAll(s, "/", "~1")
+	return s
+}
+
 // Get retrieves the value at path in doc.
 // An empty path returns the whole document.
 func Get(doc any, path string) (any, error) {

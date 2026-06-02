@@ -88,7 +88,7 @@ AI Client (Claude, Cline)
 
 **Domain handlers** follow naming `handlers/{domain}.go` → `manage_{domain}` tool. Exceptions:
 - `entities.go` → `get_state`
-- `analysis.go` → `analyze_entity`, `get_entity_dependencies`
+- `analysis.go` → `analyze_entity`, `get_entity_dependencies`; `analysis_paths.go` → RFC 6901 path walker (`collectEntityPaths`, `collectSectionReferencePaths`, `collectAutomationReferencePaths`, `referencePathContext`) used to surface exact reference locations in `analyze_entity` output; `analysis_verbose.go` → excerpt summaries (verbose mode)
 - `entities_consolidated.go` → `query_entities`; `devices_consolidated.go` → `query_devices`
 - `targets_consolidated.go` → `analyze_target`; `registry_consolidated.go` → `get_registry`
 - `entities_manage.go` → `manage_entity`; `devices_manage.go` → `manage_device`

@@ -19,7 +19,7 @@ Authorization: Bearer <your-ha-access-token>
 | `query_entities`          | Consolidated entity queries (mode: current, history, statistics, domains, presence, health; format: natural/json; group_by: domain, area_id, device_class, integration; health: multi-category filter for unavailable/unknown/disabled/orphaned/stale entities) |
 | `query_devices`           | Device health check (mode: health; format: natural/json; categories: disabled, orphaned_config_entry, config_entry_error, no_entities, no_config_entries; manufacturer filter)                                                                                |
 | `get_state`               | Get state of a specific entity (format: natural/json)                                                                                                                                                                                    |
-| `analyze_entity`          | Analyze entity usage in automations, scripts, and scenes; includes registry metadata (platform, area, device, labels, aliases) at zero extra API cost (format: natural/json)                                                             |
+| `analyze_entity`          | Analyze entity usage in automations, scripts, and scenes; includes registry metadata (platform, area, device, labels, aliases) and RFC 6901 JSON Pointer paths to each reference location (e.g. `/sequence/0/target/entity_id  (action: automation.turn_off)`) at zero extra API cost (format: natural/json) |
 | `get_entity_dependencies` | Find all entities an automation/script depends on (format: natural/json)                                                                                                                                                                 |
 
 ### Registry Tools
