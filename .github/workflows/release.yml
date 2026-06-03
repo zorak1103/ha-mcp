@@ -14,7 +14,7 @@ permissions:
 
 env:
   # renovate: datasource=golang-version depName=golang
-  GO_VERSION: "1.26.3"
+  GO_VERSION: "1.26.4"
 
 jobs:
   release:
