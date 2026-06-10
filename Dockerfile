@@ -1,6 +1,6 @@
 # GoReleaser v2 multi-arch Dockerfile
 # Binary is pre-built by GoReleaser and placed in platform-specific directories
-FROM alpine:3.23
+FROM alpine:3.24
 
 # Install runtime dependencies
 RUN apk add --no-cache ca-certificates tzdata \
