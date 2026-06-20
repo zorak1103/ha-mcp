@@ -139,7 +139,7 @@ jobs:
 
       - name: Install govulncheck
         # renovate: datasource=go depName=golang.org/x/vuln
-        run: go install golang.org/x/vuln/cmd/govulncheck@v1.3.0
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.4.0
 
       - name: Run govulncheck
         run: task vulncheck
