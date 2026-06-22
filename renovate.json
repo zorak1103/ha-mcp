@@ -10,6 +10,7 @@
   "timezone": "Europe/Berlin",
   "schedule": ["at any time"],
   "prConcurrentLimit": 5,
+  "gitAuthor": "zorak1103 <zorak1103@users.noreply.github.com>",
   "labels": [
     "dependencies"
   ],
@@ -69,6 +70,13 @@
       "matchPackageNames": ["golangci/golangci-lint"],
       "automerge": true,
       "matchUpdateTypes": ["minor", "patch"]
+    },
+    {
+      "description": "govulncheck: skip v1.4.0 (panics on generics) — allow only versions before or after it",
+      "matchManagers": ["custom.regex"],
+      "matchPackageNames": ["golang.org/x/vuln"],
+      "allowedVersions": "<1.4.0 || >1.4.0",
+      "automerge": true
     }
   ],
   "gomod": {
@@ -91,13 +99,6 @@
       "managerFilePatterns": ["/^\\.github/workflows/.+\\.ya?ml$/"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+version: (?<currentValue>v\\S+)"
-      ]
-    },
-    {
-      "customType": "regex",
-      "managerFilePatterns": ["/^\\.github/workflows/.+\\.ya?ml$/"],
-      "matchStrings": [
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+GO_VERSION: \"(?<currentValue>\\S+)\""
       ]
     }
   ]
