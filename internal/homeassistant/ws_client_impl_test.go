@@ -1322,6 +1322,52 @@ func TestWSClientImplWithSender_CallService_NilData(t *testing.T) {
 	}
 }
 
+func TestWSClientImplWithSender_ClearSystemLog(t *testing.T) {
+	t.Parallel()
+
+	mock := &mockWSClientSender{
+		sendCommandFunc: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
+			if cmdType != "call_service" {
+				t.Errorf("unexpected command: %s", cmdType)
+			}
+			if params["domain"] != "system_log" {
+				t.Errorf("domain mismatch: %v", params["domain"])
+			}
+			if params["service"] != "clear" {
+				t.Errorf("service mismatch: %v", params["service"])
+			}
+			if params["service_data"] != nil {
+				t.Error("service_data should be nil")
+			}
+			return makeWSResultMsg(map[string]any{"context": map[string]any{"id": "123"}}), nil
+		},
+	}
+
+	client := NewWSClientImplWithSender(mock)
+	err := client.ClearSystemLog(context.Background())
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestWSClientImplWithSender_ClearSystemLog_Error(t *testing.T) {
+	t.Parallel()
+
+	mock := &mockWSClientSender{
+		sendCommandFunc: func(_ context.Context, _ string, _ map[string]any) (*WSResultMessage, error) {
+			return nil, errors.New("unknown_command")
+		},
+	}
+
+	client := NewWSClientImplWithSender(mock)
+	err := client.ClearSystemLog(context.Background())
+
+	if err == nil || !containsStr(err.Error(), "clear system log failed") {
+		t.Errorf("expected 'clear system log failed' error, got: %v", err)
+	}
+}
+
 func TestWSClientImplWithSender_CallService_NilResult(t *testing.T) {
 	t.Parallel()
 

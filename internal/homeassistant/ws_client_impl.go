@@ -1875,7 +1875,7 @@ func (c *wsClientImpl) GetSystemLog(ctx context.Context) ([]SystemLogEntry, erro
 
 // ClearSystemLog clears the Home Assistant system log ring buffer.
 func (c *wsClientImpl) ClearSystemLog(ctx context.Context) error {
-	_, err := c.ws.SendCommand(ctx, "system_log/clear", nil)
+	_, err := c.CallService(ctx, "system_log", "clear", nil)
 	if err != nil {
 		return fmt.Errorf("clear system log failed: %w", err)
 	}
