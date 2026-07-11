@@ -29,6 +29,7 @@ Look up by symptom. Fix is actionable.
 | Script `update` loses fields (sequence, fields, etc.)     | `get_state` returns only state + friendly_name, not full script config     | Always call `manage_script:get` (uses `GetScript()`), never derive config from a state call.                    |
 | Coverage action returns empty even for active automations | Requires at least one automation with triggers using the target entity     | Expected behavior — no coverage data = target not referenced.                                                   |
 | Light (or actuator) stays on indefinitely after patching an automation | `patch`/`update` writes via REST, causing HA to reload the automation and reset in-flight `for:` trigger timers. If the sensor is already in the target state, no new state transition fires. | Tool now warns when `for:` triggers are present. Verify actuators manually after the call. Identical (no-op) patches are skipped automatically to avoid a needless reload. |
+| `get` still shows pre-change config right after a successful `update`/`patch` | Reads are WebSocket (`automation/config`/`script/config`), writes are REST — a config write only becomes visible after a domain reload. `update`/`patch` now call `automation.reload`/`script.reload` automatically after every real write (#126). | Check the success message for a "reload after save failed" warning — if present, the write persisted but the reload itself failed; retry `manage_automation:get`/`manage_script:get` or call `automation.reload`/`script.reload` manually. |
 
 ## Helper ID Rules
 

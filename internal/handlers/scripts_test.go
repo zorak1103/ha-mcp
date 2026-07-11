@@ -1008,6 +1008,137 @@ func TestManageScript_SemanticPatch(t *testing.T) {
 	runHandlerTestCases(t, tests, h.handleManageScript)
 }
 
+// TestManageScript_PatchReload verifies that a successful patch write triggers
+// script.reload so the change is immediately visible to a subsequent get (#126).
+func TestManageScript_PatchReload(t *testing.T) {
+	t.Parallel()
+
+	baseConfig := &homeassistant.ScriptConfig{
+		Alias:    "Morning Routine",
+		Mode:     "single",
+		Sequence: []any{map[string]any{"action": "light.turn_on"}},
+	}
+
+	h := &ScriptHandlers{}
+	patchArgs := map[string]any{
+		"action":    "patch",
+		"script_id": "morning_routine",
+		"operations": []any{
+			map[string]any{"op": "replace", "path": "/mode", "value": "queued"},
+		},
+	}
+
+	t.Run("patch reloads script domain after a successful write", func(t *testing.T) {
+		t.Parallel()
+		var reloadDomain, reloadService string
+		client := &UniversalMockClient{}
+		client.GetScriptFn = func(context.Context, string) (*homeassistant.Script, error) {
+			cfg := *baseConfig
+			return &homeassistant.Script{EntityID: "script.morning_routine", Config: &cfg}, nil
+		}
+		client.UpdateScriptFn = func(context.Context, string, homeassistant.ScriptConfig) error { return nil }
+		client.CallServiceFn = func(_ context.Context, domain, service string, _ map[string]any) ([]homeassistant.Entity, error) {
+			reloadDomain, reloadService = domain, service
+			return nil, nil
+		}
+
+		result, err := h.handleManageScript(context.Background(), client, patchArgs)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("expected success, got error: %s", result.Content[0].Text)
+		}
+		if reloadDomain != "script" || reloadService != "reload" {
+			t.Errorf("expected script.reload to be called, got domain=%q service=%q", reloadDomain, reloadService)
+		}
+	})
+
+	t.Run("patch reports a warning when the reload call fails", func(t *testing.T) {
+		t.Parallel()
+		client := &UniversalMockClient{}
+		client.GetScriptFn = func(context.Context, string) (*homeassistant.Script, error) {
+			cfg := *baseConfig
+			return &homeassistant.Script{EntityID: "script.morning_routine", Config: &cfg}, nil
+		}
+		client.UpdateScriptFn = func(context.Context, string, homeassistant.ScriptConfig) error { return nil }
+		client.CallServiceFn = func(context.Context, string, string, map[string]any) ([]homeassistant.Entity, error) {
+			return nil, errors.New("ws down")
+		}
+
+		result, err := h.handleManageScript(context.Background(), client, patchArgs)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("expected success (patch persisted even if reload failed), got error: %s", result.Content[0].Text)
+		}
+		if !strings.Contains(result.Content[0].Text, "reload after save failed") {
+			t.Errorf("expected reload-failed warning, got: %s", result.Content[0].Text)
+		}
+	})
+}
+
+// TestManageScript_UpdateReload verifies that a successful update write triggers
+// script.reload so the change is immediately visible to a subsequent get (#126).
+func TestManageScript_UpdateReload(t *testing.T) {
+	t.Parallel()
+
+	makeScript := func() *homeassistant.Script {
+		return &homeassistant.Script{
+			EntityID:     "script.morning_routine",
+			FriendlyName: "Morning Routine",
+			Config:       &homeassistant.ScriptConfig{Alias: "Morning Routine"},
+		}
+	}
+	h := NewScriptHandlers()
+	updateArgs := map[string]any{"action": "update", "script_id": "morning_routine", "alias": "Updated"}
+
+	t.Run("update reloads script domain after a successful write", func(t *testing.T) {
+		t.Parallel()
+		var reloadDomain, reloadService string
+		client := &UniversalMockClient{}
+		client.GetScriptFn = func(context.Context, string) (*homeassistant.Script, error) { return makeScript(), nil }
+		client.UpdateScriptFn = func(context.Context, string, homeassistant.ScriptConfig) error { return nil }
+		client.CallServiceFn = func(_ context.Context, domain, service string, _ map[string]any) ([]homeassistant.Entity, error) {
+			reloadDomain, reloadService = domain, service
+			return nil, nil
+		}
+
+		result, err := h.handleManageScript(context.Background(), client, updateArgs)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("expected success, got error: %s", result.Content[0].Text)
+		}
+		if reloadDomain != "script" || reloadService != "reload" {
+			t.Errorf("expected script.reload to be called, got domain=%q service=%q", reloadDomain, reloadService)
+		}
+	})
+
+	t.Run("update reports a warning when the reload call fails", func(t *testing.T) {
+		t.Parallel()
+		client := &UniversalMockClient{}
+		client.GetScriptFn = func(context.Context, string) (*homeassistant.Script, error) { return makeScript(), nil }
+		client.UpdateScriptFn = func(context.Context, string, homeassistant.ScriptConfig) error { return nil }
+		client.CallServiceFn = func(context.Context, string, string, map[string]any) ([]homeassistant.Entity, error) {
+			return nil, errors.New("ws down")
+		}
+
+		result, err := h.handleManageScript(context.Background(), client, updateArgs)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("expected success (update persisted even if reload failed), got error: %s", result.Content[0].Text)
+		}
+		if !strings.Contains(result.Content[0].Text, "reload after save failed") {
+			t.Errorf("expected reload-failed warning, got: %s", result.Content[0].Text)
+		}
+	})
+}
+
 func TestScriptHandlers_CallService(t *testing.T) {
 	t.Parallel()
 

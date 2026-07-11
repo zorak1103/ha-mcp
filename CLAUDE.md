@@ -216,6 +216,7 @@ The server supports flexible tool/action filtering for security and capability c
 - `scene.reload` ❌ does NOT work — scenes require full HA restart after REST creation
 - `call_service`: snapshots target entities before, polls for state changes after, appends "\nState changes: entity: old → new" or warning
 - **Config**: Env vars `HA_WAIT_TIMEOUT_MS` (default: 5000), `HA_WAIT_POLL_INTERVAL_MS` (default: 100). Injected via `mcp.WithWaitConfig(ctx, cfg)` → `mcp.WaitConfigFromContext(ctx)` in handlers
+- **Reads are WebSocket, writes are REST** (`GetAutomation`/`GetScript` via `automation/config`/`script/config` WS commands; `Update*` via REST `/api/config/...`) — a REST config write does not refresh HA's running config until a domain reload runs. `manage_automation`/`manage_script` `update` and `patch` call `reloadDomain(ctx, client, domain)` (`internal/handlers/waiter.go`) after every successful write for this reason — without it, an immediate `get` after `update`/`patch` returns stale pre-write config (issue #126). Reload failure (rare) appends a warning to the success message rather than failing the call, since the config write itself already succeeded.
 
 ### Configuration Priority
 

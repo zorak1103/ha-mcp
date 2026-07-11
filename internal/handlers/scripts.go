@@ -22,6 +22,13 @@ const (
 	scriptActionPatch   = "patch"
 )
 
+// scriptReloadFailedWarning is appended to update/patch success messages when the post-write
+// script.reload service call itself fails. The config write to REST already succeeded, so the
+// change is not lost — but until a reload succeeds (manual or automatic retry), get() may keep
+// returning the pre-change config (#126).
+const scriptReloadFailedWarning = " (warning: reload after save failed; changes may not be " +
+	"visible or active until a manual script.reload)"
+
 // ScriptHandlers provides handlers for script-related MCP tools.
 type ScriptHandlers struct{}
 
@@ -417,7 +424,11 @@ func (h *ScriptHandlers) handleUpdate(ctx context.Context, client homeassistant.
 		return errorResult(enrichConfigError(msg, err, scriptErrorHints)), nil
 	}
 
-	return successResult(fmt.Sprintf("Script '%s' updated successfully", scriptID)), nil
+	successMsg := fmt.Sprintf("Script '%s' updated successfully", scriptID)
+	if !reloadDomain(ctx, client, "script") {
+		successMsg += scriptReloadFailedWarning
+	}
+	return successResult(successMsg), nil
 }
 
 func (h *ScriptHandlers) handleDelete(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
@@ -519,7 +530,11 @@ func (h *ScriptHandlers) handlePatch(ctx context.Context, client homeassistant.C
 		return errorResult(enrichConfigError(msg, err, scriptErrorHints)), nil
 	}
 
-	return successResult(fmt.Sprintf("Script '%s' patched successfully (%d operations applied)", scriptID, len(ops))), nil
+	successMsg := fmt.Sprintf("Script '%s' patched successfully (%d operations applied)", scriptID, len(ops))
+	if !reloadDomain(ctx, client, "script") {
+		successMsg += scriptReloadFailedWarning
+	}
+	return successResult(successMsg), nil
 }
 
 // =============================================================================

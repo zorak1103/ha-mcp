@@ -31,14 +31,23 @@ const (
 )
 
 // automationForTimerReloadWarning is appended to patch/update success messages when the
-// automation has triggers with a "for:" duration. Home Assistant reloads the automation on
-// every config write, which tears down trigger runtime state (including in-flight "for:" timers).
-// If the monitored entity is already in the target state, no new transition occurs and the
-// timer never re-fires — leaving actuators stuck until the next full state cycle.
+// automation has triggers with a "for:" duration. Update/patch trigger an explicit
+// automation.reload after a successful config write (see reloadDomain in waiter.go) so the
+// change is immediately visible to a subsequent get (#126) — but that reload tears down
+// trigger runtime state (including in-flight "for:" timers). If the monitored entity is
+// already in the target state, no new transition occurs and the timer never re-fires —
+// leaving actuators stuck until the next full state cycle.
 const automationForTimerReloadWarning = " (warning: saving reloads the automation in Home Assistant, " +
 	"which resets any in-flight 'for:' trigger timer; if the monitored entity is already in the " +
 	"target state the trigger will not re-fire until the next state transition — verify dependent " +
 	"actuators after this change)"
+
+// automationReloadFailedWarning is appended to update/patch success messages when the
+// post-write automation.reload service call itself fails. The config write to REST already
+// succeeded, so the change is not lost — but until a reload succeeds (manual or automatic
+// retry), get() may keep returning the pre-change config (#126).
+const automationReloadFailedWarning = " (warning: reload after save failed; changes may not be " +
+	"visible or active until a manual automation.reload)"
 
 // manualOnlyTrigger is a placeholder trigger for manual-only automations.
 var manualOnlyTrigger = []any{
@@ -457,7 +466,9 @@ func (h *AutomationHandlers) handleUpdate(ctx context.Context, client homeassist
 	}
 
 	successMsg := fmt.Sprintf("Automation '%s' updated successfully", automationID)
-	if triggersHaveForTimer(current.Config.Triggers) {
+	if !reloadDomain(ctx, client, "automation") {
+		successMsg += automationReloadFailedWarning
+	} else if triggersHaveForTimer(current.Config.Triggers) {
 		successMsg += automationForTimerReloadWarning
 	}
 	return successResult(successMsg), nil
@@ -601,9 +612,11 @@ func applyPatchedAutomationWrite(
 	}
 
 	successMsg := fmt.Sprintf("Automation '%s' patched successfully (%d operations applied)", automationID, numOps)
-	// Warn when either the old or the new config uses "for:" triggers — the reload resets any
-	// countdown that was already running at the moment of the write.
-	if triggersHaveForTimer(newConfig.Triggers) || triggersHaveForTimer(oldTriggers) {
+	if !reloadDomain(ctx, client, "automation") {
+		successMsg += automationReloadFailedWarning
+	} else if triggersHaveForTimer(newConfig.Triggers) || triggersHaveForTimer(oldTriggers) {
+		// Warn when either the old or the new config uses "for:" triggers — the reload resets any
+		// countdown that was already running at the moment of the write.
 		successMsg += automationForTimerReloadWarning
 	}
 	return successResult(successMsg), nil

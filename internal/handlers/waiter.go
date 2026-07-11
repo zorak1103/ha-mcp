@@ -146,6 +146,17 @@ func reloadAndWaitForEntity(ctx context.Context, client homeassistant.Client, do
 	return waitForEntityAppear(ctx, client, entityID)
 }
 
+// reloadDomain triggers a config reload for the given domain so a REST-written config
+// change (update/patch) becomes immediately live and readable. Home Assistant processes
+// the reload service call synchronously, so a nil error means the new config is already
+// visible to a subsequent get. Used by update/patch handlers, which — unlike create/delete —
+// write config via REST without any other reload step (see issue #126).
+// Returns true when the reload service call succeeded.
+func reloadDomain(ctx context.Context, client homeassistant.Client, domain string) bool {
+	_, err := client.CallService(ctx, domain, "reload", nil)
+	return err == nil
+}
+
 // waitForTraces polls trace/list until at least one trace is returned or the timeout expires.
 // Returns the trace list and whether any were found before the timeout.
 // Used when wait=true on manage_trace:list to handle async trace recording.
