@@ -1077,6 +1077,49 @@ func TestManageScript_PatchReload(t *testing.T) {
 			t.Errorf("expected reload-failed warning, got: %s", result.Content[0].Text)
 		}
 	})
+
+	t.Run("no-op patch does not write or trigger a reload", func(t *testing.T) {
+		t.Parallel()
+		updateCalled := false
+		reloadCalled := false
+		client := &UniversalMockClient{}
+		client.GetScriptFn = func(context.Context, string) (*homeassistant.Script, error) {
+			cfg := *baseConfig
+			return &homeassistant.Script{EntityID: "script.morning_routine", Config: &cfg}, nil
+		}
+		client.UpdateScriptFn = func(context.Context, string, homeassistant.ScriptConfig) error {
+			updateCalled = true
+			return nil
+		}
+		client.CallServiceFn = func(context.Context, string, string, map[string]any) ([]homeassistant.Entity, error) {
+			reloadCalled = true
+			return nil, nil
+		}
+
+		noOpArgs := map[string]any{
+			"action":    "patch",
+			"script_id": "morning_routine",
+			"operations": []any{
+				map[string]any{"op": "replace", "path": "/mode", "value": "single"}, // matches existing value
+			},
+		}
+		result, err := h.handleManageScript(context.Background(), client, noOpArgs)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("expected success, got error: %s", result.Content[0].Text)
+		}
+		if updateCalled {
+			t.Error("UpdateScript must NOT be called for a no-op patch")
+		}
+		if reloadCalled {
+			t.Error("no-op patch must not trigger a reload")
+		}
+		if !strings.Contains(result.Content[0].Text, "no changes") {
+			t.Errorf("expected 'no changes' in response, got: %s", result.Content[0].Text)
+		}
+	})
 }
 
 // TestManageScript_UpdateReload verifies that a successful update write triggers
@@ -1135,6 +1178,40 @@ func TestManageScript_UpdateReload(t *testing.T) {
 		}
 		if !strings.Contains(result.Content[0].Text, "reload after save failed") {
 			t.Errorf("expected reload-failed warning, got: %s", result.Content[0].Text)
+		}
+	})
+
+	t.Run("no-op update does not write or trigger a reload", func(t *testing.T) {
+		t.Parallel()
+		updateCalled := false
+		reloadCalled := false
+		client := &UniversalMockClient{}
+		client.GetScriptFn = func(context.Context, string) (*homeassistant.Script, error) { return makeScript(), nil }
+		client.UpdateScriptFn = func(context.Context, string, homeassistant.ScriptConfig) error {
+			updateCalled = true
+			return nil
+		}
+		client.CallServiceFn = func(context.Context, string, string, map[string]any) ([]homeassistant.Entity, error) {
+			reloadCalled = true
+			return nil, nil
+		}
+
+		noOpArgs := map[string]any{"action": "update", "script_id": "morning_routine", "alias": "Morning Routine"}
+		result, err := h.handleManageScript(context.Background(), client, noOpArgs)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("expected success, got error: %s", result.Content[0].Text)
+		}
+		if updateCalled {
+			t.Error("UpdateScript must NOT be called for a no-op update")
+		}
+		if reloadCalled {
+			t.Error("no-op update must not trigger a reload")
+		}
+		if !strings.Contains(result.Content[0].Text, "no changes") {
+			t.Errorf("expected 'no changes' in response, got: %s", result.Content[0].Text)
 		}
 	})
 }

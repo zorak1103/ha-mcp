@@ -4,6 +4,7 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/zorak1103/ha-mcp/internal/handlers/formatter"
@@ -395,6 +396,10 @@ func (h *ScriptHandlers) handleUpdate(ctx context.Context, client homeassistant.
 		config.Alias = current.FriendlyName
 	}
 
+	// Snapshot config before mutation so we can detect no-op updates.
+	// No-op writes cause a needless script.reload.
+	beforeMap, _ := configToMap(config)
+
 	// Override with new values from args
 	if alias, ok := args["alias"].(string); ok {
 		config.Alias = alias
@@ -416,6 +421,11 @@ func (h *ScriptHandlers) handleUpdate(ctx context.Context, client homeassistant.
 	}
 	if fields, ok := args["fields"].(map[string]any); ok {
 		config.Fields = fields
+	}
+
+	afterMap, _ := configToMap(config)
+	if reflect.DeepEqual(beforeMap, afterMap) {
+		return successResult(fmt.Sprintf("Script '%s': no changes detected, skipping write (reload avoided)", scriptID)), nil
 	}
 
 	// Use configID (without prefix) for REST API
@@ -518,6 +528,12 @@ func (h *ScriptHandlers) handlePatch(ctx context.Context, client homeassistant.C
 
 	if dryRun, _ := args["dry_run"].(bool); dryRun {
 		return dryRunPatchResult(patchedMap, "script", scriptID, len(ops))
+	}
+
+	// A patch that resolves to the same config must skip the write (and reload) entirely —
+	// otherwise every no-op patch would trigger a needless script.reload.
+	if reflect.DeepEqual(configMap, patchedMap) {
+		return successResult(fmt.Sprintf("Script '%s': no changes detected, skipping write (reload avoided)", scriptID)), nil
 	}
 
 	var newConfig homeassistant.ScriptConfig
