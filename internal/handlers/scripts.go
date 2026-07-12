@@ -482,7 +482,7 @@ func deleteScriptWithRegistryFallback(ctx context.Context, client homeassistant.
 		return false, fmt.Sprintf("Error deleting script: %v", err)
 	}
 	if regErr := deleteScriptViaRegistry(ctx, client, entityID); regErr != nil {
-		return false, fmt.Sprintf("Error deleting script: %v", err)
+		return false, fmt.Sprintf("Error deleting script: %v (registry fallback also failed: %v)", err, regErr)
 	}
 	return true, ""
 }

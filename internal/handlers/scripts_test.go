@@ -746,7 +746,7 @@ func TestScriptHandlers_ManageScript_Delete(t *testing.T) {
 				return []homeassistant.EntityRegistryEntry{}, nil
 			},
 			wantError:    true,
-			wantContains: "Error deleting script",
+			wantContains: "registry fallback also failed: script \"script.example_toggle_2\" not found in entity registry",
 		},
 		{
 			name: "not found but registry removal fails",
@@ -767,7 +767,7 @@ func TestScriptHandlers_ManageScript_Delete(t *testing.T) {
 				return errors.New("registry removal failed")
 			},
 			wantError:    true,
-			wantContains: "Error deleting script",
+			wantContains: "registry fallback also failed: registry removal failed",
 		},
 		{
 			name: "not found but registry lookup fails",
@@ -783,7 +783,7 @@ func TestScriptHandlers_ManageScript_Delete(t *testing.T) {
 				return nil, errors.New("registry unavailable")
 			},
 			wantError:    true,
-			wantContains: "Error deleting script",
+			wantContains: "registry fallback also failed: registry unavailable",
 		},
 	}
 
