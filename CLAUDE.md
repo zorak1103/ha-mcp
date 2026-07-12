@@ -364,6 +364,8 @@ set -a && source .env.integration && set +a && go test -tags=integration -v ./in
 
 **TDD Required**: Tests MUST be written BEFORE writing or modifying code. Run `golangci-lint run --timeout=5m ./...` after implementation.
 
+**Roborev Review Gate**: This repo has a roborev post-commit hook (`.git/hooks/post-commit`) that asynchronously enqueues an AI review after every commit — the hook only enqueues, it does NOT block. After committing changes destined for push or a PR, run `roborev wait` (blocks on HEAD's review; exit 0 = pass, exit 1 = fail/no job found) before pushing. If it exits non-zero, run `/roborev-fix` to address the findings, then re-commit and `roborev wait` again before proceeding. Do not push or open a PR while a roborev review for the pushed commit is still outstanding.
+
 **File Editing Tool Priority**: Always use the dedicated file tools (Write, Edit) to create or modify files. Never use Bash with Python or shell commands to manipulate file content — the Write tool rewrites a complete file cleanly, the Edit tool makes surgical replacements. Python byte-level manipulation is error-prone, harder to read, and the wrong tool for the job.
 
 **CRLF Line Endings (Windows)**: `git config core.autocrlf=true` means working-directory files have CRLF line endings. The Edit tool silently fails to match multi-line strings in such files. When Edit fails unexpectedly on a file with many changes needed, use Write to rewrite the whole file instead of diagnosing the mismatch.
