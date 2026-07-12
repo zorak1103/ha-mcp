@@ -79,7 +79,7 @@ func TestIsYAMLDefinedEntity_RegistryLookupFails(t *testing.T) {
 }
 
 func TestYamlDefinedWriteError(t *testing.T) {
-	msg := yamlDefinedWriteError("script", "example_toggle", "script.example_toggle")
+	msg := yamlDefinedWriteError("script", "update", "example_toggle", "script.example_toggle")
 
 	assertContainsAll(t, msg, []string{
 		"example_toggle",
@@ -88,4 +88,12 @@ func TestYamlDefinedWriteError(t *testing.T) {
 		"script.example_toggle_2",
 		"script.reload",
 	})
+}
+
+func TestYamlDefinedWriteError_UsesActionInMessage(t *testing.T) {
+	updateMsg := yamlDefinedWriteError("script", "update", "example_toggle", "script.example_toggle")
+	patchMsg := yamlDefinedWriteError("script", "patch", "example_toggle", "script.example_toggle")
+
+	assertContainsAll(t, updateMsg, []string{"cannot update"})
+	assertContainsAll(t, patchMsg, []string{"cannot patch"})
 }

@@ -33,15 +33,16 @@ func isYAMLDefinedEntity(ctx context.Context, client homeassistant.Client, entit
 }
 
 // yamlDefinedWriteError builds the refusal message for a write attempt against a YAML-defined
-// entity. domain is "script" or "automation"; displayID is the user-supplied identifier as
-// echoed in other error messages; entityID is the resolved "<domain>.<id>" entity_id.
-func yamlDefinedWriteError(domain, displayID, entityID string) string {
+// entity. domain is "script" or "automation"; action is "update" or "patch" (the action being
+// refused); displayID is the user-supplied identifier as echoed in other error messages;
+// entityID is the resolved "<domain>.<id>" entity_id.
+func yamlDefinedWriteError(domain, action, displayID, entityID string) string {
 	return fmt.Sprintf(
-		"cannot update '%s': %s is YAML-defined, not storage-managed. The %s config API "+
+		"cannot %s '%s': %s is YAML-defined, not storage-managed. The %s config API "+
 			"cannot edit YAML-defined entities - writing would silently create a duplicate "+
 			"orphan entity (%s_2) instead of updating the original. Edit the YAML file directly "+
 			"and call %s.reload to apply changes.",
-		displayID, entityID, domain, entityID, domain,
+		action, displayID, entityID, domain, entityID, domain,
 	)
 }
 
@@ -50,10 +51,21 @@ func yamlDefinedWriteError(domain, displayID, entityID string) string {
 // (storage-managed entity, or the registry check itself failed - see isYAMLDefinedEntity).
 // Centralizing the checked&&isYAML branching here keeps handleUpdate/handlePatch below the
 // gocyclo threshold.
-func yamlWriteGuardError(ctx context.Context, client homeassistant.Client, domain, displayID, entityID string) *mcp.ToolsCallResult {
+func yamlWriteGuardError(ctx context.Context, client homeassistant.Client, domain, action, displayID, entityID string) *mcp.ToolsCallResult {
 	isYAML, checked := isYAMLDefinedEntity(ctx, client, entityID)
 	if !checked || !isYAML {
 		return nil
 	}
-	return errorResult(yamlDefinedWriteError(domain, displayID, entityID))
+	return errorResult(yamlDefinedWriteError(domain, action, displayID, entityID))
+}
+
+// resolveWriteCheckEntityID picks the entity_id to use for the YAML-defined write guard,
+// preferring the entity actually resolved from HA (resolvedEntityID, e.g. via a fallback
+// alias/UUID search) over the id guessed purely from user input (guessedEntityID) - the
+// fallback search may have matched a different underlying entity than the guess.
+func resolveWriteCheckEntityID(guessedEntityID, resolvedEntityID string) string {
+	if resolvedEntityID != "" {
+		return resolvedEntityID
+	}
+	return guessedEntityID
 }

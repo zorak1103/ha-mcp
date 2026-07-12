@@ -437,7 +437,8 @@ func (h *ScriptHandlers) handleUpdate(ctx context.Context, client homeassistant.
 
 	// Refuse to write YAML-defined scripts: the config API silently creates a duplicate
 	// orphan entity instead of updating them (#122).
-	if guardErr := yamlWriteGuardError(ctx, client, "script", scriptID, entityID); guardErr != nil {
+	checkEntityID := resolveWriteCheckEntityID(entityID, current.EntityID)
+	if guardErr := yamlWriteGuardError(ctx, client, "script", "update", scriptID, checkEntityID); guardErr != nil {
 		return guardErr, nil
 	}
 
@@ -592,10 +593,7 @@ func (h *ScriptHandlers) handlePatch(ctx context.Context, client homeassistant.C
 
 	// current.EntityID reflects the entity actually resolved above (findScriptByID may have
 	// matched a different entity than a bare entityID guess).
-	checkEntityID := entityID
-	if current.EntityID != "" {
-		checkEntityID = current.EntityID
-	}
+	checkEntityID := resolveWriteCheckEntityID(entityID, current.EntityID)
 
 	return applyPatchedScriptWrite(ctx, client, scriptID, checkEntityID, configID, configMap, patchedMap, len(ops))
 }
@@ -616,7 +614,7 @@ func applyPatchedScriptWrite(
 		return successResult(fmt.Sprintf("Script '%s': no changes detected, skipping write (reload avoided)", scriptID)), nil
 	}
 
-	if guardErr := yamlWriteGuardError(ctx, client, "script", scriptID, entityID); guardErr != nil {
+	if guardErr := yamlWriteGuardError(ctx, client, "script", "patch", scriptID, entityID); guardErr != nil {
 		return guardErr, nil
 	}
 

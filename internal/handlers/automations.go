@@ -458,11 +458,8 @@ func (h *AutomationHandlers) handleUpdate(ctx context.Context, client homeassist
 	// current.EntityID reflects the entity actually resolved above (findAutomationByID may have
 	// matched a different entity than a bare entityID guess). Refuse to write YAML-defined
 	// automations: the config API silently creates a duplicate orphan entity instead (#122).
-	checkEntityID := entityID
-	if current.EntityID != "" {
-		checkEntityID = current.EntityID
-	}
-	if guardErr := yamlWriteGuardError(ctx, client, "automation", automationID, checkEntityID); guardErr != nil {
+	checkEntityID := resolveWriteCheckEntityID(entityID, current.EntityID)
+	if guardErr := yamlWriteGuardError(ctx, client, "automation", "update", automationID, checkEntityID); guardErr != nil {
 		return guardErr, nil
 	}
 
@@ -595,10 +592,7 @@ func (h *AutomationHandlers) handlePatch(ctx context.Context, client homeassista
 
 	// current.EntityID reflects the entity actually resolved above (findAutomationByID may have
 	// matched a different entity than a bare entityID guess).
-	checkEntityID := entityID
-	if current.EntityID != "" {
-		checkEntityID = current.EntityID
-	}
+	checkEntityID := resolveWriteCheckEntityID(entityID, current.EntityID)
 
 	return applyPatchedAutomationWrite(ctx, client, automationID, checkEntityID, actualConfigID, configMap, patchedMap, current.Config.Triggers, len(ops))
 }
@@ -622,7 +616,7 @@ func applyPatchedAutomationWrite(
 
 	// Refuse to write YAML-defined automations: the config API silently creates a duplicate
 	// orphan entity instead of updating them (#122).
-	if guardErr := yamlWriteGuardError(ctx, client, "automation", automationID, entityID); guardErr != nil {
+	if guardErr := yamlWriteGuardError(ctx, client, "automation", "patch", automationID, entityID); guardErr != nil {
 		return guardErr, nil
 	}
 
