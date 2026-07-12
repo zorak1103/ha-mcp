@@ -63,6 +63,12 @@ Authorization: Bearer <your-ha-access-token>
 - `field`: field within matched element(s) to modify (omit for `remove` to delete the whole element)
 - `match_index`: optional 0-based index to select a specific match when multiple elements match
 
+`section` only addresses **top-level** arrays. Editing inside a nested `choose`/`if`/`repeat`
+action block requires a standard JSON Pointer `path` op instead — and the nesting is easy to
+get wrong: `then`/`else` are **siblings of `if`**, not nested inside it. Use
+`/actions/0/then/0`, not `/actions/0/if/0/then/0`. See the `ha-mcp-patching` skill
+("Nested Action Structures") for the full `choose`/`if`/`repeat` path reference.
+
 **Key Parameters (create/update):**
 
 | Parameter    | Type    | Required | Description                                                                                     |

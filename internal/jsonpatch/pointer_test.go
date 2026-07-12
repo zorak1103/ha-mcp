@@ -149,6 +149,12 @@ func TestGet(t *testing.T) {
 			wantErrMsg: "available keys: [mode nested triggers]",
 		},
 		{
+			name:       "nested miss reports parent prefix, not full path",
+			path:       "/nested/notexist",
+			wantErr:    true,
+			wantErrMsg: `at "/nested" (available keys: [deep])`,
+		},
+		{
 			name:    "index out of bounds",
 			path:    "/triggers/5",
 			wantErr: true,
@@ -262,6 +268,108 @@ func TestParseIndex(t *testing.T) {
 			}
 			if !tt.wantErr && got != tt.want {
 				t.Errorf("parseIndex(%q, %d) = %d, want %d", tt.seg, tt.length, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestGet_ActionBlockHints covers issue #124: users assume then/else/sequence/default
+// nest one level deeper than they actually do (e.g. inside "if" rather than as its
+// sibling). A missing-key error for one of these keywords should include a structural
+// hint; a miss on an unrelated key should not.
+func TestGet_ActionBlockHints(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		doc       map[string]any
+		path      string
+		wantMsg   []string
+		wantNoMsg []string
+	}{
+		{
+			name: "then is sibling of if, not nested inside it",
+			doc: map[string]any{
+				"actions": []any{
+					map[string]any{
+						"if":   []any{map[string]any{"condition": "state"}},
+						"then": []any{},
+					},
+				},
+			},
+			path:    "/actions/0/if/0/then",
+			wantMsg: []string{"sibling", `"if"`},
+		},
+		{
+			name: "else is sibling of if, not nested inside it",
+			doc: map[string]any{
+				"actions": []any{
+					map[string]any{
+						"if":   []any{map[string]any{"condition": "state"}},
+						"else": []any{},
+					},
+				},
+			},
+			path:    "/actions/0/if/0/else",
+			wantMsg: []string{"sibling", `"if"`},
+		},
+		{
+			name: "sequence lives inside choose/repeat, not inside conditions",
+			doc: map[string]any{
+				"actions": []any{
+					map[string]any{
+						"choose": []any{
+							map[string]any{
+								"conditions": []any{map[string]any{"condition": "state"}},
+								"sequence":   []any{},
+							},
+						},
+					},
+				},
+			},
+			path:    "/actions/0/choose/0/conditions/0/sequence",
+			wantMsg: []string{`"choose"`, `"repeat"`},
+		},
+		{
+			name: "default is sibling of choose, not nested inside it",
+			doc: map[string]any{
+				"actions": []any{
+					map[string]any{
+						"choose":  []any{map[string]any{"conditions": []any{}, "sequence": []any{}}},
+						"default": []any{},
+					},
+				},
+			},
+			path:    "/actions/0/choose/0/default",
+			wantMsg: []string{"sibling", `"choose"`},
+		},
+		{
+			name: "non-keyword miss has no structural hint",
+			doc: map[string]any{
+				"actions": []any{map[string]any{"choose": []any{}}},
+			},
+			path:      "/actions/0/notarealkey",
+			wantNoMsg: []string{"sibling", "nested inside"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := Get(tt.doc, tt.path)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			for _, want := range tt.wantMsg {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error = %q, want to contain %q", err.Error(), want)
+				}
+			}
+			for _, notWant := range tt.wantNoMsg {
+				if strings.Contains(err.Error(), notWant) {
+					t.Errorf("error = %q, want NOT to contain %q", err.Error(), notWant)
+				}
 			}
 		})
 	}

@@ -559,6 +559,110 @@ func TestApply_ErrorMessages(t *testing.T) {
 	}
 }
 
+// TestApply_NestedErrorMessages covers issue #124: a missing key deep inside a
+// nested action structure (if/then/else, choose/sequence/default) should report
+// the prefix actually navigated (not the full submitted path) plus a structural
+// hint when the missing key is one of these HA action-block keywords.
+func TestApply_NestedErrorMessages(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		docJSON   string
+		op        Operation
+		wantMsg   []string
+		wantNoMsg []string
+	}{
+		{
+			name:    "add: nested miss reports parent prefix, not full path",
+			docJSON: `{"a":{"b":{"if":[]}}}`,
+			op:      Operation{Op: "add", Path: "/a/b/then/0", Value: 1},
+			wantMsg: []string{`at "/a/b"`, "available keys: [if]"},
+		},
+		{
+			name:    "add: then hint when then is missing sibling of if",
+			docJSON: `{"actions":[{"if":[{"condition":"state"}],"then":[]}]}`,
+			op:      Operation{Op: "add", Path: "/actions/0/if/0/then/0", Value: map[string]any{}},
+			wantMsg: []string{"sibling", `"if"`},
+		},
+		{
+			name:    "add: else hint when else is missing sibling of if",
+			docJSON: `{"actions":[{"if":[{"condition":"state"}],"else":[]}]}`,
+			op:      Operation{Op: "add", Path: "/actions/0/if/0/else/0", Value: map[string]any{}},
+			wantMsg: []string{"sibling", `"if"`},
+		},
+		{
+			name:    "add: sequence hint when sequence is missing inside conditions",
+			docJSON: `{"actions":[{"choose":[{"conditions":[{"condition":"state"}],"sequence":[]}]}]}`,
+			op:      Operation{Op: "add", Path: "/actions/0/choose/0/conditions/0/sequence/0", Value: map[string]any{}},
+			wantMsg: []string{`"choose"`, `"repeat"`},
+		},
+		{
+			name:    "add: default hint when default is missing inside choose",
+			docJSON: `{"actions":[{"choose":[{"conditions":[],"sequence":[]}],"default":[]}]}`,
+			op:      Operation{Op: "add", Path: "/actions/0/choose/0/default/0", Value: map[string]any{}},
+			wantMsg: []string{"sibling", `"choose"`},
+		},
+		{
+			name:      "add: non-keyword miss has no structural hint",
+			docJSON:   `{"actions":[{"choose":[]}]}`,
+			op:        Operation{Op: "add", Path: "/actions/0/notarealkey/x", Value: 1},
+			wantMsg:   []string{`"notarealkey"`},
+			wantNoMsg: []string{"sibling", "nested inside"},
+		},
+		{
+			name:    "remove: nested miss reports parent prefix",
+			docJSON: `{"a":{"b":{"if":[]}}}`,
+			op:      Operation{Op: "remove", Path: "/a/b/then"},
+			wantMsg: []string{`at "/a/b"`, "available keys: [if]"},
+		},
+		{
+			name:    "remove: then hint when then is missing sibling of if",
+			docJSON: `{"actions":[{"if":[{"condition":"state"}]}]}`,
+			op:      Operation{Op: "remove", Path: "/actions/0/if/0/then"},
+			wantMsg: []string{"sibling", `"if"`},
+		},
+		{
+			name:    "replace: nested miss reports parent prefix",
+			docJSON: `{"a":{"b":{"if":[]}}}`,
+			op:      Operation{Op: "replace", Path: "/a/b/then", Value: 1},
+			wantMsg: []string{`at "/a/b"`, "available keys: [if]"},
+		},
+		{
+			name:    "add: escaped segment prefix round-trips",
+			docJSON: `{"weird~key":{"child":{"if":[]}}}`,
+			op:      Operation{Op: "add", Path: "/weird~0key/child/then/0", Value: 1},
+			wantMsg: []string{`at "/weird~0key/child"`, "available keys: [if]"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var doc any
+			if err := json.Unmarshal([]byte(tt.docJSON), &doc); err != nil {
+				t.Fatalf("invalid test doc JSON: %v", err)
+			}
+
+			_, err := Apply(doc, []Operation{tt.op})
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			for _, want := range tt.wantMsg {
+				if !containsStr(err.Error(), want) {
+					t.Errorf("error = %q, want to contain %q", err.Error(), want)
+				}
+			}
+			for _, notWant := range tt.wantNoMsg {
+				if containsStr(err.Error(), notWant) {
+					t.Errorf("error = %q, want NOT to contain %q", err.Error(), notWant)
+				}
+			}
+		})
+	}
+}
+
 func TestApply_EdgeCases(t *testing.T) {
 	t.Parallel()
 

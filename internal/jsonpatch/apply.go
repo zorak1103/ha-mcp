@@ -220,7 +220,7 @@ func setInMap(d map[string]any, seg string, rest []string, value any, insert boo
 	}
 	child, ok := d[seg]
 	if !ok {
-		return nil, fmt.Errorf("key %q not found at path %q (available keys: %v)", seg, path, sortedMapKeys(d))
+		return nil, keyNotFoundError(seg, path, rest, sortedMapKeys(d))
 	}
 	newChild, err := setAtPath(child, rest, value, insert, path)
 	if err != nil {
@@ -294,7 +294,7 @@ func removeAtPath(doc any, segs []string, path string) (any, error) {
 // removeFromMap handles removing from a map.
 func removeFromMap(d map[string]any, seg string, rest []string, path string) (any, error) {
 	if _, ok := d[seg]; !ok {
-		return nil, fmt.Errorf("key %q not found at path %q (available keys: %v)", seg, path, sortedMapKeys(d))
+		return nil, keyNotFoundError(seg, path, rest, sortedMapKeys(d))
 	}
 	if len(rest) == 0 {
 		delete(d, seg)

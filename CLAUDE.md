@@ -190,7 +190,8 @@ Tool actions and parameters are defined in the handler schemas. Non-obvious aspe
 - Supported ops: `add`, `remove`, `replace`, `test` (standard: also `move`, `copy`)
 - Atomic: if any operation fails, the config is not modified
 - Standard paths use RFC 6901 JSON Pointer syntax: `/triggers/0/entity_id`, `/actions/-` (append)
-- Implemented in `internal/jsonpatch/` (RFC 6902 engine) + `internal/handlers/patch_semantic.go` (semantic layer)
+- **Nested action blocks (issue #124):** `then`/`else` are siblings of `if`, NOT nested inside it — `/actions/0/then/0`, not `/actions/0/if/0/then/0`. `choose` nests `conditions`/`sequence` per option (`/actions/0/choose/0/sequence/-`); `default` is a sibling of `choose` (`/actions/0/default/-`). `section` in semantic ops only addresses top-level arrays — nested blocks require standard `path` ops. See `.claude/skills/ha-mcp/ha-mcp-patching/SKILL.md` ("Nested Action Structures").
+- Implemented in `internal/jsonpatch/` (RFC 6902 engine) + `internal/handlers/patch_semantic.go` (semantic layer). A `key not found` error reports the prefix actually navigated (not the full submitted path) plus a structural hint for `then`/`else`/`sequence`/`default` misses (`internal/jsonpatch/pointer.go`: `navigatedPrefix`, `actionBlockKeyHint`, `keyNotFoundError`)
 
 **Access Control & Tool Filtering:**
 

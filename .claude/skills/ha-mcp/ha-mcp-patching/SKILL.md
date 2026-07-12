@@ -62,6 +62,28 @@ Use when array indexes are unreliable — re-ordered, unknown position, or after
 ]
 ```
 
+## Nested Action Structures
+
+`section` in Semantic Ops only addresses **top-level** arrays (`triggers`, `conditions`,
+`actions`, …). Editing inside a `choose`/`if`/`repeat` action block requires a standard
+`path` op that descends into the nested structure — and the nesting is easy to get wrong:
+
+| Block    | Structure                                                        | Example path                       |
+| -------- | ----------------------------------------------------------------- | ----------------------------------- |
+| `choose` | `conditions`/`sequence` are children **inside each choose option** | `/actions/0/choose/0/sequence/-`   |
+| `choose` | `default` is a **sibling of `choose`**, not inside an option       | `/actions/0/default/-`             |
+| `if`     | `then`/`else` are **siblings of `if`**, NOT nested inside it       | `/actions/0/then/-`, `/actions/0/else/-` |
+| `repeat` | `sequence` is a child of `repeat`                                  | `/actions/0/repeat/sequence/-`     |
+
+<EXTREMELY-IMPORTANT>
+`then`/`else` are siblings of `if` at the same level — they are NOT inside the `if` array.
+`/actions/0/if/0/then/0` is wrong (issue #124); the correct path is `/actions/0/then/0`.
+</EXTREMELY-IMPORTANT>
+
+If a path op fails with "key not found", the error now reports the prefix it actually
+navigated (not your full submitted path) plus a hint when the missing key is one of
+`then`/`else`/`sequence`/`default` — use that prefix + `get` output to find the right sibling.
+
 ## Worked Snippets
 
 **Replace automation mode:**
