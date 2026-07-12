@@ -535,6 +535,11 @@ func TestApply_ErrorMessages(t *testing.T) {
 			errMsg: "available keys: [items mode]",
 		},
 		{
+			name:   "root-level miss still echoes the requested path",
+			ops:    []Operation{{Op: "replace", Path: "/notexist", Value: "x"}},
+			errMsg: `document root (requested "/notexist")`,
+		},
+		{
 			name:   "test failure includes expected and actual",
 			ops:    []Operation{{Op: "test", Path: "/mode", Value: "queued"}},
 			errMsg: "test failed",

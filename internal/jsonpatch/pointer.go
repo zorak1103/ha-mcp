@@ -137,7 +137,9 @@ func navigatedPrefix(fullPath string, rest []string) string {
 
 // actionBlockKeyHint returns structural guidance for Home Assistant action-block
 // keywords that are commonly mistaken for children of a sibling key (issue #124).
-// Returns "" for keys with no known structural gotcha.
+// Returns "" for keys with no known structural gotcha. This is a heuristic keyed
+// only on the missing segment name — it assumes an HA automation/script document
+// and may fire on an unrelated schema that happens to reuse one of these key names.
 func actionBlockKeyHint(key string) string {
 	switch key {
 	case "then", "else":
@@ -157,7 +159,7 @@ func actionBlockKeyHint(key string) string {
 // Home Assistant action-block keyword (see actionBlockKeyHint).
 func keyNotFoundError(seg, fullPath string, rest, available []string) error {
 	loc := navigatedPrefix(fullPath, rest)
-	locDesc := "document root"
+	locDesc := fmt.Sprintf("document root (requested %q)", fullPath)
 	if loc != "" {
 		locDesc = fmt.Sprintf("%q", loc)
 	}
