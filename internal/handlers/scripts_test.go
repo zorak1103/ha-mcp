@@ -14,13 +14,15 @@ import (
 // mockScriptClient implements homeassistant.Client for testing.
 type mockScriptClient struct {
 	homeassistant.Client
-	listScriptsFn  func(ctx context.Context) ([]homeassistant.Entity, error)
-	getScriptFn    func(ctx context.Context, scriptID string) (*homeassistant.Script, error)
-	createScriptFn func(ctx context.Context, scriptID string, config homeassistant.ScriptConfig) error
-	updateScriptFn func(ctx context.Context, scriptID string, config homeassistant.ScriptConfig) error
-	deleteScriptFn func(ctx context.Context, scriptID string) error
-	callServiceFn  func(ctx context.Context, domain, service string, data map[string]any) ([]homeassistant.Entity, error)
-	getStateFn     func(ctx context.Context, entityID string) (*homeassistant.Entity, error)
+	listScriptsFn               func(ctx context.Context) ([]homeassistant.Entity, error)
+	getScriptFn                 func(ctx context.Context, scriptID string) (*homeassistant.Script, error)
+	createScriptFn              func(ctx context.Context, scriptID string, config homeassistant.ScriptConfig) error
+	updateScriptFn              func(ctx context.Context, scriptID string, config homeassistant.ScriptConfig) error
+	deleteScriptFn              func(ctx context.Context, scriptID string) error
+	callServiceFn               func(ctx context.Context, domain, service string, data map[string]any) ([]homeassistant.Entity, error)
+	getStateFn                  func(ctx context.Context, entityID string) (*homeassistant.Entity, error)
+	getEntityRegistryFn         func(ctx context.Context) ([]homeassistant.EntityRegistryEntry, error)
+	removeEntityRegistryEntryFn func(ctx context.Context, entityID string) error
 
 	// Track IDs and configs passed to methods for verification
 	lastGetScriptID    string
@@ -75,6 +77,25 @@ func (m *mockScriptClient) DeleteScript(ctx context.Context, scriptID string) er
 	m.lastDeleteScriptID = scriptID
 	if m.deleteScriptFn != nil {
 		err := m.deleteScriptFn(ctx, scriptID)
+		if err == nil {
+			m.entityDeleted = true
+		}
+		return err
+	}
+	m.entityDeleted = true
+	return nil
+}
+
+func (m *mockScriptClient) GetEntityRegistry(ctx context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+	if m.getEntityRegistryFn != nil {
+		return m.getEntityRegistryFn(ctx)
+	}
+	return nil, nil
+}
+
+func (m *mockScriptClient) RemoveEntityRegistryEntry(ctx context.Context, entityID string) error {
+	if m.removeEntityRegistryEntryFn != nil {
+		err := m.removeEntityRegistryEntryFn(ctx, entityID)
 		if err == nil {
 			m.entityDeleted = true
 		}
@@ -628,11 +649,13 @@ func TestScriptHandlers_ManageScript_Delete(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name            string
-		args            map[string]any
-		deleteScriptErr error
-		wantError       bool
-		wantContains    string
+		name                        string
+		args                        map[string]any
+		deleteScriptErr             error
+		getEntityRegistryFn         func(ctx context.Context) ([]homeassistant.EntityRegistryEntry, error)
+		removeEntityRegistryEntryFn func(ctx context.Context, entityID string) error
+		wantError                   bool
+		wantContains                string
 	}{
 		{
 			name: "success",
@@ -661,7 +684,7 @@ func TestScriptHandlers_ManageScript_Delete(t *testing.T) {
 			wantContains: "script_id is required",
 		},
 		{
-			name: "client error",
+			name: "client error (not a not-found error, no registry fallback)",
 			args: map[string]any{
 				"action":    "delete",
 				"script_id": "morning_routine",
@@ -669,6 +692,98 @@ func TestScriptHandlers_ManageScript_Delete(t *testing.T) {
 			deleteScriptErr: errors.New("deletion failed"),
 			wantError:       true,
 			wantContains:    "Error deleting script",
+		},
+		{
+			// #123: HA's storage-config API 400s with a "Resource not found" body for
+			// YAML-defined/orphan-duplicate scripts. Delete should fall back to the
+			// entity registry, same path as manage_entity delete.
+			name: "not found (400 form) falls back to registry",
+			args: map[string]any{
+				"action":    "delete",
+				"script_id": "example_toggle_2",
+			},
+			deleteScriptErr: &homeassistant.APIError{
+				StatusCode: 400,
+				Message:    `unexpected status 400: {"message":"Resource not found"}`,
+			},
+			getEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+				return []homeassistant.EntityRegistryEntry{
+					{EntityID: "script.example_toggle_2"},
+				}, nil
+			},
+			wantError:    false,
+			wantContains: "removed via entity registry",
+		},
+		{
+			name: "not found (404 form) falls back to registry",
+			args: map[string]any{
+				"action":    "delete",
+				"script_id": "script.example_toggle_2",
+			},
+			deleteScriptErr: &homeassistant.APIError{
+				StatusCode: 404,
+				Message:    "script not found: example_toggle_2",
+			},
+			getEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+				return []homeassistant.EntityRegistryEntry{
+					{EntityID: "script.example_toggle_2"},
+				}, nil
+			},
+			wantError:    false,
+			wantContains: "removed via entity registry",
+		},
+		{
+			name: "not found but entity absent from registry",
+			args: map[string]any{
+				"action":    "delete",
+				"script_id": "example_toggle_2",
+			},
+			deleteScriptErr: &homeassistant.APIError{
+				StatusCode: 404,
+				Message:    "script not found: example_toggle_2",
+			},
+			getEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+				return []homeassistant.EntityRegistryEntry{}, nil
+			},
+			wantError:    true,
+			wantContains: "Error deleting script",
+		},
+		{
+			name: "not found but registry removal fails",
+			args: map[string]any{
+				"action":    "delete",
+				"script_id": "example_toggle_2",
+			},
+			deleteScriptErr: &homeassistant.APIError{
+				StatusCode: 404,
+				Message:    "script not found: example_toggle_2",
+			},
+			getEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+				return []homeassistant.EntityRegistryEntry{
+					{EntityID: "script.example_toggle_2"},
+				}, nil
+			},
+			removeEntityRegistryEntryFn: func(context.Context, string) error {
+				return errors.New("registry removal failed")
+			},
+			wantError:    true,
+			wantContains: "Error deleting script",
+		},
+		{
+			name: "not found but registry lookup fails",
+			args: map[string]any{
+				"action":    "delete",
+				"script_id": "example_toggle_2",
+			},
+			deleteScriptErr: &homeassistant.APIError{
+				StatusCode: 404,
+				Message:    "script not found: example_toggle_2",
+			},
+			getEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+				return nil, errors.New("registry unavailable")
+			},
+			wantError:    true,
+			wantContains: "Error deleting script",
 		},
 	}
 
@@ -680,6 +795,8 @@ func TestScriptHandlers_ManageScript_Delete(t *testing.T) {
 				deleteScriptFn: func(_ context.Context, _ string) error {
 					return tt.deleteScriptErr
 				},
+				getEntityRegistryFn:         tt.getEntityRegistryFn,
+				removeEntityRegistryEntryFn: tt.removeEntityRegistryEntryFn,
 			}
 
 			h := NewScriptHandlers()

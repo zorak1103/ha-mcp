@@ -448,20 +448,67 @@ func (h *ScriptHandlers) handleDelete(ctx context.Context, client homeassistant.
 	}
 
 	// Normalize ID to handle prefix variations - use configID for REST API
-	_, configID := normalizeScriptID(scriptID)
+	entityID, configID := normalizeScriptID(scriptID)
 
-	if err := client.DeleteScript(ctx, configID); err != nil {
-		return errorResult(fmt.Sprintf("Error deleting script: %v", err)), nil
+	viaRegistry, errMsg := deleteScriptWithRegistryFallback(ctx, client, configID, entityID)
+	if errMsg != "" {
+		return errorResult(errMsg), nil
 	}
 
-	entityID, _ := normalizeScriptID(scriptID)
 	_, _ = client.CallService(ctx, "script", "reload", nil)
 	successMsg := fmt.Sprintf("Script '%s' deleted successfully", scriptID)
+	if viaRegistry {
+		successMsg += " (removed via entity registry; script was not storage-managed)"
+	}
 	if !waitForEntityDisappear(ctx, client, entityID) {
 		successMsg += " (warning: script entity may still be visible until reload completes)"
 	}
 
 	return successResult(successMsg), nil
+}
+
+// deleteScriptWithRegistryFallback deletes a script via the storage-config API, falling back to
+// entity-registry removal when the config API reports the resource as not found. The storage-
+// config API only knows storage-managed scripts; YAML-defined or orphan-duplicate scripts
+// (entity object_id differs from the storage key) 404/400 here even though the entity exists
+// and is readable via get/list (#123). Returns viaRegistry=true if the fallback path was used,
+// or a non-empty errMsg describing the failure.
+func deleteScriptWithRegistryFallback(ctx context.Context, client homeassistant.Client, configID, entityID string) (viaRegistry bool, errMsg string) {
+	err := client.DeleteScript(ctx, configID)
+	if err == nil {
+		return false, ""
+	}
+	if !isNotFoundError(err) {
+		return false, fmt.Sprintf("Error deleting script: %v", err)
+	}
+	if regErr := deleteScriptViaRegistry(ctx, client, entityID); regErr != nil {
+		return false, fmt.Sprintf("Error deleting script: %v", err)
+	}
+	return true, ""
+}
+
+// isNotFoundError reports whether err indicates the target resource does not exist. Covers
+// both HA's 404 form ("script not found: X") and the observed 400 body
+// ("unexpected status 400: {\"message\":\"Resource not found\"}") — see #123.
+func isNotFoundError(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "not found")
+}
+
+// deleteScriptViaRegistry removes a script by its entity-registry entry. This is the fallback
+// for scripts the storage-config DELETE API can't find (YAML-defined or orphan-duplicate
+// entities whose object_id differs from the storage key). Mirrors the registry-based deletion
+// path used by manage_entity delete and HybridClient.DeleteHelper.
+func deleteScriptViaRegistry(ctx context.Context, client homeassistant.Client, entityID string) error {
+	entries, err := client.GetEntityRegistry(ctx)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.EntityID == entityID {
+			return client.RemoveEntityRegistryEntry(ctx, entityID)
+		}
+	}
+	return fmt.Errorf("script %q not found in entity registry", entityID)
 }
 
 func (h *ScriptHandlers) handleExecute(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
