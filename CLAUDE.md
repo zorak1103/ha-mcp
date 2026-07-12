@@ -266,6 +266,7 @@ Key environment variables:
 - **MCP Registry API**: Use `registry.RegisterTool(tool, handler)` NOT `registry.AddTool(tool)` (method doesn't exist)
 - **InputSchema type**: Use `mcp.JSONSchema` with `Properties: map[string]mcp.JSONSchema`, NOT `map[string]any`
 - **AutomationConfig.UnmarshalJSON field enumeration:** The custom UnmarshalJSON (types.go:165) explicitly handles each field. Any new field added to `AutomationConfig` MUST also get an unmarshal branch — otherwise the value is silently dropped when reading from HA's API. `ScriptConfig` uses default unmarshalling and only needs the struct field.
+- **YAML-defined scripts/automations are not writable via the config API (#122):** `POST /api/config/{script,automation}/config/<id>` only edits storage/UI-managed entities. Writing a YAML-defined entity's id still returns 200, but HA creates a *new* storage entity with the same object_id, disambiguated as `<entity>_2` — leaving the original YAML entity untouched while the tool reports false success (same storage-vs-YAML root cause as the delete fallback above). `manage_script`/`manage_automation` `update`/`patch` now guard against this: before writing, `isYAMLDefinedEntity()` (`yaml_defined.go`) checks the entity-registry entry's `unique_id` (empty or missing entry ⇒ YAML-defined ⇒ refuse with an actionable error) via the same `GetEntityRegistry` access the delete fallback uses. A registry lookup failure is *not* treated as YAML-defined — the write proceeds (graceful degradation) rather than blocking a legitimate edit.
 
 ### Pattern Reference
 

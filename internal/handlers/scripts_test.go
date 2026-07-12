@@ -618,6 +618,8 @@ func TestScriptHandlers_ManageScript_Update(t *testing.T) {
 				updateScriptFn: func(_ context.Context, _ string, _ homeassistant.ScriptConfig) error {
 					return tt.updateScriptErr
 				},
+				// Storage-managed so the isYAMLDefinedEntity write guard (#122) lets the write proceed.
+				getEntityRegistryFn: storageManagedRegistry("script.morning_routine"),
 			}
 
 			h := NewScriptHandlers()
@@ -1006,6 +1008,7 @@ func TestManageScript_Patch(t *testing.T) {
 				m.UpdateScriptFn = func(_ context.Context, _ string, _ homeassistant.ScriptConfig) error {
 					return nil
 				}
+				m.GetEntityRegistryFn = storageManagedRegistry("script.morning_routine")
 			},
 			wantError:    false,
 			wantContains: []string{"patched successfully", "1 operations"},
@@ -1027,6 +1030,7 @@ func TestManageScript_Patch(t *testing.T) {
 				m.UpdateScriptFn = func(_ context.Context, _ string, _ homeassistant.ScriptConfig) error {
 					return nil
 				}
+				m.GetEntityRegistryFn = storageManagedRegistry("script.morning_routine")
 			},
 			wantError:    false,
 			wantContains: []string{"patched successfully"},
@@ -1092,6 +1096,7 @@ func TestManageScript_SemanticPatch(t *testing.T) {
 				m.UpdateScriptFn = func(_ context.Context, _ string, _ homeassistant.ScriptConfig) error {
 					return nil
 				}
+				m.GetEntityRegistryFn = storageManagedRegistry("script.morning_routine")
 			},
 			wantError:    false,
 			wantContains: []string{"patched successfully"},
@@ -1158,6 +1163,7 @@ func TestManageScript_PatchReload(t *testing.T) {
 			reloadDomain, reloadService = domain, service
 			return nil, nil
 		}
+		client.GetEntityRegistryFn = storageManagedRegistry("script.morning_routine")
 
 		result, err := h.handleManageScript(context.Background(), client, patchArgs)
 		if err != nil {
@@ -1182,6 +1188,7 @@ func TestManageScript_PatchReload(t *testing.T) {
 		client.CallServiceFn = func(context.Context, string, string, map[string]any) ([]homeassistant.Entity, error) {
 			return nil, errors.New("ws down")
 		}
+		client.GetEntityRegistryFn = storageManagedRegistry("script.morning_routine")
 
 		result, err := h.handleManageScript(context.Background(), client, patchArgs)
 		if err != nil {
@@ -1264,6 +1271,7 @@ func TestManageScript_UpdateReload(t *testing.T) {
 			reloadDomain, reloadService = domain, service
 			return nil, nil
 		}
+		client.GetEntityRegistryFn = storageManagedRegistry("script.morning_routine")
 
 		result, err := h.handleManageScript(context.Background(), client, updateArgs)
 		if err != nil {
@@ -1285,6 +1293,7 @@ func TestManageScript_UpdateReload(t *testing.T) {
 		client.CallServiceFn = func(context.Context, string, string, map[string]any) ([]homeassistant.Entity, error) {
 			return nil, errors.New("ws down")
 		}
+		client.GetEntityRegistryFn = storageManagedRegistry("script.morning_routine")
 
 		result, err := h.handleManageScript(context.Background(), client, updateArgs)
 		if err != nil {
@@ -1870,7 +1879,10 @@ func TestScriptHandlers_IDNormalization(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			client := &mockScriptClient{}
+			client := &mockScriptClient{
+				// Storage-managed so the isYAMLDefinedEntity write guard (#122) lets update proceed.
+				getEntityRegistryFn: storageManagedRegistry("script.morning_routine"),
+			}
 			h := &ScriptHandlers{}
 
 			args := map[string]any{
@@ -1938,6 +1950,7 @@ func TestScriptHandlers_UpdateDataPreservation(t *testing.T) {
 		getScriptFn: func(context.Context, string) (*homeassistant.Script, error) {
 			return existingScript, nil
 		},
+		getEntityRegistryFn: storageManagedRegistry("script.test_script"),
 	}
 
 	h := &ScriptHandlers{}
@@ -1978,6 +1991,138 @@ func TestScriptHandlers_UpdateDataPreservation(t *testing.T) {
 	if client.lastUpdateConfig.Alias != "Updated Name" {
 		t.Errorf("Alias not updated: got %q, want %q", client.lastUpdateConfig.Alias, "Updated Name")
 	}
+}
+
+// TestManageScript_YAMLDefinedGuard verifies that update/patch refuse to write YAML-defined
+// scripts instead of silently creating a duplicate orphan entity (#122), and that a registry
+// lookup failure degrades gracefully by letting the write proceed.
+func TestManageScript_YAMLDefinedGuard(t *testing.T) {
+	t.Parallel()
+
+	baseConfig := &homeassistant.ScriptConfig{
+		Alias:    "Example Toggle",
+		Mode:     "single",
+		Sequence: []any{map[string]any{"action": "script.old_name"}},
+	}
+	updateArgs := map[string]any{
+		"action":    "update",
+		"script_id": "example_toggle",
+		"alias":     "Updated Example Toggle",
+	}
+	patchArgs := map[string]any{
+		"action":    "patch",
+		"script_id": "example_toggle",
+		"operations": []any{
+			map[string]any{"op": "replace", "path": "/sequence/0/action", "value": "script.new_name"},
+		},
+	}
+
+	h := &ScriptHandlers{}
+
+	t.Run("update refuses a YAML-defined script (empty unique_id)", func(t *testing.T) {
+		t.Parallel()
+		updateCalled := false
+		client := &UniversalMockClient{}
+		client.GetScriptFn = func(context.Context, string) (*homeassistant.Script, error) {
+			cfg := *baseConfig
+			return &homeassistant.Script{EntityID: "script.example_toggle", Config: &cfg}, nil
+		}
+		client.UpdateScriptFn = func(context.Context, string, homeassistant.ScriptConfig) error {
+			updateCalled = true
+			return nil
+		}
+		client.GetEntityRegistryFn = func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+			return []homeassistant.EntityRegistryEntry{{EntityID: "script.example_toggle", UniqueID: ""}}, nil
+		}
+
+		result, err := h.handleManageScript(context.Background(), client, updateArgs)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !result.IsError {
+			t.Fatalf("expected refusal, got success: %s", result.Content[0].Text)
+		}
+		if !strings.Contains(result.Content[0].Text, "YAML-defined") {
+			t.Errorf("expected YAML-defined refusal message, got: %s", result.Content[0].Text)
+		}
+		if updateCalled {
+			t.Error("UpdateScript must NOT be called when the target is YAML-defined")
+		}
+	})
+
+	t.Run("patch refuses a YAML-defined script (no registry entry)", func(t *testing.T) {
+		t.Parallel()
+		updateCalled := false
+		client := &UniversalMockClient{}
+		client.GetScriptFn = func(context.Context, string) (*homeassistant.Script, error) {
+			cfg := *baseConfig
+			return &homeassistant.Script{EntityID: "script.example_toggle", Config: &cfg}, nil
+		}
+		client.UpdateScriptFn = func(context.Context, string, homeassistant.ScriptConfig) error {
+			updateCalled = true
+			return nil
+		}
+		client.GetEntityRegistryFn = func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+			return []homeassistant.EntityRegistryEntry{}, nil // no entry at all for this entity
+		}
+
+		result, err := h.handleManageScript(context.Background(), client, patchArgs)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !result.IsError {
+			t.Fatalf("expected refusal, got success: %s", result.Content[0].Text)
+		}
+		if !strings.Contains(result.Content[0].Text, "YAML-defined") {
+			t.Errorf("expected YAML-defined refusal message, got: %s", result.Content[0].Text)
+		}
+		if updateCalled {
+			t.Error("UpdateScript must NOT be called when the target is YAML-defined")
+		}
+	})
+
+	t.Run("update proceeds when the registry lookup fails (graceful degradation)", func(t *testing.T) {
+		t.Parallel()
+		client := &UniversalMockClient{}
+		client.GetScriptFn = func(context.Context, string) (*homeassistant.Script, error) {
+			cfg := *baseConfig
+			return &homeassistant.Script{EntityID: "script.example_toggle", Config: &cfg}, nil
+		}
+		client.UpdateScriptFn = func(context.Context, string, homeassistant.ScriptConfig) error { return nil }
+		client.GetEntityRegistryFn = func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+			return nil, errors.New("registry unavailable")
+		}
+
+		result, err := h.handleManageScript(context.Background(), client, updateArgs)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("expected success (registry check should not block the write on failure), got error: %s", result.Content[0].Text)
+		}
+		if !strings.Contains(result.Content[0].Text, "updated successfully") {
+			t.Errorf("expected success message, got: %s", result.Content[0].Text)
+		}
+	})
+
+	t.Run("update proceeds for a storage-managed script", func(t *testing.T) {
+		t.Parallel()
+		client := &UniversalMockClient{}
+		client.GetScriptFn = func(context.Context, string) (*homeassistant.Script, error) {
+			cfg := *baseConfig
+			return &homeassistant.Script{EntityID: "script.example_toggle", Config: &cfg}, nil
+		}
+		client.UpdateScriptFn = func(context.Context, string, homeassistant.ScriptConfig) error { return nil }
+		client.GetEntityRegistryFn = storageManagedRegistry("script.example_toggle")
+
+		result, err := h.handleManageScript(context.Background(), client, updateArgs)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("expected success, got error: %s", result.Content[0].Text)
+		}
+	})
 }
 
 func TestManageScript_Schema(t *testing.T) {
@@ -2046,6 +2191,7 @@ func TestManageScript_Update_MaxPreservation(t *testing.T) {
 				},
 			}, nil
 		},
+		getEntityRegistryFn: storageManagedRegistry("script.test_script"),
 	}
 	h := &ScriptHandlers{}
 	args := map[string]any{

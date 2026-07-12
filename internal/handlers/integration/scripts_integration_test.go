@@ -244,6 +244,9 @@ func (s *ScriptIntegrationTestSuite) TestScriptUpdate() {
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteScript(s.Context(), scriptID)
 		_ = s.Client().DeleteHelper(s.Context(), targetEntityID)
+		// Safety net for #122: if this test ever regresses and an orphan duplicate is created,
+		// clean it up too so it doesn't linger in the test HA instance.
+		_ = s.Client().DeleteScript(s.Context(), scriptID+"_2")
 	})
 
 	// Create target - entity ID is derived from name
@@ -309,6 +312,16 @@ func (s *ScriptIntegrationTestSuite) TestScriptUpdate() {
 
 	friendlyName, _ = entity.Attributes["friendly_name"].(string)
 	s.Equal("Updated Script", friendlyName, "Script name should be updated")
+
+	// Regression check for #122: updating a storage-managed script must never spawn a
+	// duplicate orphan entity (script.<id>_2) - that only happens when the REST config write
+	// silently lands on a different underlying config than the one it targeted.
+	orphanEntityID := scriptEntityID + "_2"
+	scripts, err := s.Client().ListScripts(s.Context())
+	s.Require().NoError(err)
+	for _, sc := range scripts {
+		s.NotEqual(orphanEntityID, sc.EntityID, "update must not create an orphan duplicate entity")
+	}
 
 	// Turn on target manually
 	_, err = s.Client().CallService(s.Context(), "input_boolean", "turn_on", map[string]any{

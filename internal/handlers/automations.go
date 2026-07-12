@@ -429,7 +429,7 @@ func (h *AutomationHandlers) handleUpdate(ctx context.Context, client homeassist
 		return errorResult("automation_id is required for update action. Use 'list' action to find IDs (shown in [brackets])"), nil
 	}
 
-	_, configID := normalizeAutomationID(automationID)
+	entityID, configID := normalizeAutomationID(automationID)
 
 	// Fetch current automation with fallback search
 	current, err := client.GetAutomation(ctx, configID)
@@ -453,6 +453,17 @@ func (h *AutomationHandlers) handleUpdate(ctx context.Context, client homeassist
 
 	if reflect.DeepEqual(beforeMap, afterMap) {
 		return successResult(fmt.Sprintf("Automation '%s': no changes detected, skipping write (reload and for: timer reset avoided)", automationID)), nil
+	}
+
+	// current.EntityID reflects the entity actually resolved above (findAutomationByID may have
+	// matched a different entity than a bare entityID guess). Refuse to write YAML-defined
+	// automations: the config API silently creates a duplicate orphan entity instead (#122).
+	checkEntityID := entityID
+	if current.EntityID != "" {
+		checkEntityID = current.EntityID
+	}
+	if guardErr := yamlWriteGuardError(ctx, client, "automation", automationID, checkEntityID); guardErr != nil {
+		return guardErr, nil
 	}
 
 	// Resolve actual config ID for REST API (may differ from entity_id suffix)
@@ -549,7 +560,7 @@ func (h *AutomationHandlers) handlePatch(ctx context.Context, client homeassista
 		return errResult, nil
 	}
 
-	_, configID := normalizeAutomationID(automationID)
+	entityID, configID := normalizeAutomationID(automationID)
 
 	current, err := client.GetAutomation(ctx, configID)
 	if err != nil {
@@ -582,7 +593,14 @@ func (h *AutomationHandlers) handlePatch(ctx context.Context, client homeassista
 		actualConfigID = current.Config.ID
 	}
 
-	return applyPatchedAutomationWrite(ctx, client, automationID, actualConfigID, configMap, patchedMap, current.Config.Triggers, len(ops))
+	// current.EntityID reflects the entity actually resolved above (findAutomationByID may have
+	// matched a different entity than a bare entityID guess).
+	checkEntityID := entityID
+	if current.EntityID != "" {
+		checkEntityID = current.EntityID
+	}
+
+	return applyPatchedAutomationWrite(ctx, client, automationID, checkEntityID, actualConfigID, configMap, patchedMap, current.Config.Triggers, len(ops))
 }
 
 // applyPatchedAutomationWrite writes the patched config to HA and returns the success result.
@@ -593,13 +611,19 @@ func (h *AutomationHandlers) handlePatch(ctx context.Context, client homeassista
 func applyPatchedAutomationWrite(
 	ctx context.Context,
 	client homeassistant.Client,
-	automationID, actualConfigID string,
+	automationID, entityID, actualConfigID string,
 	configMap, patchedMap map[string]any,
 	oldTriggers []any,
 	numOps int,
 ) (*mcp.ToolsCallResult, error) {
 	if reflect.DeepEqual(configMap, patchedMap) {
 		return successResult(fmt.Sprintf("Automation '%s': no changes detected, skipping write (reload and for: timer reset avoided)", automationID)), nil
+	}
+
+	// Refuse to write YAML-defined automations: the config API silently creates a duplicate
+	// orphan entity instead of updating them (#122).
+	if guardErr := yamlWriteGuardError(ctx, client, "automation", automationID, entityID); guardErr != nil {
+		return guardErr, nil
 	}
 
 	var newConfig homeassistant.AutomationConfig

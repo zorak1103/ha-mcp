@@ -49,6 +49,19 @@ type mockAutomationClient struct {
 
 	// updateCalled tracks whether UpdateAutomation was invoked (used by dry-run tests).
 	updateCalled bool
+
+	// getEntityRegistryFn backs GetEntityRegistry, used by the isYAMLDefinedEntity write guard
+	// (#122). A nil hook (the default) reports no registry entries, which the guard interprets
+	// as YAML-defined - tests reaching the update/patch write path must set this via
+	// storageManagedRegistry to mark the target as storage-managed.
+	getEntityRegistryFn func(ctx context.Context) ([]homeassistant.EntityRegistryEntry, error)
+}
+
+func (m *mockAutomationClient) GetEntityRegistry(ctx context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+	if m.getEntityRegistryFn != nil {
+		return m.getEntityRegistryFn(ctx)
+	}
+	return nil, nil
 }
 
 func (m *mockAutomationClient) ListAutomations(_ context.Context) ([]homeassistant.Automation, error) {
@@ -617,9 +630,14 @@ func TestManageAutomation_Update(t *testing.T) {
 		wantContains []string
 	}{
 		{
-			name:         "success",
-			args:         map[string]any{"action": "update", "automation_id": "test_automation", "alias": "Updated"},
-			setupClient:  func() *mockAutomationClient { return &mockAutomationClient{automation: newExistingAutomation()} },
+			name: "success",
+			args: map[string]any{"action": "update", "automation_id": "test_automation", "alias": "Updated"},
+			setupClient: func() *mockAutomationClient {
+				return &mockAutomationClient{
+					automation:          newExistingAutomation(),
+					getEntityRegistryFn: storageManagedRegistry("automation.test_automation"),
+				}
+			},
 			wantContains: []string{"updated successfully"},
 		},
 		{
@@ -640,7 +658,11 @@ func TestManageAutomation_Update(t *testing.T) {
 			name: "error - update fails",
 			args: map[string]any{"action": "update", "automation_id": "test_automation", "alias": "New"},
 			setupClient: func() *mockAutomationClient {
-				return &mockAutomationClient{automation: newExistingAutomation(), updateErr: errors.New("failed")}
+				return &mockAutomationClient{
+					automation:          newExistingAutomation(),
+					updateErr:           errors.New("failed"),
+					getEntityRegistryFn: storageManagedRegistry("automation.test_automation"),
+				}
 			},
 			wantError:    true,
 			wantContains: []string{"Error updating automation"},
@@ -897,6 +919,7 @@ func TestManageAutomation_Patch(t *testing.T) {
 				m.UpdateAutomationFn = func(_ context.Context, _ string, _ homeassistant.AutomationConfig) error {
 					return nil
 				}
+				m.GetEntityRegistryFn = storageManagedRegistry("automation.morning_routine")
 			},
 			wantError:    false,
 			wantContains: []string{"patched successfully", "1 operations"},
@@ -918,6 +941,7 @@ func TestManageAutomation_Patch(t *testing.T) {
 				m.UpdateAutomationFn = func(_ context.Context, _ string, _ homeassistant.AutomationConfig) error {
 					return nil
 				}
+				m.GetEntityRegistryFn = storageManagedRegistry("automation.morning_routine")
 			},
 			wantError:    false,
 			wantContains: []string{"patched successfully"},
@@ -1008,6 +1032,7 @@ func TestManageAutomation_SemanticPatch(t *testing.T) {
 				m.UpdateAutomationFn = func(_ context.Context, _ string, _ homeassistant.AutomationConfig) error {
 					return nil
 				}
+				m.GetEntityRegistryFn = storageManagedRegistry("automation.morning_routine")
 			},
 			wantError:    false,
 			wantContains: []string{"patched successfully"},
@@ -1035,6 +1060,7 @@ func TestManageAutomation_SemanticPatch(t *testing.T) {
 				m.UpdateAutomationFn = func(_ context.Context, _ string, _ homeassistant.AutomationConfig) error {
 					return nil
 				}
+				m.GetEntityRegistryFn = storageManagedRegistry("automation.morning_routine")
 			},
 			wantError:    false,
 			wantContains: []string{"patched successfully"},
@@ -1736,6 +1762,8 @@ func TestAutomationHandlers_IDNormalization(t *testing.T) {
 				automationMap: map[string]*homeassistant.Automation{
 					"test_auto": testAutomation,
 				},
+				// Storage-managed so the isYAMLDefinedEntity write guard (#122) lets update proceed.
+				getEntityRegistryFn: storageManagedRegistry("automation.test_auto"),
 			}
 
 			h := &AutomationHandlers{}
@@ -1874,6 +1902,8 @@ func TestAutomationHandlers_IDNormalization(t *testing.T) {
 			client := &mockAutomationClient{
 				automation:    testAutomation,
 				automationMap: automationMap,
+				// Storage-managed so the isYAMLDefinedEntity write guard (#122) lets update proceed.
+				getEntityRegistryFn: storageManagedRegistry(tt.entityID),
 			}
 
 			h := &AutomationHandlers{}
@@ -2567,7 +2597,7 @@ func TestManageAutomation_Update_MaxPreservation(t *testing.T) {
 			Max:   10,
 		},
 	}
-	client := &mockAutomationClient{automation: existing}
+	client := &mockAutomationClient{automation: existing, getEntityRegistryFn: storageManagedRegistry("automation.test")}
 	h := &AutomationHandlers{}
 	args := map[string]any{
 		"action":        "update",
@@ -2600,7 +2630,7 @@ func TestManageAutomation_Update_MaxSet(t *testing.T) {
 		State:    "on",
 		Config:   &homeassistant.AutomationConfig{ID: "test", Alias: "Test", Mode: "parallel", Max: 10},
 	}
-	client := &mockAutomationClient{automation: existing}
+	client := &mockAutomationClient{automation: existing, getEntityRegistryFn: storageManagedRegistry("automation.test")}
 	h := &AutomationHandlers{}
 	args := map[string]any{
 		"action":        "update",
@@ -2700,6 +2730,7 @@ func TestManageAutomation_PatchForTimerWarning(t *testing.T) {
 					return &homeassistant.Automation{EntityID: "automation.motion_lights", Config: &cfg}, nil
 				}
 				m.UpdateAutomationFn = func(_ context.Context, _ string, _ homeassistant.AutomationConfig) error { return nil }
+				m.GetEntityRegistryFn = storageManagedRegistry("automation.motion_lights")
 			},
 			wantError:    false,
 			wantContains: []string{"patched successfully", "timer"},
@@ -2719,6 +2750,7 @@ func TestManageAutomation_PatchForTimerWarning(t *testing.T) {
 					return &homeassistant.Automation{EntityID: "automation.simple", Config: &cfg}, nil
 				}
 				m.UpdateAutomationFn = func(_ context.Context, _ string, _ homeassistant.AutomationConfig) error { return nil }
+				m.GetEntityRegistryFn = storageManagedRegistry("automation.simple")
 			},
 			wantError:       false,
 			wantContains:    []string{"patched successfully"},
@@ -2739,6 +2771,7 @@ func TestManageAutomation_PatchForTimerWarning(t *testing.T) {
 					return &homeassistant.Automation{EntityID: "automation.motion_lights", Config: &cfg}, nil
 				}
 				m.UpdateAutomationFn = func(_ context.Context, _ string, _ homeassistant.AutomationConfig) error { return nil }
+				m.GetEntityRegistryFn = storageManagedRegistry("automation.motion_lights")
 			},
 			wantError:    false,
 			wantContains: []string{"patched successfully", "timer"},
@@ -2824,7 +2857,10 @@ func TestManageAutomation_UpdateForTimerWarning(t *testing.T) {
 	t.Run("update with for: trigger warns about timer reset", func(t *testing.T) {
 		t.Parallel()
 		h := &AutomationHandlers{}
-		client := &mockAutomationClient{automation: makeAuto()}
+		client := &mockAutomationClient{
+			automation:          makeAuto(),
+			getEntityRegistryFn: storageManagedRegistry("automation.motion_lights"),
+		}
 		args := map[string]any{
 			"action":        "update",
 			"automation_id": "motion_lights",
@@ -2908,6 +2944,7 @@ func TestManageAutomation_PatchReload(t *testing.T) {
 			reloadDomain, reloadService = domain, service
 			return nil, nil
 		}
+		client.GetEntityRegistryFn = storageManagedRegistry("automation.morning_routine")
 
 		result, err := h.handleManageAutomation(fastCtx(), client, patchArgs)
 		if err != nil {
@@ -2932,6 +2969,7 @@ func TestManageAutomation_PatchReload(t *testing.T) {
 		client.CallServiceFn = func(context.Context, string, string, map[string]any) ([]homeassistant.Entity, error) {
 			return nil, errors.New("ws down")
 		}
+		client.GetEntityRegistryFn = storageManagedRegistry("automation.morning_routine")
 
 		result, err := h.handleManageAutomation(fastCtx(), client, patchArgs)
 		if err != nil {
@@ -2978,6 +3016,140 @@ func TestManageAutomation_PatchReload(t *testing.T) {
 	})
 }
 
+// TestManageAutomation_YAMLDefinedGuard verifies that update/patch refuse to write YAML-defined
+// automations instead of silently creating a duplicate orphan entity (#122), and that a registry
+// lookup failure degrades gracefully by letting the write proceed.
+func TestManageAutomation_YAMLDefinedGuard(t *testing.T) {
+	t.Parallel()
+
+	baseConfig := &homeassistant.AutomationConfig{
+		ID:       "morning_routine",
+		Alias:    "Morning Routine",
+		Mode:     "single",
+		Triggers: []any{map[string]any{"trigger": "time", "at": "07:00"}},
+		Actions:  []any{map[string]any{"action": "light.turn_on"}},
+	}
+	updateArgs := map[string]any{
+		"action":        "update",
+		"automation_id": "morning_routine",
+		"alias":         "Updated Morning Routine",
+	}
+	patchArgs := map[string]any{
+		"action":        "patch",
+		"automation_id": "morning_routine",
+		"operations": []any{
+			map[string]any{"op": "replace", "path": "/mode", "value": "queued"},
+		},
+	}
+
+	h := &AutomationHandlers{}
+
+	t.Run("update refuses a YAML-defined automation (empty unique_id)", func(t *testing.T) {
+		t.Parallel()
+		updateCalled := false
+		client := &UniversalMockClient{}
+		client.GetAutomationFn = func(context.Context, string) (*homeassistant.Automation, error) {
+			cfg := *baseConfig
+			return &homeassistant.Automation{EntityID: "automation.morning_routine", Config: &cfg}, nil
+		}
+		client.UpdateAutomationFn = func(context.Context, string, homeassistant.AutomationConfig) error {
+			updateCalled = true
+			return nil
+		}
+		client.GetEntityRegistryFn = func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+			return []homeassistant.EntityRegistryEntry{{EntityID: "automation.morning_routine", UniqueID: ""}}, nil
+		}
+
+		result, err := h.handleManageAutomation(context.Background(), client, updateArgs)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !result.IsError {
+			t.Fatalf("expected refusal, got success: %s", result.Content[0].Text)
+		}
+		if !strings.Contains(result.Content[0].Text, "YAML-defined") {
+			t.Errorf("expected YAML-defined refusal message, got: %s", result.Content[0].Text)
+		}
+		if updateCalled {
+			t.Error("UpdateAutomation must NOT be called when the target is YAML-defined")
+		}
+	})
+
+	t.Run("patch refuses a YAML-defined automation (no registry entry)", func(t *testing.T) {
+		t.Parallel()
+		updateCalled := false
+		client := &UniversalMockClient{}
+		client.GetAutomationFn = func(context.Context, string) (*homeassistant.Automation, error) {
+			cfg := *baseConfig
+			return &homeassistant.Automation{EntityID: "automation.morning_routine", Config: &cfg}, nil
+		}
+		client.UpdateAutomationFn = func(context.Context, string, homeassistant.AutomationConfig) error {
+			updateCalled = true
+			return nil
+		}
+		client.GetEntityRegistryFn = func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+			return []homeassistant.EntityRegistryEntry{}, nil // no entry at all for this entity
+		}
+
+		result, err := h.handleManageAutomation(context.Background(), client, patchArgs)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !result.IsError {
+			t.Fatalf("expected refusal, got success: %s", result.Content[0].Text)
+		}
+		if !strings.Contains(result.Content[0].Text, "YAML-defined") {
+			t.Errorf("expected YAML-defined refusal message, got: %s", result.Content[0].Text)
+		}
+		if updateCalled {
+			t.Error("UpdateAutomation must NOT be called when the target is YAML-defined")
+		}
+	})
+
+	t.Run("update proceeds when the registry lookup fails (graceful degradation)", func(t *testing.T) {
+		t.Parallel()
+		client := &UniversalMockClient{}
+		client.GetAutomationFn = func(context.Context, string) (*homeassistant.Automation, error) {
+			cfg := *baseConfig
+			return &homeassistant.Automation{EntityID: "automation.morning_routine", Config: &cfg}, nil
+		}
+		client.UpdateAutomationFn = func(context.Context, string, homeassistant.AutomationConfig) error { return nil }
+		client.GetEntityRegistryFn = func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+			return nil, errors.New("registry unavailable")
+		}
+
+		result, err := h.handleManageAutomation(context.Background(), client, updateArgs)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("expected success (registry check should not block the write on failure), got error: %s", result.Content[0].Text)
+		}
+		if !strings.Contains(result.Content[0].Text, "updated successfully") {
+			t.Errorf("expected success message, got: %s", result.Content[0].Text)
+		}
+	})
+
+	t.Run("update proceeds for a storage-managed automation", func(t *testing.T) {
+		t.Parallel()
+		client := &UniversalMockClient{}
+		client.GetAutomationFn = func(context.Context, string) (*homeassistant.Automation, error) {
+			cfg := *baseConfig
+			return &homeassistant.Automation{EntityID: "automation.morning_routine", Config: &cfg}, nil
+		}
+		client.UpdateAutomationFn = func(context.Context, string, homeassistant.AutomationConfig) error { return nil }
+		client.GetEntityRegistryFn = storageManagedRegistry("automation.morning_routine")
+
+		result, err := h.handleManageAutomation(context.Background(), client, updateArgs)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("expected success, got error: %s", result.Content[0].Text)
+		}
+	})
+}
+
 // TestManageAutomation_UpdateReload verifies that a successful update write triggers
 // automation.reload so the change is immediately visible to a subsequent get (#126).
 func TestManageAutomation_UpdateReload(t *testing.T) {
@@ -3006,6 +3178,7 @@ func TestManageAutomation_UpdateReload(t *testing.T) {
 			reloadDomain, reloadService = domain, service
 			return nil, nil
 		}
+		client.GetEntityRegistryFn = storageManagedRegistry("automation.test_automation")
 
 		result, err := h.handleManageAutomation(fastCtx(), client, updateArgs)
 		if err != nil {
@@ -3027,6 +3200,7 @@ func TestManageAutomation_UpdateReload(t *testing.T) {
 		client.CallServiceFn = func(context.Context, string, string, map[string]any) ([]homeassistant.Entity, error) {
 			return nil, errors.New("ws down")
 		}
+		client.GetEntityRegistryFn = storageManagedRegistry("automation.test_automation")
 
 		result, err := h.handleManageAutomation(fastCtx(), client, updateArgs)
 		if err != nil {

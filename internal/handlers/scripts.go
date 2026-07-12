@@ -372,6 +372,34 @@ func (h *ScriptHandlers) handleCreate(ctx context.Context, client homeassistant.
 	return successResult(successMsg), nil
 }
 
+// applyScriptConfigUpdates overrides config fields with any values present in args, leaving
+// fields absent from args untouched so existing values are preserved. Extracted from
+// handleUpdate as a pure function (no ctx/client) to keep the handler's cyclomatic complexity
+// down; mirrors applyAutomationConfigUpdates in automations.go.
+func applyScriptConfigUpdates(config *homeassistant.ScriptConfig, args map[string]any) {
+	if alias, ok := args["alias"].(string); ok {
+		config.Alias = alias
+	}
+	if description, ok := args["description"].(string); ok {
+		config.Description = description
+	}
+	if mode, ok := args["mode"].(string); ok {
+		config.Mode = mode
+	}
+	if maxVal, ok := args["max"].(float64); ok {
+		config.Max = int(maxVal)
+	}
+	if icon, ok := args["icon"].(string); ok {
+		config.Icon = icon
+	}
+	if sequence, ok := args["sequence"].([]any); ok {
+		config.Sequence = sequence
+	}
+	if fields, ok := args["fields"].(map[string]any); ok {
+		config.Fields = fields
+	}
+}
+
 func (h *ScriptHandlers) handleUpdate(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
 	scriptID, ok := args["script_id"].(string)
 	if !ok || scriptID == "" {
@@ -400,32 +428,17 @@ func (h *ScriptHandlers) handleUpdate(ctx context.Context, client homeassistant.
 	// No-op writes cause a needless script.reload.
 	beforeMap, _ := configToMap(config)
 
-	// Override with new values from args
-	if alias, ok := args["alias"].(string); ok {
-		config.Alias = alias
-	}
-	if description, ok := args["description"].(string); ok {
-		config.Description = description
-	}
-	if mode, ok := args["mode"].(string); ok {
-		config.Mode = mode
-	}
-	if maxVal, ok := args["max"].(float64); ok {
-		config.Max = int(maxVal)
-	}
-	if icon, ok := args["icon"].(string); ok {
-		config.Icon = icon
-	}
-	if sequence, ok := args["sequence"].([]any); ok {
-		config.Sequence = sequence
-	}
-	if fields, ok := args["fields"].(map[string]any); ok {
-		config.Fields = fields
-	}
+	applyScriptConfigUpdates(&config, args)
 
 	afterMap, _ := configToMap(config)
 	if reflect.DeepEqual(beforeMap, afterMap) {
 		return successResult(fmt.Sprintf("Script '%s': no changes detected, skipping write (reload avoided)", scriptID)), nil
+	}
+
+	// Refuse to write YAML-defined scripts: the config API silently creates a duplicate
+	// orphan entity instead of updating them (#122).
+	if guardErr := yamlWriteGuardError(ctx, client, "script", scriptID, entityID); guardErr != nil {
+		return guardErr, nil
 	}
 
 	// Use configID (without prefix) for REST API
@@ -577,10 +590,34 @@ func (h *ScriptHandlers) handlePatch(ctx context.Context, client homeassistant.C
 		return dryRunPatchResult(patchedMap, "script", scriptID, len(ops))
 	}
 
-	// A patch that resolves to the same config must skip the write (and reload) entirely —
-	// otherwise every no-op patch would trigger a needless script.reload.
+	// current.EntityID reflects the entity actually resolved above (findScriptByID may have
+	// matched a different entity than a bare entityID guess).
+	checkEntityID := entityID
+	if current.EntityID != "" {
+		checkEntityID = current.EntityID
+	}
+
+	return applyPatchedScriptWrite(ctx, client, scriptID, checkEntityID, configID, configMap, patchedMap, len(ops))
+}
+
+// applyPatchedScriptWrite writes the patched config to HA and returns the success result. It
+// skips the write entirely when configMap and patchedMap are deep-equal — otherwise every no-op
+// patch would trigger a needless script.reload — and refuses to write YAML-defined scripts,
+// which the config API would otherwise silently duplicate into an orphan entity (#122). Mirrors
+// applyPatchedAutomationWrite in automations.go.
+func applyPatchedScriptWrite(
+	ctx context.Context,
+	client homeassistant.Client,
+	scriptID, entityID, configID string,
+	configMap, patchedMap map[string]any,
+	numOps int,
+) (*mcp.ToolsCallResult, error) {
 	if reflect.DeepEqual(configMap, patchedMap) {
 		return successResult(fmt.Sprintf("Script '%s': no changes detected, skipping write (reload avoided)", scriptID)), nil
+	}
+
+	if guardErr := yamlWriteGuardError(ctx, client, "script", scriptID, entityID); guardErr != nil {
+		return guardErr, nil
 	}
 
 	var newConfig homeassistant.ScriptConfig
@@ -593,7 +630,7 @@ func (h *ScriptHandlers) handlePatch(ctx context.Context, client homeassistant.C
 		return errorResult(enrichConfigError(msg, err, scriptErrorHints)), nil
 	}
 
-	successMsg := fmt.Sprintf("Script '%s' patched successfully (%d operations applied)", scriptID, len(ops))
+	successMsg := fmt.Sprintf("Script '%s' patched successfully (%d operations applied)", scriptID, numOps)
 	if !reloadDomain(ctx, client, "script") {
 		successMsg += scriptReloadFailedWarning
 	}
