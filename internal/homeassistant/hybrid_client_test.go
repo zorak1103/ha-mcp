@@ -2409,3 +2409,33 @@ func TestAddSensorGroupDefaults(t *testing.T) {
 		})
 	}
 }
+
+// TestExtractOptionsFromSchema_SkipsNilSuggestedValue is a regression test for a
+// bug where a field whose suggested_value is JSON null (key present, value nil -
+// which Home Assistant reports for an optional field left unset at creation)
+// was included in the extracted options map as a literal nil, which then got
+// resubmitted to Home Assistant's Options Flow API as an explicit null and
+// rejected as a type error. A field must be omitted from the result exactly
+// like a genuinely-absent field would be - but a real zero value (e.g. 0.0)
+// must NOT be treated the same as nil and must still be included.
+func TestExtractOptionsFromSchema_SkipsNilSuggestedValue(t *testing.T) {
+	t.Parallel()
+
+	schema := []OptionsFlowField{
+		{Name: "upper", Description: map[string]any{"suggested_value": 50.0}},
+		{Name: "lower", Description: map[string]any{"suggested_value": nil}},
+		{Name: "hysteresis", Description: map[string]any{"suggested_value": 0.0}},
+	}
+
+	options := extractOptionsFromSchema(schema)
+
+	if _, present := options["lower"]; present {
+		t.Errorf("extractOptionsFromSchema should omit a field whose suggested_value is nil (JSON null), got: %v", options)
+	}
+	if options["upper"] != 50.0 {
+		t.Errorf("upper should be 50.0, got %v", options["upper"])
+	}
+	if options["hysteresis"] != 0.0 {
+		t.Errorf("hysteresis (a real zero value, not nil) must still be included, got %v", options["hysteresis"])
+	}
+}

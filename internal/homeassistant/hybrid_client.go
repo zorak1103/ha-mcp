@@ -1307,7 +1307,7 @@ func extractOptionsFromSchema(dataSchema []OptionsFlowField) map[string]any {
 	options := make(map[string]any)
 	for _, field := range dataSchema {
 		if field.Description != nil {
-			if suggestedValue, ok := field.Description["suggested_value"]; ok {
+			if suggestedValue, ok := field.Description["suggested_value"]; ok && suggestedValue != nil {
 				options[field.Name] = suggestedValue
 			}
 		}
