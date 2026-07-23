@@ -76,10 +76,12 @@ func (s *ThresholdToolDispatchTestSuite) TestThresholdUpdateViaTool() {
 
 	entity, err := s.Client().GetState(s.Context(), thresholdEntityID)
 	s.Require().NoError(err)
-	if upper, ok := entity.Attributes["upper"].(float64); ok {
-		s.Equal(80.0, upper, "upper threshold should be updated to 80.0")
-	}
-	if hysteresis, ok := entity.Attributes["hysteresis"].(float64); ok {
-		s.Equal(2.0, hysteresis, "hysteresis should be updated to 2.0")
-	}
+
+	upper, ok := entity.Attributes["upper"].(float64)
+	s.Require().True(ok, "upper attribute missing or wrong type: %#v", entity.Attributes["upper"])
+	s.Equal(80.0, upper, "upper threshold should be updated to 80.0")
+
+	hysteresis, ok := entity.Attributes["hysteresis"].(float64)
+	s.Require().True(ok, "hysteresis attribute missing or wrong type: %#v", entity.Attributes["hysteresis"])
+	s.Equal(2.0, hysteresis, "hysteresis should be updated to 2.0")
 }
