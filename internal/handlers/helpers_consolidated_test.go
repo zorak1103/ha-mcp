@@ -1203,6 +1203,80 @@ func TestManageHelper_Update_ConfigEntryDoesNotLeakEntityID(t *testing.T) {
 	}
 }
 
+// TestManageHelper_Update_ConfigEntryDoesNotDefaultDeviceClassForNonHygrostat is a
+// regression test for a bug where addExtendedConfigEntryFields unconditionally
+// defaulted device_class to "humidifier" for every config-entry helper's update,
+// not just generic_hygrostat, corrupting/rejecting updates for every other type
+// (template, threshold, group, ...).
+func TestManageHelper_Update_ConfigEntryDoesNotDefaultDeviceClassForNonHygrostat(t *testing.T) {
+	t.Parallel()
+
+	var capturedConfig homeassistant.HelperConfig
+	client := &UniversalMockClient{}
+	client.UpdateHelperFn = func(_ context.Context, _ string, cfg homeassistant.HelperConfig) error {
+		capturedConfig = cfg
+		return nil
+	}
+
+	ctx := mcp.WithWaitConfig(context.Background(), mcp.WaitConfig{
+		Timeout:      50 * time.Millisecond,
+		PollInterval: 5 * time.Millisecond,
+	})
+
+	h := NewConsolidatedHelperHandlers()
+	result, err := h.handleManageHelper(ctx, client, map[string]any{
+		"action":    "update",
+		"entity_id": "sensor.my_template",
+		"state":     "{{ 42 }}",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+	}
+
+	if dc, leaked := capturedConfig.Config["device_class"]; leaked {
+		t.Errorf("config-entry update for a non-hygrostat helper must not default device_class (got %q); it's only valid for generic_hygrostat, got config: %v", dc, capturedConfig.Config)
+	}
+}
+
+// TestManageHelper_Update_GenericHygrostatStillDefaultsDeviceClass confirms the
+// fix above doesn't remove the legitimate default for the helper type it was
+// actually meant for.
+func TestManageHelper_Update_GenericHygrostatStillDefaultsDeviceClass(t *testing.T) {
+	t.Parallel()
+
+	var capturedConfig homeassistant.HelperConfig
+	client := &UniversalMockClient{}
+	client.UpdateHelperFn = func(_ context.Context, _ string, cfg homeassistant.HelperConfig) error {
+		capturedConfig = cfg
+		return nil
+	}
+
+	ctx := mcp.WithWaitConfig(context.Background(), mcp.WaitConfig{
+		Timeout:      50 * time.Millisecond,
+		PollInterval: 5 * time.Millisecond,
+	})
+
+	h := NewConsolidatedHelperHandlers()
+	result, err := h.handleManageHelper(ctx, client, map[string]any{
+		"action":       "update",
+		"entity_id":    "humidifier.my_hygrostat",
+		"min_humidity": float64(30),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+	}
+
+	if dc, ok := capturedConfig.Config["device_class"].(string); !ok || dc != "humidifier" {
+		t.Errorf("generic_hygrostat update should still default device_class to \"humidifier\"; got config: %v", capturedConfig.Config)
+	}
+}
+
 // =============================================================================
 // manage_helper - Delete Tests
 // =============================================================================

@@ -859,7 +859,7 @@ func (h *ConsolidatedHelperHandlers) handleUpdate(ctx context.Context, client ho
 	} else {
 		// Unknown helper type (sensor/binary_sensor without metadata)
 		// These are Config Entry Flow helpers - build loose config
-		config = buildConfigEntryUpdateConfig(entityID, args)
+		config = buildConfigEntryUpdateConfig(platform, args)
 	}
 
 	// Create UpdateHelper request
@@ -1660,7 +1660,7 @@ func (h *ConsolidatedHelperHandlers) handleGroupEntities(ctx context.Context, cl
 // Extracts all recognized Config Entry fields from args.
 //
 //nolint:gocyclo // Routing to type-specific builders requires switch over all helper types
-func buildConfigEntryUpdateConfig(_ string, args map[string]any) map[string]any {
+func buildConfigEntryUpdateConfig(platform string, args map[string]any) map[string]any {
 	config := make(map[string]any)
 
 	// Common fields
@@ -1704,7 +1704,7 @@ func buildConfigEntryUpdateConfig(_ string, args map[string]any) map[string]any 
 	}
 
 	// Add fields for extended helper types
-	addExtendedConfigEntryFields(config, args)
+	addExtendedConfigEntryFields(config, args, platform)
 
 	return config
 }

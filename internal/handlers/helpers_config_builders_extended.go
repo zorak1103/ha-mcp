@@ -189,7 +189,7 @@ func buildGenericHygrostatConfig(config, args map[string]any) error {
 // This function is called by buildConfigEntryUpdateConfig to handle new helper types.
 //
 //nolint:funlen // Large number of fields for extended helper types
-func addExtendedConfigEntryFields(config, args map[string]any) {
+func addExtendedConfigEntryFields(config, args map[string]any, platform string) {
 	// utility_meter fields
 	addOptionalString(config, args, "source")
 	addOptionalString(config, args, "cycle")
@@ -262,10 +262,15 @@ func addExtendedConfigEntryFields(config, args map[string]any) {
 	if targetSensor, ok := args["target_sensor_entity_id"].(string); ok {
 		config["target_sensor"] = targetSensor
 	}
-	// device_class is required for hygrostat
-	const deviceClassHumidifier = "humidifier"
-	if _, exists := config["device_class"]; !exists {
-		config["device_class"] = deviceClassHumidifier
+	// device_class is required for hygrostat - only default it when the
+	// helper being updated is actually a generic_hygrostat (platform ==
+	// "humidifier"), not every config-entry helper type that shares this
+	// one-size-fits-all update builder.
+	if platform == "humidifier" {
+		const deviceClassHumidifier = "humidifier"
+		if _, exists := config["device_class"]; !exists {
+			config["device_class"] = deviceClassHumidifier
+		}
 	}
 	addOptionalFloat(config, args, "min_humidity")
 	addOptionalFloat(config, args, "max_humidity")
