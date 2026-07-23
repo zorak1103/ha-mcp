@@ -119,6 +119,24 @@ go test -tags=integration -v ./internal/handlers/integration/... 2>&1 | tee test
 
 **Note:** Read-only tests (traces, updates, blueprints, cameras) verify API integration and response parsing. They skip gracefully if no entities exist or features are unavailable.
 
+### Handler-Dispatch (Tool-Level) Tests
+
+Every test above calls `homeassistant.Client` methods directly, verifying the client library talks to real HA correctly - but bypassing the MCP tool's argument-parsing/handler layer entirely. Issue #135 (`manage_helper` update failing with `unknown_command` for config-entry helpers) lived in that bypassed layer and had no test coverage as a result.
+
+`*_tool_dispatch_integration_test.go` files close this gap: they use `s.CallTool(name, args)` (added to `IntegrationTestSuite` in `suite_test.go`) to dispatch through the real registry + handler layer - the same path a real MCP client exercises - while reusing the existing suites' proven fixture-creation and cleanup code for setup/teardown.
+
+| Test Suite | Tool | Action(s) tested via CallTool |
+|------------|------|-------------------------------|
+| `TestToolDispatchHarness` | `get_state` | Read-only smoke test proving the harness reaches the real client |
+| `TestTemplateHelperToolDispatch` | `manage_helper` | update (template_sensor) - direct #135 regression test |
+| `TestThresholdToolDispatch` | `manage_helper` | update (threshold) |
+| `TestInputNumberToolDispatch` | `manage_helper` | update (input_number, WS helper) |
+| `TestGroupToolDispatch` | `manage_helper` | delete (group) |
+| `TestAutomationToolDispatch` | `manage_automation` | update, patch |
+| `TestScriptToolDispatch` | `manage_script` | update |
+
+Writing these tests uncovered and fixed three further, previously-unknown bugs in the config-entry helper update path (all unreachable until the #135 fix let update calls reach Home Assistant's Options Flow submission for the first time) - see `CLAUDE.md`'s API & Type Gotchas section for `buildConfigEntryUpdateConfig`'s `entity_id` leak, `addExtendedConfigEntryFields`'s `device_class` leak, and `extractOptionsFromSchema`'s nil `suggested_value` propagation.
+
 ## Test Entity Naming Convention
 
 All test entities follow the pattern:
