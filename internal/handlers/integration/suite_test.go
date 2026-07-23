@@ -13,7 +13,9 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"github.com/zorak1103/ha-mcp/internal/handlers"
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
+	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
 
 // TestConfig holds configuration for integration tests.
@@ -66,10 +68,11 @@ func LoadTestConfig(t *testing.T) *TestConfig {
 // IntegrationTestSuite is the base test suite for integration tests.
 type IntegrationTestSuite struct {
 	suite.Suite
-	client homeassistant.Client
-	config *TestConfig
-	ctx    context.Context
-	cancel context.CancelFunc
+	client   homeassistant.Client
+	registry *mcp.Registry
+	config   *TestConfig
+	ctx      context.Context
+	cancel   context.CancelFunc
 }
 
 // SetupSuite runs before all tests in the suite.
@@ -85,6 +88,12 @@ func (s *IntegrationTestSuite) SetupSuite() {
 	client, err := homeassistant.NewDefaultWSClient(s.ctx, s.config.URL, s.config.Token)
 	require.NoError(s.T(), err, "Failed to create Home Assistant client")
 	s.client = client
+
+	// Build the real tool registry once per suite - this is the layer that
+	// failed silently in issue #135 (handler argument parsing), which no
+	// prior integration test exercised.
+	s.registry = mcp.NewRegistry()
+	handlers.RegisterAllTools(s.registry)
 
 	// Pre-test cleanup: Remove any leftover test entities from previous runs
 	s.T().Log("Running pre-test cleanup...")
@@ -188,6 +197,30 @@ func (s *IntegrationTestSuite) Context() context.Context {
 // Client returns the Home Assistant client.
 func (s *IntegrationTestSuite) Client() homeassistant.Client {
 	return s.client
+}
+
+// CallTool dispatches a tool call through the real registry + handler layer
+// (tool name -> registry lookup -> handler -> real HybridClient), using the
+// suite's live Home Assistant client. This is the layer that issue #135's
+// bug lived in but no prior integration test exercised - every existing
+// test in this package calls Client() methods directly instead.
+func (s *IntegrationTestSuite) CallTool(name string, args map[string]any) *mcp.ToolsCallResult {
+	handler, ok := s.registry.GetHandler(name)
+	s.Require().True(ok, "tool %q is not registered", name)
+
+	result, err := handler(s.ctx, s.client, args)
+	s.Require().NoError(err, "handler for %q returned a Go error - handlers must report domain errors via IsError, not a Go error", name)
+
+	return result
+}
+
+// resultText extracts the primary text content from a tool call result,
+// mirroring the pattern used by internal/handlers unit test helpers.
+func resultText(r *mcp.ToolsCallResult) string {
+	if len(r.Content) == 0 {
+		return ""
+	}
+	return r.Content[0].Text
 }
 
 // RegisterCleanup registers a cleanup function to be called after the test.
