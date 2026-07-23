@@ -1664,6 +1664,58 @@ func TestWSClientImplWithSender_UpdateHelper(t *testing.T) {
 	}
 }
 
+func TestWSClientImplWithSender_UpdateHelper_FullEntityID(t *testing.T) {
+	t.Parallel()
+
+	mock := &mockWSClientSender{
+		sendCommandFunc: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
+			if cmdType != "input_number/update" {
+				t.Errorf("unexpected command: %s", cmdType)
+			}
+			// Full entity_id ("input_number.test") must be stripped to the bare id
+			// before being sent as "input_number_id" - HA rejects a prefixed value.
+			if params["input_number_id"] != "test" {
+				t.Errorf("id mismatch: %v", params["input_number_id"])
+			}
+			return makeWSResultMsg(nil), nil
+		},
+	}
+
+	client := NewWSClientImplWithSender(mock)
+	err := client.UpdateHelper(context.Background(), "input_number.test", HelperConfig{
+		Platform: "input_number",
+		Config:   map[string]any{"min": 0, "max": 100},
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestWSClientImplWithSender_UpdateHelper_ConfigEntryPlatformRejected(t *testing.T) {
+	t.Parallel()
+
+	mock := &mockWSClientSender{
+		sendCommandFunc: func(_ context.Context, cmdType string, _ map[string]any) (*WSResultMessage, error) {
+			t.Fatalf("SendCommand should not be called for config-entry platform, got cmdType: %s", cmdType)
+			return nil, nil
+		},
+	}
+
+	client := NewWSClientImplWithSender(mock)
+	err := client.UpdateHelper(context.Background(), "sensor.my_template", HelperConfig{
+		Platform: "sensor",
+		Config:   map[string]any{"state": "{{ 42 }}"},
+	})
+
+	if err == nil {
+		t.Fatal("expected error for config-entry platform")
+	}
+	if !containsStr(err.Error(), "sensor") || !containsStr(err.Error(), "options flow") {
+		t.Errorf("error should explain config-entry helpers require options flow: %v", err)
+	}
+}
+
 func TestWSClientImplWithSender_DeleteHelper(t *testing.T) {
 	t.Parallel()
 
@@ -1697,6 +1749,30 @@ func TestWSClientImplWithSender_DeleteHelper_UnknownPlatform(t *testing.T) {
 		t.Fatal("expected error for unknown platform")
 	}
 	if !containsStr(err.Error(), "unable to determine platform") {
+		t.Errorf("error should mention platform: %v", err)
+	}
+}
+
+func TestWSClientImplWithSender_DeleteHelper_ConfigEntryPlatformRejected(t *testing.T) {
+	t.Parallel()
+
+	mock := &mockWSClientSender{
+		sendCommandFunc: func(_ context.Context, cmdType string, _ map[string]any) (*WSResultMessage, error) {
+			t.Fatalf("SendCommand should not be called for config-entry platform, got cmdType: %s", cmdType)
+			return nil, nil
+		},
+	}
+
+	// "group" is a Config Entry platform (see configEntryPlatforms) even though
+	// extractPlatform recognizes its entity_id prefix - there is no group/delete
+	// WS command, so this must be rejected rather than sent as unknown_command.
+	client := NewWSClientImplWithSender(mock)
+	err := client.DeleteHelper(context.Background(), "group.my_group")
+
+	if err == nil {
+		t.Fatal("expected error for config-entry platform")
+	}
+	if !containsStr(err.Error(), "group") {
 		t.Errorf("error should mention platform: %v", err)
 	}
 }

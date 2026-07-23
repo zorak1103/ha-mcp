@@ -374,11 +374,46 @@ func (c *wsClientImpl) CreateHelper(ctx context.Context, config HelperConfig) er
 	return nil
 }
 
+// wsHelperPlatforms lists helper platforms managed entirely over the WebSocket API
+// (input_* helpers, counter, timer, schedule). Config Entry helper platforms (sensor,
+// binary_sensor, climate, humidifier, select, group, template, threshold, derivative, ...)
+// have no "<platform>/update" or "<platform>/delete" WS command - they must go through
+// the Options Flow / Config Entry Flow REST API instead (see HybridClient.UpdateHelper
+// and HybridClient.DeleteHelper). Sending them here would surface as a confusing
+// unknown_command error from Home Assistant.
+var wsHelperPlatforms = map[string]bool{
+	"input_boolean":  true,
+	"input_button":   true,
+	"input_number":   true,
+	"input_text":     true,
+	"input_select":   true,
+	"input_datetime": true,
+	"counter":        true,
+	"timer":          true,
+	"schedule":       true,
+}
+
+// isWSHelperPlatform reports whether platform has real "<platform>/update|delete" WS commands.
+func isWSHelperPlatform(platform string) bool {
+	return wsHelperPlatforms[platform]
+}
+
 // UpdateHelper updates an existing input helper.
 func (c *wsClientImpl) UpdateHelper(ctx context.Context, helperID string, config HelperConfig) error {
+	if !isWSHelperPlatform(config.Platform) {
+		return fmt.Errorf("cannot update %s helper via websocket: config-entry helpers require options flow (entity may be missing from the registry)", config.Platform)
+	}
+
+	// Accept either a full entity_id ("input_number.my_helper") or a bare id
+	// ("my_helper") - callers historically used both conventions.
+	id := helperID
+	if p := extractPlatform(helperID); p != "" {
+		id = helperID[len(p)+1:]
+	}
+
 	cmdType := fmt.Sprintf("%s/update", config.Platform)
 	params := map[string]any{
-		config.Platform + "_id": helperID,
+		config.Platform + "_id": id,
 	}
 
 	// Add config fields
@@ -402,6 +437,10 @@ func (c *wsClientImpl) DeleteHelper(ctx context.Context, helperID string) error 
 	platform := extractPlatform(helperID)
 	if platform == "" {
 		return fmt.Errorf("unable to determine platform for helper %s", helperID)
+	}
+
+	if !isWSHelperPlatform(platform) {
+		return fmt.Errorf("cannot delete %s helper via websocket: config-entry helpers require the config entry API (entity may be missing from the registry)", platform)
 	}
 
 	// Extract ID without prefix
