@@ -831,7 +831,11 @@ func TestManageHelper_Update(t *testing.T) {
 			},
 			setupMock: func(m *UniversalMockClient) {
 				m.UpdateHelperFn = func(_ context.Context, helperID string, config homeassistant.HelperConfig) error {
-					if helperID != "test_number" {
+					// The client must receive the FULL entity_id, not the bare object_id -
+					// HybridClient.UpdateHelper matches config-entry helpers against the
+					// registry's full entity_id, so a stripped id silently falls through
+					// to the WS unknown_command path (issue #135).
+					if helperID != "input_number.test_number" {
 						return fmt.Errorf("unexpected helperID: %s", helperID)
 					}
 					if config.Platform != "input_number" {
@@ -852,7 +856,7 @@ func TestManageHelper_Update(t *testing.T) {
 			},
 			setupMock: func(m *UniversalMockClient) {
 				m.UpdateHelperFn = func(_ context.Context, helperID string, _ homeassistant.HelperConfig) error {
-					if helperID != "mode" {
+					if helperID != "input_select.mode" {
 						return fmt.Errorf("unexpected helperID: %s", helperID)
 					}
 					return nil
@@ -1041,6 +1045,32 @@ func TestManageHelper_Update(t *testing.T) {
 			wantError:    true,
 			wantContains: []string{"error", "updating"},
 		},
+		{
+			// Regression test for issue #135: manage_helper update failed with
+			// "unknown_command" for config-entry template helpers because the handler
+			// passed the bare object_id ("my_template") to client.UpdateHelper, but
+			// HybridClient.UpdateHelper routes config-entry helpers by matching the
+			// registry's FULL entity_id ("sensor.my_template"). This mock reproduces
+			// that real routing logic - it only succeeds when it receives the full id.
+			name: "update template config-entry helper routes on full entity_id",
+			args: map[string]any{
+				"action":    "update",
+				"entity_id": "sensor.my_template",
+				"state":     "{{ 42 }}",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				registry := map[string]string{"sensor.my_template": "config789"} // EntityID -> ConfigEntryID
+				m.UpdateHelperFn = func(_ context.Context, id string, config homeassistant.HelperConfig) error {
+					if _, ok := registry[id]; ok {
+						return nil // options-flow success
+					}
+					// Reproduces the real WS fallback failure for a config-entry domain.
+					return fmt.Errorf("update helper failed: command failed: unknown_command: %s/update", config.Platform)
+				}
+			},
+			wantError:    false,
+			wantContains: []string{"updated", "sensor.my_template"},
+		},
 	}
 
 	h := NewConsolidatedHelperHandlers()
@@ -1132,6 +1162,44 @@ func TestManageHelper_Update_NameField(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestManageHelper_Update_ConfigEntryDoesNotLeakEntityID is a regression test for
+// a bug where buildConfigEntryUpdateConfig forwarded the tool's top-level
+// entity_id (identifying which helper to update) into the update config
+// payload sent to Home Assistant, corrupting/rejecting the request. See the
+// entity_id leak fix in buildConfigEntryUpdateConfig.
+func TestManageHelper_Update_ConfigEntryDoesNotLeakEntityID(t *testing.T) {
+	t.Parallel()
+
+	var capturedConfig homeassistant.HelperConfig
+	client := &UniversalMockClient{}
+	client.UpdateHelperFn = func(_ context.Context, _ string, cfg homeassistant.HelperConfig) error {
+		capturedConfig = cfg
+		return nil
+	}
+
+	ctx := mcp.WithWaitConfig(context.Background(), mcp.WaitConfig{
+		Timeout:      50 * time.Millisecond,
+		PollInterval: 5 * time.Millisecond,
+	})
+
+	h := NewConsolidatedHelperHandlers()
+	result, err := h.handleManageHelper(ctx, client, map[string]any{
+		"action":    "update",
+		"entity_id": "sensor.my_template",
+		"state":     "{{ 42 }}",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+	}
+
+	if _, leaked := capturedConfig.Config["entity_id"]; leaked {
+		t.Errorf("config-entry update config must not contain \"entity_id\" (the tool's top-level target identifier leaked into the HA payload); got: %v", capturedConfig.Config)
 	}
 }
 
