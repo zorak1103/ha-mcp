@@ -1548,6 +1548,43 @@ func TestHandleManageDashboard_Find(t *testing.T) {
 			wantError:    true,
 			wantContains: []string{"error listing dashboards"},
 		},
+		{
+			name: "find - all dashboard fetches fail returns error, not false no-matches",
+			args: map[string]any{
+				"action": "find",
+				"search": "device_tracker.example_phone",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.ListDashboardsFn = func(context.Context) ([]homeassistant.DashboardEntry, error) {
+					return []homeassistant.DashboardEntry{{URLPath: "lovelace"}}, nil
+				}
+				m.GetLovelaceConfigFn = func(_ context.Context, _ string) (map[string]any, error) {
+					return nil, fmt.Errorf("ws timeout")
+				}
+			},
+			wantError:    true,
+			wantContains: []string{"Could not search any dashboard", "default", "lovelace"},
+		},
+		{
+			name: "find - some dashboard fetches fail, success message includes warning",
+			args: map[string]any{
+				"action": "find",
+				"search": "device_tracker.example_phone",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.ListDashboardsFn = func(context.Context) ([]homeassistant.DashboardEntry, error) {
+					return []homeassistant.DashboardEntry{{URLPath: "lovelace"}}, nil
+				}
+				m.GetLovelaceConfigFn = func(_ context.Context, urlPath string) (map[string]any, error) {
+					if urlPath == "lovelace" {
+						return nil, fmt.Errorf("ws timeout")
+					}
+					return deepCopyMap(nestedConfig), nil
+				}
+			},
+			wantError:    false,
+			wantContains: []string{"Found 1 match", "could not be scanned", "lovelace"},
+		},
 	}
 
 	runHandlerTestCases(t, tests, h.handleManageDashboard)

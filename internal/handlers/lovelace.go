@@ -402,19 +402,37 @@ func (h *DashboardHandlers) handleFind(ctx context.Context, client homeassistant
 	}
 
 	var hits []ConfigHit
+	var outcomes []ScanOutcome
 	for _, urlPath := range urlPaths {
+		source := urlPath
+		if source == "" {
+			source = "default"
+		}
 		config, err := client.GetLovelaceConfig(ctx, urlPath)
+		outcomes = append(outcomes, ScanOutcome{Source: source, Err: err})
 		if err != nil {
 			continue
 		}
 		hits = append(hits, scanDashboardConfig(urlPath, config, match)...)
 	}
 
+	_, failed := splitScanOutcomes(outcomes)
+
 	if len(hits) == 0 {
-		return successResult(fmt.Sprintf("No matches for %q in any dashboard", search)), nil
+		if len(failed) > 0 && len(failed) == len(urlPaths) {
+			return errorResult(fmt.Sprintf("Could not search any dashboard: %s", strings.Join(failed, ", "))), nil
+		}
+		msg := fmt.Sprintf("No matches for %q in any dashboard", search)
+		if len(failed) > 0 {
+			msg += "\n" + fmt.Sprintf(scanFailureWarningFormat, len(failed), strings.Join(failed, ", "))
+		}
+		return successResult(msg), nil
 	}
 
 	summary := fmt.Sprintf("Found %d match(es) for %q", len(hits), search)
+	if len(failed) > 0 {
+		summary += "\n" + fmt.Sprintf(scanFailureWarningFormat, len(failed), strings.Join(failed, ", "))
+	}
 	return formatLovelaceResponse(hits, summary)
 }
 
