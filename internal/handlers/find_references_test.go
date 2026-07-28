@@ -34,6 +34,9 @@ func TestFindReferencesHandlers_Schema(t *testing.T) {
 	if len(tool.InputSchema.Required) != 1 || tool.InputSchema.Required[0] != "search" {
 		t.Errorf("Required = %v, want [search]", tool.InputSchema.Required)
 	}
+	if !strings.Contains(tool.Description, "scanned_sources") || !strings.Contains(tool.Description, "failed_sources") {
+		t.Errorf("Description should mention scanned_sources/failed_sources trust guarantee, got: %s", tool.Description)
+	}
 }
 
 func TestHandleFindReferences(t *testing.T) {
@@ -189,6 +192,15 @@ func TestHandleFindReferences(t *testing.T) {
 			},
 			wantError:    false,
 			wantContains: []string{"No references found"},
+		},
+		{
+			name: "invalid types value returns error",
+			args: map[string]any{
+				"search": "device_tracker.example_phone",
+				"types":  []any{"automations"},
+			},
+			wantError:    true,
+			wantContains: []string{"invalid types", "automations"},
 		},
 		{
 			name: "json format",

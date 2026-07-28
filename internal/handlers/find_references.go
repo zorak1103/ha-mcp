@@ -44,7 +44,9 @@ func (h *FindReferencesHandlers) findReferencesTool() mcp.Tool {
 			`template-helper templates in one call - the server-side equivalent of grepping every config type ` +
 			`at once instead of listing/getting each object individually and scanning client-side (issue #141).
 
-Returns matches grouped by type with the object id, JSON path (where applicable), context, and a snippet.`,
+Returns matches grouped by type with the object id, JSON path (where applicable), context, and a snippet. ` +
+			`The response includes scanned_sources (which types were successfully searched) and failed_sources ` +
+			`(which could not be fetched), so a "no references found" result can be trusted only when failed_sources is empty.`,
 		InputSchema: mcp.JSONSchema{
 			Type:        schemaTypeObject,
 			Description: "Parameters for a cross-config reference search",
@@ -92,6 +94,13 @@ func (h *FindReferencesHandlers) handleFindReferences(ctx context.Context, clien
 
 	matchMode, _ := args["match_mode"].(string)
 	match := searchMatchFunc(matchMode, search)
+
+	if invalid := invalidFindReferencesTypes(args); len(invalid) > 0 {
+		return errorResult(fmt.Sprintf(
+			"invalid types: %s. Valid types: %s",
+			strings.Join(invalid, ", "), strings.Join(findReferencesTypes, ", "),
+		)), nil
+	}
 
 	types := findReferencesRequestedTypes(args)
 	hits, scanned, failed := runRequestedScanners(ctx, client, types, match)
@@ -181,6 +190,31 @@ func searchMatchFunc(matchMode, search string) func(string) bool {
 		return func(s string) bool { return s == search }
 	}
 	return func(s string) bool { return strings.Contains(s, search) }
+}
+
+// invalidFindReferencesTypes returns any requested "types" values that aren't
+// in findReferencesTypes (e.g. a typo/plural like "automations"), so the
+// caller gets a hard validation error instead of silently matching zero
+// scanners and reporting a false "no references found".
+func invalidFindReferencesTypes(args map[string]any) []string {
+	requested, ok := args["types"].([]any)
+	if !ok {
+		return nil
+	}
+
+	valid := make(map[string]bool, len(findReferencesTypes))
+	for _, t := range findReferencesTypes {
+		valid[t] = true
+	}
+
+	var invalid []string
+	for _, t := range requested {
+		s, ok := t.(string)
+		if !ok || !valid[s] {
+			invalid = append(invalid, fmt.Sprintf("%v", t))
+		}
+	}
+	return invalid
 }
 
 // findReferencesRequestedTypes returns the set of types to search, defaulting
