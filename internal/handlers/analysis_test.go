@@ -2,7 +2,10 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -2658,5 +2661,95 @@ func TestHandleAnalyzeEntity_NoReferencesListsScannedSources(t *testing.T) {
 		if !strings.Contains(text, source) {
 			t.Errorf("expected scanned_sources to mention %q, got:\n%s", source, text)
 		}
+	}
+}
+
+// TestHandleAnalyzeEntity_FailedSourceReportedInFailedSourcesAndWarning is a
+// regression test for the adversarial-review finding that ScannedSources was
+// a hardcoded literal, not a measurement: if a source's fetch fails, it must
+// land in FailedSources and the natural-language output must warn about it -
+// even on the "no references found" path, which is the exact scenario a
+// silent failure would otherwise misrepresent as a confirmed negative.
+func TestHandleAnalyzeEntity_FailedSourceReportedInFailedSourcesAndWarning(t *testing.T) {
+	t.Parallel()
+
+	entityID := "light.test_entity"
+	client := &mockAnalysisClient{
+		GetStateFn: func(_ context.Context, id string) (*homeassistant.Entity, error) {
+			return &homeassistant.Entity{EntityID: id, State: "on"}, nil
+		},
+		ListDashboardsFn: func(context.Context) ([]homeassistant.DashboardEntry, error) {
+			return nil, errors.New("connection failed")
+		},
+	}
+
+	h := NewAnalysisHandlers()
+	args := map[string]any{"entity_id": entityID, "format": "natural"}
+	result, err := h.handleAnalyzeEntity(context.Background(), client, args)
+	if err != nil {
+		t.Fatalf("handleAnalyzeEntity() error = %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error result: %v", result.Content)
+	}
+
+	text := result.Content[0].Text
+	if !strings.Contains(text, "could not be scanned: dashboards") {
+		t.Errorf("expected a failed-source warning naming dashboards, got:\n%s", text)
+	}
+
+	jsonArgs := map[string]any{"entity_id": entityID, "format": "json"}
+	jsonResult, err := h.handleAnalyzeEntity(context.Background(), client, jsonArgs)
+	if err != nil {
+		t.Fatalf("handleAnalyzeEntity() error = %v", err)
+	}
+	var analysis EntityAnalysis
+	if unmarshalErr := json.Unmarshal([]byte(jsonResult.Content[0].Text), &analysis); unmarshalErr != nil {
+		t.Fatalf("failed to unmarshal JSON result: %v", unmarshalErr)
+	}
+	if !reflect.DeepEqual(analysis.References.FailedSources, []string{"dashboards"}) {
+		t.Errorf("FailedSources = %v, want [dashboards]", analysis.References.FailedSources)
+	}
+	for _, s := range analysis.References.ScannedSources {
+		if s == "dashboards" {
+			t.Errorf("ScannedSources should not include the failed source, got %v", analysis.References.ScannedSources)
+		}
+	}
+}
+
+// TestHandleAnalyzeEntity_NoReferencesListsScannedSources_AllSourcesFailIndependently
+// verifies FailedSources accumulates every failing source, not just the first.
+func TestHandleAnalyzeEntity_MultipleFailedSourcesAllReported(t *testing.T) {
+	t.Parallel()
+
+	entityID := "light.test_entity"
+	client := &mockAnalysisClient{
+		GetStateFn: func(_ context.Context, id string) (*homeassistant.Entity, error) {
+			return &homeassistant.Entity{EntityID: id, State: "on"}, nil
+		},
+		ListDashboardsFn: func(context.Context) ([]homeassistant.DashboardEntry, error) {
+			return nil, errors.New("connection failed")
+		},
+		GetEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+			return nil, errors.New("registry unavailable")
+		},
+	}
+
+	h := NewAnalysisHandlers()
+	args := map[string]any{"entity_id": entityID, "format": "json"}
+	result, err := h.handleAnalyzeEntity(context.Background(), client, args)
+	if err != nil {
+		t.Fatalf("handleAnalyzeEntity() error = %v", err)
+	}
+
+	var analysis EntityAnalysis
+	if unmarshalErr := json.Unmarshal([]byte(result.Content[0].Text), &analysis); unmarshalErr != nil {
+		t.Fatalf("failed to unmarshal JSON result: %v", unmarshalErr)
+	}
+	got := append([]string{}, analysis.References.FailedSources...)
+	sort.Strings(got)
+	want := []string{"dashboards", "helper_templates"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("FailedSources = %v, want %v", got, want)
 	}
 }

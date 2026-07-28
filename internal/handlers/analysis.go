@@ -129,6 +129,7 @@ type EntityReferences struct {
 	HelperTemplates []HelperTemplateReference `json:"helper_templates,omitempty"`
 	TotalReferences int                       `json:"total_references"`
 	ScannedSources  []string                  `json:"scanned_sources"`
+	FailedSources   []string                  `json:"failed_sources,omitempty"`
 }
 
 // DashboardReference describes how a dashboard references an entity, directly
@@ -300,20 +301,25 @@ func (h *AnalysisHandlers) buildEntityAnalysis(ctx context.Context, client homea
 	}
 	analysis.Registry = h.extractRegistryInfo(snapshot, entityID)
 
-	// Find all references
-	h.findAutomationReferences(ctx, client, entityID, analysis.References, verbose)
-	h.findScriptReferences(ctx, client, entityID, analysis.References, verbose)
-	h.findSceneReferences(ctx, client, entityID, analysis.References)
+	// Find all references. groups/areas are sourced from the pre-existing
+	// AnalysisSnapshot, which has no per-field error tracking of its own, so
+	// they're not included in outcomes below - see the plan's Global Constraints.
+	outcomes := []ScanOutcome{
+		{Source: "automations", Err: h.findAutomationReferences(ctx, client, entityID, analysis.References, verbose)},
+		{Source: "scripts", Err: h.findScriptReferences(ctx, client, entityID, analysis.References, verbose)},
+		{Source: "scenes", Err: h.findSceneReferences(ctx, client, entityID, analysis.References)},
+		{Source: "dashboards", Err: h.findDashboardReferences(ctx, client, entityID, analysis.References)},
+		{Source: "helper_templates", Err: h.findHelperTemplateReferences(ctx, client, entityID, analysis.References)},
+	}
 	h.findGroupReferencesWithSnapshot(snapshot, entityID, analysis.References)
-	h.findDashboardReferences(ctx, client, entityID, analysis.References)
-	_ = h.findHelperTemplateReferences(ctx, client, entityID, analysis.References) // error wiring: Task 6
 
 	// Find area-based references using snapshot (entity controlled via area_id in automations/scripts)
 	h.findAreaReferencesWithSnapshot(ctx, client, snapshot, entityID, analysis.References)
 
-	analysis.References.ScannedSources = []string{
-		"automations", "scripts", "scenes", "groups", "areas", "dashboards", "helper_templates",
-	}
+	scanned, failed := splitScanOutcomes(outcomes)
+	scanned = append(scanned, "groups", "areas")
+	analysis.References.ScannedSources = scanned
+	analysis.References.FailedSources = failed
 
 	// Calculate total references
 	analysis.References.TotalReferences = len(analysis.References.Automations) +
@@ -334,10 +340,10 @@ func (h *AnalysisHandlers) buildEntityAnalysis(ctx context.Context, client homea
 	return analysis, nil
 }
 
-func (h *AnalysisHandlers) findAutomationReferences(ctx context.Context, client homeassistant.Client, entityID string, refs *EntityReferences, verbose bool) {
+func (h *AnalysisHandlers) findAutomationReferences(ctx context.Context, client homeassistant.Client, entityID string, refs *EntityReferences, verbose bool) error {
 	automations, err := client.ListAutomations(ctx)
 	if err != nil {
-		return
+		return err
 	}
 
 	for _, auto := range automations {
@@ -363,12 +369,13 @@ func (h *AnalysisHandlers) findAutomationReferences(ctx context.Context, client 
 			refs.Automations = append(refs.Automations, ref)
 		}
 	}
+	return nil
 }
 
-func (h *AnalysisHandlers) findScriptReferences(ctx context.Context, client homeassistant.Client, entityID string, refs *EntityReferences, verbose bool) {
+func (h *AnalysisHandlers) findScriptReferences(ctx context.Context, client homeassistant.Client, entityID string, refs *EntityReferences, verbose bool) error {
 	scripts, err := client.ListScripts(ctx)
 	if err != nil {
-		return
+		return err
 	}
 
 	for _, script := range scripts {
@@ -392,12 +399,13 @@ func (h *AnalysisHandlers) findScriptReferences(ctx context.Context, client home
 		}
 		refs.Scripts = append(refs.Scripts, ref)
 	}
+	return nil
 }
 
-func (h *AnalysisHandlers) findSceneReferences(ctx context.Context, client homeassistant.Client, entityID string, refs *EntityReferences) {
+func (h *AnalysisHandlers) findSceneReferences(ctx context.Context, client homeassistant.Client, entityID string, refs *EntityReferences) error {
 	scenes, err := client.ListScenes(ctx)
 	if err != nil {
-		return
+		return err
 	}
 
 	for _, scene := range scenes {
@@ -420,22 +428,17 @@ func (h *AnalysisHandlers) findSceneReferences(ctx context.Context, client homea
 			}
 		}
 	}
+	return nil
 }
 
 // findDashboardReferences scans every dashboard (including the default one) for
 // entity references, both as a direct card/chip "entity" field and embedded in
 // a card's Jinja template text (e.g. an icon_color template calling
 // states('entity_id')) - issue #140.
-func (h *AnalysisHandlers) findDashboardReferences(ctx context.Context, client homeassistant.Client, entityID string, refs *EntityReferences) {
-	dashboards, err := client.ListDashboards(ctx)
+func (h *AnalysisHandlers) findDashboardReferences(ctx context.Context, client homeassistant.Client, entityID string, refs *EntityReferences) error {
+	urlPaths, err := allDashboardURLPaths(ctx, client)
 	if err != nil {
-		return
-	}
-
-	urlPaths := make([]string, 0, len(dashboards)+1)
-	urlPaths = append(urlPaths, "")
-	for _, d := range dashboards {
-		urlPaths = append(urlPaths, d.URLPath)
+		return err
 	}
 
 	match := func(s string) bool { return strings.Contains(s, entityID) }
@@ -454,6 +457,7 @@ func (h *AnalysisHandlers) findDashboardReferences(ctx context.Context, client h
 		}
 		refs.Dashboards = append(refs.Dashboards, DashboardReference{URLPath: urlPath, Paths: paths})
 	}
+	return nil
 }
 
 // findHelperTemplateReferences scans template-helper state/availability Jinja
@@ -1271,6 +1275,13 @@ func (h *AnalysisHandlers) generateEntitySummary(analysis *EntityAnalysis) strin
 		parts = append(parts, fmt.Sprintf("Referenced by %s.", strings.Join(refParts, ", ")))
 	}
 
+	if len(analysis.References.FailedSources) > 0 {
+		parts = append(parts, fmt.Sprintf(
+			scanFailureWarningFormat,
+			len(analysis.References.FailedSources), strings.Join(analysis.References.FailedSources, ", "),
+		))
+	}
+
 	// Automation details
 	for _, auto := range analysis.References.Automations {
 		usedInStr := strings.Join(auto.UsedIn, ", ")
@@ -1339,6 +1350,13 @@ func (h *AnalysisHandlers) formatAnalysisNatural(analysis *EntityAnalysis, verbo
 		))
 	} else {
 		parts = h.formatReferences(parts, analysis.References, verbose)
+	}
+
+	if len(analysis.References.FailedSources) > 0 {
+		parts = append(parts, fmt.Sprintf(
+			scanFailureWarningFormat,
+			len(analysis.References.FailedSources), strings.Join(analysis.References.FailedSources, ", "),
+		))
 	}
 
 	// History
