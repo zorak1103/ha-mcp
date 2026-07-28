@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/zorak1103/ha-mcp/internal/handlers/formatter"
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
@@ -108,36 +109,63 @@ func (h *FindReferencesHandlers) handleFindReferences(ctx context.Context, clien
 	return successResult(string(output)), nil
 }
 
-// runRequestedScanners runs every scanner named in types and aggregates their
-// hits plus which sources succeeded/failed. Sequential for now; Task 5 makes
-// this concurrent without changing this function's signature or behavior.
-func runRequestedScanners(ctx context.Context, client homeassistant.Client, types map[string]bool, match func(string) bool) (hits []ConfigHit, scanned, failed []string) {
-	var outcomes []ScanOutcome
+// scannerCall pairs a source name with the scan function to run for it.
+type scannerCall struct {
+	source string
+	run    func() ([]ConfigHit, error)
+}
 
+// buildScannerCalls returns one scannerCall per requested type, in
+// findReferencesTypes order (automation, script, scene, dashboard,
+// helper_template) - this fixed order is what keeps runRequestedScanners'
+// output deterministic regardless of which goroutine finishes first.
+func buildScannerCalls(ctx context.Context, client homeassistant.Client, types map[string]bool, match func(string) bool) []scannerCall {
+	var calls []scannerCall
 	if types["automation"] {
-		h, err := scanAutomationsForReferences(ctx, client, match)
-		hits = append(hits, h...)
-		outcomes = append(outcomes, ScanOutcome{Source: "automation", Err: err})
+		calls = append(calls, scannerCall{"automation", func() ([]ConfigHit, error) { return scanAutomationsForReferences(ctx, client, match) }})
 	}
 	if types["script"] {
-		h, err := scanScriptsForReferences(ctx, client, match)
-		hits = append(hits, h...)
-		outcomes = append(outcomes, ScanOutcome{Source: "script", Err: err})
+		calls = append(calls, scannerCall{"script", func() ([]ConfigHit, error) { return scanScriptsForReferences(ctx, client, match) }})
 	}
 	if types["scene"] {
-		h, err := scanScenesForReferences(ctx, client, match)
-		hits = append(hits, h...)
-		outcomes = append(outcomes, ScanOutcome{Source: "scene", Err: err})
+		calls = append(calls, scannerCall{"scene", func() ([]ConfigHit, error) { return scanScenesForReferences(ctx, client, match) }})
 	}
 	if types["dashboard"] {
-		h, err := scanAllDashboardsForReferences(ctx, client, match)
-		hits = append(hits, h...)
-		outcomes = append(outcomes, ScanOutcome{Source: "dashboard", Err: err})
+		calls = append(calls, scannerCall{"dashboard", func() ([]ConfigHit, error) { return scanAllDashboardsForReferences(ctx, client, match) }})
 	}
 	if types["helper_template"] {
-		h, err := scanHelperTemplates(ctx, client, match)
-		hits = append(hits, h...)
-		outcomes = append(outcomes, ScanOutcome{Source: "helper_template", Err: err})
+		calls = append(calls, scannerCall{"helper_template", func() ([]ConfigHit, error) { return scanHelperTemplates(ctx, client, match) }})
+	}
+	return calls
+}
+
+// runRequestedScanners runs every scanner named in types concurrently and
+// aggregates their hits plus which sources succeeded/failed. Each goroutine
+// writes only to its own index in results, so no locking is needed; hits are
+// concatenated in calls order (not completion order) afterward, keeping
+// output deterministic regardless of which scan finishes first.
+func runRequestedScanners(ctx context.Context, client homeassistant.Client, types map[string]bool, match func(string) bool) (hits []ConfigHit, scanned, failed []string) {
+	calls := buildScannerCalls(ctx, client, types, match)
+
+	results := make([]struct {
+		hits []ConfigHit
+		err  error
+	}, len(calls))
+
+	var wg sync.WaitGroup
+	for i, c := range calls {
+		wg.Add(1)
+		go func(i int, run func() ([]ConfigHit, error)) {
+			defer wg.Done()
+			results[i].hits, results[i].err = run()
+		}(i, c.run)
+	}
+	wg.Wait()
+
+	var outcomes []ScanOutcome
+	for i, c := range calls {
+		hits = append(hits, results[i].hits...)
+		outcomes = append(outcomes, ScanOutcome{Source: c.source, Err: results[i].err})
 	}
 
 	scanned, failed = splitScanOutcomes(outcomes)

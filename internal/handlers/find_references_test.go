@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 )
@@ -210,6 +211,54 @@ func TestHandleFindReferences(t *testing.T) {
 	}
 
 	runHandlerTestCases(t, tests, h.handleFindReferences)
+}
+
+func TestHandleFindReferences_ConcurrentScannersPreserveRequestOrder(t *testing.T) {
+	t.Parallel()
+
+	h := NewFindReferencesHandlers()
+
+	client := &UniversalMockClient{
+		ListAutomationsFn: func(context.Context) ([]homeassistant.Automation, error) {
+			time.Sleep(20 * time.Millisecond) // slowest scanner - must not reorder output
+			return []homeassistant.Automation{{EntityID: "automation.example"}}, nil
+		},
+		GetAutomationFn: func(context.Context, string) (*homeassistant.Automation, error) {
+			return &homeassistant.Automation{
+				EntityID: "automation.example",
+				Config: &homeassistant.AutomationConfig{
+					Actions: []any{map[string]any{"action": "light.turn_on", "target": map[string]any{"entity_id": "device_tracker.example_phone"}}},
+				},
+			}, nil
+		},
+		ListScriptsFn: func(context.Context) ([]homeassistant.Entity, error) {
+			return []homeassistant.Entity{{EntityID: "script.example"}}, nil
+		},
+		GetScriptFn: func(context.Context, string) (*homeassistant.Script, error) {
+			return &homeassistant.Script{
+				EntityID: "script.example",
+				Config:   &homeassistant.ScriptConfig{Sequence: []any{map[string]any{"action": "notify.mobile_app", "target": map[string]any{"entity_id": "device_tracker.example_phone"}}}},
+			}, nil
+		},
+	}
+
+	result, err := h.handleFindReferences(context.Background(), client, map[string]any{
+		"search": "device_tracker.example_phone",
+		"types":  []any{"automation", "script"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	text := result.Content[0].Text
+	autoIdx := strings.Index(text, "automation.example")
+	scriptIdx := strings.Index(text, "script.example")
+	if autoIdx == -1 || scriptIdx == -1 {
+		t.Fatalf("expected both references in output, got:\n%s", text)
+	}
+	if autoIdx > scriptIdx {
+		t.Errorf("expected automation section before script section (requested order) despite finishing last, got:\n%s", text)
+	}
 }
 
 func TestSearchMatchFunc(t *testing.T) {
