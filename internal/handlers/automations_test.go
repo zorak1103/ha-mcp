@@ -2390,11 +2390,12 @@ func TestFetchAutomationConfigs(t *testing.T) {
 
 func TestEnrichAutomationError(t *testing.T) {
 	tests := []struct {
-		name        string
-		msg         string
-		err         error
-		wantContain string
-		wantExact   string
+		name           string
+		msg            string
+		err            error
+		wantContain    string
+		wantNotContain string
+		wantExact      string
 	}{
 		{
 			name:      "non-API error unchanged",
@@ -2446,13 +2447,26 @@ func TestEnrichAutomationError(t *testing.T) {
 			wantContain: "domain.service",
 		},
 		{
-			name: "invalid template triggers hint",
+			// Real-world message from issue #55: TemplateSyntaxError must match the specific
+			// rule (before the generic "invalid template" rule), even though the body contains
+			// both substrings.
+			name: "template syntax error triggers specific split-expression hint",
+			msg:  "error saving patched automation: HA error",
+			err: &homeassistant.APIError{
+				StatusCode: 400,
+				Message:    "invalid automation config: {\"message\":\"Message malformed: invalid template (TemplateSyntaxError: unexpected '}') for dictionary value @ data['conditions'][1]['value_template']\"}",
+			},
+			wantContain: "{% set %}",
+		},
+		{
+			name: "invalid template triggers generic hint",
 			msg:  "Error updating automation: HA error",
 			err: &homeassistant.APIError{
 				StatusCode: 400,
 				Message:    "invalid automation config: {\"message\":\"invalid template\"}",
 			},
-			wantContain: "Jinja2",
+			wantContain:    "Jinja2",
+			wantNotContain: "{% set %}",
 		},
 		{
 			name: "unrecognized 400 error unchanged",
@@ -2477,6 +2491,11 @@ func TestEnrichAutomationError(t *testing.T) {
 			if tt.wantContain != "" {
 				if !strings.Contains(result, tt.wantContain) {
 					t.Errorf("expected result to contain %q, got %q", tt.wantContain, result)
+				}
+			}
+			if tt.wantNotContain != "" {
+				if strings.Contains(result, tt.wantNotContain) {
+					t.Errorf("expected result to NOT contain %q, got %q", tt.wantNotContain, result)
 				}
 			}
 		})

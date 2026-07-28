@@ -55,6 +55,15 @@ var automationErrorHints = []configErrorHint{
 		suggestion: "The service name in 'action' may be wrong. Use 'domain.service' format, e.g. 'light.turn_on', 'notify.mobile_app'. Check available services with call_service tool.",
 	},
 	{
+		// Specific match before the generic "invalid template" catch-all below.
+		pattern: "templatesyntaxerror",
+		suggestion: "Jinja2 template syntax error. If the expression is complex, split it into " +
+			"multiple '{% set %}' lines and keep the final '{{ ... }}' simple — chaining filters " +
+			"(e.g. from_json) with and/or in one block often trips the parser. Example: " +
+			"{% set days = states('input_text.x') %}{% set empty = days in ['unknown','unavailable',''] %}{{ empty }}. " +
+			"The data[...] path shown in the error above identifies which template failed.",
+	},
+	{
 		pattern:    "invalid template",
 		suggestion: "Template syntax error. HA uses Jinja2: {{ states('sensor.x') }}, {{ is_state('entity', 'on') }}, etc.",
 	},
@@ -68,6 +77,15 @@ var scriptErrorHints = []configErrorHint{
 	{
 		pattern:    "required key not provided",
 		suggestion: "A required field is missing from the script config. Each sequence step needs an 'action' key.",
+	},
+	{
+		// Specific match before the generic "invalid template" catch-all below.
+		pattern: "templatesyntaxerror",
+		suggestion: "Jinja2 template syntax error in script. If the expression is complex, split it into " +
+			"multiple '{% set %}' lines and keep the final '{{ ... }}' simple — chaining filters " +
+			"(e.g. from_json) with and/or in one block often trips the parser. Example: " +
+			"{% set days = states('input_text.x') %}{% set empty = days in ['unknown','unavailable',''] %}{{ empty }}. " +
+			"The data[...] path shown in the error above identifies which template failed.",
 	},
 	{
 		pattern:    "invalid template",
