@@ -84,8 +84,3 @@ AGENTS.md
 .mcp.json
 .reports/
 
-# Superpowers plans/specs (local-only)
-docs/superpowers/
-audit/
-# roborev snapshots
-/.roborev/
