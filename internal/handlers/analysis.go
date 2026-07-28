@@ -422,7 +422,6 @@ func (h *AnalysisHandlers) findSceneReferences(ctx context.Context, client homea
 	}
 }
 
-
 // findDashboardReferences scans every dashboard (including the default one) for
 // entity references, both as a direct card/chip "entity" field and embedded in
 // a card's Jinja template text (e.g. an icon_color template calling

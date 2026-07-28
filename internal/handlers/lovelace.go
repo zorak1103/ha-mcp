@@ -385,7 +385,6 @@ func (h *DashboardHandlers) handlePatch(ctx context.Context, client homeassistan
 	return successResult(msg), nil
 }
 
-
 // handleFind searches for a string/entity_id across a dashboard's views and
 // nested cards/chips at any depth (issue #143: action=get's compact/format=natural
 // fallback cannot locate content in a large dashboard). If url_path is omitted,
