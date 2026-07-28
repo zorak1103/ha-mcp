@@ -189,3 +189,20 @@ func splitScanOutcomes(outcomes []ScanOutcome) (scanned, failed []string) {
 	}
 	return scanned, failed
 }
+
+// allDashboardURLPaths returns the url_paths to search for "every dashboard"
+// scans: "" (the default dashboard) followed by every registered dashboard's
+// URLPath. Returns the ListDashboards error, if any, so callers can record a
+// failed "dashboards" scan instead of silently searching zero dashboards.
+func allDashboardURLPaths(ctx context.Context, client homeassistant.Client) ([]string, error) {
+	dashboards, err := client.ListDashboards(ctx)
+	if err != nil {
+		return nil, err
+	}
+	urlPaths := make([]string, 0, len(dashboards)+1)
+	urlPaths = append(urlPaths, "")
+	for _, d := range dashboards {
+		urlPaths = append(urlPaths, d.URLPath)
+	}
+	return urlPaths, nil
+}

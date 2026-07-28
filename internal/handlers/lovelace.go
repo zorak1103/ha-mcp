@@ -427,16 +427,7 @@ func (h *DashboardHandlers) findTargetURLPaths(ctx context.Context, client homea
 		return []string{urlPath}, nil
 	}
 
-	dashboards, err := client.ListDashboards(ctx)
-	if err != nil {
-		return nil, err
-	}
-	urlPaths := make([]string, 0, len(dashboards)+1)
-	urlPaths = append(urlPaths, "")
-	for _, d := range dashboards {
-		urlPaths = append(urlPaths, d.URLPath)
-	}
-	return urlPaths, nil
+	return allDashboardURLPaths(ctx, client)
 }
 
 // correctViewOrder reads back the saved config from HA and, if the views array

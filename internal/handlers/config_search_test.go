@@ -260,3 +260,42 @@ func TestSplitScanOutcomes_Empty(t *testing.T) {
 		t.Errorf("expected both empty, got scanned=%v failed=%v", scanned, failed)
 	}
 }
+
+// --- allDashboardURLPaths ---
+
+func TestAllDashboardURLPaths_IncludesDefaultAndListed(t *testing.T) {
+	t.Parallel()
+
+	mock := &UniversalMockClient{
+		ListDashboardsFn: func(context.Context) ([]homeassistant.DashboardEntry, error) {
+			return []homeassistant.DashboardEntry{{URLPath: "energy"}, {URLPath: "leak-sensors"}}, nil
+		},
+	}
+
+	got, err := allDashboardURLPaths(context.Background(), mock)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"", "energy", "leak-sensors"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestAllDashboardURLPaths_ListDashboardsError(t *testing.T) {
+	t.Parallel()
+
+	mock := &UniversalMockClient{
+		ListDashboardsFn: func(context.Context) ([]homeassistant.DashboardEntry, error) {
+			return nil, errors.New("connection failed")
+		},
+	}
+
+	got, err := allDashboardURLPaths(context.Background(), mock)
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if got != nil {
+		t.Errorf("expected nil paths on error, got %v", got)
+	}
+}
