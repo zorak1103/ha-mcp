@@ -172,9 +172,12 @@ func TestScanHelperTemplates_MatchesStateTemplate(t *testing.T) {
 		},
 	}
 
-	hits := scanHelperTemplates(context.Background(), mock, func(s string) bool {
+	hits, err := scanHelperTemplates(context.Background(), mock, func(s string) bool {
 		return strings.Contains(s, "device_tracker.example_phone")
 	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(hits) != 1 {
 		t.Fatalf("expected 1 hit, got %d: %+v", len(hits), hits)
 	}
@@ -198,13 +201,16 @@ func TestScanHelperTemplates_SkipsNonTemplateEntities(t *testing.T) {
 		},
 	}
 
-	hits := scanHelperTemplates(context.Background(), mock, func(string) bool { return true })
+	hits, err := scanHelperTemplates(context.Background(), mock, func(string) bool { return true })
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if len(hits) != 0 {
 		t.Errorf("expected no hits, got %+v", hits)
 	}
 }
 
-func TestScanHelperTemplates_RegistryErrorReturnsNil(t *testing.T) {
+func TestScanHelperTemplates_RegistryErrorReturnsError(t *testing.T) {
 	t.Parallel()
 
 	mock := &UniversalMockClient{
@@ -213,9 +219,12 @@ func TestScanHelperTemplates_RegistryErrorReturnsNil(t *testing.T) {
 		},
 	}
 
-	hits := scanHelperTemplates(context.Background(), mock, func(string) bool { return true })
+	hits, err := scanHelperTemplates(context.Background(), mock, func(string) bool { return true })
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
 	if hits != nil {
-		t.Errorf("expected nil, got %+v", hits)
+		t.Errorf("expected nil hits, got %+v", hits)
 	}
 }
 

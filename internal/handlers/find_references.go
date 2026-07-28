@@ -74,6 +74,15 @@ Returns matches grouped by type with the object id, JSON path (where applicable)
 	}
 }
 
+// findReferencesResult is the format=json payload shape: hits plus which
+// sources were actually scanned successfully, so a "no references found"
+// result can be trusted (or explicitly not, via failed_sources).
+type findReferencesResult struct {
+	Hits           []ConfigHit `json:"hits"`
+	ScannedSources []string    `json:"scanned_sources"`
+	FailedSources  []string    `json:"failed_sources,omitempty"`
+}
+
 func (h *FindReferencesHandlers) handleFindReferences(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
 	search, _ := args["search"].(string)
 	if search == "" {
@@ -84,34 +93,55 @@ func (h *FindReferencesHandlers) handleFindReferences(ctx context.Context, clien
 	match := searchMatchFunc(matchMode, search)
 
 	types := findReferencesRequestedTypes(args)
-
-	var hits []ConfigHit
-	if types["automation"] {
-		hits = append(hits, scanAutomationsForReferences(ctx, client, match)...)
-	}
-	if types["script"] {
-		hits = append(hits, scanScriptsForReferences(ctx, client, match)...)
-	}
-	if types["scene"] {
-		hits = append(hits, scanScenesForReferences(ctx, client, match)...)
-	}
-	if types["dashboard"] {
-		hits = append(hits, scanAllDashboardsForReferences(ctx, client, match)...)
-	}
-	if types["helper_template"] {
-		hits = append(hits, scanHelperTemplates(ctx, client, match)...)
-	}
+	hits, scanned, failed := runRequestedScanners(ctx, client, types, match)
 
 	format := formatter.ParseFormat(getStringArg(args, "format"))
 	if format == formatter.FormatNatural {
-		return successResult(formatFindReferencesNatural(search, hits)), nil
+		return successResult(formatFindReferencesNatural(search, hits, failed)), nil
 	}
 
-	output, err := json.MarshalIndent(hits, "", "  ")
+	result := findReferencesResult{Hits: hits, ScannedSources: scanned, FailedSources: failed}
+	output, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		return errorResult(fmt.Sprintf("error formatting results: %v", err)), nil
 	}
 	return successResult(string(output)), nil
+}
+
+// runRequestedScanners runs every scanner named in types and aggregates their
+// hits plus which sources succeeded/failed. Sequential for now; Task 5 makes
+// this concurrent without changing this function's signature or behavior.
+func runRequestedScanners(ctx context.Context, client homeassistant.Client, types map[string]bool, match func(string) bool) (hits []ConfigHit, scanned, failed []string) {
+	var outcomes []ScanOutcome
+
+	if types["automation"] {
+		h, err := scanAutomationsForReferences(ctx, client, match)
+		hits = append(hits, h...)
+		outcomes = append(outcomes, ScanOutcome{Source: "automation", Err: err})
+	}
+	if types["script"] {
+		h, err := scanScriptsForReferences(ctx, client, match)
+		hits = append(hits, h...)
+		outcomes = append(outcomes, ScanOutcome{Source: "script", Err: err})
+	}
+	if types["scene"] {
+		h, err := scanScenesForReferences(ctx, client, match)
+		hits = append(hits, h...)
+		outcomes = append(outcomes, ScanOutcome{Source: "scene", Err: err})
+	}
+	if types["dashboard"] {
+		h, err := scanAllDashboardsForReferences(ctx, client, match)
+		hits = append(hits, h...)
+		outcomes = append(outcomes, ScanOutcome{Source: "dashboard", Err: err})
+	}
+	if types["helper_template"] {
+		h, err := scanHelperTemplates(ctx, client, match)
+		hits = append(hits, h...)
+		outcomes = append(outcomes, ScanOutcome{Source: "helper_template", Err: err})
+	}
+
+	scanned, failed = splitScanOutcomes(outcomes)
+	return hits, scanned, failed
 }
 
 // searchMatchFunc builds the leaf-value predicate for the requested match_mode.
@@ -147,10 +177,10 @@ func findReferencesRequestedTypes(args map[string]any) map[string]bool {
 }
 
 // scanAutomationsForReferences scans every automation's triggers/conditions/actions.
-func scanAutomationsForReferences(ctx context.Context, client homeassistant.Client, match func(string) bool) []ConfigHit {
+func scanAutomationsForReferences(ctx context.Context, client homeassistant.Client, match func(string) bool) ([]ConfigHit, error) {
 	automations, err := client.ListAutomations(ctx)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 
 	var hits []ConfigHit
@@ -166,14 +196,14 @@ func scanAutomationsForReferences(ctx context.Context, client homeassistant.Clie
 			namedSection{"actions", full.Config.Actions},
 		)...)
 	}
-	return hits
+	return hits, nil
 }
 
 // scanScriptsForReferences scans every script's sequence.
-func scanScriptsForReferences(ctx context.Context, client homeassistant.Client, match func(string) bool) []ConfigHit {
+func scanScriptsForReferences(ctx context.Context, client homeassistant.Client, match func(string) bool) ([]ConfigHit, error) {
 	scripts, err := client.ListScripts(ctx)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 
 	var hits []ConfigHit
@@ -189,14 +219,14 @@ func scanScriptsForReferences(ctx context.Context, client homeassistant.Client, 
 			namedSection{"sequence", full.Config.Sequence},
 		)...)
 	}
-	return hits
+	return hits, nil
 }
 
 // scanScenesForReferences scans every scene's flat entity_id list.
-func scanScenesForReferences(ctx context.Context, client homeassistant.Client, match func(string) bool) []ConfigHit {
+func scanScenesForReferences(ctx context.Context, client homeassistant.Client, match func(string) bool) ([]ConfigHit, error) {
 	scenes, err := client.ListScenes(ctx)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 
 	var hits []ConfigHit
@@ -209,20 +239,14 @@ func scanScenesForReferences(ctx context.Context, client homeassistant.Client, m
 			namedSection{configKeyEntityID, entities},
 		)...)
 	}
-	return hits
+	return hits, nil
 }
 
 // scanAllDashboardsForReferences scans every dashboard, including the default one.
-func scanAllDashboardsForReferences(ctx context.Context, client homeassistant.Client, match func(string) bool) []ConfigHit {
-	dashboards, err := client.ListDashboards(ctx)
+func scanAllDashboardsForReferences(ctx context.Context, client homeassistant.Client, match func(string) bool) ([]ConfigHit, error) {
+	urlPaths, err := allDashboardURLPaths(ctx, client)
 	if err != nil {
-		return nil
-	}
-
-	urlPaths := make([]string, 0, len(dashboards)+1)
-	urlPaths = append(urlPaths, "")
-	for _, d := range dashboards {
-		urlPaths = append(urlPaths, d.URLPath)
+		return nil, err
 	}
 
 	var hits []ConfigHit
@@ -233,7 +257,7 @@ func scanAllDashboardsForReferences(ctx context.Context, client homeassistant.Cl
 		}
 		hits = append(hits, scanDashboardConfig(urlPath, config, match)...)
 	}
-	return hits
+	return hits, nil
 }
 
 // namedSection pairs a top-level config array with the pointer-path segment name it lives under.
@@ -255,34 +279,46 @@ func configSectionHits(objectType, objectID string, match func(string) bool, sec
 	return hits
 }
 
-// formatFindReferencesNatural renders hits grouped by type for LLM-friendly output.
-func formatFindReferencesNatural(search string, hits []ConfigHit) string {
+// formatFindReferencesNatural renders hits grouped by type for LLM-friendly
+// output, followed by a warning listing any source that could not be scanned
+// (so an empty-hits result is never mistaken for a confirmed "not used anywhere").
+func formatFindReferencesNatural(search string, hits []ConfigHit, failedSources []string) string {
+	var parts []string
+
 	if len(hits) == 0 {
-		return fmt.Sprintf("No references found for %q.", search)
+		parts = append(parts, fmt.Sprintf("No references found for %q.", search))
+	} else {
+		byType := make(map[string][]ConfigHit)
+		var order []string
+		for _, hit := range hits {
+			if _, seen := byType[hit.Type]; !seen {
+				order = append(order, hit.Type)
+			}
+			byType[hit.Type] = append(byType[hit.Type], hit)
+		}
+
+		parts = append(parts, fmt.Sprintf("Found %d match(es) for %q:", len(hits), search))
+		for _, t := range order {
+			parts = append(parts, fmt.Sprintf("\n%s (%d):", t, len(byType[t])))
+			for _, hit := range byType[t] {
+				line := fmt.Sprintf("  • %s", hit.ObjectID)
+				if hit.Path != "" {
+					line += " " + hit.Path
+				}
+				if hit.Context != "" {
+					line += " - " + hit.Context
+				}
+				parts = append(parts, line)
+			}
+		}
 	}
 
-	byType := make(map[string][]ConfigHit)
-	var order []string
-	for _, hit := range hits {
-		if _, seen := byType[hit.Type]; !seen {
-			order = append(order, hit.Type)
-		}
-		byType[hit.Type] = append(byType[hit.Type], hit)
+	if len(failedSources) > 0 {
+		parts = append(parts, "", fmt.Sprintf(
+			scanFailureWarningFormat,
+			len(failedSources), strings.Join(failedSources, ", "),
+		))
 	}
 
-	parts := []string{fmt.Sprintf("Found %d match(es) for %q:", len(hits), search)}
-	for _, t := range order {
-		parts = append(parts, fmt.Sprintf("\n%s (%d):", t, len(byType[t])))
-		for _, hit := range byType[t] {
-			line := fmt.Sprintf("  • %s", hit.ObjectID)
-			if hit.Path != "" {
-				line += " " + hit.Path
-			}
-			if hit.Context != "" {
-				line += " - " + hit.Context
-			}
-			parts = append(parts, line)
-		}
-	}
 	return strings.Join(parts, "\n")
 }

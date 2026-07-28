@@ -130,10 +130,10 @@ func buildCardContext(cardType, entity string) string {
 // availability) for text satisfying match. Entities that are not template
 // helpers, and registry/options-flow lookup failures, are skipped rather than
 // treated as errors - a helper without a config_entry_id simply isn't scanned.
-func scanHelperTemplates(ctx context.Context, client homeassistant.Client, match func(string) bool) []ConfigHit {
+func scanHelperTemplates(ctx context.Context, client homeassistant.Client, match func(string) bool) ([]ConfigHit, error) {
 	entries, err := client.GetEntityRegistry(ctx)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 
 	var hits []ConfigHit
@@ -147,8 +147,16 @@ func scanHelperTemplates(ctx context.Context, client homeassistant.Client, match
 		}
 		hits = append(hits, templateOptionHits(entry.EntityID, options, match)...)
 	}
-	return hits
+	return hits, nil
 }
+
+// scanFailureWarningFormat is the shared natural-language warning appended by
+// find_references (this task) and analyze_entity (Task 6) when one or more
+// sources could not be scanned - both tools must use identical wording so
+// the failure signal reads the same way everywhere. Defined here, in its
+// first consumer's task, rather than earlier, so it's never an unused
+// package-level const (golangci-lint's `unused` check would fail on that).
+const scanFailureWarningFormat = "⚠ %d source(s) could not be scanned: %s — results may be incomplete."
 
 // templateOptionHits checks the state/availability template fields of a single
 // template helper's config-entry options against match.

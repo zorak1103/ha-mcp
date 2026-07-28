@@ -306,7 +306,7 @@ func (h *AnalysisHandlers) buildEntityAnalysis(ctx context.Context, client homea
 	h.findSceneReferences(ctx, client, entityID, analysis.References)
 	h.findGroupReferencesWithSnapshot(snapshot, entityID, analysis.References)
 	h.findDashboardReferences(ctx, client, entityID, analysis.References)
-	h.findHelperTemplateReferences(ctx, client, entityID, analysis.References)
+	_ = h.findHelperTemplateReferences(ctx, client, entityID, analysis.References) // error wiring: Task 6
 
 	// Find area-based references using snapshot (entity controlled via area_id in automations/scripts)
 	h.findAreaReferencesWithSnapshot(ctx, client, snapshot, entityID, analysis.References)
@@ -458,9 +458,12 @@ func (h *AnalysisHandlers) findDashboardReferences(ctx context.Context, client h
 
 // findHelperTemplateReferences scans template-helper state/availability Jinja
 // templates for entity references - issue #140.
-func (h *AnalysisHandlers) findHelperTemplateReferences(ctx context.Context, client homeassistant.Client, entityID string, refs *EntityReferences) {
+func (h *AnalysisHandlers) findHelperTemplateReferences(ctx context.Context, client homeassistant.Client, entityID string, refs *EntityReferences) error {
 	match := func(s string) bool { return strings.Contains(s, entityID) }
-	hits := scanHelperTemplates(ctx, client, match)
+	hits, err := scanHelperTemplates(ctx, client, match)
+	if err != nil {
+		return err
+	}
 
 	fieldsByEntity := make(map[string][]string)
 	var order []string
@@ -476,6 +479,7 @@ func (h *AnalysisHandlers) findHelperTemplateReferences(ctx context.Context, cli
 			Fields:   fieldsByEntity[id],
 		})
 	}
+	return nil
 }
 
 // findGroupReferencesWithSnapshot finds groups that contain the entity using pre-fetched data.

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -250,8 +251,62 @@ func TestFindReferencesRequestedTypes(t *testing.T) {
 func TestFormatFindReferencesNatural_Empty(t *testing.T) {
 	t.Parallel()
 
-	got := formatFindReferencesNatural("sensor.x", nil)
+	got := formatFindReferencesNatural("sensor.x", nil, nil)
 	if !strings.Contains(got, "No references found") {
 		t.Errorf("expected no-references message, got %q", got)
 	}
+}
+
+func TestHandleFindReferences_PartialScanFailureReportedInBothFormats(t *testing.T) {
+	t.Parallel()
+
+	h := NewFindReferencesHandlers()
+
+	tests := []handlerTestCase{
+		{
+			name: "natural format shows failed source warning",
+			args: map[string]any{
+				"search": "device_tracker.example_phone",
+				"types":  []any{"script", "dashboard"},
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.ListScriptsFn = func(context.Context) ([]homeassistant.Entity, error) {
+					return nil, nil
+				}
+				m.ListDashboardsFn = func(context.Context) ([]homeassistant.DashboardEntry, error) {
+					return nil, errors.New("connection failed")
+				}
+			},
+			wantError: false,
+			wantContains: []string{
+				"No references found",
+				"1 source(s) could not be scanned: dashboard",
+			},
+		},
+		{
+			name: "json format includes scanned_sources and failed_sources",
+			args: map[string]any{
+				"search": "device_tracker.example_phone",
+				"types":  []any{"script", "dashboard"},
+				"format": "json",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.ListScriptsFn = func(context.Context) ([]homeassistant.Entity, error) {
+					return nil, nil
+				}
+				m.ListDashboardsFn = func(context.Context) ([]homeassistant.DashboardEntry, error) {
+					return nil, errors.New("connection failed")
+				}
+			},
+			wantError: false,
+			wantContains: []string{
+				`"scanned_sources"`,
+				`"script"`,
+				`"failed_sources"`,
+				`"dashboard"`,
+			},
+		},
+	}
+
+	runHandlerTestCases(t, tests, h.handleFindReferences)
 }
