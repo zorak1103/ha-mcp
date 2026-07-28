@@ -168,3 +168,32 @@ func templateOptionHits(entityID string, options map[string]any, match func(stri
 	}
 	return hits
 }
+
+// ScanOutcome names one source's scan attempt and its error, if any (nil = success).
+// Used by analyze_entity and find_references to build a scanned/failed source
+// list that reflects what actually happened, not what should have happened.
+type ScanOutcome struct {
+	Source string
+	Err    error
+}
+
+// splitScanOutcomes splits a list of per-source scan attempts into the names
+// that succeeded and the names that failed, preserving input order in each list.
+func splitScanOutcomes(outcomes []ScanOutcome) (scanned, failed []string) {
+	for _, o := range outcomes {
+		if o.Err != nil {
+			failed = append(failed, o.Source)
+			continue
+		}
+		scanned = append(scanned, o.Source)
+	}
+	return scanned, failed
+}
+
+// scanFailureWarningFormat is the shared natural-language warning appended by
+// analyze_entity and find_references when one or more sources could not be
+// scanned - both tools must use identical wording so the failure signal reads
+// the same way everywhere. Defined once here to satisfy the project's goconst
+// rule (CLAUDE.md: "Extract strings repeated 3+ times to package-level
+// constants") since Tasks 4 and 6 each need this exact string.
+const scanFailureWarningFormat = "⚠ %d source(s) could not be scanned: %s — results may be incomplete."

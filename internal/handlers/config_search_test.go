@@ -218,3 +218,45 @@ func TestScanHelperTemplates_RegistryErrorReturnsNil(t *testing.T) {
 		t.Errorf("expected nil, got %+v", hits)
 	}
 }
+
+// --- splitScanOutcomes ---
+
+func TestSplitScanOutcomes_AllSucceed(t *testing.T) {
+	t.Parallel()
+
+	scanned, failed := splitScanOutcomes([]ScanOutcome{
+		{Source: "automation", Err: nil},
+		{Source: "script", Err: nil},
+	})
+	if !reflect.DeepEqual(scanned, []string{"automation", "script"}) {
+		t.Errorf("scanned = %v, want [automation script]", scanned)
+	}
+	if len(failed) != 0 {
+		t.Errorf("failed = %v, want empty", failed)
+	}
+}
+
+func TestSplitScanOutcomes_SomeFail(t *testing.T) {
+	t.Parallel()
+
+	scanned, failed := splitScanOutcomes([]ScanOutcome{
+		{Source: "automation", Err: nil},
+		{Source: "dashboard", Err: errors.New("connection failed")},
+		{Source: "helper_template", Err: errors.New("registry unavailable")},
+	})
+	if !reflect.DeepEqual(scanned, []string{"automation"}) {
+		t.Errorf("scanned = %v, want [automation]", scanned)
+	}
+	if !reflect.DeepEqual(failed, []string{"dashboard", "helper_template"}) {
+		t.Errorf("failed = %v, want [dashboard helper_template]", failed)
+	}
+}
+
+func TestSplitScanOutcomes_Empty(t *testing.T) {
+	t.Parallel()
+
+	scanned, failed := splitScanOutcomes(nil)
+	if len(scanned) != 0 || len(failed) != 0 {
+		t.Errorf("expected both empty, got scanned=%v failed=%v", scanned, failed)
+	}
+}
