@@ -189,11 +189,3 @@ func splitScanOutcomes(outcomes []ScanOutcome) (scanned, failed []string) {
 	}
 	return scanned, failed
 }
-
-// scanFailureWarningFormat is the shared natural-language warning appended by
-// analyze_entity and find_references when one or more sources could not be
-// scanned - both tools must use identical wording so the failure signal reads
-// the same way everywhere. Defined once here to satisfy the project's goconst
-// rule (CLAUDE.md: "Extract strings repeated 3+ times to package-level
-// constants") since Tasks 4 and 6 each need this exact string.
-const scanFailureWarningFormat = "⚠ %d source(s) could not be scanned: %s — results may be incomplete."
