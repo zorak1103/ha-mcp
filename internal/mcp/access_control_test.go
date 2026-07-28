@@ -220,8 +220,8 @@ func TestManagedToolsActions(t *testing.T) {
 		{
 			tool:         "manage_dashboard",
 			paramName:    "action",
-			readActions:  []string{"list", "get"},
-			writeActions: []string{"create", "update", "delete", "save_config"},
+			readActions:  []string{"list", "get", "find"},
+			writeActions: []string{"create", "update", "delete", "save_config", "patch"},
 		},
 		{
 			tool:         "manage_config_entry",
