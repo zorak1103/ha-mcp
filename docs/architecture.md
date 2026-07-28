@@ -95,6 +95,9 @@ ha-mcp/
 │   │   ├── analysis_snapshot.go # Parallel data fetching for analysis
 │   │   ├── entities.go          # Entity tool handlers (get_state)
 │   │   ├── analysis.go          # Analysis tool handlers (analyze_entity, get_entity_dependencies)
+│   │   ├── analysis_paths.go    # RFC 6901 path walker for automation/script reference locations
+│   │   ├── config_search.go     # Shared reference-search scanners (dashboards, template helpers)
+│   │   ├── find_references.go   # Cross-config find_references tool (automations/scripts/scenes/dashboards/helpers)
 │   │   ├── entities_consolidated.go # Consolidated query_entities tool (current/history/statistics/domains/presence/health)
 │   │   ├── entities_presence.go # Presence analysis for query_entities (mode=presence)
 │   │   ├── entities_health.go   # Health mode: detect and remove dead entities (mode=health)

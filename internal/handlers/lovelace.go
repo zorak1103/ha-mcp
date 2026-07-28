@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -22,6 +23,7 @@ const (
 	dashboardActionDelete     = "delete"
 	dashboardActionSaveConfig = "save_config"
 	dashboardActionPatch      = "patch"
+	dashboardActionFind       = "find"
 )
 
 // DashboardHandlers provides handlers for dashboard-related MCP tools.
@@ -55,72 +57,89 @@ Actions:
 - delete: Delete a dashboard (requires dashboard_id)
 - save_config: Save dashboard configuration (requires config, url_path optional)
 - patch: Apply RFC 6902 JSON Patch operations to dashboard config (requires operations, url_path optional)
+- find: Search for a string/entity_id across a dashboard's views and nested cards without fetching the whole config (requires search; url_path optional, defaults to all dashboards)
 
-Note: Newly created dashboards use the modern "sections" layout format instead of the legacy "badges/cards" format.`,
+Note: Newly created dashboards use the modern "sections" layout format instead of the legacy "badges/cards" format.
+For large dashboards where action=get exceeds the response size limit, use action=find to locate content by entity/string, or view=<name> to fetch a single view instead of retrying get with format=natural.`,
 		InputSchema: schema,
 	}
 }
 
 func (h *DashboardHandlers) buildDashboardSchema() mcp.JSONSchema {
+	properties := map[string]mcp.JSONSchema{
+		"action": {
+			Type:        "string",
+			Description: "Operation to perform: list, get, create, update, delete, save_config, patch, find",
+			Enum:        []string{"list", "get", "create", "update", "delete", "save_config", "patch", "find"},
+		},
+		"dashboard_id": {
+			Type:        "string",
+			Description: "HA-generated dashboard identifier (e.g., 'lovelace-xxxx'), returned by list/create. Required for update/delete.",
+		},
+		"url_path": {
+			Type:        "string",
+			Description: "Dashboard URL path (e.g., 'energy', 'leak-sensors'). Use hyphens for multi-word paths. Required for create. Optional for get/save_config (empty = default dashboard). Optional for find (omit to search all dashboards).",
+		},
+		"title": {
+			Type:        "string",
+			Description: "Dashboard title (required for create, optional for update)",
+		},
+		"icon": {
+			Type:        "string",
+			Description: "Dashboard icon (e.g., 'mdi:view-dashboard'). Omit rather than set empty.",
+		},
+		"mode": {
+			Type:        "string",
+			Description: "Dashboard mode: 'storage' or 'yaml'. Required for create.",
+			Enum:        []string{"storage", "yaml"},
+		},
+	}
+	maps.Copy(properties, h.buildDashboardViewProperties())
+
 	return mcp.JSONSchema{
 		Type:        "object",
 		Description: "Dashboard management operation",
-		Properties: map[string]mcp.JSONSchema{
-			"action": {
-				Type:        "string",
-				Description: "Operation to perform: list, get, create, update, delete, save_config, patch",
-				Enum:        []string{"list", "get", "create", "update", "delete", "save_config", "patch"},
-			},
-			"dashboard_id": {
-				Type:        "string",
-				Description: "HA-generated dashboard identifier (e.g., 'lovelace-xxxx'), returned by list/create. Required for update/delete.",
-			},
-			"url_path": {
-				Type:        "string",
-				Description: "Dashboard URL path (e.g., 'energy', 'leak-sensors'). Use hyphens for multi-word paths. Required for create. Optional for get/save_config (empty = default dashboard).",
-			},
-			"title": {
-				Type:        "string",
-				Description: "Dashboard title (required for create, optional for update)",
-			},
-			"icon": {
-				Type:        "string",
-				Description: "Dashboard icon (e.g., 'mdi:view-dashboard'). Omit rather than set empty.",
-			},
-			"mode": {
-				Type:        "string",
-				Description: "Dashboard mode: 'storage' or 'yaml'. Required for create.",
-				Enum:        []string{"storage", "yaml"},
-			},
-			"require_admin": {
-				Type:        "boolean",
-				Description: "Whether dashboard requires admin access. Defaults to false for create.",
-			},
-			"show_in_sidebar": {
-				Type:        "boolean",
-				Description: "Whether to show dashboard in sidebar. Defaults to false for create.",
-			},
-			"config": {
-				Type:        "object",
-				Description: "Dashboard configuration object (for save_config action)",
-			},
-			"view": {
-				Type:        "string",
-				Description: "Filter by view path or title (for get action, case-insensitive, partial match)",
-			},
-			"verbose": {
-				Type:        "boolean",
-				Description: "If true, return full configuration including all cards (for get action). Default: false (compact overview)",
-			},
-			"format": {
-				Type:        "string",
-				Description: "Output format: 'natural' (default, human-readable) or 'json' (structured data)",
-				Enum:        []string{"natural", "json"},
-			},
-			"operations": patchOperationsSchema(),
-			"dry_run":    dryRunSchema(),
+		Properties:  properties,
+		Required:    []string{"action"},
+	}
+}
+
+// buildDashboardViewProperties holds the get/save_config/patch/find-related
+// schema properties, split out of buildDashboardSchema to stay under the
+// funlen threshold.
+func (h *DashboardHandlers) buildDashboardViewProperties() map[string]mcp.JSONSchema {
+	return map[string]mcp.JSONSchema{
+		"require_admin": {
+			Type:        "boolean",
+			Description: "Whether dashboard requires admin access. Defaults to false for create.",
 		},
-		Required: []string{"action"},
+		"show_in_sidebar": {
+			Type:        "boolean",
+			Description: "Whether to show dashboard in sidebar. Defaults to false for create.",
+		},
+		"config": {
+			Type:        "object",
+			Description: "Dashboard configuration object (for save_config action)",
+		},
+		"view": {
+			Type:        "string",
+			Description: "Filter by view path or title (for get action, case-insensitive, partial match)",
+		},
+		"search": {
+			Type:        "string",
+			Description: "Substring or entity_id to search for across views and nested cards/chips at any depth (required for find action)",
+		},
+		"verbose": {
+			Type:        "boolean",
+			Description: "If true, return full configuration including all cards (for get action). Default: false (compact overview)",
+		},
+		"format": {
+			Type:        "string",
+			Description: "Output format: 'natural' (default, human-readable) or 'json' (structured data)",
+			Enum:        []string{"natural", "json"},
+		},
+		"operations": patchOperationsSchema(),
+		"dry_run":    dryRunSchema(),
 	}
 }
 
@@ -153,8 +172,10 @@ func (h *DashboardHandlers) handleManageDashboard(
 		return h.handleSaveConfig(ctx, client, args)
 	case dashboardActionPatch:
 		return h.handlePatch(ctx, client, args)
+	case dashboardActionFind:
+		return h.handleFind(ctx, client, args)
 	default:
-		return errorResult(fmt.Sprintf("invalid action: %s. Valid actions: list, get, create, update, delete, save_config, patch", action)), nil
+		return errorResult(fmt.Sprintf("invalid action: %s. Valid actions: list, get, create, update, delete, save_config, patch, find", action)), nil
 	}
 }
 
@@ -362,6 +383,61 @@ func (h *DashboardHandlers) handlePatch(ctx context.Context, client homeassistan
 		msg += "\n" + warning
 	}
 	return successResult(msg), nil
+}
+
+
+// handleFind searches for a string/entity_id across a dashboard's views and
+// nested cards/chips at any depth (issue #143: action=get's compact/format=natural
+// fallback cannot locate content in a large dashboard). If url_path is omitted,
+// every dashboard (including the default one) is searched.
+func (h *DashboardHandlers) handleFind(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+	search, _ := args["search"].(string)
+	if search == "" {
+		return errorResult("search is required for action=find"), nil
+	}
+	match := func(s string) bool { return strings.Contains(s, search) }
+
+	urlPaths, err := h.findTargetURLPaths(ctx, client, args)
+	if err != nil {
+		return errorResult(fmt.Sprintf("error listing dashboards: %v", err)), nil
+	}
+
+	var hits []ConfigHit
+	for _, urlPath := range urlPaths {
+		config, err := client.GetLovelaceConfig(ctx, urlPath)
+		if err != nil {
+			continue
+		}
+		hits = append(hits, scanDashboardConfig(urlPath, config, match)...)
+	}
+
+	if len(hits) == 0 {
+		return successResult(fmt.Sprintf("No matches for %q in any dashboard", search)), nil
+	}
+
+	summary := fmt.Sprintf("Found %d match(es) for %q", len(hits), search)
+	return formatLovelaceResponse(hits, summary)
+}
+
+// findTargetURLPaths returns the url_paths to search for handleFind: just the
+// explicitly requested one if url_path was passed (including "" for the default
+// dashboard), or every dashboard plus the default one otherwise.
+func (h *DashboardHandlers) findTargetURLPaths(ctx context.Context, client homeassistant.Client, args map[string]any) ([]string, error) {
+	if _, present := args["url_path"]; present {
+		urlPath, _ := args["url_path"].(string)
+		return []string{urlPath}, nil
+	}
+
+	dashboards, err := client.ListDashboards(ctx)
+	if err != nil {
+		return nil, err
+	}
+	urlPaths := make([]string, 0, len(dashboards)+1)
+	urlPaths = append(urlPaths, "")
+	for _, d := range dashboards {
+		urlPaths = append(urlPaths, d.URLPath)
+	}
+	return urlPaths, nil
 }
 
 // correctViewOrder reads back the saved config from HA and, if the views array

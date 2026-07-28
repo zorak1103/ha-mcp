@@ -89,6 +89,7 @@ AI Client (Claude, Cline)
 **Domain handlers** follow naming `handlers/{domain}.go` → `manage_{domain}` tool. Exceptions:
 - `entities.go` → `get_state`
 - `analysis.go` → `analyze_entity`, `get_entity_dependencies`; `analysis_paths.go` → RFC 6901 path walker (`collectEntityPaths`, `collectSectionReferencePaths`, `collectAutomationReferencePaths`, `referencePathContext`) used to surface exact reference locations in `analyze_entity` output; `analysis_verbose.go` → excerpt summaries (verbose mode)
+- `config_search.go` → shared cross-config search primitives: `collectMatchPaths` (generalized, predicate-based version of `collectEntityPaths`), `scanDashboardConfig` (recursive dashboard view/card/chip walker), `scanHelperTemplates` (template-helper `state`/`availability` Jinja scanner). Used by `analyze_entity`'s dashboard/helper-template coverage, `find_references.go`, and `manage_dashboard action=find`. `find_references.go` → `find_references` tool (cross-config search across automations/scripts/scenes/dashboards/helper templates, `match_mode`: substring default/exact, `types` filter)
 - `entities_consolidated.go` → `query_entities`; `devices_consolidated.go` → `query_devices`
 - `targets_consolidated.go` → `analyze_target`; `registry_consolidated.go` → `get_registry`
 - `entities_manage.go` → `manage_entity`; `devices_manage.go` → `manage_device`
@@ -179,7 +180,7 @@ Tool actions and parameters are defined in the handler schemas. Non-obvious aspe
 - Modes apply only to `update`; `create` always sets initial values directly
 
 **JSON Patch (RFC 6902) + Semantic Patch:**
-- `manage_automation`, `manage_script`, `manage_scene`, `manage_dashboard` all support `action=patch` with an `operations` array
+- `manage_automation`, `manage_script`, `manage_scene`, `manage_dashboard` all support `action=patch` with an `operations` array. `manage_dashboard` also supports `action=find` (search a string/entity_id across all views/nested cards, issue #143)
 - **Standard ops** follow RFC 6902: `{"op": "replace", "path": "/mode", "value": "queued"}`
 - **Semantic ops** use property-based addressing: `{"op": "add", "match": {"entity_id": "binary_sensor.door"}, "section": "triggers", "field": "for", "value": "00:05:00"}`
   - `match`: key-value pairs to identify element(s) — mutually exclusive with `path`
@@ -209,7 +210,7 @@ The server supports flexible tool/action filtering for security and capability c
 - `"*:write"` - category expansion (all write operations)
 - `"manage_entity:delete"` - specific action on manage_entity
 
-**Implementation**: `ToolFilterEngine` in `internal/mcp/tool_filter.go` with static classification in `internal/mcp/access_control.go` (34 tools, read/write per action). `ValidateFilterConfig()` runs at startup before engine creation — rejects unknown tools, typos, and removed sub-actions with a combined error listing all problems at once (server refuses to start). Three-stage enforcement: startup config validation → registry filtering (removes/modifies tools) → runtime check (blocks calls).
+**Implementation**: `ToolFilterEngine` in `internal/mcp/tool_filter.go` with static classification in `internal/mcp/access_control.go` (35 tools, read/write per action). `ValidateFilterConfig()` runs at startup before engine creation — rejects unknown tools, typos, and removed sub-actions with a combined error listing all problems at once (server refuses to start). Three-stage enforcement: startup config validation → registry filtering (removes/modifies tools) → runtime check (blocks calls).
 
 **Post-Mutation Async Confirmation (Smart Wait):**
 - **Pattern**: snapshot before → mutate → poll until changed or timeout → append state diff/warning to success message. Timeout → warning appended, never an error
@@ -260,6 +261,7 @@ Key environment variables:
 - **HACS download API field**: `hacs/repository/download` command requires `repository` field (not `repository_id`)
 - **Automation/Scene entity ID derivation**: Home Assistant derives entity IDs from alias/name field (slugified), NOT from config ID. Integration tests: Use matching alias/name and config ID for predictable entity IDs. Handlers: Use `generateAutomationID(alias)` to create matching config IDs
 - **List operations don't populate Config**: `ListAutomations()`, `ListScenes()`, `ListScripts()` return entities with State/EntityID but NOT Config field - use `Get*()` for full config
+- **Script entities never expose `sequence` as a state attribute**: `analyze_entity`'s and `find_references`'s script-reference scanners used to read `script.Attributes["sequence"]` from `ListScripts()`'s state list - which works against unit-test mocks (they set `sequence` directly on `Attributes`) but silently returns zero results against real Home Assistant, since real script entity attributes are only `current`, `friendly_name`, `last_triggered`, `mode`. Found via a live-HA integration test (#141) that unit tests could not catch. Fixed by fetching the full config via `GetScript(ctx, script.EntityID)` per script (`internal/handlers/analysis.go`'s `findScriptReferences`, `internal/handlers/find_references.go`'s `scanScriptsForReferences`), mirroring how automation-reference scanning already used `GetAutomation`.
 - **Trace list API requirement**: `trace/list` WebSocket command requires `domain` parameter (automation or script) - not optional despite handler schema making it optional. Uses `SendHACSCommand` for generic WS dispatch. `wait=true` opt-in parameter polls `trace/list` until traces appear (HA records asynchronously — may lag a fresh `automation.trigger` call)
 - **Todo uid→item API field rename**: User param `uid` maps to `data["item"]` in HA `todo.update_item`/`todo.remove_item` service calls — not `data["uid"]`
 - **Empty array parameter handling**: Distinguish missing array parameter from empty array in validation errors. Create operations reject empty arrays (validation error), update operations allow empty arrays to clear fields. Automation triggers: empty array `[]` auto-fills with manual-only placeholder trigger

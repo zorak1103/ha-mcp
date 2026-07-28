@@ -36,6 +36,12 @@ func RegisterLovelaceTools(registry *mcp.Registry) {
 
 // RegisterAnalysisTools is defined in analysis.go
 
+// RegisterFindReferencesTools registers the find_references cross-config search tool.
+func RegisterFindReferencesTools(registry *mcp.Registry) {
+	h := NewFindReferencesHandlers()
+	h.RegisterTools(registry)
+}
+
 // RegisterServiceTools registers all service discovery tools with the registry.
 func RegisterServiceTools(registry *mcp.Registry) {
 	h := NewServiceHandlers()
@@ -204,6 +210,16 @@ func RegisterAllTools(registry *mcp.Registry) {
 	// Analysis tools for entity dependency tracking
 	RegisterAnalysisTools(registry)
 
+	// Cross-config reference search
+	RegisterFindReferencesTools(registry)
+
+	registerRemainingTools(registry)
+}
+
+// registerRemainingTools registers service discovery, system, template, config,
+// and integration-management tools. Split out of RegisterAllTools to stay under
+// the funlen threshold.
+func registerRemainingTools(registry *mcp.Registry) {
 	// Service discovery and system information
 	RegisterServiceTools(registry)
 	RegisterSystemTools(registry)

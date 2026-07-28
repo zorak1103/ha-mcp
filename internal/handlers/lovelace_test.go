@@ -53,16 +53,16 @@ func TestDashboardHandlers_Schema(t *testing.T) {
 		t.Errorf("InputSchema.Type = %q, want %q", tool.InputSchema.Type, testSchemaTypeObject)
 	}
 
-	// Verify action enum has 7 values: list, get, create, update, delete, save_config, patch
+	// Verify action enum has 8 values: list, get, create, update, delete, save_config, patch, find
 	actionProp, ok := tool.InputSchema.Properties["action"]
 	if !ok {
 		t.Fatal("expected 'action' property in schema")
 	}
-	if len(actionProp.Enum) != 7 {
-		t.Errorf("expected 7 action enum values, got %d", len(actionProp.Enum))
+	if len(actionProp.Enum) != 8 {
+		t.Errorf("expected 8 action enum values, got %d", len(actionProp.Enum))
 	}
 
-	expectedActions := []string{"list", "get", "create", "update", "delete", "save_config", "patch"}
+	expectedActions := []string{"list", "get", "create", "update", "delete", "save_config", "patch", "find"}
 	for _, expected := range expectedActions {
 		found := false
 		for _, enum := range actionProp.Enum {
@@ -1431,4 +1431,124 @@ func TestDashboardHandlers_CreateDashboardInitializesSectionLayout(t *testing.T)
 	if _, hasCards := view["cards"]; hasCards {
 		t.Error("View should not have root-level 'cards' field (legacy format)")
 	}
+}
+
+// TestHandleManageDashboard_Find covers issue #143: locating content in a
+// dashboard too large to fetch wholesale, including content nested several
+// card levels deep.
+func TestHandleManageDashboard_Find(t *testing.T) {
+	t.Parallel()
+
+	nestedConfig := map[string]any{
+		"title": "Home",
+		"views": []any{
+			map[string]any{
+				"title": "Home",
+				"sections": []any{
+					map[string]any{
+						"cards": []any{
+							map[string]any{
+								"type": "vertical-stack",
+								"cards": []any{
+									map[string]any{
+										"type": "tile",
+										"chips": []any{
+											map[string]any{"type": "entity", "entity": "light.desk"},
+											map[string]any{"type": "entity", "entity": "device_tracker.example_phone"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	h := NewDashboardHandlers()
+
+	tests := []handlerTestCase{
+		{
+			name: "find - missing search",
+			args: map[string]any{
+				"action": "find",
+			},
+			wantError:    true,
+			wantContains: []string{"search is required"},
+		},
+		{
+			name: "find - locates deeply nested chip across all dashboards",
+			args: map[string]any{
+				"action": "find",
+				"search": "device_tracker.example_phone",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.ListDashboardsFn = func(context.Context) ([]homeassistant.DashboardEntry, error) {
+					return []homeassistant.DashboardEntry{{URLPath: "lovelace"}}, nil
+				}
+				m.GetLovelaceConfigFn = func(_ context.Context, _ string) (map[string]any, error) {
+					return deepCopyMap(nestedConfig), nil
+				}
+			},
+			// Searches both the default ("") dashboard and the listed "lovelace" one.
+			wantError:    false,
+			wantContains: []string{"Found 2 match(es)", "views/0/sections/0/cards/0/cards/0/chips/1/entity"},
+		},
+		{
+			name: "find - explicit url_path skips dashboard listing",
+			args: map[string]any{
+				"action":   "find",
+				"search":   "device_tracker.example_phone",
+				"url_path": "energy",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.ListDashboardsFn = func(context.Context) ([]homeassistant.DashboardEntry, error) {
+					t.Fatal("should not list dashboards when url_path is given")
+					return nil, nil
+				}
+				m.GetLovelaceConfigFn = func(_ context.Context, urlPath string) (map[string]any, error) {
+					if urlPath != "energy" {
+						t.Fatalf("expected url_path 'energy', got %q", urlPath)
+					}
+					return deepCopyMap(nestedConfig), nil
+				}
+			},
+			wantError:    false,
+			wantContains: []string{"Found 1 match"},
+		},
+		{
+			name: "find - no matches",
+			args: map[string]any{
+				"action": "find",
+				"search": "device_tracker.nonexistent",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.ListDashboardsFn = func(context.Context) ([]homeassistant.DashboardEntry, error) {
+					return nil, nil
+				}
+				m.GetLovelaceConfigFn = func(_ context.Context, _ string) (map[string]any, error) {
+					return deepCopyMap(nestedConfig), nil
+				}
+			},
+			wantError:    false,
+			wantContains: []string{"No matches"},
+		},
+		{
+			name: "find - list dashboards error",
+			args: map[string]any{
+				"action": "find",
+				"search": "device_tracker.example_phone",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.ListDashboardsFn = func(context.Context) ([]homeassistant.DashboardEntry, error) {
+					return nil, fmt.Errorf("connection failed")
+				}
+			},
+			wantError:    true,
+			wantContains: []string{"error listing dashboards"},
+		},
+	}
+
+	runHandlerTestCases(t, tests, h.handleManageDashboard)
 }

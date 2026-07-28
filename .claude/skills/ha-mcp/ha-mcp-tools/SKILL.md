@@ -18,8 +18,9 @@ description: "Use when choosing which ha-mcp tool or action to call. Examples: \
 | Aggregated stats (min/max/mean) for a sensor         | `query_entities` mode=statistics                                       |
 | Which entity domains exist in this HA instance?      | `query_entities` mode=domains                                          |
 | Device health (orphaned / config errors)             | `query_devices` mode=health                                            |
-| Where is entity X used? (automations, scripts)       | `analyze_entity` — returns RFC 6901 paths to each reference location  |
+| Where is entity X used? (automations, scripts, scenes, dashboards, template helpers) | `analyze_entity` — returns RFC 6901 paths to each reference location; `scanned_sources` lists what was actually searched |
 | Which entities does automation X depend on?          | `get_entity_dependencies`                                              |
+| Find a string/entity_id across ALL config types in one call | `find_references` — automations/scripts/scenes/dashboards/helper templates, match_mode substring/exact |
 | Create / edit / delete an automation                 | `manage_automation` action=create/update/delete                        |
 | Toggle / enable / disable an automation              | `manage_automation` action=toggle                                       |
 | See automation trigger/condition/service coverage    | `manage_automation` action=coverage                                    |
@@ -39,6 +40,7 @@ description: "Use when choosing which ha-mcp tool or action to call. Examples: \
 | Check HA version / timezone                          | `get_system_info`                                                      |
 | Validate configuration.yaml                          | `validate_config`                                                      |
 | Manage a dashboard (create / edit / view)            | `manage_dashboard`                                                     |
+| Locate content in a large dashboard (avoid size-limit errors) | `manage_dashboard` action=find search=&lt;string/entity_id&gt;   |
 | Install / uninstall a HACS add-on                    | `manage_hacs` action=download/uninstall                                |
 | View automation / script execution trace             | `manage_trace` action=list/get                                         |
 | Import a blueprint                                   | `manage_blueprint` action=import                                       |
@@ -57,7 +59,7 @@ description: "Use when choosing which ha-mcp tool or action to call. Examples: \
 | `manage_script`       | list, get                                        | create, update, delete, execute, patch          |
 | `manage_scene`        | list, get                                        | create, update, delete, activate, patch         |
 | `manage_helper`       | list, get_details                                | create, update, delete                          |
-| `manage_dashboard`    | list, get                                        | create, update, delete, patch                   |
+| `manage_dashboard`    | list, get, find                                  | create, update, delete, patch                   |
 | `manage_area`         | list, get                                        | create, update, delete                          |
 | `manage_entity`       | get                                              | update, delete                                  |
 | `manage_device`       | get                                              | update, delete                                  |

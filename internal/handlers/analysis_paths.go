@@ -3,11 +3,8 @@ package handlers
 
 import (
 	"fmt"
-	"sort"
-	"strconv"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
-	"github.com/zorak1103/ha-mcp/internal/jsonpatch"
 )
 
 // ReferencePath is a single location where an entity_id appears in a config,
@@ -21,38 +18,7 @@ type ReferencePath struct {
 // and returns the RFC 6901 pointer path to each match, rooted at prefix.
 // Map keys are visited in sorted order for deterministic output.
 func collectEntityPaths(node any, entityID, prefix string) []string {
-	if node == nil {
-		return nil
-	}
-	switch v := node.(type) {
-	case string:
-		if v == entityID {
-			return []string{prefix}
-		}
-		return nil
-	case []any:
-		var paths []string
-		for i, item := range v {
-			sub := collectEntityPaths(item, entityID, prefix+"/"+strconv.Itoa(i))
-			paths = append(paths, sub...)
-		}
-		return paths
-	case map[string]any:
-		// Sort keys for deterministic output.
-		keys := make([]string, 0, len(v))
-		for k := range v {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-
-		var paths []string
-		for _, k := range keys {
-			sub := collectEntityPaths(v[k], entityID, prefix+"/"+jsonpatch.EscapeSegment(k))
-			paths = append(paths, sub...)
-		}
-		return paths
-	}
-	return nil
+	return collectMatchPaths(node, prefix, func(s string) bool { return s == entityID })
 }
 
 // collectSectionReferencePaths collects all ReferencePaths for an entity_id

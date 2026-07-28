@@ -19,8 +19,9 @@ Authorization: Bearer <your-ha-access-token>
 | `query_entities`          | Consolidated entity queries (mode: current, history, statistics, domains, presence, health; format: natural/json; group_by: domain, area_id, device_class, integration; health: multi-category filter for unavailable/unknown/disabled/orphaned/stale entities). Non-verbose `mode=current` returns a compact list of entity_id + friendly name + state (capped at 50; use `verbose=true` or pagination for more). |
 | `query_devices`           | Device health check (mode: health; format: natural/json; categories: disabled, orphaned_config_entry, config_entry_error, no_entities, no_config_entries; manufacturer filter)                                                                                |
 | `get_state`               | Get state of a specific entity (format: natural/json)                                                                                                                                                                                    |
-| `analyze_entity`          | Analyze entity usage in automations, scripts, and scenes; includes registry metadata (platform, area, device, labels, aliases) and RFC 6901 JSON Pointer paths to each reference location (e.g. `/sequence/0/target/entity_id  (action: automation.turn_off)`) at zero extra API cost (format: natural/json) |
+| `analyze_entity`          | Analyze entity usage in automations, scripts, scenes, dashboards, and template-helper templates; includes registry metadata (platform, area, device, labels, aliases), RFC 6901 JSON Pointer paths to each reference location (e.g. `/sequence/0/target/entity_id  (action: automation.turn_off)`), and a `scanned_sources` list so a "no references" result can be trusted (format: natural/json) |
 | `get_entity_dependencies` | Find all entities an automation/script depends on (format: natural/json)                                                                                                                                                                 |
+| `find_references`        | Server-side search for a string/entity_id across automations, scripts, scenes, dashboards, and template-helper templates in one call (match_mode: substring/exact; types filter; format: natural/json)                                    |
 
 ### Registry Tools
 
@@ -176,7 +177,7 @@ Universal tool for runtime helper operations:
 
 | Tool               | Description                                                                        |
 | ------------------ | ---------------------------------------------------------------------------------- |
-| `manage_dashboard` | Manage Lovelace dashboards - list, get, create, update, delete, save configuration, patch (JSON Patch + semantic patch, e.g. match views by `title`) |
+| `manage_dashboard` | Manage Lovelace dashboards - list, get, create, update, delete, save configuration, patch (JSON Patch + semantic patch, e.g. match views by `title`), find (search a string/entity_id across all views and nested cards without fetching the whole config) |
 
 ### Template Tools
 
@@ -307,7 +308,7 @@ Most tools support two output formats via the `format` parameter:
 - **`json`**: Structured JSON output for backward compatibility and programmatic access
   - Example: `{"entity_id": "light.living_room", "state": "on", "attributes": {"brightness": 204, ...}}`
 
-**Tools with format support**: `query_entities`, `query_devices`, `get_state`, `analyze_entity`, `get_entity_dependencies`, `call_service`, `get_registry`, `analyze_target`, `manage_automation`, `manage_script`, `manage_scene`, `manage_area`, `manage_label`, `manage_floor`, `manage_zone`, `manage_person`, `manage_tag`, `manage_helper`, `helper_action`, `manage_hacs`, `manage_trace`, `manage_blueprint`, `manage_update`, `manage_todo`, `manage_calendar`, `manage_camera`
+**Tools with format support**: `query_entities`, `query_devices`, `get_state`, `analyze_entity`, `get_entity_dependencies`, `find_references`, `call_service`, `get_registry`, `analyze_target`, `manage_automation`, `manage_script`, `manage_scene`, `manage_area`, `manage_label`, `manage_floor`, `manage_zone`, `manage_person`, `manage_tag`, `manage_helper`, `helper_action`, `manage_hacs`, `manage_trace`, `manage_blueprint`, `manage_update`, `manage_todo`, `manage_calendar`, `manage_camera`
 
 ## Example Requests
 

@@ -36,7 +36,7 @@ func (h *AnalysisHandlers) RegisterTools(registry *mcp.Registry) {
 func (h *AnalysisHandlers) analyzeEntityTool() mcp.Tool {
 	return mcp.Tool{
 		Name:        "analyze_entity",
-		Description: "Analyze an entity and find all automations, scripts, and scenes that reference it. Returns a comprehensive overview including registry metadata (platform, area, device, labels) and how the entity is controlled and used in Home Assistant.",
+		Description: "Analyze an entity and find all automations, scripts, scenes, dashboards, and template-helper templates that reference it. Returns a comprehensive overview including registry metadata (platform, area, device, labels) and how the entity is controlled and used in Home Assistant. The response's references.scanned_sources field lists exactly which config types were searched, so a \"no references found\" result can be trusted.",
 		InputSchema: mcp.JSONSchema{
 			Type:        "object",
 			Description: "Parameters for analyzing an entity",
@@ -120,12 +120,29 @@ type EntityAnalysis struct {
 
 // EntityReferences contains all automations, scripts, and scenes referencing an entity.
 type EntityReferences struct {
-	Automations     []AutomationReference `json:"automations,omitempty"`
-	Scripts         []ScriptReference     `json:"scripts,omitempty"`
-	Scenes          []SceneReference      `json:"scenes,omitempty"`
-	Groups          []string              `json:"groups,omitempty"`
-	AreaReferences  []AreaReference       `json:"area_references,omitempty"`
-	TotalReferences int                   `json:"total_references"`
+	Automations     []AutomationReference     `json:"automations,omitempty"`
+	Scripts         []ScriptReference         `json:"scripts,omitempty"`
+	Scenes          []SceneReference          `json:"scenes,omitempty"`
+	Groups          []string                  `json:"groups,omitempty"`
+	AreaReferences  []AreaReference           `json:"area_references,omitempty"`
+	Dashboards      []DashboardReference      `json:"dashboards,omitempty"`
+	HelperTemplates []HelperTemplateReference `json:"helper_templates,omitempty"`
+	TotalReferences int                       `json:"total_references"`
+	ScannedSources  []string                  `json:"scanned_sources"`
+}
+
+// DashboardReference describes how a dashboard references an entity, directly
+// as a card/chip "entity" field or embedded in a card's Jinja template text.
+type DashboardReference struct {
+	URLPath string          `json:"url_path"`
+	Paths   []ReferencePath `json:"paths,omitempty"`
+}
+
+// HelperTemplateReference describes how a template-helper's Jinja template(s)
+// reference an entity.
+type HelperTemplateReference struct {
+	EntityID string   `json:"entity_id"`
+	Fields   []string `json:"fields"` // "state", "availability"
 }
 
 // AreaReference describes how an automation/script references an entity via its area.
@@ -288,16 +305,24 @@ func (h *AnalysisHandlers) buildEntityAnalysis(ctx context.Context, client homea
 	h.findScriptReferences(ctx, client, entityID, analysis.References, verbose)
 	h.findSceneReferences(ctx, client, entityID, analysis.References)
 	h.findGroupReferencesWithSnapshot(snapshot, entityID, analysis.References)
+	h.findDashboardReferences(ctx, client, entityID, analysis.References)
+	h.findHelperTemplateReferences(ctx, client, entityID, analysis.References)
 
 	// Find area-based references using snapshot (entity controlled via area_id in automations/scripts)
 	h.findAreaReferencesWithSnapshot(ctx, client, snapshot, entityID, analysis.References)
+
+	analysis.References.ScannedSources = []string{
+		"automations", "scripts", "scenes", "groups", "areas", "dashboards", "helper_templates",
+	}
 
 	// Calculate total references
 	analysis.References.TotalReferences = len(analysis.References.Automations) +
 		len(analysis.References.Scripts) +
 		len(analysis.References.Scenes) +
 		len(analysis.References.Groups) +
-		len(analysis.References.AreaReferences)
+		len(analysis.References.AreaReferences) +
+		len(analysis.References.Dashboards) +
+		len(analysis.References.HelperTemplates)
 
 	// Include history if requested
 	if includeHistory {
@@ -347,18 +372,18 @@ func (h *AnalysisHandlers) findScriptReferences(ctx context.Context, client home
 	}
 
 	for _, script := range scripts {
-		sequence, ok := script.Attributes["sequence"].([]any)
-		if !ok || !searchInConfigSlice(sequence, entityID) {
+		full, getErr := client.GetScript(ctx, script.EntityID)
+		if getErr != nil || full.Config == nil {
+			continue
+		}
+		sequence := full.Config.Sequence
+		if !searchInConfigSlice(sequence, entityID) {
 			continue
 		}
 
-		fn := ""
-		if name, ok := script.Attributes["friendly_name"].(string); ok {
-			fn = name
-		}
 		ref := ScriptReference{
 			EntityID:     script.EntityID,
-			FriendlyName: fn,
+			FriendlyName: full.FriendlyName,
 			UsedIn:       usedInAction,
 		}
 		ref.Paths = collectSectionReferencePaths(sequence, "sequence", "action", entityID)
@@ -394,6 +419,63 @@ func (h *AnalysisHandlers) findSceneReferences(ctx context.Context, client homea
 				break
 			}
 		}
+	}
+}
+
+
+// findDashboardReferences scans every dashboard (including the default one) for
+// entity references, both as a direct card/chip "entity" field and embedded in
+// a card's Jinja template text (e.g. an icon_color template calling
+// states('entity_id')) - issue #140.
+func (h *AnalysisHandlers) findDashboardReferences(ctx context.Context, client homeassistant.Client, entityID string, refs *EntityReferences) {
+	dashboards, err := client.ListDashboards(ctx)
+	if err != nil {
+		return
+	}
+
+	urlPaths := make([]string, 0, len(dashboards)+1)
+	urlPaths = append(urlPaths, "")
+	for _, d := range dashboards {
+		urlPaths = append(urlPaths, d.URLPath)
+	}
+
+	match := func(s string) bool { return strings.Contains(s, entityID) }
+	for _, urlPath := range urlPaths {
+		config, err := client.GetLovelaceConfig(ctx, urlPath)
+		if err != nil {
+			continue
+		}
+		hits := scanDashboardConfig(urlPath, config, match)
+		if len(hits) == 0 {
+			continue
+		}
+		paths := make([]ReferencePath, 0, len(hits))
+		for _, hit := range hits {
+			paths = append(paths, ReferencePath{Path: hit.Path, Context: hit.Context})
+		}
+		refs.Dashboards = append(refs.Dashboards, DashboardReference{URLPath: urlPath, Paths: paths})
+	}
+}
+
+// findHelperTemplateReferences scans template-helper state/availability Jinja
+// templates for entity references - issue #140.
+func (h *AnalysisHandlers) findHelperTemplateReferences(ctx context.Context, client homeassistant.Client, entityID string, refs *EntityReferences) {
+	match := func(s string) bool { return strings.Contains(s, entityID) }
+	hits := scanHelperTemplates(ctx, client, match)
+
+	fieldsByEntity := make(map[string][]string)
+	var order []string
+	for _, hit := range hits {
+		if _, seen := fieldsByEntity[hit.ObjectID]; !seen {
+			order = append(order, hit.ObjectID)
+		}
+		fieldsByEntity[hit.ObjectID] = append(fieldsByEntity[hit.ObjectID], hit.Context)
+	}
+	for _, id := range order {
+		refs.HelperTemplates = append(refs.HelperTemplates, HelperTemplateReference{
+			EntityID: id,
+			Fields:   fieldsByEntity[id],
+		})
 	}
 }
 
@@ -1159,7 +1241,10 @@ func (h *AnalysisHandlers) generateEntitySummary(analysis *EntityAnalysis) strin
 
 	// References
 	if analysis.References.TotalReferences == 0 {
-		parts = append(parts, "This entity is not referenced by any automations, scripts, or scenes.")
+		parts = append(parts, fmt.Sprintf(
+			"No references found (scanned: %s).",
+			strings.Join(analysis.References.ScannedSources, ", "),
+		))
 	} else {
 		refParts := []string{}
 		if len(analysis.References.Automations) > 0 {
@@ -1173,6 +1258,12 @@ func (h *AnalysisHandlers) generateEntitySummary(analysis *EntityAnalysis) strin
 		}
 		if len(analysis.References.Groups) > 0 {
 			refParts = append(refParts, fmt.Sprintf("%d group(s)", len(analysis.References.Groups)))
+		}
+		if len(analysis.References.Dashboards) > 0 {
+			refParts = append(refParts, fmt.Sprintf("%d dashboard(s)", len(analysis.References.Dashboards)))
+		}
+		if len(analysis.References.HelperTemplates) > 0 {
+			refParts = append(refParts, fmt.Sprintf("%d helper template(s)", len(analysis.References.HelperTemplates)))
 		}
 		parts = append(parts, fmt.Sprintf("Referenced by %s.", strings.Join(refParts, ", ")))
 	}
@@ -1239,7 +1330,10 @@ func (h *AnalysisHandlers) formatAnalysisNatural(analysis *EntityAnalysis, verbo
 
 	// References section
 	if analysis.References.TotalReferences == 0 {
-		parts = append(parts, "\nNo references found.")
+		parts = append(parts, fmt.Sprintf(
+			"\nNo references found (scanned: %s).",
+			strings.Join(analysis.References.ScannedSources, ", "),
+		))
 	} else {
 		parts = h.formatReferences(parts, analysis.References, verbose)
 	}
@@ -1276,6 +1370,26 @@ func (h *AnalysisHandlers) formatReferences(parts []string, refs *EntityReferenc
 	// Area references
 	if len(refs.AreaReferences) > 0 {
 		parts = append(parts, fmt.Sprintf("- Area references: %d", len(refs.AreaReferences)))
+	}
+
+	// Dashboards
+	if len(refs.Dashboards) > 0 {
+		parts = append(parts, fmt.Sprintf("- %d dashboard(s):", len(refs.Dashboards)))
+		for _, dash := range refs.Dashboards {
+			label := dash.URLPath
+			if label == "" {
+				label = "default"
+			}
+			parts = append(parts, fmt.Sprintf("  • %s (%d location(s))", label, len(dash.Paths)))
+		}
+	}
+
+	// Helper templates
+	if len(refs.HelperTemplates) > 0 {
+		parts = append(parts, fmt.Sprintf("- %d helper template(s):", len(refs.HelperTemplates)))
+		for _, ht := range refs.HelperTemplates {
+			parts = append(parts, fmt.Sprintf("  • %s (%s)", ht.EntityID, strings.Join(ht.Fields, ", ")))
+		}
 	}
 
 	return parts

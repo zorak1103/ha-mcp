@@ -33,7 +33,7 @@ Choose ha-mcp if you need:
 - Advanced analysis (dependencies, cross-references, automation coverage)
 - System administration (registry queries, config validation, logbook, history)
 - Media management (browser, camera streams), HACS, and dashboard access
-- Reliable LLM tool selection — 40 consolidated tools reduce selection errors compared to 95+ fine-grained alternatives
+- Reliable LLM tool selection — 41 consolidated tools reduce selection errors compared to 95+ fine-grained alternatives
 
 Choose the official integration if you need entity-level security or no external infrastructure.
 
@@ -127,7 +127,7 @@ See [docs/configuration.md](docs/configuration.md) for Cline, opencode, and othe
 
 ## Available Tools
 
-40 tools organized by domain. Full reference at [docs/tools.md](docs/tools.md).
+41 tools organized by domain. Full reference at [docs/tools.md](docs/tools.md).
 
 Seven guidance topics are also available as MCP resources under `skill://ha-mcp/<slug>` URIs (format-selection, automation-patterns, template-resilience, helper-selection, dashboard-safety, entity-renaming, debugging-workflow).
 
@@ -138,7 +138,7 @@ Seven guidance topics are also available as MCP resources under `skill://ha-mcp/
 | Automation        | 1     | `manage_automation` (CRUD, toggle, coverage, JSON Patch + semantic patch)   |
 | Helpers           | 2     | `manage_helper` (26 types), `helper_action`                                 |
 | Scripts & Scenes  | 2     | `manage_script`, `manage_scene` (CRUD + execute/activate + JSON Patch + semantic patch) |
-| Analysis          | 3     | `analyze_entity`, `get_entity_dependencies`, `analyze_target`               |
+| Analysis          | 4     | `analyze_entity`, `get_entity_dependencies`, `analyze_target`, `find_references` |
 | Services          | 2     | `call_service`, `list_services`                                             |
 | History/Logbook   | 2     | `query_entities` modes, `get_logbook` (entries + correlation)               |
 | Dashboards/Media  | 4     | `manage_dashboard` (JSON Patch + semantic patch), `browse_media`, `manage_camera`, `sign_media_path` |

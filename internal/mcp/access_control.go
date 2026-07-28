@@ -58,6 +58,9 @@ func buildPureTools() map[string]ToolClassification {
 		"analyze_entity": {
 			PureCategory: CategoryRead,
 		},
+		"find_references": {
+			PureCategory: CategoryRead,
+		},
 		"get_datetime": {
 			PureCategory: CategoryRead,
 		},
