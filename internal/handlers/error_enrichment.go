@@ -32,6 +32,17 @@ func enrichConfigError(msg string, err error, hints []configErrorHint) string {
 
 //nolint:gochecknoglobals // static lookup tables for error enrichment
 
+// templateSyntaxErrorHint is shared by automation and script hint tables.
+const templateSyntaxErrorHint = "Jinja2 template syntax error. \"unexpected '}'\" " +
+	"(or similar) usually means an unbalanced brace — check that every '{{' has a " +
+	"matching '}}' and every '{%' a matching '%}', and look for a stray or missing " +
+	"brace. If the braces are balanced, the expression may be too complex for one " +
+	"block: split it into multiple '{% set %}' lines and keep the final '{{ ... }}' " +
+	"simple (chaining filters like from_json with and/or in one block can also trip " +
+	"the parser). Example: {% set days = states('input_text.x') %}" +
+	"{% set empty = days in ['unknown','unavailable',''] %}{{ empty }}. " +
+	"The data[...] path shown in the error above identifies which template failed."
+
 var automationErrorHints = []configErrorHint{
 	{
 		// Specific match before the generic "extra keys not allowed" catch-all.
@@ -56,12 +67,8 @@ var automationErrorHints = []configErrorHint{
 	},
 	{
 		// Specific match before the generic "invalid template" catch-all below.
-		pattern: "templatesyntaxerror",
-		suggestion: "Jinja2 template syntax error. If the expression is complex, split it into " +
-			"multiple '{% set %}' lines and keep the final '{{ ... }}' simple — chaining filters " +
-			"(e.g. from_json) with and/or in one block often trips the parser. Example: " +
-			"{% set days = states('input_text.x') %}{% set empty = days in ['unknown','unavailable',''] %}{{ empty }}. " +
-			"The data[...] path shown in the error above identifies which template failed.",
+		pattern:    "templatesyntaxerror",
+		suggestion: templateSyntaxErrorHint,
 	},
 	{
 		pattern:    "invalid template",
@@ -80,12 +87,8 @@ var scriptErrorHints = []configErrorHint{
 	},
 	{
 		// Specific match before the generic "invalid template" catch-all below.
-		pattern: "templatesyntaxerror",
-		suggestion: "Jinja2 template syntax error in script. If the expression is complex, split it into " +
-			"multiple '{% set %}' lines and keep the final '{{ ... }}' simple — chaining filters " +
-			"(e.g. from_json) with and/or in one block often trips the parser. Example: " +
-			"{% set days = states('input_text.x') %}{% set empty = days in ['unknown','unavailable',''] %}{{ empty }}. " +
-			"The data[...] path shown in the error above identifies which template failed.",
+		pattern:    "templatesyntaxerror",
+		suggestion: templateSyntaxErrorHint,
 	},
 	{
 		pattern:    "invalid template",
