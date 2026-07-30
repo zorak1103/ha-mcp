@@ -598,6 +598,141 @@ func (t *testableWSClientImplV2) GetAreaRegistry(ctx context.Context) ([]AreaReg
 	return entries, nil
 }
 
+// TestWSClientImpl_ZonePersonCommands guards the exact WebSocket command
+// strings for the zone and person collection APIs against the real
+// wsClientImpl (not a test re-implementation). Home Assistant registers these
+// under the bare domain prefix (zone/list, person/list, ...) via its
+// collection helper - NOT under config/ like the entity/device/area
+// registries. A regression to a config/-prefixed command fails against every
+// HA version with unknown_command, so this runs in normal CI without a live
+// Home Assistant.
+func TestWSClientImpl_ZonePersonCommands(t *testing.T) {
+	t.Parallel()
+
+	const (
+		zoneID   = "home"
+		personID = "abc123"
+	)
+
+	tests := []struct {
+		name       string
+		wantCmd    string
+		wantParams map[string]any // subset that must be present; nil to skip
+		mockResult any
+		invoke     func(ctx context.Context, c *wsClientImpl) error
+	}{
+		{
+			name:       "GetZones",
+			wantCmd:    "zone/list",
+			mockResult: []ZoneRegistryEntry{{ID: zoneID, Name: "Home"}},
+			invoke: func(ctx context.Context, c *wsClientImpl) error {
+				_, err := c.GetZones(ctx)
+				return err
+			},
+		},
+		{
+			name:       "CreateZone",
+			wantCmd:    "zone/create",
+			mockResult: ZoneRegistryEntry{ID: zoneID, Name: "Home"},
+			invoke: func(ctx context.Context, c *wsClientImpl) error {
+				_, err := c.CreateZone(ctx, ZoneConfig{Name: "Home"})
+				return err
+			},
+		},
+		{
+			name:       "UpdateZone",
+			wantCmd:    "zone/update",
+			wantParams: map[string]any{"zone_id": zoneID},
+			mockResult: ZoneRegistryEntry{ID: zoneID, Name: "Home"},
+			invoke: func(ctx context.Context, c *wsClientImpl) error {
+				_, err := c.UpdateZone(ctx, zoneID, ZoneConfig{Name: "Home"})
+				return err
+			},
+		},
+		{
+			name:       "DeleteZone",
+			wantCmd:    "zone/delete",
+			wantParams: map[string]any{"zone_id": zoneID},
+			invoke: func(ctx context.Context, c *wsClientImpl) error {
+				return c.DeleteZone(ctx, zoneID)
+			},
+		},
+		{
+			name:       "GetPersons",
+			wantCmd:    "person/list",
+			mockResult: []PersonRegistryEntry{{ID: personID, Name: "Alice"}},
+			invoke: func(ctx context.Context, c *wsClientImpl) error {
+				_, err := c.GetPersons(ctx)
+				return err
+			},
+		},
+		{
+			name:       "CreatePerson",
+			wantCmd:    "person/create",
+			mockResult: PersonRegistryEntry{ID: personID, Name: "Alice"},
+			invoke: func(ctx context.Context, c *wsClientImpl) error {
+				_, err := c.CreatePerson(ctx, PersonConfig{Name: "Alice"})
+				return err
+			},
+		},
+		{
+			name:       "UpdatePerson",
+			wantCmd:    "person/update",
+			wantParams: map[string]any{"person_id": personID},
+			mockResult: PersonRegistryEntry{ID: personID, Name: "Alice"},
+			invoke: func(ctx context.Context, c *wsClientImpl) error {
+				_, err := c.UpdatePerson(ctx, personID, PersonConfig{Name: "Alice"})
+				return err
+			},
+		},
+		{
+			name:       "DeletePerson",
+			wantCmd:    "person/delete",
+			wantParams: map[string]any{"person_id": personID},
+			invoke: func(ctx context.Context, c *wsClientImpl) error {
+				return c.DeletePerson(ctx, personID)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var (
+				gotCmd    string
+				gotParams map[string]any
+			)
+			c := &wsClientImpl{ws: &mockWSClientSender{
+				sendCommandFunc: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
+					gotCmd = cmdType
+					gotParams = params
+					return makeWSResultMsg(tt.mockResult), nil
+				},
+			}}
+
+			if err := tt.invoke(context.Background(), c); err != nil {
+				t.Fatalf("%s returned error: %v", tt.name, err)
+			}
+
+			if gotCmd != tt.wantCmd {
+				t.Errorf("%s sent command %q, want %q (a config/-prefixed value is the regression)", tt.name, gotCmd, tt.wantCmd)
+			}
+
+			for k, want := range tt.wantParams {
+				got, ok := gotParams[k]
+				if !ok {
+					t.Errorf("%s params missing %q", tt.name, k)
+					continue
+				}
+				if got != want {
+					t.Errorf("%s params[%q] = %v, want %v", tt.name, k, got, want)
+				}
+			}
+		})
+	}
+}
+
 func TestWSClientImpl_SignPath(t *testing.T) {
 	t.Parallel()
 

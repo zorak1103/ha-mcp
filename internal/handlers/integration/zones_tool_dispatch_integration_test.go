@@ -10,9 +10,9 @@ import (
 
 // ZoneToolDispatchTestSuite covers manage_zone's list action through the
 // real registry+handler+HybridClient dispatch path (CallTool), not just the
-// Client() method used by ZoneTestSuite's create/update/delete lifecycle
-// tests. This mirrors the person tool dispatch coverage added for issue
-// #145: GetZones had the identical wrong "config/zone/list" WebSocket
+// Client() method used by ZoneIntegrationTestSuite's create/update/delete
+// lifecycle tests. This mirrors the person tool dispatch coverage:
+// GetZones had the identical wrong "config/zone/list" WebSocket
 // command prefix (HA registers it as "zone/list"), also misdiagnosed as a
 // version incompatibility.
 type ZoneToolDispatchTestSuite struct {

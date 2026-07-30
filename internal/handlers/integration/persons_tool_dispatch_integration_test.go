@@ -10,9 +10,10 @@ import (
 
 // PersonToolDispatchTestSuite covers manage_person's list action through the
 // real registry+handler+HybridClient dispatch path (CallTool), not just the
-// Client() method used by PersonTestSuite's create/update/delete lifecycle
-// tests. This is the layer where issue #145 lived: GetPersons sent the
-// WebSocket command "config/person/list" instead of the HA-registered
+// Client() method used by PersonIntegrationTestSuite's create/update/delete
+// lifecycle tests. This is the layer where the person command-prefix bug
+// lived: GetPersons sent the WebSocket command "config/person/list"
+// instead of the HA-registered
 // "person/list", failing with unknown_command on every Home Assistant
 // version - misdiagnosed as a version incompatibility until traced to the
 // wrong command prefix.
