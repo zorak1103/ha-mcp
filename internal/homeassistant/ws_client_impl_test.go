@@ -658,9 +658,15 @@ func TestWSClientImpl_ZonePersonCommands(t *testing.T) {
 			},
 		},
 		{
-			name:       "GetPersons",
-			wantCmd:    "person/list",
-			mockResult: []PersonRegistryEntry{{ID: personID, Name: "Alice"}},
+			name:    "GetPersons",
+			wantCmd: "person/list",
+			// Home Assistant's person/list command returns an object with
+			// separate "storage" and "config" (YAML) arrays, not a bare
+			// list, unlike zone/list.
+			mockResult: map[string]any{
+				"storage": []PersonRegistryEntry{{ID: personID, Name: "Alice"}},
+				"config":  []PersonRegistryEntry{},
+			},
 			invoke: func(ctx context.Context, c *wsClientImpl) error {
 				_, err := c.GetPersons(ctx)
 				return err
@@ -730,6 +736,46 @@ func TestWSClientImpl_ZonePersonCommands(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestWSClientImpl_GetPersons_MergesStorageAndConfig guards against a second,
+// distinct bug in the person WebSocket API discovered once the command
+// prefix fix let requests actually reach Home Assistant: person/list uses a
+// custom collection handler that responds with {"storage": [...], "config":
+// [...]} - separating storage-managed persons from YAML-configured ones -
+// unlike zone/list and the other collection APIs, which return a plain
+// array. Naively unmarshalling the response into []PersonRegistryEntry fails
+// with a JSON type error. GetPersons must merge both sources so YAML-defined
+// persons are still visible to callers.
+func TestWSClientImpl_GetPersons_MergesStorageAndConfig(t *testing.T) {
+	t.Parallel()
+
+	c := &wsClientImpl{ws: &mockWSClientSender{
+		sendCommandFunc: func(_ context.Context, _ string, _ map[string]any) (*WSResultMessage, error) {
+			return makeWSResultMsg(map[string]any{
+				"storage": []PersonRegistryEntry{{ID: "storage1", Name: "Alice"}},
+				"config":  []PersonRegistryEntry{{ID: "config1", Name: "Bob"}},
+			}), nil
+		},
+	}}
+
+	entries, err := c.GetPersons(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(entries) != 2 {
+		t.Fatalf("got %d entries, want 2 (1 storage + 1 config): %+v", len(entries), entries)
+	}
+
+	var gotIDs []string
+	for _, e := range entries {
+		gotIDs = append(gotIDs, e.ID)
+	}
+	want := []string{"storage1", "config1"}
+	if diff := cmp.Diff(want, gotIDs); diff != "" {
+		t.Errorf("person IDs mismatch (-want +got):\n%s", diff)
 	}
 }
 

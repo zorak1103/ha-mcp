@@ -1292,16 +1292,29 @@ func (c *wsClientImpl) DeleteZone(ctx context.Context, zoneID string) error {
 }
 
 // GetPersons retrieves all persons.
+// GetPersons retrieves all persons.
+//
+// Unlike zone/list, person/list responds with {"storage": [...], "config":
+// [...]} - Home Assistant's person integration separates storage-managed
+// persons from YAML-configured ones, using a custom collection handler
+// instead of the generic list response the other collection APIs return.
 func (c *wsClientImpl) GetPersons(ctx context.Context) ([]PersonRegistryEntry, error) {
 	result, err := c.ws.SendCommand(ctx, "person/list", nil)
 	if err != nil {
 		return nil, fmt.Errorf("get persons failed: %w", err)
 	}
 
-	var entries []PersonRegistryEntry
-	if err := json.Unmarshal(result.Result, &entries); err != nil {
+	var response struct {
+		Storage []PersonRegistryEntry `json:"storage"`
+		Config  []PersonRegistryEntry `json:"config"`
+	}
+	if err := json.Unmarshal(result.Result, &response); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal persons: %w", err)
 	}
+
+	entries := make([]PersonRegistryEntry, 0, len(response.Storage)+len(response.Config))
+	entries = append(entries, response.Storage...)
+	entries = append(entries, response.Config...)
 
 	return entries, nil
 }
