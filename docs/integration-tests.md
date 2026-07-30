@@ -99,6 +99,8 @@ go test -tags=integration -v ./internal/handlers/integration/... 2>&1 | tee test
 | `TestAutomationIntegration` | create, update, toggle, trigger, delete |
 | `TestScriptIntegration` | create, update, execute, delete |
 | `TestSceneIntegration` | create, update, activate, delete |
+| `TestZoneIntegration` | create, update (partial), delete, multiple zones |
+| `TestPersonIntegration` | create, update (partial), delete, multiple persons |
 
 ### Advanced Feature Tests
 
@@ -136,6 +138,8 @@ Every test above calls `homeassistant.Client` methods directly, verifying the cl
 | `TestScriptToolDispatch` | `manage_script` | update |
 | `TestFindReferencesToolDispatch` | `find_references` | search across script + dashboard references (#141) |
 | `TestDashboardFindToolDispatch` | `manage_dashboard` | find (deeply nested card, #143) |
+| `TestPersonToolDispatch` | `manage_person` | list - regression test for the person WS command-prefix and response-shape fixes |
+| `TestZoneToolDispatch` | `manage_zone` | list - regression test for the zone WS command-prefix fix |
 
 Writing these tests uncovered and fixed three further, previously-unknown bugs in the config-entry helper update path (all unreachable until the #135 fix let update calls reach Home Assistant's Options Flow submission for the first time) - see `CLAUDE.md`'s API & Type Gotchas section for `buildConfigEntryUpdateConfig`'s `entity_id` leak, `addExtendedConfigEntryFields`'s `device_class` leak, and `extractOptionsFromSchema`'s nil `suggested_value` propagation.
 
