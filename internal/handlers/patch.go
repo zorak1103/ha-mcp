@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/zorak1103/ha-mcp/internal/jsonpatch"
 	"github.com/zorak1103/ha-mcp/internal/mcp"
@@ -43,7 +44,7 @@ func patchOperationsSchema() mcp.JSONSchema {
 				},
 				"section": {
 					Type:        "string",
-					Description: "Array section to search when using 'match'. For automations: 'triggers', 'conditions', 'actions'. For scripts: 'sequence'. For scenes: 'entities'. For dashboards: 'views'.",
+					Description: "Array section to search when using 'match'. For automations: 'triggers', 'conditions', 'actions'. For scripts: 'sequence'. For scenes: 'entities'. For dashboards: 'views'. Matching recurses into nested arrays/objects within the section (e.g. a dashboard card/chip nested several levels below 'views', or a nested action block), not just the section's direct elements.",
 				},
 				"field": {
 					Type:        "string",
@@ -175,24 +176,27 @@ func parseOneOperation(raw any, idx int) (SemanticOperation, error) {
 }
 
 // applyPatchWithSemantics resolves semantic operations and applies all operations
-// to the config map atomically. Returns the patched map on success.
-func applyPatchWithSemantics(configMap map[string]any, ops []SemanticOperation) (map[string]any, error) {
+// to the config map atomically. Returns the patched map and the resolved concrete
+// operations (semantic match+section addressing expanded to real JSON Pointer
+// paths) on success — the resolved ops let callers render a compact dry-run diff
+// (see dryRunPatchResult) without re-deriving affected paths.
+func applyPatchWithSemantics(configMap map[string]any, ops []SemanticOperation) (map[string]any, []jsonpatch.Operation, error) {
 	resolved, err := resolveSemanticOps(configMap, ops)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	patchedAny, err := jsonpatch.Apply(configMap, resolved)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	patchedMap, ok := patchedAny.(map[string]any)
 	if !ok {
-		return nil, fmt.Errorf("patch result must be an object")
+		return nil, nil, fmt.Errorf("patch result must be an object")
 	}
 
-	return patchedMap, nil
+	return patchedMap, resolved, nil
 }
 
 // configToMap converts a typed config struct to map[string]any via JSON round-trip.
@@ -208,14 +212,61 @@ func configToMap(config any) (map[string]any, error) {
 	return m, nil
 }
 
-// dryRunPatchResult returns a preview of the patched config without saving.
-func dryRunPatchResult(patchedMap map[string]any, entityType, entityID string, opCount int) (*mcp.ToolsCallResult, error) {
-	result, err := json.MarshalIndent(patchedMap, "", "  ")
-	if err != nil {
-		return errorResult(fmt.Sprintf("error formatting dry-run result: %v", err)), nil
+// dryRunValueTruncateLen bounds each before/after value shown in a dry-run diff so
+// that replacing or removing a large subtree (e.g. a dashboard card) cannot
+// reproduce the token blow-up dry-run is meant to avoid (issue #142).
+const dryRunValueTruncateLen = 200
+
+// dryRunPatchResult returns a compact preview of a patch: only the affected paths
+// with their before/after values, not the entire patched config. original is the
+// pre-patch config (used to look up "before" values); resolved are the concrete
+// operations that were applied (semantic match+section ops already expanded to
+// real JSON Pointer paths by applyPatchWithSemantics).
+func dryRunPatchResult(original, patched map[string]any, resolved []jsonpatch.Operation, entityType, entityID string, opCount int) (*mcp.ToolsCallResult, error) {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Dry-run result for %s '%s' (%d operations, NOT saved):\n", entityType, entityID, opCount)
+
+	for i, op := range resolved {
+		fmt.Fprintf(&b, "%d. %s %s\n", i+1, op.Op, op.Path)
+		switch op.Op {
+		case "move", "copy":
+			fmt.Fprintf(&b, "   from: %s\n", op.From)
+			fmt.Fprintf(&b, "   after:  %s\n", dryRunFormatValue(patched, op.Path))
+		case arrayModeRemove:
+			fmt.Fprintf(&b, "   before: %s\n", dryRunFormatValue(original, op.Path))
+			b.WriteString("   after:  (removed)\n")
+		default: // add, replace, test
+			fmt.Fprintf(&b, "   before: %s\n", dryRunFormatValue(original, op.Path))
+			fmt.Fprintf(&b, "   after:  %s\n", truncateDiffValue(op.Value))
+		}
 	}
-	return successResult(fmt.Sprintf("Dry-run result for %s '%s' (%d operations, NOT saved):\n%s",
-		entityType, entityID, opCount, string(result))), nil
+
+	return successResult(b.String()), nil
+}
+
+// dryRunFormatValue looks up path in doc and renders it truncated for diff display.
+// A missing path (e.g. a field that doesn't exist yet before an "add") renders as
+// "(absent)" rather than an error.
+func dryRunFormatValue(doc map[string]any, path string) string {
+	val, err := jsonpatch.Get(doc, path)
+	if err != nil {
+		return "(absent)"
+	}
+	return truncateDiffValue(val)
+}
+
+// truncateDiffValue renders v as compact single-line JSON, truncated to
+// dryRunValueTruncateLen characters.
+func truncateDiffValue(v any) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprintf("%v", v)
+	}
+	s := string(b)
+	if len(s) > dryRunValueTruncateLen {
+		return s[:dryRunValueTruncateLen] + "…"
+	}
+	return s
 }
 
 // dryRunSchema returns the MCP JSONSchema for the dry_run parameter.

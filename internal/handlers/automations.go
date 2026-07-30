@@ -576,13 +576,13 @@ func (h *AutomationHandlers) handlePatch(ctx context.Context, client homeassista
 		return errorResult(fmt.Sprintf("error processing automation config: %v", err)), nil
 	}
 
-	patchedMap, patchErr := applyPatchWithSemantics(configMap, ops)
+	patchedMap, resolvedOps, patchErr := applyPatchWithSemantics(configMap, ops)
 	if patchErr != nil {
 		return errorResult(fmt.Sprintf("error applying patch: %v", patchErr)), nil
 	}
 
 	if dryRun, _ := args["dry_run"].(bool); dryRun {
-		return dryRunPatchResult(patchedMap, "automation", automationID, len(ops))
+		return dryRunPatchResult(configMap, patchedMap, resolvedOps, "automation", automationID, len(ops))
 	}
 
 	actualConfigID := configID

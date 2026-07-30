@@ -550,13 +550,13 @@ func (h *SceneHandlers) handlePatch(ctx context.Context, client homeassistant.Cl
 		return errorResult(fmt.Sprintf("error processing scene config: %v", err)), nil
 	}
 
-	patchedMap, patchErr := applyPatchWithSemantics(configMap, ops)
+	patchedMap, resolvedOps, patchErr := applyPatchWithSemantics(configMap, ops)
 	if patchErr != nil {
 		return errorResult(fmt.Sprintf("error applying patch: %v", patchErr)), nil
 	}
 
 	if dryRun, _ := args["dry_run"].(bool); dryRun {
-		return dryRunPatchResult(patchedMap, "scene", sceneID, len(ops))
+		return dryRunPatchResult(configMap, patchedMap, resolvedOps, "scene", sceneID, len(ops))
 	}
 
 	var newConfig homeassistant.SceneConfig

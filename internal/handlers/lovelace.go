@@ -351,7 +351,7 @@ func (h *DashboardHandlers) handlePatch(ctx context.Context, client homeassistan
 		return errorResult(fmt.Sprintf("error getting dashboard configuration: %v", err)), nil
 	}
 
-	patchedMap, patchErr := applyPatchWithSemantics(config, ops)
+	patchedMap, resolvedOps, patchErr := applyPatchWithSemantics(config, ops)
 	if patchErr != nil {
 		return errorResult(fmt.Sprintf("error applying patch: %v", patchErr)), nil
 	}
@@ -361,7 +361,7 @@ func (h *DashboardHandlers) handlePatch(ctx context.Context, client homeassistan
 		if dashboardID == "" {
 			dashboardID = "default"
 		}
-		return dryRunPatchResult(patchedMap, "dashboard", dashboardID, len(ops))
+		return dryRunPatchResult(config, patchedMap, resolvedOps, "dashboard", dashboardID, len(ops))
 	}
 
 	if err := client.SaveLovelaceConfig(ctx, urlPath, patchedMap); err != nil {

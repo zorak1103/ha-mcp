@@ -582,13 +582,13 @@ func (h *ScriptHandlers) handlePatch(ctx context.Context, client homeassistant.C
 		return errorResult(fmt.Sprintf("error processing script config: %v", err)), nil
 	}
 
-	patchedMap, patchErr := applyPatchWithSemantics(configMap, ops)
+	patchedMap, resolvedOps, patchErr := applyPatchWithSemantics(configMap, ops)
 	if patchErr != nil {
 		return errorResult(fmt.Sprintf("error applying patch: %v", patchErr)), nil
 	}
 
 	if dryRun, _ := args["dry_run"].(bool); dryRun {
-		return dryRunPatchResult(patchedMap, "script", scriptID, len(ops))
+		return dryRunPatchResult(configMap, patchedMap, resolvedOps, "script", scriptID, len(ops))
 	}
 
 	// current.EntityID reflects the entity actually resolved above (findScriptByID may have

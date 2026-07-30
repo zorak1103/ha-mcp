@@ -2,9 +2,11 @@ package handlers
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
+	"github.com/zorak1103/ha-mcp/internal/jsonpatch"
 )
 
 func TestParseOperations(t *testing.T) {
@@ -321,7 +323,7 @@ func TestParseOperations_RoundTrip(t *testing.T) {
 		"conditions": []any{map[string]any{"condition": "time"}},
 	}
 
-	resultMap, applyErr := applyPatchWithSemantics(doc, ops)
+	resultMap, _, applyErr := applyPatchWithSemantics(doc, ops)
 	if applyErr != nil {
 		t.Fatalf("applyPatchWithSemantics() error = %v", applyErr)
 	}
@@ -442,7 +444,7 @@ func TestParseOperations_DeepValueObject(t *testing.T) {
 			map[string]any{"action": "light.turn_off"},
 		},
 	}
-	result, err := applyPatchWithSemantics(doc, ops)
+	result, _, err := applyPatchWithSemantics(doc, ops)
 	if err != nil {
 		t.Fatalf("applyPatchWithSemantics error: %v", err)
 	}
@@ -454,4 +456,146 @@ func TestParseOperations_DeepValueObject(t *testing.T) {
 	if _, ok := inserted["choose"]; !ok {
 		t.Errorf("inserted action missing 'choose' key; got: %v", inserted)
 	}
+}
+
+// dryRunPatchResult tests (issue #142: dry_run must return a compact diff,
+// not the entire patched config)
+
+func TestDryRunPatchResult_CompactDiff(t *testing.T) {
+	t.Parallel()
+
+	original := map[string]any{
+		"mode":              "single",
+		"unrelated_field":   "should-not-appear-in-diff-output",
+		"another_unrelated": map[string]any{"nested": "also-should-not-appear"},
+		"triggers":          []any{map[string]any{"platform": "time", "at": "07:00"}},
+	}
+	patched := map[string]any{
+		"mode":              "queued",
+		"unrelated_field":   "should-not-appear-in-diff-output",
+		"another_unrelated": map[string]any{"nested": "also-should-not-appear"},
+		"triggers":          []any{map[string]any{"platform": "time", "at": "07:00"}},
+	}
+	resolved := []jsonpatch.Operation{
+		{Op: "replace", Path: "/mode", Value: "queued"},
+	}
+
+	result, err := dryRunPatchResult(original, patched, resolved, "automation", "morning_routine", len(resolved))
+	if err != nil {
+		t.Fatalf("dryRunPatchResult() error = %v", err)
+	}
+	text := result.Content[0].Text
+
+	if !strings.Contains(text, "/mode") {
+		t.Errorf("output missing affected path /mode: %s", text)
+	}
+	if !strings.Contains(text, "single") {
+		t.Errorf("output missing before value 'single': %s", text)
+	}
+	if !strings.Contains(text, "queued") {
+		t.Errorf("output missing after value 'queued': %s", text)
+	}
+	if strings.Contains(text, "should-not-appear-in-diff-output") {
+		t.Errorf("output leaked untouched field value: %s", text)
+	}
+	if strings.Contains(text, "also-should-not-appear") {
+		t.Errorf("output leaked untouched nested field value: %s", text)
+	}
+}
+
+func TestDryRunPatchResult_RemoveShowsRemoved(t *testing.T) {
+	t.Parallel()
+
+	original := map[string]any{
+		"triggers": []any{map[string]any{"platform": "state", "entity_id": "binary_sensor.door"}},
+	}
+	patched := map[string]any{
+		"triggers": []any{},
+	}
+	resolved := []jsonpatch.Operation{
+		{Op: "remove", Path: "/triggers/0"},
+	}
+
+	result, err := dryRunPatchResult(original, patched, resolved, "automation", "test_id", len(resolved))
+	if err != nil {
+		t.Fatalf("dryRunPatchResult() error = %v", err)
+	}
+	text := result.Content[0].Text
+
+	if !strings.Contains(text, "(removed)") {
+		t.Errorf("output missing '(removed)' marker: %s", text)
+	}
+	if !strings.Contains(text, "binary_sensor.door") {
+		t.Errorf("output missing removed element's before value: %s", text)
+	}
+}
+
+func TestDryRunPatchResult_TruncatesLongValues(t *testing.T) {
+	t.Parallel()
+
+	longValue := strings.Repeat("x", 1000)
+	original := map[string]any{"field": "short"}
+	patched := map[string]any{"field": longValue}
+	resolved := []jsonpatch.Operation{
+		{Op: "replace", Path: "/field", Value: longValue},
+	}
+
+	result, err := dryRunPatchResult(original, patched, resolved, "script", "test_id", len(resolved))
+	if err != nil {
+		t.Fatalf("dryRunPatchResult() error = %v", err)
+	}
+	text := result.Content[0].Text
+
+	if strings.Contains(text, longValue) {
+		t.Errorf("output contains untruncated 1000-char value")
+	}
+	if !strings.Contains(text, "…") {
+		t.Errorf("output missing truncation marker: %s", text)
+	}
+}
+
+func TestDryRunPatchResult_LargeConfigStaysCompact(t *testing.T) {
+	t.Parallel()
+
+	// Simulate a large dashboard: many views, each with padding content
+	// unrelated to the patch (issue #142 reproduction).
+	views := make([]any, 200)
+	for i := range views {
+		views[i] = map[string]any{
+			"title": "padding",
+			"cards": []any{
+				map[string]any{"type": "entities", "entities": strings.Repeat("e", 500)},
+			},
+		}
+	}
+	original := map[string]any{"views": views}
+
+	fullConfigSize := len(mustMarshal(t, original))
+
+	resolved := []jsonpatch.Operation{
+		{Op: "replace", Path: "/views/0/title", Value: "updated"},
+	}
+	patched := map[string]any{"views": views}
+
+	result, err := dryRunPatchResult(original, patched, resolved, "dashboard", "lovelace", len(resolved))
+	if err != nil {
+		t.Fatalf("dryRunPatchResult() error = %v", err)
+	}
+	text := result.Content[0].Text
+
+	if len(text) >= fullConfigSize {
+		t.Errorf("dry-run diff (%d bytes) is not smaller than the full config (%d bytes)", len(text), fullConfigSize)
+	}
+	if len(text) > 1000 {
+		t.Errorf("dry-run diff for a single-field change is unexpectedly large: %d bytes", len(text))
+	}
+}
+
+func mustMarshal(t *testing.T, v any) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	return b
 }

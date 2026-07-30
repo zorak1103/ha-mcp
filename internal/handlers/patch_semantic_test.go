@@ -92,11 +92,9 @@ func TestMatchesElement(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// findMatchingIndices tests
-// =============================================================================
+// findMatchingPaths tests
 
-func TestFindMatchingIndices(t *testing.T) {
+func TestFindMatchingPaths(t *testing.T) {
 	t.Parallel()
 
 	triggers := []any{
@@ -109,17 +107,17 @@ func TestFindMatchingIndices(t *testing.T) {
 	tests := []struct {
 		name  string
 		match map[string]any
-		want  []int
+		want  []string
 	}{
 		{
 			name:  "match by entity_id only - two matches",
 			match: map[string]any{"entity_id": "binary_sensor.door"},
-			want:  []int{0, 3},
+			want:  []string{"/triggers/0", "/triggers/3"},
 		},
 		{
 			name:  "match by entity_id and to - single match",
 			match: map[string]any{"entity_id": "binary_sensor.door", "to": "off"},
-			want:  []int{3},
+			want:  []string{"/triggers/3"},
 		},
 		{
 			name:  "no match",
@@ -129,32 +127,32 @@ func TestFindMatchingIndices(t *testing.T) {
 		{
 			name:  "match by platform - three matches",
 			match: map[string]any{"platform": "state"},
-			want:  []int{0, 2, 3},
+			want:  []string{"/triggers/0", "/triggers/2", "/triggers/3"},
 		},
 		{
 			name:  "match time trigger",
 			match: map[string]any{"at": "07:00"},
-			want:  []int{1},
+			want:  []string{"/triggers/1"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := findMatchingIndices(triggers, tt.match)
+			got := findMatchingPaths(triggers, "/triggers", tt.match)
 			if len(got) != len(tt.want) {
-				t.Fatalf("findMatchingIndices() = %v, want %v", got, tt.want)
+				t.Fatalf("findMatchingPaths() = %v, want %v", got, tt.want)
 			}
-			for i, idx := range got {
-				if idx != tt.want[i] {
-					t.Errorf("findMatchingIndices()[%d] = %d, want %d", i, idx, tt.want[i])
+			for i, p := range got {
+				if p != tt.want[i] {
+					t.Errorf("findMatchingPaths()[%d] = %q, want %q", i, p, tt.want[i])
 				}
 			}
 		})
 	}
 }
 
-func TestFindMatchingIndices_SkipsNonMaps(t *testing.T) {
+func TestFindMatchingPaths_SkipsNonMapNodes(t *testing.T) {
 	t.Parallel()
 
 	// Section with a non-map element mixed in
@@ -164,42 +162,64 @@ func TestFindMatchingIndices_SkipsNonMaps(t *testing.T) {
 		42,
 	}
 
-	indices := findMatchingIndices(section, map[string]any{"entity_id": "binary_sensor.door"})
-	if len(indices) != 1 || indices[0] != 1 {
-		t.Errorf("findMatchingIndices() = %v, want [1]", indices)
+	paths := findMatchingPaths(section, "/triggers", map[string]any{"entity_id": "binary_sensor.door"})
+	if len(paths) != 1 || paths[0] != "/triggers/1" {
+		t.Errorf("findMatchingPaths() = %v, want [/triggers/1]", paths)
 	}
 }
+
+func TestFindMatchingPaths_NestedDashboardCards(t *testing.T) {
+	t.Parallel()
+
+	// Mirrors issue #144: a chip nested 4 levels below "views" via
+	// sections -> cards -> cards -> chips.
+	views := []any{
+		map[string]any{"title": "Home"},
+		map[string]any{
+			"title": "Example",
+			"sections": []any{
+				map[string]any{
+					"cards": []any{
+						map[string]any{"type": "grid"},
+						map[string]any{
+							"type": "vertical-stack",
+							"cards": []any{
+								map[string]any{
+									"type": "tile",
+									"chips": []any{
+										map[string]any{"type": "weather"},
+										map[string]any{"type": "weather"},
+										map[string]any{
+											"type":    "entity",
+											"entity":  "device_tracker.example_phone",
+											"content": "Example",
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	match := map[string]any{"content": "Example", "entity": "device_tracker.example_phone"}
+	paths := findMatchingPaths(views, "/views", match)
+
+	want := "/views/1/sections/0/cards/1/cards/0/chips/2"
+	if len(paths) != 1 || paths[0] != want {
+		t.Fatalf("findMatchingPaths() = %v, want [%s]", paths, want)
+	}
+}
+
+// =============================================================================
+// findMatchingIndices tests
+// =============================================================================
 
 // =============================================================================
 // buildResolvedPath tests
 // =============================================================================
-
-func TestBuildResolvedPath(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		section string
-		index   int
-		field   string
-		want    string
-	}{
-		{"triggers", 0, "for", "/triggers/0/for"},
-		{"triggers", 2, "entity_id", "/triggers/2/entity_id"},
-		{"conditions", 1, "state", "/conditions/1/state"},
-		{"actions", 0, "", "/actions/0"},
-		{"triggers", 5, "", "/triggers/5"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.want, func(t *testing.T) {
-			t.Parallel()
-			got := buildResolvedPath(tt.section, tt.index, tt.field)
-			if got != tt.want {
-				t.Errorf("buildResolvedPath() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
 
 // =============================================================================
 // validateSemanticOp tests
@@ -673,7 +693,7 @@ func TestResolveSemanticOps_CrossOpRemoveDescendingOrder(t *testing.T) {
 	}
 
 	// Verify applying these ops leaves only the time trigger
-	result, applyErr := applyPatchWithSemantics(doc, ops)
+	result, _, applyErr := applyPatchWithSemantics(doc, ops)
 	if applyErr != nil {
 		t.Fatalf("applyPatchWithSemantics() error = %v", applyErr)
 	}
@@ -684,6 +704,113 @@ func TestResolveSemanticOps_CrossOpRemoveDescendingOrder(t *testing.T) {
 	remaining := triggers[0].(map[string]any)
 	if remaining["platform"] != "time" {
 		t.Errorf("remaining trigger = %v, want time trigger", remaining)
+	}
+}
+
+func TestResolveSemanticOps_NestedMatch(t *testing.T) {
+	t.Parallel()
+
+	// Reproduces issue #144: target lives several levels below the named
+	// section, nested through sections/cards/cards/chips.
+	doc := map[string]any{
+		"views": []any{
+			map[string]any{
+				"sections": []any{
+					map[string]any{
+						"cards": []any{
+							map[string]any{
+								"cards": []any{
+									map[string]any{
+										"chips": []any{
+											map[string]any{
+												"entity":  "device_tracker.example_phone",
+												"content": "Example",
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	ops := []SemanticOperation{
+		{
+			Operation: jsonpatch.Operation{Op: "replace", Value: "device_tracker.example_phone_new"},
+			Match:     map[string]any{"content": "Example", "entity": "device_tracker.example_phone"},
+			Section:   "views",
+			Field:     "entity",
+		},
+	}
+
+	resolved, err := resolveSemanticOps(doc, ops)
+	if err != nil {
+		t.Fatalf("resolveSemanticOps() error = %v", err)
+	}
+	if len(resolved) != 1 {
+		t.Fatalf("len(resolved) = %d, want 1", len(resolved))
+	}
+	want := "/views/0/sections/0/cards/0/cards/0/chips/0/entity"
+	if resolved[0].Path != want {
+		t.Errorf("resolved path = %q, want %q", resolved[0].Path, want)
+	}
+
+	result, _, applyErr := applyPatchWithSemantics(doc, ops)
+	if applyErr != nil {
+		t.Fatalf("applyPatchWithSemantics() error = %v", applyErr)
+	}
+	chip := result["views"].([]any)[0].(map[string]any)["sections"].([]any)[0].(map[string]any)["cards"].([]any)[0].(map[string]any)["cards"].([]any)[0].(map[string]any)["chips"].([]any)[0].(map[string]any)
+	if chip["entity"] != "device_tracker.example_phone_new" {
+		t.Errorf("chip entity = %v, want updated value", chip["entity"])
+	}
+}
+
+func TestResolveSemanticOps_NestedRemoveOrdering(t *testing.T) {
+	t.Parallel()
+
+	// Two chips at different indices within the same nested array must be
+	// removed highest-index-first so earlier removals don't shift the
+	// indices of not-yet-processed matches.
+	doc := map[string]any{
+		"views": []any{
+			map[string]any{
+				"cards": []any{
+					map[string]any{
+						"chips": []any{
+							map[string]any{"type": "weather"},
+							map[string]any{"type": "stale"},
+							map[string]any{"type": "weather"},
+							map[string]any{"type": "stale"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	ops := []SemanticOperation{
+		{
+			Operation: jsonpatch.Operation{Op: "remove"},
+			Match:     map[string]any{"type": "stale"},
+			Section:   "views",
+		},
+	}
+
+	result, _, err := applyPatchWithSemantics(doc, ops)
+	if err != nil {
+		t.Fatalf("applyPatchWithSemantics() error = %v", err)
+	}
+	chips := result["views"].([]any)[0].(map[string]any)["cards"].([]any)[0].(map[string]any)["chips"].([]any)
+	if len(chips) != 2 {
+		t.Fatalf("len(chips) = %d, want 2", len(chips))
+	}
+	for _, c := range chips {
+		if c.(map[string]any)["type"] != "weather" {
+			t.Errorf("remaining chip = %v, want weather", c)
+		}
 	}
 }
 
@@ -759,7 +886,7 @@ func TestApplyPatchWithSemantics_EndToEnd(t *testing.T) {
 				Field:     "for",
 			},
 		}
-		result, err := applyPatchWithSemantics(doc, ops)
+		result, _, err := applyPatchWithSemantics(doc, ops)
 		if err != nil {
 			t.Fatalf("applyPatchWithSemantics() error = %v", err)
 		}
@@ -780,7 +907,7 @@ func TestApplyPatchWithSemantics_EndToEnd(t *testing.T) {
 				Field:     "state",
 			},
 		}
-		result, err := applyPatchWithSemantics(doc, ops)
+		result, _, err := applyPatchWithSemantics(doc, ops)
 		if err != nil {
 			t.Fatalf("applyPatchWithSemantics() error = %v", err)
 		}
@@ -800,7 +927,7 @@ func TestApplyPatchWithSemantics_EndToEnd(t *testing.T) {
 				Section:   "triggers",
 			},
 		}
-		result, err := applyPatchWithSemantics(doc, ops)
+		result, _, err := applyPatchWithSemantics(doc, ops)
 		if err != nil {
 			t.Fatalf("applyPatchWithSemantics() error = %v", err)
 		}
@@ -826,7 +953,7 @@ func TestApplyPatchWithSemantics_EndToEnd(t *testing.T) {
 				Field:     "at",
 			},
 		}
-		result, err := applyPatchWithSemantics(doc, ops)
+		result, _, err := applyPatchWithSemantics(doc, ops)
 		if err != nil {
 			t.Fatalf("applyPatchWithSemantics() error = %v", err)
 		}

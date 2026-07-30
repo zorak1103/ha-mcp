@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 
 	"github.com/zorak1103/ha-mcp/internal/jsonpatch"
 )
@@ -36,12 +37,13 @@ type SemanticOperation struct {
 	MatchIndex *int
 }
 
-// resolvedOp is a jsonpatch.Operation annotated with its original array index path
-// for global descending-index sort of remove operations.
+// resolvedOp is a jsonpatch.Operation annotated with its resolved element path
+// (without the trailing field segment) for path-based descending sort of
+// semantic remove operations.
 type resolvedOp struct {
-	op      jsonpatch.Operation
-	section string // non-empty only for semantic remove ops
-	index   int    // array index, used for sorting semantic removes
+	op               jsonpatch.Operation
+	isSemanticRemove bool
+	path             string // matched element path, set only for semantic remove ops
 }
 
 // resolveSemanticOps converts semantic operations into standard jsonpatch.Operations
@@ -84,28 +86,53 @@ func resolveSemanticOps(doc map[string]any, ops []SemanticOperation) ([]jsonpatc
 }
 
 // sortSemanticRemoves performs a stable sort of the annotated ops such that
-// semantic remove ops with higher array indices come before lower ones within
-// each section. Non-remove ops and standard ops keep their original order.
+// semantic remove ops are ordered so that applying them sequentially never
+// invalidates a not-yet-processed match: deeper (nested) paths are removed
+// before their ancestors, and within the same array, higher indices are
+// removed before lower ones. Non-remove ops and standard ops keep their
+// original relative order.
 func sortSemanticRemoves(ops []resolvedOp) {
-	// We want to reorder ONLY the remove ops for a given section, leaving all
-	// other ops in place. We use a stable sort that preserves relative order
-	// of non-remove entries.
 	sort.SliceStable(ops, func(i, j int) bool {
 		a, b := ops[i], ops[j]
-		// Only reorder entries that are semantic removes of the same section
-		if a.op.Op != arrayModeRemove || b.op.Op != arrayModeRemove {
+		if !a.isSemanticRemove || !b.isSemanticRemove {
 			return false
 		}
-		if a.section == "" || b.section == "" || a.section != b.section {
-			return false
-		}
-		// Higher index comes first (descending)
-		return a.index > b.index
+		return removeBeforePaths(a.path, b.path)
 	})
 }
 
+// removeBeforePaths reports whether the element at path a must be removed
+// before the element at path b. Comparison walks both paths' RFC 6901
+// segments left to right: at the first differing pair of numeric (array
+// index) segments, the higher index is ordered first (safe removal of
+// siblings). If one path is a prefix of the other, the longer (deeper,
+// descendant) path is ordered first. Differing non-numeric segments (distinct
+// object keys or sections) have no defined removal order and are left stable.
+func removeBeforePaths(a, b string) bool {
+	segsA, errA := jsonpatch.Segments(a)
+	segsB, errB := jsonpatch.Segments(b)
+	if errA != nil || errB != nil {
+		return false
+	}
+	n := min(len(segsB), len(segsA))
+	for i := range n {
+		if segsA[i] == segsB[i] {
+			continue
+		}
+		numA, errNA := strconv.Atoi(segsA[i])
+		numB, errNB := strconv.Atoi(segsB[i])
+		if errNA == nil && errNB == nil {
+			return numA > numB
+		}
+		return false
+	}
+	return len(segsA) > len(segsB)
+}
+
 // resolveOneSemanticOp resolves a single semantic operation into one or more
-// annotated operations.
+// annotated operations. Matching recurses into nested arrays/objects within
+// the named section (e.g. a dashboard card/chip nested several levels below
+// "views"), so the resolved path reflects the actual depth of the match.
 func resolveOneSemanticOp(doc map[string]any, op SemanticOperation, opIdx int) ([]resolvedOp, error) {
 	if err := validateSemanticOp(op, opIdx); err != nil {
 		return nil, err
@@ -121,34 +148,37 @@ func resolveOneSemanticOp(doc map[string]any, op SemanticOperation, opIdx int) (
 		return nil, fmt.Errorf("section %q is not an array (operation %d)", op.Section, opIdx)
 	}
 
-	indices := findMatchingIndices(sectionSlice, op.Match)
-	if len(indices) == 0 {
-		return nil, fmt.Errorf("no elements in section %q match criteria %v (operation %d)", op.Section, op.Match, opIdx)
+	paths := findMatchingPaths(sectionSlice, "/"+op.Section, op.Match)
+	if len(paths) == 0 {
+		return nil, fmt.Errorf("no elements in section %q (including nested cards/actions) match criteria %v (operation %d)", op.Section, op.Match, opIdx)
 	}
 
 	if op.MatchIndex != nil {
 		idx := *op.MatchIndex
-		if idx < 0 || idx >= len(indices) {
+		if idx < 0 || idx >= len(paths) {
 			return nil, fmt.Errorf("match_index %d out of range: only %d elements matched in section %q (operation %d)",
-				idx, len(indices), op.Section, opIdx)
+				idx, len(paths), op.Section, opIdx)
 		}
-		indices = []int{indices[idx]}
+		paths = []string{paths[idx]}
 	}
 
-	result := make([]resolvedOp, 0, len(indices))
-	for _, idx := range indices {
-		path := buildResolvedPath(op.Section, idx, op.Field)
+	result := make([]resolvedOp, 0, len(paths))
+	for _, p := range paths {
+		fullPath := p
+		if op.Field != "" {
+			fullPath = p + "/" + jsonpatch.EscapeSegment(op.Field)
+		}
 		r := resolvedOp{
 			op: jsonpatch.Operation{
 				Op:    op.Op,
-				Path:  path,
+				Path:  fullPath,
 				Value: op.Value,
 			},
 		}
 		// Annotate remove ops for later global sort
 		if op.Op == arrayModeRemove {
-			r.section = op.Section
-			r.index = idx
+			r.isSemanticRemove = true
+			r.path = p
 		}
 		result = append(result, r)
 	}
@@ -194,29 +224,37 @@ func matchesElement(elem, match map[string]any) bool {
 	return true
 }
 
-// findMatchingIndices returns the indices of elements in section that match all criteria.
-func findMatchingIndices(section []any, match map[string]any) []int {
-	var indices []int
-	for i, item := range section {
-		m, ok := item.(map[string]any)
-		if !ok {
-			continue
+// findMatchingPaths recursively walks node looking for map elements that
+// satisfy match, returning the RFC 6901 pointer path to each matching
+// element, rooted at prefix. Arrays are visited by index and objects by
+// sorted key for deterministic ordering (this determines match_index
+// selection). Recursion continues into a matching element's children too, so
+// a match at one depth does not prevent finding further nested matches
+// beneath it — this is what allows "match"+"section" addressing to reach
+// dashboard cards/chips nested arbitrarily deep below a top-level section
+// (issue #144), while still finding direct top-level matches exactly as
+// before.
+func findMatchingPaths(node any, prefix string, match map[string]any) []string {
+	var paths []string
+	switch v := node.(type) {
+	case map[string]any:
+		if matchesElement(v, match) {
+			paths = append(paths, prefix)
 		}
-		if matchesElement(m, match) {
-			indices = append(indices, i)
+		keys := make([]string, 0, len(v))
+		for k := range v {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			paths = append(paths, findMatchingPaths(v[k], prefix+"/"+jsonpatch.EscapeSegment(k), match)...)
+		}
+	case []any:
+		for i, item := range v {
+			paths = append(paths, findMatchingPaths(item, prefix+"/"+strconv.Itoa(i), match)...)
 		}
 	}
-	return indices
-}
-
-// buildResolvedPath constructs a JSON Pointer for the matched element.
-// If field is empty, targets the element itself (e.g., for remove).
-// Otherwise targets a specific field within the element.
-func buildResolvedPath(section string, index int, field string) string {
-	if field == "" {
-		return fmt.Sprintf("/%s/%d", section, index)
-	}
-	return fmt.Sprintf("/%s/%d/%s", section, index, field)
+	return paths
 }
 
 // jsonValEqual compares two values using JSON-semantic equality.
