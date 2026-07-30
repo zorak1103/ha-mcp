@@ -1193,7 +1193,7 @@ func (c *wsClientImpl) DeleteFloor(ctx context.Context, floorID string) error {
 
 // GetZones retrieves all zones.
 func (c *wsClientImpl) GetZones(ctx context.Context) ([]ZoneRegistryEntry, error) {
-	result, err := c.ws.SendCommand(ctx, "config/zone/list", nil)
+	result, err := c.ws.SendCommand(ctx, "zone/list", nil)
 	if err != nil {
 		return nil, fmt.Errorf("get zones failed: %w", err)
 	}
@@ -1228,7 +1228,7 @@ func (c *wsClientImpl) CreateZone(ctx context.Context, config ZoneConfig) (*Zone
 		params["passive"] = *config.Passive
 	}
 
-	result, err := c.ws.SendCommand(ctx, "config/zone/create", params)
+	result, err := c.ws.SendCommand(ctx, "zone/create", params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create zone: %w", err)
 	}
@@ -1267,7 +1267,7 @@ func (c *wsClientImpl) UpdateZone(ctx context.Context, zoneID string, config Zon
 		params["passive"] = *config.Passive
 	}
 
-	result, err := c.ws.SendCommand(ctx, "config/zone/update", params)
+	result, err := c.ws.SendCommand(ctx, "zone/update", params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update zone: %w", err)
 	}
@@ -1282,7 +1282,7 @@ func (c *wsClientImpl) UpdateZone(ctx context.Context, zoneID string, config Zon
 
 // DeleteZone deletes a zone.
 func (c *wsClientImpl) DeleteZone(ctx context.Context, zoneID string) error {
-	_, err := c.ws.SendCommand(ctx, "config/zone/delete", map[string]any{
+	_, err := c.ws.SendCommand(ctx, "zone/delete", map[string]any{
 		"zone_id": zoneID,
 	})
 	if err != nil {
@@ -1293,7 +1293,7 @@ func (c *wsClientImpl) DeleteZone(ctx context.Context, zoneID string) error {
 
 // GetPersons retrieves all persons.
 func (c *wsClientImpl) GetPersons(ctx context.Context) ([]PersonRegistryEntry, error) {
-	result, err := c.ws.SendCommand(ctx, "config/person/list", nil)
+	result, err := c.ws.SendCommand(ctx, "person/list", nil)
 	if err != nil {
 		return nil, fmt.Errorf("get persons failed: %w", err)
 	}
@@ -1322,7 +1322,7 @@ func (c *wsClientImpl) CreatePerson(ctx context.Context, config PersonConfig) (*
 		params["picture"] = config.Picture
 	}
 
-	result, err := c.ws.SendCommand(ctx, "config/person/create", params)
+	result, err := c.ws.SendCommand(ctx, "person/create", params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create person: %w", err)
 	}
@@ -1355,7 +1355,7 @@ func (c *wsClientImpl) UpdatePerson(ctx context.Context, personID string, config
 		params["picture"] = config.Picture
 	}
 
-	result, err := c.ws.SendCommand(ctx, "config/person/update", params)
+	result, err := c.ws.SendCommand(ctx, "person/update", params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update person: %w", err)
 	}
@@ -1370,7 +1370,7 @@ func (c *wsClientImpl) UpdatePerson(ctx context.Context, personID string, config
 
 // DeletePerson deletes a person.
 func (c *wsClientImpl) DeletePerson(ctx context.Context, personID string) error {
-	_, err := c.ws.SendCommand(ctx, "config/person/delete", map[string]any{
+	_, err := c.ws.SendCommand(ctx, "person/delete", map[string]any{
 		"person_id": personID,
 	})
 	if err != nil {

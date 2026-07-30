@@ -353,7 +353,9 @@ set -a && source .env.integration && set +a && go test -tags=integration -v ./in
 
 **Source entity wrapper pattern**: Config Entry helpers with domain requirements need template wrappers in tests: `createSourceSensor()` (input_number + template sensor), `createSourceSwitch()` (input_boolean + template switch with turn_on/turn_off service actions).
 
-**Pre-existing integration test failures on this HA instance** (not regression indicators): `TestZoneIntegration`, `TestPersonIntegration` → `unknown_command` (Zone/Person WS API unsupported on this HA version); `TestSwitchAsXIntegration` → `extra keys not allowed @ data['name']` (HA API validation tightened); `TestGenericThermostatIntegration`, `TestTemplateHelperIntegration/TestTemplateSensorUpdate` → HA version-specific 400 errors.
+**Pre-existing integration test failures on this HA instance** (not regression indicators): `TestSwitchAsXIntegration` → `extra keys not allowed @ data['name']` (HA API validation tightened); `TestGenericThermostatIntegration`, `TestTemplateHelperIntegration/TestTemplateSensorUpdate` → HA version-specific 400 errors.
+
+**Zone/Person WS command prefix (#145)**: `TestZoneIntegration`/`TestPersonIntegration` failing with `unknown_command` was previously misdiagnosed here as "Zone/Person WS API unsupported on this HA version" — the real cause was `wsClientImpl.GetZones`/`GetPersons`/`Create*`/`Update*`/`Delete*` sending `config/zone/*` and `config/person/*` WebSocket commands. Home Assistant's collection helper (`helpers/collection.py`) registers these under the bare domain prefix (`zone/list`, `person/list`, ...), not `config/` — unlike the genuine `config/*_registry/*` commands (entity/device/area/label/floor), which are a different, correctly `config/`-prefixed API. `unknown_command` looks identical whether a command is missing from this HA version or was simply never registered under that name, which is why the true cause went undetected — fixed by dropping the `config/` prefix from all 8 zone/person commands. Both suites are expected to pass now.
 
 ## Workflow Preferences
 
