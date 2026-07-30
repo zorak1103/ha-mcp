@@ -64,14 +64,14 @@ Authorization: Bearer <your-ha-access-token>
 - `field`: field within matched element(s) to modify (omit for `remove` to delete the whole element)
 - `match_index`: optional 0-based index to select a specific match when multiple elements match
 
-`section` recurses into nested arrays/objects within it (issue #144) — a `match` inside a
+`section` recurses into nested arrays/objects within it — a `match` inside a
 nested `choose`/`if`/`repeat` action block is found the same way a top-level element is. A
 standard JSON Pointer `path` op is still useful for pinpointing one specific occurrence
 deterministically, and the nesting is easy to get wrong by hand: `then`/`else` are
 **siblings of `if`**, not nested inside it. Use `/actions/0/then/0`, not
 `/actions/0/if/0/then/0`. See the `ha-mcp-patching` skill ("Nested Action Structures") for
 the full `choose`/`if`/`repeat` path reference. `dry_run: true` returns a compact diff of
-affected paths (not the full config, issue #142).
+affected paths (not the full config).
 
 **Key Parameters (create/update):**
 

@@ -46,7 +46,7 @@ Use when array indexes are unreliable — re-ordered, unknown position, or after
 | Field         | Purpose                                                                      |
 | ------------- | ---------------------------------------------------------------------------- |
 | `match`       | Key-value pairs identifying the target element(s) in the section             |
-| `section`     | Array to search: `triggers`, `conditions`, `actions`, `sequence`, `views`, … Recurses into nested arrays/objects within it (issue #144) — not just the section's direct elements. |
+| `section`     | Array to search: `triggers`, `conditions`, `actions`, `sequence`, `views`, … Recurses into nested arrays/objects within it — not just the section's direct elements. |
 | `field`       | Field within the matched element; omit for `remove` (deletes whole element)  |
 | `match_index` | 0-based index when multiple elements match (default: first match)            |
 
@@ -64,7 +64,7 @@ Use when array indexes are unreliable — re-ordered, unknown position, or after
 
 ## Nested Action Structures
 
-`section` in Semantic Ops recurses into nested arrays/objects (issue #144) — a `match`
+`section` in Semantic Ops recurses into nested arrays/objects — a `match`
 inside a `choose`/`if`/`repeat` action block, or a dashboard card/chip nested several
 levels below `views`, is found the same way a top-level element is; you no longer need
 a `path` op just to reach it. A standard `path` op is still useful when you need to
@@ -80,7 +80,7 @@ on `match_index`), and the nesting shown below is easy to get wrong when writing
 
 <EXTREMELY-IMPORTANT>
 `then`/`else` are siblings of `if` at the same level — they are NOT inside the `if` array.
-`/actions/0/if/0/then/0` is wrong (issue #124); the correct path is `/actions/0/then/0`.
+`/actions/0/if/0/then/0` is wrong; the correct path is `/actions/0/then/0`.
 </EXTREMELY-IMPORTANT>
 
 If a path op fails with "key not found", the error now reports the prefix it actually
@@ -119,7 +119,7 @@ navigated (not your full submitted path) plus a hint when the missing key is one
 [{"op": "replace", "match": {"entity_id": "light.old"}, "section": "actions", "field": "entity_id", "value": "light.new"}]
 ```
 
-**Replace an entity nested inside a dashboard card/chip (recursive match, issue #144):**
+**Replace an entity nested inside a dashboard card/chip (recursive match):**
 ```json
 [{"op": "replace", "match": {"content": "Example", "entity": "device_tracker.example_phone"}, "section": "views", "field": "entity", "value": "device_tracker.example_phone_new"}]
 ```
@@ -128,7 +128,7 @@ navigated (not your full submitted path) plus a hint when the missing key is one
 
 Pass `dry_run: true` to preview a patch without saving. The result is a compact diff —
 each affected path with its truncated before/after value — not the entire patched config,
-so it stays small even for a large dashboard (issue #142).
+so it stays small even for a large dashboard.
 
 ## Atomicity & Ordering
 
