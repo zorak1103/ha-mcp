@@ -186,16 +186,21 @@ func (f *NaturalScriptFormatter) formatModeCounts(counts map[string]int) string 
 	return strings.Join(parts, ", ")
 }
 
+// scriptObjectID returns the bare object_id (entity_id without the "script." prefix).
+func scriptObjectID(script homeassistant.Script) string {
+	return strings.TrimPrefix(script.EntityID, "script.")
+}
+
 func (f *NaturalScriptFormatter) getDisplayName(script homeassistant.Script) string {
 	if script.FriendlyName != "" {
 		return script.FriendlyName
 	}
-	return strings.TrimPrefix(script.EntityID, "script.")
+	return scriptObjectID(script)
 }
 
 func (f *NaturalScriptFormatter) writeScriptLine(result *strings.Builder, script homeassistant.Script, verbose bool) {
 	name := f.getDisplayName(script)
-	scriptID := strings.TrimPrefix(script.EntityID, "script.")
+	scriptID := scriptObjectID(script)
 
 	stepCount := 0
 	if script.Config != nil {
