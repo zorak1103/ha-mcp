@@ -582,7 +582,7 @@ func (h *AutomationHandlers) handlePatch(ctx context.Context, client homeassista
 	}
 
 	if dryRun, _ := args["dry_run"].(bool); dryRun {
-		return dryRunPatchResult(configMap, patchedMap, resolvedOps, "automation", automationID, len(ops))
+		return dryRunPatchResult(configMap, resolvedOps, "automation", automationID, len(ops))
 	}
 
 	actualConfigID := configID

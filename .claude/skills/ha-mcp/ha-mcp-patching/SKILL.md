@@ -50,6 +50,16 @@ Use when array indexes are unreliable — re-ordered, unknown position, or after
 | `field`       | Field within the matched element; omit for `remove` (deletes whole element)  |
 | `match_index` | 0-based index when multiple elements match (default: first match)            |
 
+<EXTREMELY-IMPORTANT>
+`match`+`section` without `match_index` resolves to **every** matching element,
+including ones nested arbitrarily deep below `section` (a `replace`/`remove` is
+not scoped to the top-level array only). If your match criteria could plausibly
+hit more than one element — e.g. the same `entity_id` used at both a top level
+action and inside a nested `choose`/`if` block, or the same card type reused
+across dashboard views — run with `dry_run: true` first and check how many
+resolved paths come back before submitting for real.
+</EXTREMELY-IMPORTANT>
+
 ```json
 [
   {

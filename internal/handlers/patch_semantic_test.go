@@ -814,6 +814,56 @@ func TestResolveSemanticOps_NestedRemoveOrdering(t *testing.T) {
 	}
 }
 
+// TestResolveSemanticOps_SiblingBranchRemovesStableOrder verifies removeBeforePaths'
+// documented behavior for paths that diverge at a non-numeric segment (distinct
+// object keys, not array indices): there is no defined removal order between
+// independent sibling branches, so sortSemanticRemoves must leave them in their
+// original DFS match order (N3) rather than reordering them. Removal safety here
+// doesn't depend on order — "badges" and "cards" are separate arrays, so removing
+// from one never shifts indices in the other — this test locks in the stability
+// guarantee itself, which the "differing non-numeric segment" branch of
+// removeBeforePaths relies on.
+func TestResolveSemanticOps_SiblingBranchRemovesStableOrder(t *testing.T) {
+	t.Parallel()
+
+	doc := map[string]any{
+		"views": []any{
+			map[string]any{
+				"badges": []any{
+					map[string]any{"type": "entity", "stale": true},
+				},
+				"cards": []any{
+					map[string]any{"type": "entity", "stale": true},
+				},
+			},
+		},
+	}
+
+	ops := []SemanticOperation{
+		{
+			Operation: jsonpatch.Operation{Op: "remove"},
+			Match:     map[string]any{"stale": true},
+			Section:   "views",
+		},
+	}
+
+	resolved, err := resolveSemanticOps(doc, ops)
+	if err != nil {
+		t.Fatalf("resolveSemanticOps() error = %v", err)
+	}
+	if len(resolved) != 2 {
+		t.Fatalf("len(resolved) = %d, want 2", len(resolved))
+	}
+	// DFS visits object keys in sorted order, so "badges" (matched first) must
+	// stay before "cards" (matched second) — no non-numeric-segment reordering.
+	if resolved[0].Path != "/views/0/badges/0" {
+		t.Errorf("resolved[0].Path = %q, want '/views/0/badges/0'", resolved[0].Path)
+	}
+	if resolved[1].Path != "/views/0/cards/0" {
+		t.Errorf("resolved[1].Path = %q, want '/views/0/cards/0'", resolved[1].Path)
+	}
+}
+
 func TestResolveSemanticOps_MixedOps(t *testing.T) {
 	t.Parallel()
 

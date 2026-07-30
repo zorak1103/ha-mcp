@@ -588,7 +588,7 @@ func (h *ScriptHandlers) handlePatch(ctx context.Context, client homeassistant.C
 	}
 
 	if dryRun, _ := args["dry_run"].(bool); dryRun {
-		return dryRunPatchResult(configMap, patchedMap, resolvedOps, "script", scriptID, len(ops))
+		return dryRunPatchResult(configMap, resolvedOps, "script", scriptID, len(ops))
 	}
 
 	// current.EntityID reflects the entity actually resolved above (findScriptByID may have

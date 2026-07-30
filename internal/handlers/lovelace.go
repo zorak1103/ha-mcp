@@ -361,7 +361,7 @@ func (h *DashboardHandlers) handlePatch(ctx context.Context, client homeassistan
 		if dashboardID == "" {
 			dashboardID = "default"
 		}
-		return dryRunPatchResult(config, patchedMap, resolvedOps, "dashboard", dashboardID, len(ops))
+		return dryRunPatchResult(config, resolvedOps, "dashboard", dashboardID, len(ops))
 	}
 
 	if err := client.SaveLovelaceConfig(ctx, urlPath, patchedMap); err != nil {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/zorak1103/ha-mcp/internal/jsonpatch"
 	"github.com/zorak1103/ha-mcp/internal/mcp"
@@ -222,26 +223,61 @@ const dryRunValueTruncateLen = 200
 // pre-patch config (used to look up "before" values); resolved are the concrete
 // operations that were applied (semantic match+section ops already expanded to
 // real JSON Pointer paths by applyPatchWithSemantics).
-func dryRunPatchResult(original, patched map[string]any, resolved []jsonpatch.Operation, entityType, entityID string, opCount int) (*mcp.ToolsCallResult, error) {
+// dryRunPatchResult returns a compact preview of a patch: only the affected
+// paths with their before/after values, not the entire patched config.
+// original is the pre-patch config; resolved are the concrete operations that
+// will be applied (semantic match+section ops already expanded to real JSON
+// Pointer paths by applyPatchWithSemantics), in the same order they are
+// applied to storage.
+//
+// Each op's diff is rendered against a working copy that is advanced op by
+// op (via jsonpatch.Apply), rather than diffed against the pristine original
+// for every op — this keeps "before" values correct when a later op targets
+// a path an earlier op in the same call already touched.
+func dryRunPatchResult(original map[string]any, resolved []jsonpatch.Operation, entityType, entityID string, opCount int) (*mcp.ToolsCallResult, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Dry-run result for %s '%s' (%d operations, NOT saved):\n", entityType, entityID, opCount)
 
+	working := original
 	for i, op := range resolved {
-		fmt.Fprintf(&b, "%d. %s %s\n", i+1, op.Op, op.Path)
-		switch op.Op {
-		case "move", "copy":
-			fmt.Fprintf(&b, "   from: %s\n", op.From)
-			fmt.Fprintf(&b, "   after:  %s\n", dryRunFormatValue(patched, op.Path))
-		case arrayModeRemove:
-			fmt.Fprintf(&b, "   before: %s\n", dryRunFormatValue(original, op.Path))
-			b.WriteString("   after:  (removed)\n")
-		default: // add, replace, test
-			fmt.Fprintf(&b, "   before: %s\n", dryRunFormatValue(original, op.Path))
-			fmt.Fprintf(&b, "   after:  %s\n", truncateDiffValue(op.Value))
+		next, err := renderDryRunOp(&b, working, op, i+1)
+		if err != nil {
+			return errorResult(fmt.Sprintf("error rendering dry-run diff: %v", err)), nil
 		}
+		working = next
 	}
 
 	return successResult(b.String()), nil
+}
+
+// renderDryRunOp writes op's numbered before/after diff line(s) to b and
+// returns working advanced by applying op, so the next call observes this
+// op's effect as its own "before" state.
+func renderDryRunOp(b *strings.Builder, working map[string]any, op jsonpatch.Operation, num int) (map[string]any, error) {
+	fmt.Fprintf(b, "%d. %s %s\n", num, op.Op, op.Path)
+	before := dryRunFormatValue(working, op.Path)
+
+	nextAny, err := jsonpatch.Apply(working, []jsonpatch.Operation{op})
+	if err != nil {
+		return nil, err
+	}
+	next, ok := nextAny.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("dry-run intermediate result must be an object")
+	}
+
+	switch op.Op {
+	case "move", "copy":
+		fmt.Fprintf(b, "   from: %s\n", op.From)
+		fmt.Fprintf(b, "   after:  %s\n", dryRunFormatValue(next, op.Path))
+	case arrayModeRemove:
+		fmt.Fprintf(b, "   before: %s\n", before)
+		b.WriteString("   after:  (removed)\n")
+	default: // add, replace, test
+		fmt.Fprintf(b, "   before: %s\n", before)
+		fmt.Fprintf(b, "   after:  %s\n", truncateDiffValue(op.Value))
+	}
+	return next, nil
 }
 
 // dryRunFormatValue looks up path in doc and renders it truncated for diff display.
@@ -257,6 +293,13 @@ func dryRunFormatValue(doc map[string]any, path string) string {
 
 // truncateDiffValue renders v as compact single-line JSON, truncated to
 // dryRunValueTruncateLen characters.
+// truncateDiffValue renders v as compact single-line JSON for human display,
+// truncated to dryRunValueTruncateLen characters. The truncated form is a
+// preview, not guaranteed-valid JSON: the trailing "…" marker replaces
+// whatever content followed, so a truncated object/array/string cannot be
+// parsed back as-is. The cut point is pulled back to the nearest UTF-8 rune
+// boundary so a multi-byte character (e.g. an umlaut in an HA entity or
+// friendly name) is never split in half.
 func truncateDiffValue(v any) string {
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -264,9 +307,18 @@ func truncateDiffValue(v any) string {
 	}
 	s := string(b)
 	if len(s) > dryRunValueTruncateLen {
-		return s[:dryRunValueTruncateLen] + "…"
+		return s[:runeSafeCutoff(s, dryRunValueTruncateLen)] + "…"
 	}
 	return s
+}
+
+// runeSafeCutoff returns the largest index <= n at which s can be sliced
+// without splitting a multi-byte UTF-8 rune.
+func runeSafeCutoff(s string, n int) int {
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return n
 }
 
 // dryRunSchema returns the MCP JSONSchema for the dry_run parameter.

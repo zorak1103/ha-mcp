@@ -556,7 +556,7 @@ func (h *SceneHandlers) handlePatch(ctx context.Context, client homeassistant.Cl
 	}
 
 	if dryRun, _ := args["dry_run"].(bool); dryRun {
-		return dryRunPatchResult(configMap, patchedMap, resolvedOps, "scene", sceneID, len(ops))
+		return dryRunPatchResult(configMap, resolvedOps, "scene", sceneID, len(ops))
 	}
 
 	var newConfig homeassistant.SceneConfig

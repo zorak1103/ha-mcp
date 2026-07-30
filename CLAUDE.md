@@ -186,8 +186,9 @@ Tool actions and parameters are defined in the handler schemas. Non-obvious aspe
   - `match`: key-value pairs to identify element(s) — mutually exclusive with `path`
   - `section`: array to search (`triggers`, `conditions`, `actions`, `sequence`, `views`, …). Matching recurses into nested arrays/objects within the section — not just its direct elements — so a dashboard card/chip nested several levels below `views`, or a nested action block, is found the same way a top-level element is
   - `field`: field within matched element(s) — required for `add`/`replace`/`test`; omit for `remove` (deletes whole element)
-  - `match_index`: optional 0-based index to select specific match when multiple elements match (ordering is depth-first: top-level matches before nested ones, in section order)
+  - `match_index`: optional 0-based index to select specific match when multiple elements match (ordering is DFS pre-order: within each section element in array order, that element's own match precedes matches nested inside it — a nested match under an earlier element can therefore come before a later top-level element's match, it is NOT "all top-level matches, then all nested ones")
   - Semantic remove ops are sorted so deeper (nested) matches are removed before their ancestors, and siblings within the same array are removed highest-index-first, so applying them sequentially never invalidates a not-yet-processed match
+  - `match`+`section` without `match_index` resolves to *every* matching element including nested ones — a `replace`/`remove` is not implicitly scoped to top-level elements only; use `dry_run` to check the resolved set when match criteria could plausibly hit more than one element
 - Supported ops: `add`, `remove`, `replace`, `test` (standard: also `move`, `copy`)
 - Atomic: if any operation fails, the config is not modified
 - Standard paths use RFC 6901 JSON Pointer syntax: `/triggers/0/entity_id`, `/actions/-` (append)
