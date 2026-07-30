@@ -52,6 +52,9 @@ configs/config.yml
 *.log
 logs/
 
+# Local scratch/analysis notes
+network.md
+
 # GoReleaser
 dist/
 
