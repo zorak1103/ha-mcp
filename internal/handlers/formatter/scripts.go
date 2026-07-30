@@ -195,13 +195,14 @@ func (f *NaturalScriptFormatter) getDisplayName(script homeassistant.Script) str
 
 func (f *NaturalScriptFormatter) writeScriptLine(result *strings.Builder, script homeassistant.Script, verbose bool) {
 	name := f.getDisplayName(script)
+	scriptID := strings.TrimPrefix(script.EntityID, "script.")
 
 	stepCount := 0
 	if script.Config != nil {
 		stepCount = len(script.Config.Sequence)
 	}
 
-	fmt.Fprintf(result, "- %s", name)
+	fmt.Fprintf(result, "- %s [%s]", name, scriptID)
 
 	// Add step count
 	if stepCount > 0 {
