@@ -66,6 +66,57 @@ func TestNaturalScriptFormatter_FormatList(t *testing.T) {
 	if !strings.Contains(result, "Morning Routine") {
 		t.Errorf("expected 'Morning Routine' in output, got: %s", result)
 	}
+
+	// Verify bare entity IDs are shown so entities sharing a display name
+	// (e.g. an orphan "_2" duplicate) remain distinguishable (issue #122)
+	for _, wantID := range []string{"[morning_routine]", "[bedtime]", "[quick_clean]"} {
+		if !strings.Contains(result, wantID) {
+			t.Errorf("expected %q in output, got: %s", wantID, result)
+		}
+	}
+}
+
+func TestNaturalScriptFormatter_FormatList_DistinguishesDuplicateAlias(t *testing.T) {
+	ctx := context.Background()
+	f := NewNaturalScriptFormatter()
+
+	// Regression test for issue #122: an orphan "_2" duplicate entity
+	// (created by the now-fixed write-path bug) shares its FriendlyName
+	// with the original script. The list output must still let a reader
+	// tell them apart via entity ID.
+	scripts := []homeassistant.Script{
+		{
+			EntityID:      "script.boiler_off",
+			State:         "off",
+			FriendlyName:  "Boiler Off",
+			LastTriggered: time.Now().Add(-21 * time.Hour).Format(time.RFC3339),
+			Config: &homeassistant.ScriptConfig{
+				Mode:     "single",
+				Sequence: []any{map[string]any{"service": "switch.turn_off"}},
+			},
+		},
+		{
+			EntityID:     "script.boiler_off_2",
+			State:        "off",
+			FriendlyName: "Boiler Off",
+			Config: &homeassistant.ScriptConfig{
+				Mode:     "single",
+				Sequence: []any{map[string]any{"service": "switch.turn_off"}},
+			},
+		},
+	}
+
+	result, err := f.FormatList(ctx, scripts, ScriptListOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.Contains(result, "[boiler_off]") {
+		t.Errorf("expected '[boiler_off]' in output, got: %s", result)
+	}
+	if !strings.Contains(result, "[boiler_off_2]") {
+		t.Errorf("expected '[boiler_off_2]' in output, got: %s", result)
+	}
 }
 
 func TestNaturalScriptFormatter_FormatList_Empty(t *testing.T) {
