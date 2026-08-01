@@ -624,6 +624,80 @@ func TestWSClientImpl_CreateDashboard_OmitsEmptyIcon(t *testing.T) {
 	}
 }
 
+func TestWSClientImpl_CreateDashboard_OmitsEmptyOptionalFields(t *testing.T) {
+	t.Parallel()
+
+	t.Run("all optional fields unset", func(t *testing.T) {
+		t.Parallel()
+
+		var gotParams map[string]any
+		c := newWSClientImplWithSender(&mockWSClientSender{
+			sendCommandFunc: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
+				if cmdType != "lovelace/dashboards/create" {
+					t.Errorf("sent command %q, want %q", cmdType, "lovelace/dashboards/create")
+				}
+				gotParams = params
+				return makeWSResultMsg(DashboardEntry{URLPath: "test"}), nil
+			},
+		})
+
+		_, err := c.CreateDashboard(context.Background(), DashboardConfig{
+			URLPath: "test",
+			Title:   "Test",
+		})
+		if err != nil {
+			t.Fatalf("CreateDashboard returned error: %v", err)
+		}
+
+		if gotParams["url_path"] != "test" {
+			t.Errorf("params[%q] = %v, want %q", "url_path", gotParams["url_path"], "test")
+		}
+		if gotParams["title"] != "Test" {
+			t.Errorf("params[%q] = %v, want %q", "title", gotParams["title"], "Test")
+		}
+		for _, key := range []string{"mode", "require_admin", "show_in_sidebar", "icon"} {
+			if got, ok := gotParams[key]; ok {
+				t.Errorf("params[%q] present = %v, want absent", key, got)
+			}
+		}
+	})
+
+	t.Run("all optional fields set", func(t *testing.T) {
+		t.Parallel()
+
+		var gotParams map[string]any
+		c := newWSClientImplWithSender(&mockWSClientSender{
+			sendCommandFunc: func(_ context.Context, _ string, params map[string]any) (*WSResultMessage, error) {
+				gotParams = params
+				return makeWSResultMsg(DashboardEntry{URLPath: "test"}), nil
+			},
+		})
+
+		requireAdmin := true
+		showInSidebar := false
+		_, err := c.CreateDashboard(context.Background(), DashboardConfig{
+			URLPath:       "test",
+			Title:         "Test",
+			Mode:          "storage",
+			RequireAdmin:  &requireAdmin,
+			ShowInSidebar: &showInSidebar,
+		})
+		if err != nil {
+			t.Fatalf("CreateDashboard returned error: %v", err)
+		}
+
+		if gotParams["mode"] != "storage" {
+			t.Errorf("params[%q] = %v, want %q", "mode", gotParams["mode"], "storage")
+		}
+		if gotParams["require_admin"] != true {
+			t.Errorf("params[%q] = %v, want %v (dereferenced bool, not pointer)", "require_admin", gotParams["require_admin"], true)
+		}
+		if gotParams["show_in_sidebar"] != false {
+			t.Errorf("params[%q] = %v, want %v (dereferenced bool, not pointer)", "show_in_sidebar", gotParams["show_in_sidebar"], false)
+		}
+	})
+}
+
 // TestWSClientImpl_GetPersons_MergesStorageAndConfig guards against a second,
 // distinct bug in the person WebSocket API discovered once the command
 // prefix fix let requests actually reach Home Assistant: person/list uses a

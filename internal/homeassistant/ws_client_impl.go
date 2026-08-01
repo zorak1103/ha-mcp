@@ -1384,14 +1384,20 @@ func (c *wsClientImpl) ListDashboards(ctx context.Context) ([]DashboardEntry, er
 // CreateDashboard creates a new Lovelace dashboard.
 func (c *wsClientImpl) CreateDashboard(ctx context.Context, config DashboardConfig) (*DashboardEntry, error) {
 	params := map[string]any{
-		"url_path":        config.URLPath,
-		"title":           config.Title,
-		"mode":            config.Mode,
-		"require_admin":   config.RequireAdmin,
-		"show_in_sidebar": config.ShowInSidebar,
+		"url_path": config.URLPath,
+		"title":    config.Title,
+	}
+	if config.Mode != "" {
+		params["mode"] = config.Mode
 	}
 	if config.Icon != "" {
 		params["icon"] = config.Icon
+	}
+	if config.RequireAdmin != nil {
+		params["require_admin"] = *config.RequireAdmin
+	}
+	if config.ShowInSidebar != nil {
+		params["show_in_sidebar"] = *config.ShowInSidebar
 	}
 
 	result, err := c.ws.SendCommand(ctx, "lovelace/dashboards/create", params)

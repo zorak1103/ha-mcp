@@ -146,9 +146,7 @@ func (h *TraceHandlers) handleListTraces(ctx context.Context, client homeassista
 
 	// Build command data
 	data := make(map[string]any)
-	if domain != "" {
-		data["domain"] = domain
-	}
+	data["domain"] = domain
 	if itemID != "" {
 		data["item_id"] = itemID
 	}
