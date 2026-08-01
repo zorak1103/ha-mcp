@@ -48,7 +48,7 @@ func RegisterTraceTools(registry *mcp.Registry) {
 				},
 				"domain": {
 					Type:        "string",
-					Description: "Domain to query traces for: 'automation' or 'script'.",
+					Description: "Domain to query traces for: 'automation' or 'script'. Required for the 'list' action unless entity_id is provided (which auto-derives it).",
 					Enum:        []string{traceDomainAutomation, traceDomainScript},
 				},
 				"entity_id": {
@@ -139,6 +139,9 @@ func (h *TraceHandlers) handleListTraces(ctx context.Context, client homeassista
 	domain, itemID, errMsg := resolveTraceListParams(entityID, domain)
 	if errMsg != "" {
 		return errorResult(errMsg), nil
+	}
+	if domain == "" {
+		return errorResult("domain is required for list action: pass domain 'automation' or 'script', or an entity_id like 'automation.morning_routine'"), nil
 	}
 
 	// Build command data

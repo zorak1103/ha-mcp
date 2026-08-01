@@ -577,6 +577,53 @@ func TestWSClientImpl_ZonePersonCommands(t *testing.T) {
 	}
 }
 
+func TestWSClientImpl_CreateDashboard_OmitsEmptyIcon(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		icon     string
+		wantIcon bool
+	}{
+		{name: "empty icon omitted", icon: "", wantIcon: false},
+		{name: "non-empty icon included", icon: "mdi:home", wantIcon: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var gotParams map[string]any
+			c := newWSClientImplWithSender(&mockWSClientSender{
+				sendCommandFunc: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
+					if cmdType != "lovelace/dashboards/create" {
+						t.Errorf("sent command %q, want %q", cmdType, "lovelace/dashboards/create")
+					}
+					gotParams = params
+					return makeWSResultMsg(DashboardEntry{URLPath: "test"}), nil
+				},
+			})
+
+			_, err := c.CreateDashboard(context.Background(), DashboardConfig{
+				URLPath: "test",
+				Title:   "Test",
+				Icon:    tt.icon,
+			})
+			if err != nil {
+				t.Fatalf("CreateDashboard returned error: %v", err)
+			}
+
+			got, ok := gotParams["icon"]
+			if ok != tt.wantIcon {
+				t.Errorf("params[%q] present = %v, want %v (got value %v)", "icon", ok, tt.wantIcon, got)
+			}
+			if tt.wantIcon && got != tt.icon {
+				t.Errorf("params[%q] = %v, want %q", "icon", got, tt.icon)
+			}
+		})
+	}
+}
+
 // TestWSClientImpl_GetPersons_MergesStorageAndConfig guards against a second,
 // distinct bug in the person WebSocket API discovered once the command
 // prefix fix let requests actually reach Home Assistant: person/list uses a

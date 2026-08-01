@@ -348,6 +348,29 @@ func TestManageTrace_List_EntityIDFilter(t *testing.T) {
 	}
 }
 
+func TestManageTrace_List_MissingDomainAndEntityID(t *testing.T) {
+	t.Parallel()
+
+	client := &UniversalMockClient{
+		SendHACSCommandFn: func(context.Context, string, map[string]any) (any, error) {
+			t.Fatal("HA should not be called when domain cannot be resolved")
+			return nil, nil
+		},
+	}
+
+	handler := NewTraceHandlers()
+	result, err := handler.HandleManageTrace(context.Background(), client, map[string]any{"action": "list"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected error result, got: %s", result.Content[0].Text)
+	}
+	if !strings.Contains(result.Content[0].Text, "domain") {
+		t.Errorf("error text does not contain %q: %s", "domain", result.Content[0].Text)
+	}
+}
+
 // TestManageTrace_GetMissingParams verifies validation for get action.
 func TestManageTrace_GetMissingParams(t *testing.T) {
 	t.Parallel()

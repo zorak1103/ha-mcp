@@ -1386,10 +1386,12 @@ func (c *wsClientImpl) CreateDashboard(ctx context.Context, config DashboardConf
 	params := map[string]any{
 		"url_path":        config.URLPath,
 		"title":           config.Title,
-		"icon":            config.Icon,
 		"mode":            config.Mode,
 		"require_admin":   config.RequireAdmin,
 		"show_in_sidebar": config.ShowInSidebar,
+	}
+	if config.Icon != "" {
+		params["icon"] = config.Icon
 	}
 
 	result, err := c.ws.SendCommand(ctx, "lovelace/dashboards/create", params)
