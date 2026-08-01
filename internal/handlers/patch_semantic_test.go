@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/zorak1103/ha-mcp/internal/jsonpatch"
@@ -370,7 +371,7 @@ func TestValidateSemanticOp(t *testing.T) {
 				if err == nil {
 					t.Fatalf("validateSemanticOp() expected error containing %q, got nil", tt.wantErrFrag)
 				}
-				if !containsStrHandlers(err.Error(), tt.wantErrFrag) {
+				if !strings.Contains(err.Error(), tt.wantErrFrag) {
 					t.Errorf("error = %q, want to contain %q", err.Error(), tt.wantErrFrag)
 				}
 			}
@@ -567,7 +568,7 @@ func TestResolveSemanticOps_NoMatches(t *testing.T) {
 	if err == nil {
 		t.Fatal("resolveSemanticOps() expected error for no matches, got nil")
 	}
-	if !containsStrHandlers(err.Error(), "no elements in section") {
+	if !strings.Contains(err.Error(), "no elements in section") {
 		t.Errorf("error = %q, want to contain 'no elements in section'", err.Error())
 	}
 }
@@ -590,7 +591,7 @@ func TestResolveSemanticOps_SectionNotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("resolveSemanticOps() expected error for missing section, got nil")
 	}
-	if !containsStrHandlers(err.Error(), "not found in config") {
+	if !strings.Contains(err.Error(), "not found in config") {
 		t.Errorf("error = %q, want to contain 'not found in config'", err.Error())
 	}
 }
@@ -615,7 +616,7 @@ func TestResolveSemanticOps_SectionNotArray(t *testing.T) {
 	if err == nil {
 		t.Fatal("resolveSemanticOps() expected error for non-array section, got nil")
 	}
-	if !containsStrHandlers(err.Error(), "is not an array") {
+	if !strings.Contains(err.Error(), "is not an array") {
 		t.Errorf("error = %q, want to contain 'is not an array'", err.Error())
 	}
 }
@@ -644,7 +645,7 @@ func TestResolveSemanticOps_MatchIndexOutOfRange(t *testing.T) {
 	if err == nil {
 		t.Fatal("resolveSemanticOps() expected error for out-of-range match_index, got nil")
 	}
-	if !containsStrHandlers(err.Error(), "out of range") {
+	if !strings.Contains(err.Error(), "out of range") {
 		t.Errorf("error = %q, want to contain 'out of range'", err.Error())
 	}
 }
@@ -1102,7 +1103,7 @@ func TestParseOperations_SemanticFields(t *testing.T) {
 		if errResult == nil {
 			t.Fatal("expected error result for non-map match")
 		}
-		if !containsStrHandlers(errResult.Content[0].Text, "'match'") {
+		if !strings.Contains(errResult.Content[0].Text, "'match'") {
 			t.Errorf("error = %q, want to contain \"'match'\"", errResult.Content[0].Text)
 		}
 	})

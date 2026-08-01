@@ -1,5 +1,5 @@
 // Package homeassistant provides the WebSocket-based Client implementation.
-// coverage-exempt: 103 WS dispatch methods require a live Home Assistant WebSocket server; extensive tests already exist
+// coverage-exempt: 67 WS dispatch methods require a live Home Assistant WebSocket server; extensive tests already exist
 package homeassistant
 
 import (
@@ -23,20 +23,23 @@ type CommandSender interface {
 	SendCommand(ctx context.Context, cmdType string, params map[string]any) (*WSResultMessage, error)
 }
 
-// wsClientImpl implements the Client interface using WebSocket commands.
+// wsClientImpl implements WSOperations using WebSocket commands. It does not implement
+// the full Client interface: automation/script/scene create/update/delete and other
+// REST-only operations are handled exclusively by HybridClient via the REST client,
+// since Home Assistant has no reliable WebSocket commands for them.
 // It wraps a CommandSender for low-level WebSocket communication.
 type wsClientImpl struct {
 	ws CommandSender
 }
 
-// NewWSClientImplWithSender creates a new WebSocket-based Client implementation
+// newWSClientImplWithSender creates a new WebSocket-based WSOperations implementation
 // with a custom CommandSender. This is useful for testing.
-func NewWSClientImplWithSender(sender CommandSender) Client {
+func newWSClientImplWithSender(sender CommandSender) *wsClientImpl {
 	return &wsClientImpl{ws: sender}
 }
 
-// Ensure wsClientImpl implements Client interface at compile time.
-var _ Client = (*wsClientImpl)(nil)
+// Ensure wsClientImpl implements WSOperations at compile time.
+var _ WSOperations = (*wsClientImpl)(nil)
 
 // =============================================================================
 // Core State Operations
@@ -227,83 +230,6 @@ func (c *wsClientImpl) GetAutomation(ctx context.Context, automationID string) (
 		EntityID: entityID,
 		Config:   &response.Config,
 	}, nil
-}
-
-// CreateAutomation creates a new automation.
-func (c *wsClientImpl) CreateAutomation(ctx context.Context, config AutomationConfig) error {
-	params := map[string]any{}
-	if config.ID != "" {
-		params["automation_id"] = config.ID
-	}
-	if config.Alias != "" {
-		params["alias"] = config.Alias
-	}
-	if config.Description != "" {
-		params["description"] = config.Description
-	}
-	if config.Triggers != nil {
-		params["trigger"] = config.Triggers
-	}
-	if config.Conditions != nil {
-		params["condition"] = config.Conditions
-	}
-	if config.Actions != nil {
-		params["action"] = config.Actions
-	}
-	if config.Mode != "" {
-		params["mode"] = config.Mode
-	}
-
-	_, err := c.ws.SendCommand(ctx, "config/automation/create", params)
-	if err != nil {
-		return fmt.Errorf("create automation failed: %w", err)
-	}
-
-	return nil
-}
-
-// UpdateAutomation updates an existing automation.
-func (c *wsClientImpl) UpdateAutomation(ctx context.Context, automationID string, config AutomationConfig) error {
-	params := map[string]any{
-		"automation_id": automationID,
-	}
-	if config.Alias != "" {
-		params["alias"] = config.Alias
-	}
-	if config.Description != "" {
-		params["description"] = config.Description
-	}
-	if config.Triggers != nil {
-		params["trigger"] = config.Triggers
-	}
-	if config.Conditions != nil {
-		params["condition"] = config.Conditions
-	}
-	if config.Actions != nil {
-		params["action"] = config.Actions
-	}
-	if config.Mode != "" {
-		params["mode"] = config.Mode
-	}
-
-	_, err := c.ws.SendCommand(ctx, "config/automation/update", params)
-	if err != nil {
-		return fmt.Errorf("update automation failed: %w", err)
-	}
-
-	return nil
-}
-
-// DeleteAutomation deletes an automation.
-func (c *wsClientImpl) DeleteAutomation(ctx context.Context, automationID string) error {
-	_, err := c.ws.SendCommand(ctx, "config/automation/delete", map[string]any{
-		"automation_id": automationID,
-	})
-	if err != nil {
-		return fmt.Errorf("delete automation failed: %w", err)
-	}
-
-	return nil
 }
 
 // ToggleAutomation enables or disables an automation.
@@ -573,82 +499,6 @@ func (c *wsClientImpl) GetScript(ctx context.Context, scriptID string) (*Script,
 	return script, nil
 }
 
-// CreateScript creates a new script.
-func (c *wsClientImpl) CreateScript(ctx context.Context, scriptID string, config ScriptConfig) error {
-	params := map[string]any{
-		"script_id": scriptID,
-	}
-	if config.Alias != "" {
-		params["alias"] = config.Alias
-	}
-	if config.Description != "" {
-		params["description"] = config.Description
-	}
-	if config.Icon != "" {
-		params["icon"] = config.Icon
-	}
-	if config.Mode != "" {
-		params["mode"] = config.Mode
-	}
-	if config.Sequence != nil {
-		params["sequence"] = config.Sequence
-	}
-	if config.Fields != nil {
-		params["fields"] = config.Fields
-	}
-
-	_, err := c.ws.SendCommand(ctx, "config/script/create", params)
-	if err != nil {
-		return fmt.Errorf("create script failed: %w", err)
-	}
-
-	return nil
-}
-
-// UpdateScript updates an existing script.
-func (c *wsClientImpl) UpdateScript(ctx context.Context, scriptID string, config ScriptConfig) error {
-	params := map[string]any{
-		"script_id": scriptID,
-	}
-	if config.Alias != "" {
-		params["alias"] = config.Alias
-	}
-	if config.Description != "" {
-		params["description"] = config.Description
-	}
-	if config.Icon != "" {
-		params["icon"] = config.Icon
-	}
-	if config.Mode != "" {
-		params["mode"] = config.Mode
-	}
-	if config.Sequence != nil {
-		params["sequence"] = config.Sequence
-	}
-	if config.Fields != nil {
-		params["fields"] = config.Fields
-	}
-
-	_, err := c.ws.SendCommand(ctx, "config/script/update", params)
-	if err != nil {
-		return fmt.Errorf("update script failed: %w", err)
-	}
-
-	return nil
-}
-
-// DeleteScript deletes a script.
-func (c *wsClientImpl) DeleteScript(ctx context.Context, scriptID string) error {
-	_, err := c.ws.SendCommand(ctx, "config/script/delete", map[string]any{
-		"script_id": scriptID,
-	})
-	if err != nil {
-		return fmt.Errorf("delete script failed: %w", err)
-	}
-
-	return nil
-}
-
 // =============================================================================
 // Scene Operations
 // =============================================================================
@@ -668,67 +518,6 @@ func (c *wsClientImpl) ListScenes(ctx context.Context) ([]Entity, error) {
 	}
 
 	return scenes, nil
-}
-
-// CreateScene creates a new scene.
-func (c *wsClientImpl) CreateScene(ctx context.Context, sceneID string, config SceneConfig) error {
-	params := map[string]any{
-		"scene_id": sceneID,
-		"name":     config.Name,
-	}
-	if config.Icon != "" {
-		params["icon"] = config.Icon
-	}
-	if config.Entities != nil {
-		params["entities"] = config.Entities
-	}
-
-	_, err := c.ws.SendCommand(ctx, "config/scene/create", params)
-	if err != nil {
-		return fmt.Errorf("create scene failed: %w", err)
-	}
-
-	return nil
-}
-
-// UpdateScene updates an existing scene.
-func (c *wsClientImpl) UpdateScene(ctx context.Context, sceneID string, config SceneConfig) error {
-	params := map[string]any{
-		"scene_id": sceneID,
-	}
-	if config.Name != "" {
-		params["name"] = config.Name
-	}
-	if config.Icon != "" {
-		params["icon"] = config.Icon
-	}
-	if config.Entities != nil {
-		params["entities"] = config.Entities
-	}
-
-	_, err := c.ws.SendCommand(ctx, "config/scene/update", params)
-	if err != nil {
-		return fmt.Errorf("update scene failed: %w", err)
-	}
-
-	return nil
-}
-
-// DeleteScene deletes a scene.
-func (c *wsClientImpl) DeleteScene(ctx context.Context, sceneID string) error {
-	_, err := c.ws.SendCommand(ctx, "config/scene/delete", map[string]any{
-		"scene_id": sceneID,
-	})
-	if err != nil {
-		return fmt.Errorf("delete scene failed: %w", err)
-	}
-
-	return nil
-}
-
-// GetScene is not supported via WebSocket; use HybridClient which routes to REST.
-func (c *wsClientImpl) GetScene(_ context.Context, sceneID string) (*Scene, error) {
-	return nil, fmt.Errorf("GetScene not supported via WebSocket for scene %q; use HybridClient", sceneID)
 }
 
 // =============================================================================
@@ -1773,56 +1562,6 @@ func (c *wsClientImpl) ExtractFromTarget(ctx context.Context, target Target, exp
 }
 
 // =============================================================================
-// Service Discovery Operations (REST API only - stubs for interface compliance)
-// =============================================================================
-
-// GetServices retrieves all available services.
-// Note: This operation is only available via REST API. Use HybridClient for full functionality.
-func (c *wsClientImpl) GetServices(_ context.Context) ([]Service, error) {
-	return nil, fmt.Errorf("GetServices not supported via WebSocket API, use REST API or HybridClient")
-}
-
-// =============================================================================
-// System Configuration Operations (REST API only - stubs for interface compliance)
-// =============================================================================
-
-// GetConfig retrieves the Home Assistant system configuration.
-// Note: This operation is only available via REST API. Use HybridClient for full functionality.
-func (c *wsClientImpl) GetConfig(_ context.Context) (*Config, error) {
-	return nil, fmt.Errorf("GetConfig not supported via WebSocket API, use REST API or HybridClient")
-}
-
-// =============================================================================
-// Template Operations (REST API only - stubs for interface compliance)
-// =============================================================================
-
-// RenderTemplate renders a Jinja2 template.
-// Note: This operation is only available via REST API. Use HybridClient for full functionality.
-func (c *wsClientImpl) RenderTemplate(_ context.Context, _ string) (string, error) {
-	return "", fmt.Errorf("RenderTemplate not supported via WebSocket API, use REST API or HybridClient")
-}
-
-// =============================================================================
-// Logbook Operations (REST API only - stubs for interface compliance)
-// =============================================================================
-
-// GetLogbook retrieves logbook entries.
-// Note: This operation is only available via REST API. Use HybridClient for full functionality.
-func (c *wsClientImpl) GetLogbook(_ context.Context, _, _, _ string) ([]LogbookEntry, error) {
-	return nil, fmt.Errorf("GetLogbook not supported via WebSocket API, use REST API or HybridClient")
-}
-
-// =============================================================================
-// Configuration Validation Operations (REST API only - stubs for interface compliance)
-// =============================================================================
-
-// CheckConfig validates the Home Assistant configuration.
-// Note: This operation is only available via REST API. Use HybridClient for full functionality.
-func (c *wsClientImpl) CheckConfig(_ context.Context) (*ConfigCheckResult, error) {
-	return nil, fmt.Errorf("CheckConfig not supported via WebSocket API, use REST API or HybridClient")
-}
-
-// =============================================================================
 // Config Entry Operations (WebSocket-only)
 // =============================================================================
 
@@ -1868,12 +1607,6 @@ func (c *wsClientImpl) GetConfigEntry(ctx context.Context, entryID string) (*Con
 	return &wrapper.ConfigEntry, nil
 }
 
-// GetConfigEntryOptions is not supported via WebSocket.
-// Use HybridClient which implements this via the Options Flow REST API.
-func (c *wsClientImpl) GetConfigEntryOptions(context.Context, string) (map[string]any, error) {
-	return nil, fmt.Errorf("GetConfigEntryOptions not supported via WebSocket - use HybridClient")
-}
-
 // =============================================================================
 // HACS Operations
 // =============================================================================
@@ -1894,16 +1627,6 @@ func (c *wsClientImpl) SendHACSCommand(ctx context.Context, command string, data
 	}
 
 	return response, nil
-}
-
-// =============================================================================
-// Calendar Operations (REST API only - stubs for interface compliance)
-// =============================================================================
-
-// GetCalendars retrieves all calendars.
-// Note: This operation is only available via REST API. Use HybridClient for full functionality.
-func (c *wsClientImpl) GetCalendars(_ context.Context) ([]CalendarEntry, error) {
-	return nil, fmt.Errorf("GetCalendars not supported via WebSocket API, use REST API or HybridClient")
 }
 
 // =============================================================================
@@ -1932,20 +1655,4 @@ func (c *wsClientImpl) ClearSystemLog(ctx context.Context) error {
 		return fmt.Errorf("clear system log failed: %w", err)
 	}
 	return nil
-}
-
-// GetCalendarEvents retrieves calendar events.
-// Note: This operation is only available via REST API. Use HybridClient for full functionality.
-func (c *wsClientImpl) GetCalendarEvents(_ context.Context, _, _, _ string) ([]CalendarEvent, error) {
-	return nil, fmt.Errorf("GetCalendarEvents not supported via WebSocket API, use REST API or HybridClient")
-}
-
-// =============================================================================
-// Camera Operations (REST API only - stubs for interface compliance)
-// =============================================================================
-
-// GetCameraSnapshot retrieves a camera snapshot as binary data.
-// Note: This operation is only available via REST API. Use HybridClient for full functionality.
-func (c *wsClientImpl) GetCameraSnapshot(_ context.Context, _ string) ([]byte, string, error) {
-	return nil, "", fmt.Errorf("GetCameraSnapshot not supported via WebSocket API, use REST API or HybridClient")
 }

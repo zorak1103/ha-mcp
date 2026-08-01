@@ -111,22 +111,11 @@ func TestCloseClient_CloserWithError(t *testing.T) {
 	}
 }
 
-// Test that wsClientImplCloser implements both Client and ClientCloser
-func TestWSClientImplCloser_Interfaces(t *testing.T) {
-	t.Parallel()
-
-	// Compile-time interface checks - these would fail at compile time if the types don't implement the interfaces
-	var _ Client = (*wsClientImplCloser)(nil)
-	var _ ClientCloser = (*wsClientImplCloser)(nil)
-
-	// The fact that this test compiles proves the interfaces are implemented
-}
-
 func TestWSClientImpl_Interfaces(t *testing.T) {
 	t.Parallel()
 
-	// Verify wsClientImpl implements Client
-	var _ Client = (*wsClientImpl)(nil)
+	// Verify wsClientImpl implements WSOperations
+	var _ WSOperations = (*wsClientImpl)(nil)
 }
 
 func TestClientOptions_CustomWSConfig(t *testing.T) {
@@ -477,45 +466,6 @@ var (
 	_ Client       = (*mockCloserClient)(nil)
 	_ ClientCloser = (*mockCloserClient)(nil)
 )
-
-func TestNewWSClientImplWithCloser(t *testing.T) {
-	t.Parallel()
-
-	// Create a WSClient (won't connect)
-	wsClient := NewWSClient("ws://localhost:8123", "test-token")
-
-	// Create wsClientImplCloser
-	client := NewWSClientImplWithCloser(wsClient)
-
-	// Verify it's not nil
-	if client == nil {
-		t.Fatal("NewWSClientImplWithCloser returned nil")
-	}
-
-	// Verify it implements ClientCloser
-	if _, ok := client.(ClientCloser); !ok {
-		t.Error("NewWSClientImplWithCloser does not implement ClientCloser")
-	}
-}
-
-func TestWSClientImplCloser_Close(t *testing.T) {
-	t.Parallel()
-
-	// Create a WSClient (won't connect)
-	wsClient := NewWSClient("ws://localhost:8123", "test-token")
-
-	// Create wsClientImplCloser
-	client := NewWSClientImplWithCloser(wsClient)
-
-	// Close should not panic
-	closer, ok := client.(ClientCloser)
-	if !ok {
-		t.Fatal("client does not implement ClientCloser")
-	}
-
-	// Close() may return error since there's no connection, but should not panic
-	_ = closer.Close()
-}
 
 func TestNewClientWithOptions_InvalidURL(t *testing.T) {
 	t.Parallel()

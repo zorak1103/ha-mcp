@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
@@ -112,7 +113,7 @@ func TestManageCamera_Stream(t *testing.T) {
 	}
 
 	text := result.Content[0].Text
-	if !contains(text, "stream.m3u8") {
+	if !strings.Contains(text, "stream.m3u8") {
 		t.Errorf("result text does not contain stream URL: %s", text)
 	}
 }
@@ -205,7 +206,7 @@ func TestManageCamera_Stream_JSONFormat(t *testing.T) {
 	}
 
 	text := result.Content[0].Text
-	if !contains(text, "stream.m3u8") {
+	if !strings.Contains(text, "stream.m3u8") {
 		t.Errorf("JSON result does not contain stream URL: %s", text)
 	}
 }

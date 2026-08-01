@@ -104,29 +104,3 @@ func CloseClient(c Client) error {
 	}
 	return nil
 }
-
-// wsClientImplCloser extends wsClientImpl to implement ClientCloser.
-// This allows proper cleanup of WebSocket connections.
-type wsClientImplCloser struct {
-	*wsClientImpl
-	wsClient *WSClient // Keep reference to concrete WSClient for Close()
-}
-
-// Close closes the underlying WebSocket connection.
-func (c *wsClientImplCloser) Close() error {
-	return c.wsClient.Close()
-}
-
-// NewWSClientImplWithCloser creates a WebSocket Client that also implements ClientCloser.
-func NewWSClientImplWithCloser(ws *WSClient) Client {
-	return &wsClientImplCloser{
-		wsClientImpl: &wsClientImpl{ws: ws},
-		wsClient:     ws,
-	}
-}
-
-// Ensure wsClientImplCloser implements both Client and ClientCloser.
-var (
-	_ Client       = (*wsClientImplCloser)(nil)
-	_ ClientCloser = (*wsClientImplCloser)(nil)
-)

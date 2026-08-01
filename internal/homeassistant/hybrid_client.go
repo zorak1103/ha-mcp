@@ -80,8 +80,6 @@ type WSOperations interface {
 	CallServiceWithResponse(ctx context.Context, domain, service string, data map[string]any) (map[string]any, error)
 	ListAutomations(ctx context.Context) ([]Automation, error)
 	GetAutomation(ctx context.Context, automationID string) (*Automation, error)
-	CreateAutomation(ctx context.Context, config AutomationConfig) error
-	UpdateAutomation(ctx context.Context, automationID string, config AutomationConfig) error
 	ToggleAutomation(ctx context.Context, entityID string, enabled bool) error
 	ListHelpers(ctx context.Context) ([]Entity, error)
 	CreateHelper(ctx context.Context, config HelperConfig) error
@@ -90,11 +88,7 @@ type WSOperations interface {
 	SetHelperValue(ctx context.Context, entityID string, value any) error
 	ListScripts(ctx context.Context) ([]Entity, error)
 	GetScript(ctx context.Context, scriptID string) (*Script, error)
-	CreateScript(ctx context.Context, scriptID string, config ScriptConfig) error
-	UpdateScript(ctx context.Context, scriptID string, config ScriptConfig) error
 	ListScenes(ctx context.Context) ([]Entity, error)
-	CreateScene(ctx context.Context, sceneID string, config SceneConfig) error
-	UpdateScene(ctx context.Context, sceneID string, config SceneConfig) error
 	GetEntityRegistry(ctx context.Context) ([]EntityRegistryEntry, error)
 	GetDeviceRegistry(ctx context.Context) ([]DeviceRegistryEntry, error)
 	GetAreaRegistry(ctx context.Context) ([]AreaRegistryEntry, error)

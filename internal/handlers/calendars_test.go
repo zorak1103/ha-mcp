@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
@@ -66,7 +67,7 @@ func TestManageCalendar_List(t *testing.T) {
 	}
 
 	text := result.Content[0].Text
-	if !contains(text, "Holidays") {
+	if !strings.Contains(text, "Holidays") {
 		t.Errorf("result text does not contain 'Holidays': %s", text)
 	}
 }
@@ -108,7 +109,7 @@ func TestManageCalendar_GetEvents(t *testing.T) {
 	}
 
 	text := result.Content[0].Text
-	if !contains(text, "Team Meeting") {
+	if !strings.Contains(text, "Team Meeting") {
 		t.Errorf("result text does not contain 'Team Meeting': %s", text)
 	}
 }
@@ -207,7 +208,7 @@ func TestManageCalendar_CreateEvent(t *testing.T) {
 	}
 
 	text := result.Content[0].Text
-	if !contains(text, "created") {
+	if !strings.Contains(text, "created") {
 		t.Errorf("result does not indicate creation: %s", text)
 	}
 }
@@ -249,7 +250,7 @@ func TestManageCalendar_DeleteEvent(t *testing.T) {
 	}
 
 	text := result.Content[0].Text
-	if !contains(text, "deleted") {
+	if !strings.Contains(text, "deleted") {
 		t.Errorf("result does not indicate deletion: %s", text)
 	}
 }
@@ -303,7 +304,7 @@ func TestManageCalendar_List_JSONFormat(t *testing.T) {
 	}
 
 	text := result.Content[0].Text
-	if !contains(text, "calendar.work") {
+	if !strings.Contains(text, "calendar.work") {
 		t.Errorf("JSON result does not contain entity_id: %s", text)
 	}
 }
@@ -367,7 +368,7 @@ func TestManageCalendar_GetEvents_JSONFormat(t *testing.T) {
 	}
 
 	text := result.Content[0].Text
-	if !contains(text, "Team Meeting") {
+	if !strings.Contains(text, "Team Meeting") {
 		t.Errorf("JSON result does not contain summary: %s", text)
 	}
 }
@@ -495,10 +496,10 @@ func TestManageCalendar_GetEvents_DateOnly(t *testing.T) {
 	}
 
 	text := result.Content[0].Text
-	if !contains(text, "All-day Event") {
+	if !strings.Contains(text, "All-day Event") {
 		t.Errorf("result does not contain event summary: %s", text)
 	}
-	if !contains(text, "2024-01-20") {
+	if !strings.Contains(text, "2024-01-20") {
 		t.Errorf("result does not contain date: %s", text)
 	}
 }

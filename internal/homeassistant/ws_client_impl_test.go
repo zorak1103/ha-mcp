@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -96,7 +97,7 @@ func TestWSClientImpl_GetStates(t *testing.T) {
 				if err == nil {
 					t.Fatal("expected error, got nil")
 				}
-				if tt.errContains != "" && !containsStr(err.Error(), tt.errContains) {
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
 					t.Errorf("error %q does not contain %q", err.Error(), tt.errContains)
 				}
 				return
@@ -130,15 +131,6 @@ func (t *testableWSClientImplV2) GetStates(ctx context.Context) ([]Entity, error
 	}
 
 	return entities, nil
-}
-
-func containsStr(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
 
 func TestWSClientImpl_GetState(t *testing.T) {
@@ -190,7 +182,7 @@ func TestWSClientImpl_GetState(t *testing.T) {
 				if err == nil {
 					t.Fatal("expected error, got nil")
 				}
-				if tt.errContains != "" && !containsStr(err.Error(), tt.errContains) {
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
 					t.Errorf("error %q does not contain %q", err.Error(), tt.errContains)
 				}
 				return
@@ -235,7 +227,7 @@ func TestWSClientImpl_SetState(t *testing.T) {
 		t.Fatal("expected error for SetState via WebSocket")
 	}
 
-	if !containsStr(err.Error(), "not supported via WebSocket") {
+	if !strings.Contains(err.Error(), "not supported via WebSocket") {
 		t.Errorf("unexpected error message: %v", err)
 	}
 }
@@ -361,7 +353,7 @@ func TestWSClientImpl_CallService(t *testing.T) {
 				if err == nil {
 					t.Fatal("expected error, got nil")
 				}
-				if tt.errContains != "" && !containsStr(err.Error(), tt.errContains) {
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
 					t.Errorf("error %q does not contain %q", err.Error(), tt.errContains)
 				}
 				return
@@ -1282,7 +1274,7 @@ func TestHelperPrefixes(t *testing.T) {
 }
 
 // =============================================================================
-// Tests using NewWSClientImplWithSender (actual implementation testing)
+// Tests using newWSClientImplWithSender (actual implementation testing)
 // =============================================================================
 
 func TestWSClientImplWithSender_GetStates(t *testing.T) {
@@ -1302,7 +1294,7 @@ func TestWSClientImplWithSender_GetStates(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	result, err := client.GetStates(context.Background())
 
 	if err != nil {
@@ -1322,13 +1314,13 @@ func TestWSClientImplWithSender_GetStates_Error(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.GetStates(context.Background())
 
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !containsStr(err.Error(), "get_states command failed") {
+	if !strings.Contains(err.Error(), "get_states command failed") {
 		t.Errorf("error should contain 'get_states command failed', got: %v", err)
 	}
 }
@@ -1345,13 +1337,13 @@ func TestWSClientImplWithSender_GetStates_UnmarshalError(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.GetStates(context.Background())
 
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !containsStr(err.Error(), "failed to unmarshal") {
+	if !strings.Contains(err.Error(), "failed to unmarshal") {
 		t.Errorf("error should contain 'failed to unmarshal', got: %v", err)
 	}
 }
@@ -1370,7 +1362,7 @@ func TestWSClientImplWithSender_GetState(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	entity, err := client.GetState(context.Background(), "sensor.temperature")
 
 	if err != nil {
@@ -1390,13 +1382,13 @@ func TestWSClientImplWithSender_GetState_NotFound(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.GetState(context.Background(), "nonexistent.entity")
 
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !containsStr(err.Error(), "entity not found") {
+	if !strings.Contains(err.Error(), "entity not found") {
 		t.Errorf("error should contain 'entity not found', got: %v", err)
 	}
 }
@@ -1423,7 +1415,7 @@ func TestWSClientImplWithSender_GetHistory(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	start := time.Now().Add(-24 * time.Hour)
 	history, err := client.GetHistory(context.Background(), "sensor.temp", start, time.Time{})
 
@@ -1447,7 +1439,7 @@ func TestWSClientImplWithSender_GetHistory_WithEndTime(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	start := time.Now().Add(-24 * time.Hour)
 	end := time.Now()
 	_, err := client.GetHistory(context.Background(), "sensor.temp", start, end)
@@ -1475,7 +1467,7 @@ func TestWSClientImplWithSender_CallService(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.CallService(context.Background(), "light", "turn_on", map[string]any{"entity_id": "light.test"})
 
 	if err != nil {
@@ -1495,7 +1487,7 @@ func TestWSClientImplWithSender_CallService_NilData(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.CallService(context.Background(), "homeassistant", "restart", nil)
 
 	if err != nil {
@@ -1524,7 +1516,7 @@ func TestWSClientImplWithSender_ClearSystemLog(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	err := client.ClearSystemLog(context.Background())
 
 	if err != nil {
@@ -1541,10 +1533,10 @@ func TestWSClientImplWithSender_ClearSystemLog_Error(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	err := client.ClearSystemLog(context.Background())
 
-	if err == nil || !containsStr(err.Error(), "clear system log failed") {
+	if err == nil || !strings.Contains(err.Error(), "clear system log failed") {
 		t.Errorf("expected 'clear system log failed' error, got: %v", err)
 	}
 }
@@ -1558,7 +1550,7 @@ func TestWSClientImplWithSender_CallService_NilResult(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	entities, err := client.CallService(context.Background(), "light", "turn_on", nil)
 
 	if err != nil {
@@ -1583,7 +1575,7 @@ func TestWSClientImplWithSender_ListAutomations(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	automations, err := client.ListAutomations(context.Background())
 
 	if err != nil {
@@ -1617,7 +1609,7 @@ func TestWSClientImplWithSender_GetAutomation(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	automation, err := client.GetAutomation(context.Background(), "test")
 
 	if err != nil {
@@ -1640,85 +1632,8 @@ func TestWSClientImplWithSender_GetAutomation_WithPrefix(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.GetAutomation(context.Background(), "automation.test")
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestWSClientImplWithSender_CreateAutomation(t *testing.T) {
-	t.Parallel()
-
-	mock := &mockWSClientSender{
-		sendCommandFunc: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
-			if cmdType != "config/automation/create" {
-				t.Errorf("unexpected command: %s", cmdType)
-			}
-			if params["alias"] != "Test" {
-				t.Errorf("alias mismatch: %v", params["alias"])
-			}
-			return makeWSResultMsg(nil), nil
-		},
-	}
-
-	client := NewWSClientImplWithSender(mock)
-	err := client.CreateAutomation(context.Background(), AutomationConfig{
-		ID:          "test_id",
-		Alias:       "Test",
-		Description: "Desc",
-		Triggers:    []any{},
-		Conditions:  []any{},
-		Actions:     []any{},
-		Mode:        "single",
-	})
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestWSClientImplWithSender_UpdateAutomation(t *testing.T) {
-	t.Parallel()
-
-	mock := &mockWSClientSender{
-		sendCommandFunc: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
-			if cmdType != "config/automation/update" {
-				t.Errorf("unexpected command: %s", cmdType)
-			}
-			if params["automation_id"] != "test" {
-				t.Errorf("automation_id mismatch: %v", params["automation_id"])
-			}
-			return makeWSResultMsg(nil), nil
-		},
-	}
-
-	client := NewWSClientImplWithSender(mock)
-	err := client.UpdateAutomation(context.Background(), "test", AutomationConfig{Alias: "Updated"})
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestWSClientImplWithSender_DeleteAutomation(t *testing.T) {
-	t.Parallel()
-
-	mock := &mockWSClientSender{
-		sendCommandFunc: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
-			if cmdType != "config/automation/delete" {
-				t.Errorf("unexpected command: %s", cmdType)
-			}
-			if params["automation_id"] != "test" {
-				t.Errorf("automation_id mismatch: %v", params["automation_id"])
-			}
-			return makeWSResultMsg(nil), nil
-		},
-	}
-
-	client := NewWSClientImplWithSender(mock)
-	err := client.DeleteAutomation(context.Background(), "test")
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1750,7 +1665,7 @@ func TestWSClientImplWithSender_ToggleAutomation(t *testing.T) {
 				},
 			}
 
-			client := NewWSClientImplWithSender(mock)
+			client := newWSClientImplWithSender(mock)
 			err := client.ToggleAutomation(context.Background(), "automation.test", tt.enabled)
 
 			if err != nil {
@@ -1778,7 +1693,7 @@ func TestWSClientImplWithSender_ListHelpers(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	helpers, err := client.ListHelpers(context.Background())
 
 	if err != nil {
@@ -1808,7 +1723,7 @@ func TestWSClientImplWithSender_CreateHelper(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	err := client.CreateHelper(context.Background(), HelperConfig{
 		Platform: "input_boolean",
 		Config:   map[string]any{"name": "Test Helper"},
@@ -1834,7 +1749,7 @@ func TestWSClientImplWithSender_UpdateHelper(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	err := client.UpdateHelper(context.Background(), "test", HelperConfig{
 		Platform: "input_number",
 		Config:   map[string]any{"min": 0, "max": 100},
@@ -1862,7 +1777,7 @@ func TestWSClientImplWithSender_UpdateHelper_FullEntityID(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	err := client.UpdateHelper(context.Background(), "input_number.test", HelperConfig{
 		Platform: "input_number",
 		Config:   map[string]any{"min": 0, "max": 100},
@@ -1883,7 +1798,7 @@ func TestWSClientImplWithSender_UpdateHelper_ConfigEntryPlatformRejected(t *test
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	err := client.UpdateHelper(context.Background(), "sensor.my_template", HelperConfig{
 		Platform: "sensor",
 		Config:   map[string]any{"state": "{{ 42 }}"},
@@ -1892,7 +1807,7 @@ func TestWSClientImplWithSender_UpdateHelper_ConfigEntryPlatformRejected(t *test
 	if err == nil {
 		t.Fatal("expected error for config-entry platform")
 	}
-	if !containsStr(err.Error(), "sensor") || !containsStr(err.Error(), "options flow") {
+	if !strings.Contains(err.Error(), "sensor") || !strings.Contains(err.Error(), "options flow") {
 		t.Errorf("error should explain config-entry helpers require options flow: %v", err)
 	}
 }
@@ -1912,7 +1827,7 @@ func TestWSClientImplWithSender_DeleteHelper(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	err := client.DeleteHelper(context.Background(), "input_boolean.test")
 
 	if err != nil {
@@ -1923,13 +1838,13 @@ func TestWSClientImplWithSender_DeleteHelper(t *testing.T) {
 func TestWSClientImplWithSender_DeleteHelper_UnknownPlatform(t *testing.T) {
 	t.Parallel()
 
-	client := NewWSClientImplWithSender(&mockWSClientSender{})
+	client := newWSClientImplWithSender(&mockWSClientSender{})
 	err := client.DeleteHelper(context.Background(), "unknown.test")
 
 	if err == nil {
 		t.Fatal("expected error for unknown platform")
 	}
-	if !containsStr(err.Error(), "unable to determine platform") {
+	if !strings.Contains(err.Error(), "unable to determine platform") {
 		t.Errorf("error should mention platform: %v", err)
 	}
 }
@@ -1947,13 +1862,13 @@ func TestWSClientImplWithSender_DeleteHelper_ConfigEntryPlatformRejected(t *test
 	// "group" is a Config Entry platform (see configEntryPlatforms) even though
 	// extractPlatform recognizes its entity_id prefix - there is no group/delete
 	// WS command, so this must be rejected rather than sent as unknown_command.
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	err := client.DeleteHelper(context.Background(), "group.my_group")
 
 	if err == nil {
 		t.Fatal("expected error for config-entry platform")
 	}
-	if !containsStr(err.Error(), "group") {
+	if !strings.Contains(err.Error(), "group") {
 		t.Errorf("error should mention platform: %v", err)
 	}
 }
@@ -1988,7 +1903,7 @@ func TestWSClientImplWithSender_SetHelperValue(t *testing.T) {
 				},
 			}
 
-			client := NewWSClientImplWithSender(mock)
+			client := newWSClientImplWithSender(mock)
 			err := client.SetHelperValue(context.Background(), tt.entityID, tt.value)
 
 			if err != nil {
@@ -2011,7 +1926,7 @@ func TestWSClientImplWithSender_SetHelperValue_DatetimeMap(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	err := client.SetHelperValue(context.Background(), "input_datetime.test", map[string]any{"time": "08:00"})
 
 	if err != nil {
@@ -2022,13 +1937,13 @@ func TestWSClientImplWithSender_SetHelperValue_DatetimeMap(t *testing.T) {
 func TestWSClientImplWithSender_SetHelperValue_InvalidBoolean(t *testing.T) {
 	t.Parallel()
 
-	client := NewWSClientImplWithSender(&mockWSClientSender{})
+	client := newWSClientImplWithSender(&mockWSClientSender{})
 	err := client.SetHelperValue(context.Background(), "input_boolean.test", "not_a_bool")
 
 	if err == nil {
 		t.Fatal("expected error for invalid boolean value")
 	}
-	if !containsStr(err.Error(), "requires a boolean value") {
+	if !strings.Contains(err.Error(), "requires a boolean value") {
 		t.Errorf("error should mention boolean: %v", err)
 	}
 }
@@ -2036,7 +1951,7 @@ func TestWSClientImplWithSender_SetHelperValue_InvalidBoolean(t *testing.T) {
 func TestWSClientImplWithSender_SetHelperValue_UnknownPlatform(t *testing.T) {
 	t.Parallel()
 
-	client := NewWSClientImplWithSender(&mockWSClientSender{})
+	client := newWSClientImplWithSender(&mockWSClientSender{})
 	err := client.SetHelperValue(context.Background(), "unknown.test", "value")
 
 	if err == nil {
@@ -2059,7 +1974,7 @@ func TestWSClientImplWithSender_ListScripts(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	scripts, err := client.ListScripts(context.Background())
 
 	if err != nil {
@@ -2099,7 +2014,7 @@ func TestWSClientImplWithSender_GetScript(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	script, err := client.GetScript(context.Background(), "test")
 
 	if err != nil {
@@ -2110,79 +2025,6 @@ func TestWSClientImplWithSender_GetScript(t *testing.T) {
 	}
 	if script.FriendlyName != "Test Script" {
 		t.Errorf("FriendlyName mismatch: %v", script.FriendlyName)
-	}
-}
-
-func TestWSClientImplWithSender_CreateScript(t *testing.T) {
-	t.Parallel()
-
-	mock := &mockWSClientSender{
-		sendCommandFunc: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
-			if cmdType != "config/script/create" {
-				t.Errorf("unexpected command: %s", cmdType)
-			}
-			if params["script_id"] != "new_script" {
-				t.Errorf("script_id mismatch: %v", params["script_id"])
-			}
-			return makeWSResultMsg(nil), nil
-		},
-	}
-
-	client := NewWSClientImplWithSender(mock)
-	err := client.CreateScript(context.Background(), "new_script", ScriptConfig{
-		Alias:       "New Script",
-		Description: "A new script",
-		Icon:        "mdi:play",
-		Mode:        "single",
-		Sequence:    []any{},
-		Fields:      map[string]any{},
-	})
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestWSClientImplWithSender_UpdateScript(t *testing.T) {
-	t.Parallel()
-
-	mock := &mockWSClientSender{
-		sendCommandFunc: func(_ context.Context, cmdType string, _ map[string]any) (*WSResultMessage, error) {
-			if cmdType != "config/script/update" {
-				t.Errorf("unexpected command: %s", cmdType)
-			}
-			return makeWSResultMsg(nil), nil
-		},
-	}
-
-	client := NewWSClientImplWithSender(mock)
-	err := client.UpdateScript(context.Background(), "test", ScriptConfig{Alias: "Updated"})
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestWSClientImplWithSender_DeleteScript(t *testing.T) {
-	t.Parallel()
-
-	mock := &mockWSClientSender{
-		sendCommandFunc: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
-			if cmdType != "config/script/delete" {
-				t.Errorf("unexpected command: %s", cmdType)
-			}
-			if params["script_id"] != "test" {
-				t.Errorf("script_id mismatch: %v", params["script_id"])
-			}
-			return makeWSResultMsg(nil), nil
-		},
-	}
-
-	client := NewWSClientImplWithSender(mock)
-	err := client.DeleteScript(context.Background(), "test")
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -2201,7 +2043,7 @@ func TestWSClientImplWithSender_ListScenes(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	scenes, err := client.ListScenes(context.Background())
 
 	if err != nil {
@@ -2209,79 +2051,6 @@ func TestWSClientImplWithSender_ListScenes(t *testing.T) {
 	}
 	if len(scenes) != 2 {
 		t.Errorf("got %d scenes, want 2", len(scenes))
-	}
-}
-
-func TestWSClientImplWithSender_CreateScene(t *testing.T) {
-	t.Parallel()
-
-	mock := &mockWSClientSender{
-		sendCommandFunc: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
-			if cmdType != "config/scene/create" {
-				t.Errorf("unexpected command: %s", cmdType)
-			}
-			if params["scene_id"] != "new_scene" {
-				t.Errorf("scene_id mismatch: %v", params["scene_id"])
-			}
-			if params["name"] != "New Scene" {
-				t.Errorf("name mismatch: %v", params["name"])
-			}
-			return makeWSResultMsg(nil), nil
-		},
-	}
-
-	client := NewWSClientImplWithSender(mock)
-	err := client.CreateScene(context.Background(), "new_scene", SceneConfig{
-		Name:     "New Scene",
-		Icon:     "mdi:star",
-		Entities: map[string]SceneState{"light.test": {State: "on"}},
-	})
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestWSClientImplWithSender_UpdateScene(t *testing.T) {
-	t.Parallel()
-
-	mock := &mockWSClientSender{
-		sendCommandFunc: func(_ context.Context, cmdType string, _ map[string]any) (*WSResultMessage, error) {
-			if cmdType != "config/scene/update" {
-				t.Errorf("unexpected command: %s", cmdType)
-			}
-			return makeWSResultMsg(nil), nil
-		},
-	}
-
-	client := NewWSClientImplWithSender(mock)
-	err := client.UpdateScene(context.Background(), "test", SceneConfig{Name: "Updated"})
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestWSClientImplWithSender_DeleteScene(t *testing.T) {
-	t.Parallel()
-
-	mock := &mockWSClientSender{
-		sendCommandFunc: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
-			if cmdType != "config/scene/delete" {
-				t.Errorf("unexpected command: %s", cmdType)
-			}
-			if params["scene_id"] != "test" {
-				t.Errorf("scene_id mismatch: %v", params["scene_id"])
-			}
-			return makeWSResultMsg(nil), nil
-		},
-	}
-
-	client := NewWSClientImplWithSender(mock)
-	err := client.DeleteScene(context.Background(), "test")
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -2302,7 +2071,7 @@ func TestWSClientImplWithSender_GetScheduleConfig(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	config, err := client.GetScheduleConfig(context.Background(), "schedule.test")
 
 	if err != nil {
@@ -2322,13 +2091,13 @@ func TestWSClientImplWithSender_GetScheduleConfig_NotFound(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.GetScheduleConfig(context.Background(), "nonexistent")
 
 	if err == nil {
 		t.Fatal("expected error for not found schedule")
 	}
-	if !containsStr(err.Error(), "schedule not found") {
+	if !strings.Contains(err.Error(), "schedule not found") {
 		t.Errorf("error should mention not found: %v", err)
 	}
 }
@@ -2349,7 +2118,7 @@ func TestWSClientImplWithSender_GetEntityRegistry(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	result, err := client.GetEntityRegistry(context.Background())
 
 	if err != nil {
@@ -2376,7 +2145,7 @@ func TestWSClientImplWithSender_GetDeviceRegistry(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	result, err := client.GetDeviceRegistry(context.Background())
 
 	if err != nil {
@@ -2403,7 +2172,7 @@ func TestWSClientImplWithSender_GetAreaRegistry(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	result, err := client.GetAreaRegistry(context.Background())
 
 	if err != nil {
@@ -2432,7 +2201,7 @@ func TestWSClientImplWithSender_SignPath(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	path, err := client.SignPath(context.Background(), "/api/test", 30)
 
 	if err != nil {
@@ -2455,7 +2224,7 @@ func TestWSClientImplWithSender_SignPath_NoExpires(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.SignPath(context.Background(), "/api/test", 0)
 
 	if err != nil {
@@ -2480,7 +2249,7 @@ func TestWSClientImplWithSender_GetCameraStream(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	info, err := client.GetCameraStream(context.Background(), "camera.test")
 
 	if err != nil {
@@ -2508,7 +2277,7 @@ func TestWSClientImplWithSender_BrowseMedia(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	result, err := client.BrowseMedia(context.Background(), "media-source://test")
 
 	if err != nil {
@@ -2531,7 +2300,7 @@ func TestWSClientImplWithSender_BrowseMedia_EmptyID(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.BrowseMedia(context.Background(), "")
 
 	if err != nil {
@@ -2553,7 +2322,7 @@ func TestWSClientImplWithSender_GetLovelaceConfig(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	result, err := client.GetLovelaceConfig(context.Background(), "")
 
 	if err != nil {
@@ -2584,7 +2353,7 @@ func TestWSClientImplWithSender_GetStatistics(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	stats, err := client.GetStatistics(context.Background(), []string{"sensor.energy"}, "hour")
 
 	if err != nil {
@@ -2616,7 +2385,7 @@ func TestWSClientImplWithSender_GetTriggersForTarget(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	result, err := client.GetTriggersForTarget(context.Background(), Target{EntityID: []string{"light.test"}}, nil)
 
 	if err != nil {
@@ -2641,7 +2410,7 @@ func TestWSClientImplWithSender_GetConditionsForTarget(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	result, err := client.GetConditionsForTarget(context.Background(), Target{}, nil)
 
 	if err != nil {
@@ -2666,7 +2435,7 @@ func TestWSClientImplWithSender_GetServicesForTarget(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	result, err := client.GetServicesForTarget(context.Background(), Target{}, nil)
 
 	if err != nil {
@@ -2698,7 +2467,7 @@ func TestWSClientImplWithSender_ExtractFromTarget(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	result, err := client.ExtractFromTarget(context.Background(), Target{EntityID: []string{"light.test"}}, &expandGroup)
 
 	if err != nil {
@@ -2709,55 +2478,14 @@ func TestWSClientImplWithSender_ExtractFromTarget(t *testing.T) {
 	}
 }
 
-func TestWSClientImplWithSender_RESTOnlyMethods(t *testing.T) {
-	t.Parallel()
-
-	client := NewWSClientImplWithSender(&mockWSClientSender{})
-
-	t.Run("GetServices", func(t *testing.T) {
-		_, err := client.GetServices(context.Background())
-		if err == nil || !containsStr(err.Error(), "not supported via WebSocket") {
-			t.Errorf("GetServices should return not supported error: %v", err)
-		}
-	})
-
-	t.Run("GetConfig", func(t *testing.T) {
-		_, err := client.GetConfig(context.Background())
-		if err == nil || !containsStr(err.Error(), "not supported via WebSocket") {
-			t.Errorf("GetConfig should return not supported error: %v", err)
-		}
-	})
-
-	t.Run("RenderTemplate", func(t *testing.T) {
-		_, err := client.RenderTemplate(context.Background(), "{{ test }}")
-		if err == nil || !containsStr(err.Error(), "not supported via WebSocket") {
-			t.Errorf("RenderTemplate should return not supported error: %v", err)
-		}
-	})
-
-	t.Run("GetLogbook", func(t *testing.T) {
-		_, err := client.GetLogbook(context.Background(), "", "", "")
-		if err == nil || !containsStr(err.Error(), "not supported via WebSocket") {
-			t.Errorf("GetLogbook should return not supported error: %v", err)
-		}
-	})
-
-	t.Run("CheckConfig", func(t *testing.T) {
-		_, err := client.CheckConfig(context.Background())
-		if err == nil || !containsStr(err.Error(), "not supported via WebSocket") {
-			t.Errorf("CheckConfig should return not supported error: %v", err)
-		}
-	})
-}
-
 func TestNewWSClientImplWithSender(t *testing.T) {
 	t.Parallel()
 
 	mock := &mockWSClientSender{}
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 
 	if client == nil {
-		t.Fatal("NewWSClientImplWithSender returned nil")
+		t.Fatal("newWSClientImplWithSender returned nil")
 	}
 }
 
@@ -2774,10 +2502,10 @@ func TestWSClientImplWithSender_GetHistory_Error(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.GetHistory(context.Background(), "sensor.temp", time.Now(), time.Time{})
 
-	if err == nil || !containsStr(err.Error(), "history command failed") {
+	if err == nil || !strings.Contains(err.Error(), "history command failed") {
 		t.Errorf("expected history command failed error, got: %v", err)
 	}
 }
@@ -2791,10 +2519,10 @@ func TestWSClientImplWithSender_GetHistory_UnmarshalError(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.GetHistory(context.Background(), "sensor.temp", time.Now(), time.Time{})
 
-	if err == nil || !containsStr(err.Error(), "failed to unmarshal") {
+	if err == nil || !strings.Contains(err.Error(), "failed to unmarshal") {
 		t.Errorf("expected unmarshal error, got: %v", err)
 	}
 }
@@ -2808,10 +2536,10 @@ func TestWSClientImplWithSender_CallService_Error(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.CallService(context.Background(), "light", "turn_on", nil)
 
-	if err == nil || !containsStr(err.Error(), "call_service failed") {
+	if err == nil || !strings.Contains(err.Error(), "call_service failed") {
 		t.Errorf("expected call_service failed error, got: %v", err)
 	}
 }
@@ -2825,7 +2553,7 @@ func TestWSClientImplWithSender_ListAutomations_Error(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.ListAutomations(context.Background())
 
 	if err == nil {
@@ -2842,10 +2570,10 @@ func TestWSClientImplWithSender_GetAutomation_Error(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.GetAutomation(context.Background(), "test")
 
-	if err == nil || !containsStr(err.Error(), "get automation failed") {
+	if err == nil || !strings.Contains(err.Error(), "get automation failed") {
 		t.Errorf("expected get automation failed error, got: %v", err)
 	}
 }
@@ -2859,62 +2587,11 @@ func TestWSClientImplWithSender_GetAutomation_UnmarshalError(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.GetAutomation(context.Background(), "test")
 
-	if err == nil || !containsStr(err.Error(), "failed to unmarshal") {
+	if err == nil || !strings.Contains(err.Error(), "failed to unmarshal") {
 		t.Errorf("expected unmarshal error, got: %v", err)
-	}
-}
-
-func TestWSClientImplWithSender_CreateAutomation_Error(t *testing.T) {
-	t.Parallel()
-
-	mock := &mockWSClientSender{
-		sendCommandFunc: func(_ context.Context, _ string, _ map[string]any) (*WSResultMessage, error) {
-			return nil, errors.New("create failed")
-		},
-	}
-
-	client := NewWSClientImplWithSender(mock)
-	err := client.CreateAutomation(context.Background(), AutomationConfig{})
-
-	if err == nil || !containsStr(err.Error(), "create automation failed") {
-		t.Errorf("expected create automation failed error, got: %v", err)
-	}
-}
-
-func TestWSClientImplWithSender_UpdateAutomation_Error(t *testing.T) {
-	t.Parallel()
-
-	mock := &mockWSClientSender{
-		sendCommandFunc: func(_ context.Context, _ string, _ map[string]any) (*WSResultMessage, error) {
-			return nil, errors.New("update failed")
-		},
-	}
-
-	client := NewWSClientImplWithSender(mock)
-	err := client.UpdateAutomation(context.Background(), "test", AutomationConfig{Alias: "Test"})
-
-	if err == nil || !containsStr(err.Error(), "update automation failed") {
-		t.Errorf("expected update automation failed error, got: %v", err)
-	}
-}
-
-func TestWSClientImplWithSender_DeleteAutomation_Error(t *testing.T) {
-	t.Parallel()
-
-	mock := &mockWSClientSender{
-		sendCommandFunc: func(_ context.Context, _ string, _ map[string]any) (*WSResultMessage, error) {
-			return nil, errors.New("delete failed")
-		},
-	}
-
-	client := NewWSClientImplWithSender(mock)
-	err := client.DeleteAutomation(context.Background(), "test")
-
-	if err == nil || !containsStr(err.Error(), "delete automation failed") {
-		t.Errorf("expected delete automation failed error, got: %v", err)
 	}
 }
 
@@ -2927,7 +2604,7 @@ func TestWSClientImplWithSender_ListHelpers_Error(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.ListHelpers(context.Background())
 
 	if err == nil {
@@ -2944,10 +2621,10 @@ func TestWSClientImplWithSender_CreateHelper_Error(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	err := client.CreateHelper(context.Background(), HelperConfig{Platform: "input_boolean"})
 
-	if err == nil || !containsStr(err.Error(), "create helper failed") {
+	if err == nil || !strings.Contains(err.Error(), "create helper failed") {
 		t.Errorf("expected create helper failed error, got: %v", err)
 	}
 }
@@ -2961,10 +2638,10 @@ func TestWSClientImplWithSender_UpdateHelper_Error(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	err := client.UpdateHelper(context.Background(), "test", HelperConfig{Platform: "input_boolean"})
 
-	if err == nil || !containsStr(err.Error(), "update helper failed") {
+	if err == nil || !strings.Contains(err.Error(), "update helper failed") {
 		t.Errorf("expected update helper failed error, got: %v", err)
 	}
 }
@@ -2978,10 +2655,10 @@ func TestWSClientImplWithSender_DeleteHelper_Error(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	err := client.DeleteHelper(context.Background(), "input_boolean.test")
 
-	if err == nil || !containsStr(err.Error(), "delete helper failed") {
+	if err == nil || !strings.Contains(err.Error(), "delete helper failed") {
 		t.Errorf("expected delete helper failed error, got: %v", err)
 	}
 }
@@ -2995,7 +2672,7 @@ func TestWSClientImplWithSender_ListScripts_Error(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.ListScripts(context.Background())
 
 	if err == nil {
@@ -3015,10 +2692,10 @@ func TestWSClientImplWithSender_GetScript_StateError(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.GetScript(context.Background(), "test")
 
-	if err == nil || !containsStr(err.Error(), "get script state failed") {
+	if err == nil || !strings.Contains(err.Error(), "get script state failed") {
 		t.Errorf("expected get script state failed error, got: %v", err)
 	}
 }
@@ -3040,10 +2717,10 @@ func TestWSClientImplWithSender_GetScript_ConfigError(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.GetScript(context.Background(), "test")
 
-	if err == nil || !containsStr(err.Error(), "get script config failed") {
+	if err == nil || !strings.Contains(err.Error(), "get script config failed") {
 		t.Errorf("expected get script config failed error, got: %v", err)
 	}
 }
@@ -3065,62 +2742,11 @@ func TestWSClientImplWithSender_GetScript_UnmarshalError(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.GetScript(context.Background(), "script.test")
 
-	if err == nil || !containsStr(err.Error(), "failed to unmarshal") {
+	if err == nil || !strings.Contains(err.Error(), "failed to unmarshal") {
 		t.Errorf("expected unmarshal error, got: %v", err)
-	}
-}
-
-func TestWSClientImplWithSender_CreateScript_Error(t *testing.T) {
-	t.Parallel()
-
-	mock := &mockWSClientSender{
-		sendCommandFunc: func(_ context.Context, _ string, _ map[string]any) (*WSResultMessage, error) {
-			return nil, errors.New("create failed")
-		},
-	}
-
-	client := NewWSClientImplWithSender(mock)
-	err := client.CreateScript(context.Background(), "test", ScriptConfig{})
-
-	if err == nil || !containsStr(err.Error(), "create script failed") {
-		t.Errorf("expected create script failed error, got: %v", err)
-	}
-}
-
-func TestWSClientImplWithSender_UpdateScript_Error(t *testing.T) {
-	t.Parallel()
-
-	mock := &mockWSClientSender{
-		sendCommandFunc: func(_ context.Context, _ string, _ map[string]any) (*WSResultMessage, error) {
-			return nil, errors.New("update failed")
-		},
-	}
-
-	client := NewWSClientImplWithSender(mock)
-	err := client.UpdateScript(context.Background(), "test", ScriptConfig{Alias: "Test"})
-
-	if err == nil || !containsStr(err.Error(), "update script failed") {
-		t.Errorf("expected update script failed error, got: %v", err)
-	}
-}
-
-func TestWSClientImplWithSender_DeleteScript_Error(t *testing.T) {
-	t.Parallel()
-
-	mock := &mockWSClientSender{
-		sendCommandFunc: func(_ context.Context, _ string, _ map[string]any) (*WSResultMessage, error) {
-			return nil, errors.New("delete failed")
-		},
-	}
-
-	client := NewWSClientImplWithSender(mock)
-	err := client.DeleteScript(context.Background(), "test")
-
-	if err == nil || !containsStr(err.Error(), "delete script failed") {
-		t.Errorf("expected delete script failed error, got: %v", err)
 	}
 }
 
@@ -3133,62 +2759,11 @@ func TestWSClientImplWithSender_ListScenes_Error(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.ListScenes(context.Background())
 
 	if err == nil {
 		t.Error("expected error, got nil")
-	}
-}
-
-func TestWSClientImplWithSender_CreateScene_Error(t *testing.T) {
-	t.Parallel()
-
-	mock := &mockWSClientSender{
-		sendCommandFunc: func(_ context.Context, _ string, _ map[string]any) (*WSResultMessage, error) {
-			return nil, errors.New("create failed")
-		},
-	}
-
-	client := NewWSClientImplWithSender(mock)
-	err := client.CreateScene(context.Background(), "test", SceneConfig{Name: "Test"})
-
-	if err == nil || !containsStr(err.Error(), "create scene failed") {
-		t.Errorf("expected create scene failed error, got: %v", err)
-	}
-}
-
-func TestWSClientImplWithSender_UpdateScene_Error(t *testing.T) {
-	t.Parallel()
-
-	mock := &mockWSClientSender{
-		sendCommandFunc: func(_ context.Context, _ string, _ map[string]any) (*WSResultMessage, error) {
-			return nil, errors.New("update failed")
-		},
-	}
-
-	client := NewWSClientImplWithSender(mock)
-	err := client.UpdateScene(context.Background(), "test", SceneConfig{Name: "Test"})
-
-	if err == nil || !containsStr(err.Error(), "update scene failed") {
-		t.Errorf("expected update scene failed error, got: %v", err)
-	}
-}
-
-func TestWSClientImplWithSender_DeleteScene_Error(t *testing.T) {
-	t.Parallel()
-
-	mock := &mockWSClientSender{
-		sendCommandFunc: func(_ context.Context, _ string, _ map[string]any) (*WSResultMessage, error) {
-			return nil, errors.New("delete failed")
-		},
-	}
-
-	client := NewWSClientImplWithSender(mock)
-	err := client.DeleteScene(context.Background(), "test")
-
-	if err == nil || !containsStr(err.Error(), "delete scene failed") {
-		t.Errorf("expected delete scene failed error, got: %v", err)
 	}
 }
 
@@ -3201,10 +2776,10 @@ func TestWSClientImplWithSender_GetScheduleConfig_Error(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.GetScheduleConfig(context.Background(), "test")
 
-	if err == nil || !containsStr(err.Error(), "get schedule list failed") {
+	if err == nil || !strings.Contains(err.Error(), "get schedule list failed") {
 		t.Errorf("expected get schedule list failed error, got: %v", err)
 	}
 }
@@ -3218,10 +2793,10 @@ func TestWSClientImplWithSender_GetScheduleConfig_UnmarshalError(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.GetScheduleConfig(context.Background(), "test")
 
-	if err == nil || !containsStr(err.Error(), "failed to unmarshal") {
+	if err == nil || !strings.Contains(err.Error(), "failed to unmarshal") {
 		t.Errorf("expected unmarshal error, got: %v", err)
 	}
 }
@@ -3235,10 +2810,10 @@ func TestWSClientImplWithSender_GetEntityRegistry_Error(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.GetEntityRegistry(context.Background())
 
-	if err == nil || !containsStr(err.Error(), "get entity registry failed") {
+	if err == nil || !strings.Contains(err.Error(), "get entity registry failed") {
 		t.Errorf("expected get entity registry failed error, got: %v", err)
 	}
 }
@@ -3252,10 +2827,10 @@ func TestWSClientImplWithSender_GetEntityRegistry_UnmarshalError(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.GetEntityRegistry(context.Background())
 
-	if err == nil || !containsStr(err.Error(), "failed to unmarshal") {
+	if err == nil || !strings.Contains(err.Error(), "failed to unmarshal") {
 		t.Errorf("expected unmarshal error, got: %v", err)
 	}
 }
@@ -3269,10 +2844,10 @@ func TestWSClientImplWithSender_GetDeviceRegistry_Error(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.GetDeviceRegistry(context.Background())
 
-	if err == nil || !containsStr(err.Error(), "get device registry failed") {
+	if err == nil || !strings.Contains(err.Error(), "get device registry failed") {
 		t.Errorf("expected get device registry failed error, got: %v", err)
 	}
 }
@@ -3286,10 +2861,10 @@ func TestWSClientImplWithSender_GetDeviceRegistry_UnmarshalError(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.GetDeviceRegistry(context.Background())
 
-	if err == nil || !containsStr(err.Error(), "failed to unmarshal") {
+	if err == nil || !strings.Contains(err.Error(), "failed to unmarshal") {
 		t.Errorf("expected unmarshal error, got: %v", err)
 	}
 }
@@ -3303,10 +2878,10 @@ func TestWSClientImplWithSender_GetAreaRegistry_Error(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.GetAreaRegistry(context.Background())
 
-	if err == nil || !containsStr(err.Error(), "get area registry failed") {
+	if err == nil || !strings.Contains(err.Error(), "get area registry failed") {
 		t.Errorf("expected get area registry failed error, got: %v", err)
 	}
 }
@@ -3320,10 +2895,10 @@ func TestWSClientImplWithSender_GetAreaRegistry_UnmarshalError(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.GetAreaRegistry(context.Background())
 
-	if err == nil || !containsStr(err.Error(), "failed to unmarshal") {
+	if err == nil || !strings.Contains(err.Error(), "failed to unmarshal") {
 		t.Errorf("expected unmarshal error, got: %v", err)
 	}
 }
@@ -3337,10 +2912,10 @@ func TestWSClientImplWithSender_SignPath_Error(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.SignPath(context.Background(), "/api/test", 30)
 
-	if err == nil || !containsStr(err.Error(), "sign path failed") {
+	if err == nil || !strings.Contains(err.Error(), "sign path failed") {
 		t.Errorf("expected sign path failed error, got: %v", err)
 	}
 }
@@ -3354,10 +2929,10 @@ func TestWSClientImplWithSender_SignPath_UnmarshalError(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.SignPath(context.Background(), "/api/test", 30)
 
-	if err == nil || !containsStr(err.Error(), "failed to unmarshal") {
+	if err == nil || !strings.Contains(err.Error(), "failed to unmarshal") {
 		t.Errorf("expected unmarshal error, got: %v", err)
 	}
 }
@@ -3371,10 +2946,10 @@ func TestWSClientImplWithSender_GetCameraStream_Error(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.GetCameraStream(context.Background(), "camera.test")
 
-	if err == nil || !containsStr(err.Error(), "get camera stream failed") {
+	if err == nil || !strings.Contains(err.Error(), "get camera stream failed") {
 		t.Errorf("expected get camera stream failed error, got: %v", err)
 	}
 }
@@ -3388,10 +2963,10 @@ func TestWSClientImplWithSender_GetCameraStream_UnmarshalError(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.GetCameraStream(context.Background(), "camera.test")
 
-	if err == nil || !containsStr(err.Error(), "failed to unmarshal") {
+	if err == nil || !strings.Contains(err.Error(), "failed to unmarshal") {
 		t.Errorf("expected unmarshal error, got: %v", err)
 	}
 }
@@ -3405,10 +2980,10 @@ func TestWSClientImplWithSender_BrowseMedia_Error(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.BrowseMedia(context.Background(), "")
 
-	if err == nil || !containsStr(err.Error(), "browse media failed") {
+	if err == nil || !strings.Contains(err.Error(), "browse media failed") {
 		t.Errorf("expected browse media failed error, got: %v", err)
 	}
 }
@@ -3422,10 +2997,10 @@ func TestWSClientImplWithSender_BrowseMedia_UnmarshalError(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.BrowseMedia(context.Background(), "")
 
-	if err == nil || !containsStr(err.Error(), "failed to unmarshal") {
+	if err == nil || !strings.Contains(err.Error(), "failed to unmarshal") {
 		t.Errorf("expected unmarshal error, got: %v", err)
 	}
 }
@@ -3439,10 +3014,10 @@ func TestWSClientImplWithSender_GetLovelaceConfig_Error(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.GetLovelaceConfig(context.Background(), "")
 
-	if err == nil || !containsStr(err.Error(), "get lovelace config failed") {
+	if err == nil || !strings.Contains(err.Error(), "get lovelace config failed") {
 		t.Errorf("expected get lovelace config failed error, got: %v", err)
 	}
 }
@@ -3456,10 +3031,10 @@ func TestWSClientImplWithSender_GetLovelaceConfig_UnmarshalError(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.GetLovelaceConfig(context.Background(), "")
 
-	if err == nil || !containsStr(err.Error(), "failed to unmarshal") {
+	if err == nil || !strings.Contains(err.Error(), "failed to unmarshal") {
 		t.Errorf("expected unmarshal error, got: %v", err)
 	}
 }
@@ -3473,10 +3048,10 @@ func TestWSClientImplWithSender_GetStatistics_Error(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.GetStatistics(context.Background(), []string{"sensor.test"}, "hour")
 
-	if err == nil || !containsStr(err.Error(), "get statistics failed") {
+	if err == nil || !strings.Contains(err.Error(), "get statistics failed") {
 		t.Errorf("expected get statistics failed error, got: %v", err)
 	}
 }
@@ -3490,10 +3065,10 @@ func TestWSClientImplWithSender_GetStatistics_UnmarshalError(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.GetStatistics(context.Background(), []string{"sensor.test"}, "hour")
 
-	if err == nil || !containsStr(err.Error(), "failed to unmarshal") {
+	if err == nil || !strings.Contains(err.Error(), "failed to unmarshal") {
 		t.Errorf("expected unmarshal error, got: %v", err)
 	}
 }
@@ -3507,10 +3082,10 @@ func TestWSClientImplWithSender_GetTriggersForTarget_Error(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.GetTriggersForTarget(context.Background(), Target{}, nil)
 
-	if err == nil || !containsStr(err.Error(), "get_triggers_for_target failed") {
+	if err == nil || !strings.Contains(err.Error(), "get_triggers_for_target failed") {
 		t.Errorf("expected get_triggers_for_target failed error, got: %v", err)
 	}
 }
@@ -3524,10 +3099,10 @@ func TestWSClientImplWithSender_GetTriggersForTarget_UnmarshalError(t *testing.T
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.GetTriggersForTarget(context.Background(), Target{}, nil)
 
-	if err == nil || !containsStr(err.Error(), "failed to unmarshal") {
+	if err == nil || !strings.Contains(err.Error(), "failed to unmarshal") {
 		t.Errorf("expected unmarshal error, got: %v", err)
 	}
 }
@@ -3541,10 +3116,10 @@ func TestWSClientImplWithSender_ExtractFromTarget_Error(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.ExtractFromTarget(context.Background(), Target{}, nil)
 
-	if err == nil || !containsStr(err.Error(), "extract_from_target failed") {
+	if err == nil || !strings.Contains(err.Error(), "extract_from_target failed") {
 		t.Errorf("expected extract_from_target failed error, got: %v", err)
 	}
 }
@@ -3558,10 +3133,10 @@ func TestWSClientImplWithSender_ExtractFromTarget_UnmarshalError(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.ExtractFromTarget(context.Background(), Target{}, nil)
 
-	if err == nil || !containsStr(err.Error(), "failed to unmarshal") {
+	if err == nil || !strings.Contains(err.Error(), "failed to unmarshal") {
 		t.Errorf("expected unmarshal error, got: %v", err)
 	}
 }
@@ -3575,7 +3150,7 @@ func TestWSClientImplWithSender_GetState_Error(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.GetState(context.Background(), "light.test")
 
 	if err == nil {
@@ -3586,140 +3161,6 @@ func TestWSClientImplWithSender_GetState_Error(t *testing.T) {
 // =============================================================================
 // Full Config Branch Coverage Tests
 // =============================================================================
-
-func TestWSClientImplWithSender_UpdateAutomation_AllFields(t *testing.T) {
-	t.Parallel()
-
-	mock := &mockWSClientSender{
-		sendCommandFunc: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
-			if cmdType != "config/automation/update" {
-				t.Errorf("unexpected command: %s", cmdType)
-			}
-			// Verify all fields are present
-			if params["automation_id"] != "test_auto" {
-				t.Errorf("automation_id mismatch: %v", params["automation_id"])
-			}
-			if params["alias"] != "Full Test Automation" {
-				t.Errorf("alias mismatch: %v", params["alias"])
-			}
-			if params["description"] != "A comprehensive test" {
-				t.Errorf("description mismatch: %v", params["description"])
-			}
-			if params["mode"] != "queued" {
-				t.Errorf("mode mismatch: %v", params["mode"])
-			}
-			if params["trigger"] == nil {
-				t.Error("trigger should be set")
-			}
-			if params["condition"] == nil {
-				t.Error("condition should be set")
-			}
-			if params["action"] == nil {
-				t.Error("action should be set")
-			}
-			return makeWSResultMsg(nil), nil
-		},
-	}
-
-	client := NewWSClientImplWithSender(mock)
-	err := client.UpdateAutomation(context.Background(), "test_auto", AutomationConfig{
-		Alias:       "Full Test Automation",
-		Description: "A comprehensive test",
-		Triggers:    []any{map[string]any{"platform": "state"}},
-		Conditions:  []any{map[string]any{"condition": "state"}},
-		Actions:     []any{map[string]any{"service": "light.turn_on"}},
-		Mode:        "queued",
-	})
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestWSClientImplWithSender_UpdateScript_AllFields(t *testing.T) {
-	t.Parallel()
-
-	mock := &mockWSClientSender{
-		sendCommandFunc: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
-			if cmdType != "config/script/update" {
-				t.Errorf("unexpected command: %s", cmdType)
-			}
-			// Verify all fields are present
-			if params["script_id"] != "test_script" {
-				t.Errorf("script_id mismatch: %v", params["script_id"])
-			}
-			if params["alias"] != "Full Test Script" {
-				t.Errorf("alias mismatch: %v", params["alias"])
-			}
-			if params["description"] != "A comprehensive script test" {
-				t.Errorf("description mismatch: %v", params["description"])
-			}
-			if params["icon"] != "mdi:script" {
-				t.Errorf("icon mismatch: %v", params["icon"])
-			}
-			if params["mode"] != "parallel" {
-				t.Errorf("mode mismatch: %v", params["mode"])
-			}
-			if params["sequence"] == nil {
-				t.Error("sequence should be set")
-			}
-			if params["fields"] == nil {
-				t.Error("fields should be set")
-			}
-			return makeWSResultMsg(nil), nil
-		},
-	}
-
-	client := NewWSClientImplWithSender(mock)
-	err := client.UpdateScript(context.Background(), "test_script", ScriptConfig{
-		Alias:       "Full Test Script",
-		Description: "A comprehensive script test",
-		Icon:        "mdi:script",
-		Mode:        "parallel",
-		Sequence:    []any{map[string]any{"service": "light.turn_on"}},
-		Fields:      map[string]any{"brightness": map[string]any{"name": "Brightness"}},
-	})
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestWSClientImplWithSender_UpdateScene_AllFields(t *testing.T) {
-	t.Parallel()
-
-	mock := &mockWSClientSender{
-		sendCommandFunc: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
-			if cmdType != "config/scene/update" {
-				t.Errorf("unexpected command: %s", cmdType)
-			}
-			if params["scene_id"] != "test_scene" {
-				t.Errorf("scene_id mismatch: %v", params["scene_id"])
-			}
-			if params["name"] != "Full Test Scene" {
-				t.Errorf("name mismatch: %v", params["name"])
-			}
-			if params["icon"] != "mdi:movie" {
-				t.Errorf("icon mismatch: %v", params["icon"])
-			}
-			if params["entities"] == nil {
-				t.Error("entities should be set")
-			}
-			return makeWSResultMsg(nil), nil
-		},
-	}
-
-	client := NewWSClientImplWithSender(mock)
-	err := client.UpdateScene(context.Background(), "test_scene", SceneConfig{
-		Name:     "Full Test Scene",
-		Icon:     "mdi:movie",
-		Entities: map[string]SceneState{"light.living_room": {State: "on"}},
-	})
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
 
 func TestWSClientImplWithSender_GetHistory_BothStartAndEnd(t *testing.T) {
 	t.Parallel()
@@ -3740,7 +3181,7 @@ func TestWSClientImplWithSender_GetHistory_BothStartAndEnd(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	start := time.Now().Add(-1 * time.Hour)
 	end := time.Now()
 	history, err := client.GetHistory(context.Background(), "sensor.temp", start, end)
@@ -3775,7 +3216,7 @@ func TestWSClientImplWithSender_CallService_WithData(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	entities, err := client.CallService(context.Background(), "light", "turn_on", map[string]any{
 		"entity_id":  "light.test",
 		"brightness": 255,
@@ -3808,7 +3249,7 @@ func TestWSClientImplWithSender_CreateHelper_NoID(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	err := client.CreateHelper(context.Background(), HelperConfig{
 		Platform: "input_text",
 		Config:   map[string]any{"name": "Test Text"},
@@ -3837,7 +3278,7 @@ func TestWSClientImplWithSender_GetTriggersForTarget_WithExpandGroup(t *testing.
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	result, err := client.GetTriggersForTarget(context.Background(), Target{EntityID: []string{"light.test"}}, &expandGroup)
 
 	if err != nil {
@@ -3857,10 +3298,10 @@ func TestWSClientImplWithSender_GetConditionsForTarget_Error(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.GetConditionsForTarget(context.Background(), Target{}, nil)
 
-	if err == nil || !containsStr(err.Error(), "get_conditions_for_target failed") {
+	if err == nil || !strings.Contains(err.Error(), "get_conditions_for_target failed") {
 		t.Errorf("expected get_conditions_for_target failed error, got: %v", err)
 	}
 }
@@ -3874,10 +3315,10 @@ func TestWSClientImplWithSender_GetConditionsForTarget_UnmarshalError(t *testing
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.GetConditionsForTarget(context.Background(), Target{}, nil)
 
-	if err == nil || !containsStr(err.Error(), "failed to unmarshal") {
+	if err == nil || !strings.Contains(err.Error(), "failed to unmarshal") {
 		t.Errorf("expected unmarshal error, got: %v", err)
 	}
 }
@@ -3891,10 +3332,10 @@ func TestWSClientImplWithSender_GetServicesForTarget_Error(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.GetServicesForTarget(context.Background(), Target{}, nil)
 
-	if err == nil || !containsStr(err.Error(), "get_services_for_target failed") {
+	if err == nil || !strings.Contains(err.Error(), "get_services_for_target failed") {
 		t.Errorf("expected get_services_for_target failed error, got: %v", err)
 	}
 }
@@ -3908,10 +3349,10 @@ func TestWSClientImplWithSender_GetServicesForTarget_UnmarshalError(t *testing.T
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.GetServicesForTarget(context.Background(), Target{}, nil)
 
-	if err == nil || !containsStr(err.Error(), "failed to unmarshal") {
+	if err == nil || !strings.Contains(err.Error(), "failed to unmarshal") {
 		t.Errorf("expected unmarshal error, got: %v", err)
 	}
 }
@@ -3919,10 +3360,10 @@ func TestWSClientImplWithSender_GetServicesForTarget_UnmarshalError(t *testing.T
 func TestWSClientImplWithSender_SetHelperValue_UnsupportedPlatform(t *testing.T) {
 	t.Parallel()
 
-	client := NewWSClientImplWithSender(&mockWSClientSender{})
+	client := newWSClientImplWithSender(&mockWSClientSender{})
 	err := client.SetHelperValue(context.Background(), "schedule.test", "value")
 
-	if err == nil || !containsStr(err.Error(), "unsupported helper platform") {
+	if err == nil || !strings.Contains(err.Error(), "unsupported helper platform") {
 		t.Errorf("expected unsupported helper platform error, got: %v", err)
 	}
 }
@@ -3940,10 +3381,10 @@ func TestWSClientImplWithSender_GetScheduleConfig_NoMatchingID(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.GetScheduleConfig(context.Background(), "schedule.nonexistent")
 
-	if err == nil || !containsStr(err.Error(), "schedule not found") {
+	if err == nil || !strings.Contains(err.Error(), "schedule not found") {
 		t.Errorf("expected schedule not found error, got: %v", err)
 	}
 }
@@ -3951,10 +3392,10 @@ func TestWSClientImplWithSender_GetScheduleConfig_NoMatchingID(t *testing.T) {
 func TestWSClientImplWithSender_SetState(t *testing.T) {
 	t.Parallel()
 
-	client := NewWSClientImplWithSender(&mockWSClientSender{})
+	client := newWSClientImplWithSender(&mockWSClientSender{})
 	_, err := client.SetState(context.Background(), "light.test", StateUpdate{State: "on"})
 
-	if err == nil || !containsStr(err.Error(), "not supported via WebSocket") {
+	if err == nil || !strings.Contains(err.Error(), "not supported via WebSocket") {
 		t.Errorf("expected not supported error, got: %v", err)
 	}
 }
@@ -3972,89 +3413,11 @@ func TestWSClientImplWithSender_GetState_EntityMissing(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.GetState(context.Background(), "light.nonexistent")
 
-	if err == nil || !containsStr(err.Error(), "entity not found") {
+	if err == nil || !strings.Contains(err.Error(), "entity not found") {
 		t.Errorf("expected entity not found error, got: %v", err)
-	}
-}
-
-func TestWSClientImplWithSender_CreateAutomation_AllFields(t *testing.T) {
-	t.Parallel()
-
-	mock := &mockWSClientSender{
-		sendCommandFunc: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
-			if cmdType != "config/automation/create" {
-				t.Errorf("unexpected command: %s", cmdType)
-			}
-			// Verify all optional fields are present
-			if params["automation_id"] != "new_auto" {
-				t.Errorf("automation_id mismatch: %v", params["automation_id"])
-			}
-			if params["alias"] != "New Automation" {
-				t.Errorf("alias mismatch: %v", params["alias"])
-			}
-			if params["description"] != "Description" {
-				t.Errorf("description mismatch: %v", params["description"])
-			}
-			if params["mode"] != "restart" {
-				t.Errorf("mode mismatch: %v", params["mode"])
-			}
-			return makeWSResultMsg(nil), nil
-		},
-	}
-
-	client := NewWSClientImplWithSender(mock)
-	err := client.CreateAutomation(context.Background(), AutomationConfig{
-		ID:          "new_auto",
-		Alias:       "New Automation",
-		Description: "Description",
-		Triggers:    []any{map[string]any{"platform": "time"}},
-		Conditions:  []any{map[string]any{"condition": "zone"}},
-		Actions:     []any{map[string]any{"service": "notify.send"}},
-		Mode:        "restart",
-	})
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestWSClientImplWithSender_CreateScript_AllFields(t *testing.T) {
-	t.Parallel()
-
-	mock := &mockWSClientSender{
-		sendCommandFunc: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
-			if cmdType != "config/script/create" {
-				t.Errorf("unexpected command: %s", cmdType)
-			}
-			// Verify all fields
-			if params["script_id"] != "new_script" {
-				t.Errorf("script_id mismatch: %v", params["script_id"])
-			}
-			if params["description"] != "Full description" {
-				t.Errorf("description mismatch: %v", params["description"])
-			}
-			if params["icon"] != "mdi:cog" {
-				t.Errorf("icon mismatch: %v", params["icon"])
-			}
-			return makeWSResultMsg(nil), nil
-		},
-	}
-
-	client := NewWSClientImplWithSender(mock)
-	err := client.CreateScript(context.Background(), "new_script", ScriptConfig{
-		Alias:       "Script Alias",
-		Description: "Full description",
-		Icon:        "mdi:cog",
-		Mode:        "queued",
-		Sequence:    []any{map[string]any{"service": "test"}},
-		Fields:      map[string]any{"param": "value"},
-	})
-
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -4072,7 +3435,7 @@ func TestWSClientImplWithSender_SetHelperValue_DatetimeOtherValue(t *testing.T) 
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	// Test with an int value (not string or map)
 	err := client.SetHelperValue(context.Background(), "input_datetime.test", 123456789)
 
@@ -4097,7 +3460,7 @@ func TestWSClientImplWithSender_CallService_NoData(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.CallService(context.Background(), "homeassistant", "restart", nil)
 
 	if err != nil {
@@ -4129,7 +3492,7 @@ func TestWSClientImplWithSender_UpdateEntityRegistryEntry(t *testing.T) {
 	}
 
 	name := "Updated Name"
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	result, err := client.UpdateEntityRegistryEntry(context.Background(), "light.living_room", EntityRegistryUpdateConfig{
 		Name: &name,
 	})
@@ -4161,7 +3524,7 @@ func TestWSClientImplWithSender_UpdateEntityRegistryEntry_Rename(t *testing.T) {
 	}
 
 	newID := "light.main_room"
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	result, err := client.UpdateEntityRegistryEntry(context.Background(), "light.living_room", EntityRegistryUpdateConfig{
 		NewEntityID: &newID,
 	})
@@ -4183,7 +3546,7 @@ func TestWSClientImplWithSender_UpdateEntityRegistryEntry_Error(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.UpdateEntityRegistryEntry(context.Background(), "light.living_room", EntityRegistryUpdateConfig{})
 
 	if err == nil {
@@ -4216,7 +3579,7 @@ func TestWSClientImplWithSender_UpdateDeviceRegistryEntry(t *testing.T) {
 
 	nameByUser := "My Custom Name"
 	areaID := "bedroom"
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	result, err := client.UpdateDeviceRegistryEntry(context.Background(), "abc123", DeviceRegistryUpdateConfig{
 		NameByUser: &nameByUser,
 		AreaID:     &areaID,
@@ -4245,7 +3608,7 @@ func TestWSClientImplWithSender_UpdateDeviceRegistryEntry_Error(t *testing.T) {
 		},
 	}
 
-	client := NewWSClientImplWithSender(mock)
+	client := newWSClientImplWithSender(mock)
 	_, err := client.UpdateDeviceRegistryEntry(context.Background(), "abc123", DeviceRegistryUpdateConfig{})
 
 	if err == nil {

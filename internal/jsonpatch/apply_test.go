@@ -420,7 +420,7 @@ func TestApply_Test(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error for test failure")
 		}
-		if !containsStr(err.Error(), "test failed") {
+		if !strings.Contains(err.Error(), "test failed") {
 			t.Errorf("error = %q, want to contain 'test failed'", err.Error())
 		}
 	})
@@ -557,7 +557,7 @@ func TestApply_ErrorMessages(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected error")
 			}
-			if !containsStr(err.Error(), tt.errMsg) {
+			if !strings.Contains(err.Error(), tt.errMsg) {
 				t.Errorf("error = %q, want to contain %q", err.Error(), tt.errMsg)
 			}
 		})
@@ -655,12 +655,12 @@ func TestApply_NestedErrorMessages(t *testing.T) {
 				t.Fatal("expected error")
 			}
 			for _, want := range tt.wantMsg {
-				if !containsStr(err.Error(), want) {
+				if !strings.Contains(err.Error(), want) {
 					t.Errorf("error = %q, want to contain %q", err.Error(), want)
 				}
 			}
 			for _, notWant := range tt.wantNoMsg {
-				if containsStr(err.Error(), notWant) {
+				if strings.Contains(err.Error(), notWant) {
 					t.Errorf("error = %q, want NOT to contain %q", err.Error(), notWant)
 				}
 			}
@@ -732,7 +732,7 @@ func TestApply_NavigationLocation(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected error")
 			}
-			if !containsStr(err.Error(), tt.wantMsg) {
+			if !strings.Contains(err.Error(), tt.wantMsg) {
 				t.Errorf("error = %q, want to contain %q", err.Error(), tt.wantMsg)
 			}
 		})
@@ -788,7 +788,7 @@ func TestApply_Move_AncestorProhibition(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error: path is a child of from (RFC 6902 §4.4)")
 		}
-		if !containsStr(err.Error(), "child") && !containsStr(err.Error(), "4.4") {
+		if !strings.Contains(err.Error(), "child") && !strings.Contains(err.Error(), "4.4") {
 			t.Errorf("error = %q, want to mention §4.4 or child", err.Error())
 		}
 	})
@@ -806,7 +806,7 @@ func TestApply_Move_AncestorProhibition(t *testing.T) {
 		})
 		// Self-move may or may not work but must not be caught by §4.4 check
 		// (it's either allowed or fails for another reason)
-		if err != nil && containsStr(err.Error(), "4.4") {
+		if err != nil && strings.Contains(err.Error(), "4.4") {
 			t.Errorf("self-move should not trigger §4.4 violation: %v", err)
 		}
 	})
@@ -908,7 +908,7 @@ func TestValidate_PathValidation(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			if tt.wantErr && tt.errFrag != "" && (err == nil || !containsStr(err.Error(), tt.errFrag)) {
+			if tt.wantErr && tt.errFrag != "" && (err == nil || !strings.Contains(err.Error(), tt.errFrag)) {
 				t.Errorf("error = %q, want to contain %q", err, tt.errFrag)
 			}
 		})

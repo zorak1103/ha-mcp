@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
@@ -142,7 +143,7 @@ func TestManageUpdate_List(t *testing.T) {
 			}
 
 			text := result.Content[0].Text
-			if !contains(text, tt.wantContain) {
+			if !strings.Contains(text, tt.wantContain) {
 				t.Errorf("result text does not contain %q: %s", tt.wantContain, text)
 			}
 		})
@@ -181,7 +182,7 @@ func TestManageUpdate_ReleaseNotes(t *testing.T) {
 	}
 
 	text := result.Content[0].Text
-	if !contains(text, "Feature 1") {
+	if !strings.Contains(text, "Feature 1") {
 		t.Errorf("result text does not contain release notes: %s", text)
 	}
 }
@@ -277,7 +278,7 @@ func TestManageUpdate_List_JSONFormat(t *testing.T) {
 	}
 
 	text := result.Content[0].Text
-	if !contains(text, "update.hass_os") {
+	if !strings.Contains(text, "update.hass_os") {
 		t.Errorf("JSON result does not contain entity_id: %s", text)
 	}
 }
@@ -349,7 +350,7 @@ func TestManageUpdate_Skip(t *testing.T) {
 	}
 
 	text := result.Content[0].Text
-	if !contains(text, "skipped") {
+	if !strings.Contains(text, "skipped") {
 		t.Errorf("result does not indicate skip: %s", text)
 	}
 }

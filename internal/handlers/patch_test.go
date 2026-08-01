@@ -114,7 +114,7 @@ func TestParseOperations(t *testing.T) {
 					t.Fatal("error result has no content")
 				}
 				content := errResult.Content[0].Text
-				if tt.wantErrFrag != "" && !containsStrHandlers(content, tt.wantErrFrag) {
+				if tt.wantErrFrag != "" && !strings.Contains(content, tt.wantErrFrag) {
 					t.Errorf("error content = %q, want to contain %q", content, tt.wantErrFrag)
 				}
 			} else {
@@ -127,15 +127,6 @@ func TestParseOperations(t *testing.T) {
 			}
 		})
 	}
-}
-
-func containsStrHandlers(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
 }
 
 func TestParseOperations_ValuePreservation(t *testing.T) {
@@ -385,7 +376,7 @@ func TestParseOperations_AlternativeInputTypes(t *testing.T) {
 				if errResult == nil {
 					t.Fatal("expected error result, got nil")
 				}
-				if !containsStrHandlers(errResult.Content[0].Text, tt.wantErrFrag) {
+				if !strings.Contains(errResult.Content[0].Text, tt.wantErrFrag) {
 					t.Errorf("error %q does not contain %q", errResult.Content[0].Text, tt.wantErrFrag)
 				}
 				return

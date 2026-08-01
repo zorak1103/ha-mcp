@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
@@ -87,7 +88,7 @@ func TestManageTodo_List(t *testing.T) {
 	}
 
 	text := result.Content[0].Text
-	if !contains(text, "Shopping List") {
+	if !strings.Contains(text, "Shopping List") {
 		t.Errorf("result text does not contain 'Shopping List': %s", text)
 	}
 }
@@ -137,7 +138,7 @@ func TestManageTodo_GetItems(t *testing.T) {
 	}
 
 	text := result.Content[0].Text
-	if !contains(text, "Buy milk") {
+	if !strings.Contains(text, "Buy milk") {
 		t.Errorf("result text does not contain 'Buy milk': %s", text)
 	}
 }
@@ -388,7 +389,7 @@ func TestManageTodo_List_JSONFormat(t *testing.T) {
 	}
 
 	text := result.Content[0].Text
-	if !contains(text, "todo.shopping_list") {
+	if !strings.Contains(text, "todo.shopping_list") {
 		t.Errorf("JSON result does not contain entity_id: %s", text)
 	}
 }
@@ -471,7 +472,7 @@ func TestManageTodo_GetItems_JSONFormat(t *testing.T) {
 	}
 
 	text := result.Content[0].Text
-	if !contains(text, "item1") {
+	if !strings.Contains(text, "item1") {
 		t.Errorf("JSON result does not contain uid: %s", text)
 	}
 }

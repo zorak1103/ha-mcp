@@ -15,7 +15,9 @@ const (
 )
 
 // Client defines the interface for Home Assistant operations.
-// All operations are performed via WebSocket connection.
+// Most operations are performed via WebSocket connection; automation/script/scene
+// create/update/delete and a handful of other operations are REST-only and are
+// implemented exclusively by HybridClient (see hybrid_client.go).
 type Client interface {
 	// Entity operations
 	GetStates(ctx context.Context) ([]Entity, error)

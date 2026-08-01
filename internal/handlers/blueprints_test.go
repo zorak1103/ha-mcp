@@ -187,7 +187,7 @@ func TestManageBlueprint_List(t *testing.T) {
 			}
 
 			text := result.Content[0].Text
-			if !contains(text, tt.wantContain) {
+			if !strings.Contains(text, tt.wantContain) {
 				t.Errorf("result text does not contain %q: %s", tt.wantContain, text)
 			}
 		})
@@ -232,7 +232,7 @@ func TestValidateBlueprintURL(t *testing.T) {
 					t.Errorf("validateBlueprintURL(%q) = nil, want error containing %q", tt.url, tt.wantContain)
 					return
 				}
-				if tt.wantContain != "" && !contains(err.Error(), tt.wantContain) {
+				if tt.wantContain != "" && !strings.Contains(err.Error(), tt.wantContain) {
 					t.Errorf("error %q does not contain %q", err.Error(), tt.wantContain)
 				}
 			} else {
@@ -338,7 +338,7 @@ func TestManageBlueprint_Import(t *testing.T) {
 				t.Errorf("IsError = %v, want %v", result.IsError, tt.wantErr)
 			}
 			text := result.Content[0].Text
-			if !contains(text, tt.wantContain) {
+			if !strings.Contains(text, tt.wantContain) {
 				t.Errorf("result text does not contain %q: %s", tt.wantContain, text)
 			}
 			if tt.expectWSCall && !wsCalled {

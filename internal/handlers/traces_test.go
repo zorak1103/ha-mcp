@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -209,7 +210,7 @@ func TestManageTrace_List(t *testing.T) {
 			}
 
 			text := result.Content[0].Text
-			if tt.wantContain != "" && !contains(text, tt.wantContain) {
+			if tt.wantContain != "" && !strings.Contains(text, tt.wantContain) {
 				t.Errorf("result text does not contain %q: %s", tt.wantContain, text)
 			}
 		})
@@ -328,7 +329,7 @@ func TestManageTrace_List_EntityIDFilter(t *testing.T) {
 				if !result.IsError {
 					t.Errorf("expected error result, got: %s", result.Content[0].Text)
 				}
-				if tt.wantContain != "" && !contains(result.Content[0].Text, tt.wantContain) {
+				if tt.wantContain != "" && !strings.Contains(result.Content[0].Text, tt.wantContain) {
 					t.Errorf("error text does not contain %q: %s", tt.wantContain, result.Content[0].Text)
 				}
 				return
@@ -432,7 +433,7 @@ func TestManageTrace_List_EmptyMessage(t *testing.T) {
 
 	text := result.Content[0].Text
 	// Message must mention async lag or suggest retry / wait param
-	if !contains(text, "async") && !contains(text, "wait") && !contains(text, "available") {
+	if !strings.Contains(text, "async") && !strings.Contains(text, "wait") && !strings.Contains(text, "available") {
 		t.Errorf("empty trace message should mention async lag or wait param, got: %s", text)
 	}
 }
@@ -479,7 +480,7 @@ func TestManageTrace_List_WaitPolls(t *testing.T) {
 	}
 
 	text := result.Content[0].Text
-	if !contains(text, "trace999") {
+	if !strings.Contains(text, "trace999") {
 		t.Errorf("expected trace999 in wait=true result, got: %s", text)
 	}
 	if callCount < 3 {

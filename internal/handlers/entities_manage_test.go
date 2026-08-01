@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
@@ -718,22 +719,9 @@ func TestHandleManageEntity(t *testing.T) {
 			}
 
 			resultText := result.Content[0].Text
-			if tc.wantContain != "" && !contains(resultText, tc.wantContain) {
+			if tc.wantContain != "" && !strings.Contains(resultText, tc.wantContain) {
 				t.Errorf("expected result to contain '%s', got: %s", tc.wantContain, resultText)
 			}
 		})
 	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) > 0 && len(substr) > 0 && (s == substr || len(s) >= len(substr) && containsHelper(s, substr))
-}
-
-func containsHelper(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

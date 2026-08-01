@@ -1,6 +1,7 @@
 package jsonpatch
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -100,24 +101,10 @@ func TestValidate(t *testing.T) {
 				t.Fatalf("Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if tt.wantErr && tt.errMsg != "" {
-				if err == nil || !containsStr(err.Error(), tt.errMsg) {
+				if err == nil || !strings.Contains(err.Error(), tt.errMsg) {
 					t.Errorf("Validate() error = %q, want to contain %q", err, tt.errMsg)
 				}
 			}
 		})
 	}
-}
-
-func containsStr(s, sub string) bool {
-	return len(s) >= len(sub) && (s == sub || len(sub) == 0 ||
-		containsBytes([]byte(s), []byte(sub)))
-}
-
-func containsBytes(s, sub []byte) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if string(s[i:i+len(sub)]) == string(sub) {
-			return true
-		}
-	}
-	return false
 }
