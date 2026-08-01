@@ -547,13 +547,13 @@ func TestWSClientImpl_ZonePersonCommands(t *testing.T) {
 				gotCmd    string
 				gotParams map[string]any
 			)
-			c := &wsClientImpl{ws: &mockWSClientSender{
+			c := newWSClientImplWithSender(&mockWSClientSender{
 				sendCommandFunc: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
 					gotCmd = cmdType
 					gotParams = params
 					return makeWSResultMsg(tt.mockResult), nil
 				},
-			}}
+			})
 
 			if err := tt.invoke(context.Background(), c); err != nil {
 				t.Fatalf("%s returned error: %v", tt.name, err)
@@ -589,14 +589,14 @@ func TestWSClientImpl_ZonePersonCommands(t *testing.T) {
 func TestWSClientImpl_GetPersons_MergesStorageAndConfig(t *testing.T) {
 	t.Parallel()
 
-	c := &wsClientImpl{ws: &mockWSClientSender{
+	c := newWSClientImplWithSender(&mockWSClientSender{
 		sendCommandFunc: func(_ context.Context, _ string, _ map[string]any) (*WSResultMessage, error) {
 			return makeWSResultMsg(map[string]any{
 				"storage": []PersonRegistryEntry{{ID: "storage1", Name: "Alice"}},
 				"config":  []PersonRegistryEntry{{ID: "config1", Name: "Bob"}},
 			}), nil
 		},
-	}}
+	})
 
 	entries, err := c.GetPersons(context.Background())
 	if err != nil {
@@ -679,23 +679,49 @@ func TestWSClientImpl_GetLovelaceConfig(t *testing.T) {
 		},
 	}
 
-	impl := newWSClientImplWithSender(&mockWSClientSender{
-		sendCommandFunc: func(_ context.Context, cmdType string, _ map[string]any) (*WSResultMessage, error) {
-			if cmdType != "lovelace/config" {
-				t.Errorf("unexpected command: %s", cmdType)
-			}
-			return makeWSResultMsg(lovelaceConfig), nil
-		},
-	})
-
-	ctx := context.Background()
-	config, err := impl.GetLovelaceConfig(ctx, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	tests := []struct {
+		name        string
+		urlPath     string
+		wantURLPath bool
+	}{
+		{name: "default dashboard", urlPath: "", wantURLPath: false},
+		{name: "named dashboard", urlPath: "lovelace-energy", wantURLPath: true},
 	}
 
-	if config["title"] != "Home" {
-		t.Errorf("title mismatch: got %v, want Home", config["title"])
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var gotParams map[string]any
+			impl := newWSClientImplWithSender(&mockWSClientSender{
+				sendCommandFunc: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
+					if cmdType != "lovelace/config" {
+						t.Errorf("unexpected command: %s", cmdType)
+					}
+					gotParams = params
+					return makeWSResultMsg(lovelaceConfig), nil
+				},
+			})
+
+			ctx := context.Background()
+			config, err := impl.GetLovelaceConfig(ctx, tt.urlPath)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if config["title"] != "Home" {
+				t.Errorf("title mismatch: got %v, want Home", config["title"])
+			}
+
+			gotURLPath, ok := gotParams["url_path"]
+			if tt.wantURLPath {
+				if !ok || gotURLPath != tt.urlPath {
+					t.Errorf("params[\"url_path\"] = %v, ok=%v, want %q", gotURLPath, ok, tt.urlPath)
+				}
+			} else if ok {
+				t.Errorf("params[\"url_path\"] = %v, want key absent", gotURLPath)
+			}
+		})
 	}
 }
 
@@ -899,7 +925,7 @@ func TestWSClientImpl_ListHelpers(t *testing.T) {
 
 	impl := newWSClientImplWithSender(&mockWSClientSender{
 		sendCommandFunc: func(_ context.Context, cmdType string, _ map[string]any) (*WSResultMessage, error) {
-			if cmdType == "get_states" {
+			if cmdType == cmdGetStates {
 				return makeWSResultMsg(entities), nil
 			}
 			return nil, errors.New("unexpected command")
@@ -971,7 +997,7 @@ func TestWSClientImplWithSender_GetStates(t *testing.T) {
 
 	mock := &mockWSClientSender{
 		sendCommandFunc: func(_ context.Context, cmdType string, _ map[string]any) (*WSResultMessage, error) {
-			if cmdType != "get_states" {
+			if cmdType != cmdGetStates {
 				t.Errorf("unexpected command type: %s", cmdType)
 			}
 			return makeWSResultMsg(entities), nil
@@ -1680,7 +1706,7 @@ func TestWSClientImplWithSender_GetScript(t *testing.T) {
 	mock := &mockWSClientSender{
 		sendCommandFunc: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
 			callCount++
-			if cmdType == "get_states" {
+			if cmdType == cmdGetStates {
 				return makeWSResultMsg(entities), nil
 			}
 			if cmdType == "script/config" {
@@ -2369,7 +2395,7 @@ func TestWSClientImplWithSender_GetScript_StateError(t *testing.T) {
 
 	mock := &mockWSClientSender{
 		sendCommandFunc: func(_ context.Context, cmdType string, _ map[string]any) (*WSResultMessage, error) {
-			if cmdType == "get_states" {
+			if cmdType == cmdGetStates {
 				return nil, errors.New("get states error")
 			}
 			return nil, errors.New("unexpected call")
@@ -2391,7 +2417,7 @@ func TestWSClientImplWithSender_GetScript_ConfigError(t *testing.T) {
 
 	mock := &mockWSClientSender{
 		sendCommandFunc: func(_ context.Context, cmdType string, _ map[string]any) (*WSResultMessage, error) {
-			if cmdType == "get_states" {
+			if cmdType == cmdGetStates {
 				return makeWSResultMsg(entities), nil
 			}
 			if cmdType == "script/config" {
@@ -2416,7 +2442,7 @@ func TestWSClientImplWithSender_GetScript_UnmarshalError(t *testing.T) {
 
 	mock := &mockWSClientSender{
 		sendCommandFunc: func(_ context.Context, cmdType string, _ map[string]any) (*WSResultMessage, error) {
-			if cmdType == "get_states" {
+			if cmdType == cmdGetStates {
 				return makeWSResultMsg(entities), nil
 			}
 			if cmdType == "script/config" {
