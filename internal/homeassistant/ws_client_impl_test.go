@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -85,10 +84,7 @@ func TestWSClientImpl_GetStates(t *testing.T) {
 				},
 			}
 
-			// Create a testable client using interface
-			impl := &testableWSClientImplV2{
-				sendCommand: mock.SendCommand,
-			}
+			impl := newWSClientImplWithSender(mock)
 
 			ctx := context.Background()
 			entities, err := impl.GetStates(ctx)
@@ -112,25 +108,6 @@ func TestWSClientImpl_GetStates(t *testing.T) {
 			}
 		})
 	}
-}
-
-// testableWSClientImplV2 wraps wsClientImpl with mockable SendCommand.
-type testableWSClientImplV2 struct {
-	sendCommand func(ctx context.Context, cmdType string, params map[string]any) (*WSResultMessage, error)
-}
-
-func (t *testableWSClientImplV2) GetStates(ctx context.Context) ([]Entity, error) {
-	result, err := t.sendCommand(ctx, cmdGetStates, nil)
-	if err != nil {
-		return nil, fmt.Errorf("get_states command failed: %w", err)
-	}
-
-	var entities []Entity
-	if err := json.Unmarshal(result.Result, &entities); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal states: %w", err)
-	}
-
-	return entities, nil
 }
 
 func TestWSClientImpl_GetState(t *testing.T) {
@@ -166,14 +143,14 @@ func TestWSClientImpl_GetState(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			impl := &testableWSClientImplV2{
-				sendCommand: func(_ context.Context, cmdType string, _ map[string]any) (*WSResultMessage, error) {
+			impl := newWSClientImplWithSender(&mockWSClientSender{
+				sendCommandFunc: func(_ context.Context, cmdType string, _ map[string]any) (*WSResultMessage, error) {
 					if cmdType == cmdGetStates {
 						return makeWSResultMsg(entities), nil
 					}
 					return nil, errors.New("unexpected command")
 				},
-			}
+			})
 
 			ctx := context.Background()
 			entity, err := impl.GetState(ctx, tt.entityID)
@@ -197,21 +174,6 @@ func TestWSClientImpl_GetState(t *testing.T) {
 			}
 		})
 	}
-}
-
-func (t *testableWSClientImplV2) GetState(ctx context.Context, entityID string) (*Entity, error) {
-	entities, err := t.GetStates(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	for i := range entities {
-		if entities[i].EntityID == entityID {
-			return &entities[i], nil
-		}
-	}
-
-	return nil, errors.New("entity not found: " + entityID)
 }
 
 func TestWSClientImpl_SetState(t *testing.T) {
@@ -242,14 +204,14 @@ func TestWSClientImpl_ListAutomations(t *testing.T) {
 		{EntityID: "sensor.temp", State: "22"},
 	}
 
-	impl := &testableWSClientImplV2{
-		sendCommand: func(_ context.Context, cmdType string, _ map[string]any) (*WSResultMessage, error) {
+	impl := newWSClientImplWithSender(&mockWSClientSender{
+		sendCommandFunc: func(_ context.Context, cmdType string, _ map[string]any) (*WSResultMessage, error) {
 			if cmdType == cmdGetStates {
 				return makeWSResultMsg(entities), nil
 			}
 			return nil, errors.New("unexpected command")
 		},
-	}
+	})
 
 	ctx := context.Background()
 	automations, err := impl.ListAutomations(ctx)
@@ -260,27 +222,6 @@ func TestWSClientImpl_ListAutomations(t *testing.T) {
 	if len(automations) != 2 {
 		t.Errorf("got %d automations, want 2", len(automations))
 	}
-}
-
-func (t *testableWSClientImplV2) ListAutomations(ctx context.Context) ([]Automation, error) {
-	entities, err := t.GetStates(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	var automations []Automation
-	for _, entity := range entities {
-		if len(entity.EntityID) > 11 && entity.EntityID[:11] == "automation." {
-			automations = append(automations, Automation{
-				EntityID:      entity.EntityID,
-				State:         entity.State,
-				FriendlyName:  getStringAttr(entity.Attributes, "friendly_name"),
-				LastTriggered: getStringAttr(entity.Attributes, "last_triggered"),
-			})
-		}
-	}
-
-	return automations, nil
 }
 
 func TestWSClientImpl_CallService(t *testing.T) {
@@ -328,8 +269,8 @@ func TestWSClientImpl_CallService(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			impl := &testableWSClientImplV2{
-				sendCommand: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
+			impl := newWSClientImplWithSender(&mockWSClientSender{
+				sendCommandFunc: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
 					if cmdType != "call_service" {
 						t.Errorf("unexpected command: %s", cmdType)
 					}
@@ -344,7 +285,7 @@ func TestWSClientImpl_CallService(t *testing.T) {
 					}
 					return makeWSResultMsg(tt.mockResult), nil
 				},
-			}
+			})
 
 			ctx := context.Background()
 			_, err := impl.CallService(ctx, tt.domain, tt.service, tt.data)
@@ -366,32 +307,6 @@ func TestWSClientImpl_CallService(t *testing.T) {
 	}
 }
 
-func (t *testableWSClientImplV2) CallService(ctx context.Context, domain, service string, data map[string]any) ([]Entity, error) {
-	params := map[string]any{
-		"domain":  domain,
-		"service": service,
-	}
-	if data != nil {
-		params["service_data"] = data
-	}
-
-	result, err := t.sendCommand(ctx, "call_service", params)
-	if err != nil {
-		return nil, fmt.Errorf("call_service failed: %w", err)
-	}
-
-	var response struct {
-		Context  Context  `json:"context"`
-		Response []Entity `json:"response,omitempty"`
-	}
-	if result.Result != nil {
-		// Unmarshal errors are ignored for the optional response field
-		_ = json.Unmarshal(result.Result, &response)
-	}
-
-	return response.Response, nil
-}
-
 func TestWSClientImpl_GetHistory(t *testing.T) {
 	t.Parallel()
 
@@ -403,8 +318,8 @@ func TestWSClientImpl_GetHistory(t *testing.T) {
 		},
 	}
 
-	impl := &testableWSClientImplV2{
-		sendCommand: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
+	impl := newWSClientImplWithSender(&mockWSClientSender{
+		sendCommandFunc: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
 			if cmdType != "history/history_during_period" {
 				t.Errorf("unexpected command: %s", cmdType)
 			}
@@ -413,7 +328,7 @@ func TestWSClientImpl_GetHistory(t *testing.T) {
 			}
 			return makeWSResultMsg(historyData), nil
 		},
-	}
+	})
 
 	ctx := context.Background()
 	start := time.Now().Add(-24 * time.Hour)
@@ -433,33 +348,6 @@ func TestWSClientImpl_GetHistory(t *testing.T) {
 	}
 }
 
-func (t *testableWSClientImplV2) GetHistory(ctx context.Context, entityID string, start, end time.Time) ([][]HistoryEntry, error) {
-	params := map[string]any{
-		"start_time": start.Format(time.RFC3339),
-		"entity_ids": []string{entityID},
-	}
-	if !end.IsZero() {
-		params["end_time"] = end.Format(time.RFC3339)
-	}
-
-	result, err := t.sendCommand(ctx, "history/history_during_period", params)
-	if err != nil {
-		return nil, fmt.Errorf("history command failed: %w", err)
-	}
-
-	var historyMap map[string][]HistoryEntry
-	if err := json.Unmarshal(result.Result, &historyMap); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal history: %w", err)
-	}
-
-	var history [][]HistoryEntry
-	if entries, ok := historyMap[entityID]; ok {
-		history = append(history, entries)
-	}
-
-	return history, nil
-}
-
 func TestWSClientImpl_GetEntityRegistry(t *testing.T) {
 	t.Parallel()
 
@@ -468,14 +356,14 @@ func TestWSClientImpl_GetEntityRegistry(t *testing.T) {
 		{EntityID: "sensor.temp", Platform: "mqtt", DeviceID: "device2"},
 	}
 
-	impl := &testableWSClientImplV2{
-		sendCommand: func(_ context.Context, cmdType string, _ map[string]any) (*WSResultMessage, error) {
+	impl := newWSClientImplWithSender(&mockWSClientSender{
+		sendCommandFunc: func(_ context.Context, cmdType string, _ map[string]any) (*WSResultMessage, error) {
 			if cmdType != "config/entity_registry/list" {
 				t.Errorf("unexpected command: %s", cmdType)
 			}
 			return makeWSResultMsg(registryEntries), nil
 		},
-	}
+	})
 
 	ctx := context.Background()
 	entries, err := impl.GetEntityRegistry(ctx)
@@ -492,20 +380,6 @@ func TestWSClientImpl_GetEntityRegistry(t *testing.T) {
 	}
 }
 
-func (t *testableWSClientImplV2) GetEntityRegistry(ctx context.Context) ([]EntityRegistryEntry, error) {
-	result, err := t.sendCommand(ctx, "config/entity_registry/list", nil)
-	if err != nil {
-		return nil, fmt.Errorf("get entity registry failed: %w", err)
-	}
-
-	var entries []EntityRegistryEntry
-	if err := json.Unmarshal(result.Result, &entries); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal entity registry: %w", err)
-	}
-
-	return entries, nil
-}
-
 func TestWSClientImpl_GetDeviceRegistry(t *testing.T) {
 	t.Parallel()
 
@@ -514,14 +388,14 @@ func TestWSClientImpl_GetDeviceRegistry(t *testing.T) {
 		{ID: "device2", Name: "Temperature Sensor", Manufacturer: "Xiaomi"},
 	}
 
-	impl := &testableWSClientImplV2{
-		sendCommand: func(_ context.Context, cmdType string, _ map[string]any) (*WSResultMessage, error) {
+	impl := newWSClientImplWithSender(&mockWSClientSender{
+		sendCommandFunc: func(_ context.Context, cmdType string, _ map[string]any) (*WSResultMessage, error) {
 			if cmdType != "config/device_registry/list" {
 				t.Errorf("unexpected command: %s", cmdType)
 			}
 			return makeWSResultMsg(deviceEntries), nil
 		},
-	}
+	})
 
 	ctx := context.Background()
 	entries, err := impl.GetDeviceRegistry(ctx)
@@ -534,20 +408,6 @@ func TestWSClientImpl_GetDeviceRegistry(t *testing.T) {
 	}
 }
 
-func (t *testableWSClientImplV2) GetDeviceRegistry(ctx context.Context) ([]DeviceRegistryEntry, error) {
-	result, err := t.sendCommand(ctx, "config/device_registry/list", nil)
-	if err != nil {
-		return nil, fmt.Errorf("get device registry failed: %w", err)
-	}
-
-	var entries []DeviceRegistryEntry
-	if err := json.Unmarshal(result.Result, &entries); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal device registry: %w", err)
-	}
-
-	return entries, nil
-}
-
 func TestWSClientImpl_GetAreaRegistry(t *testing.T) {
 	t.Parallel()
 
@@ -556,14 +416,14 @@ func TestWSClientImpl_GetAreaRegistry(t *testing.T) {
 		{AreaID: "area2", Name: "Kitchen"},
 	}
 
-	impl := &testableWSClientImplV2{
-		sendCommand: func(_ context.Context, cmdType string, _ map[string]any) (*WSResultMessage, error) {
+	impl := newWSClientImplWithSender(&mockWSClientSender{
+		sendCommandFunc: func(_ context.Context, cmdType string, _ map[string]any) (*WSResultMessage, error) {
 			if cmdType != "config/area_registry/list" {
 				t.Errorf("unexpected command: %s", cmdType)
 			}
 			return makeWSResultMsg(areaEntries), nil
 		},
-	}
+	})
 
 	ctx := context.Background()
 	entries, err := impl.GetAreaRegistry(ctx)
@@ -574,20 +434,6 @@ func TestWSClientImpl_GetAreaRegistry(t *testing.T) {
 	if len(entries) != 2 {
 		t.Errorf("got %d entries, want 2", len(entries))
 	}
-}
-
-func (t *testableWSClientImplV2) GetAreaRegistry(ctx context.Context) ([]AreaRegistryEntry, error) {
-	result, err := t.sendCommand(ctx, "config/area_registry/list", nil)
-	if err != nil {
-		return nil, fmt.Errorf("get area registry failed: %w", err)
-	}
-
-	var entries []AreaRegistryEntry
-	if err := json.Unmarshal(result.Result, &entries); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal area registry: %w", err)
-	}
-
-	return entries, nil
 }
 
 // TestWSClientImpl_ZonePersonCommands guards the exact WebSocket command
@@ -798,8 +644,8 @@ func TestWSClientImpl_SignPath(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			impl := &testableWSClientImplV2{
-				sendCommand: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
+			impl := newWSClientImplWithSender(&mockWSClientSender{
+				sendCommandFunc: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
 					if cmdType != "auth/sign_path" {
 						t.Errorf("unexpected command: %s", cmdType)
 					}
@@ -808,7 +654,7 @@ func TestWSClientImpl_SignPath(t *testing.T) {
 					}
 					return makeWSResultMsg(map[string]string{"path": tt.wantPath}), nil
 				},
-			}
+			})
 
 			ctx := context.Background()
 			signedPath, err := impl.SignPath(ctx, tt.path, tt.expires)
@@ -823,29 +669,6 @@ func TestWSClientImpl_SignPath(t *testing.T) {
 	}
 }
 
-func (t *testableWSClientImplV2) SignPath(ctx context.Context, path string, expires int) (string, error) {
-	params := map[string]any{
-		"path": path,
-	}
-	if expires > 0 {
-		params["expires"] = expires
-	}
-
-	result, err := t.sendCommand(ctx, "auth/sign_path", params)
-	if err != nil {
-		return "", fmt.Errorf("sign path failed: %w", err)
-	}
-
-	var response struct {
-		Path string `json:"path"`
-	}
-	if err := json.Unmarshal(result.Result, &response); err != nil {
-		return "", fmt.Errorf("failed to unmarshal sign path response: %w", err)
-	}
-
-	return response.Path, nil
-}
-
 func TestWSClientImpl_GetLovelaceConfig(t *testing.T) {
 	t.Parallel()
 
@@ -856,17 +679,17 @@ func TestWSClientImpl_GetLovelaceConfig(t *testing.T) {
 		},
 	}
 
-	impl := &testableWSClientImplV2{
-		sendCommand: func(_ context.Context, cmdType string, _ map[string]any) (*WSResultMessage, error) {
+	impl := newWSClientImplWithSender(&mockWSClientSender{
+		sendCommandFunc: func(_ context.Context, cmdType string, _ map[string]any) (*WSResultMessage, error) {
 			if cmdType != "lovelace/config" {
 				t.Errorf("unexpected command: %s", cmdType)
 			}
 			return makeWSResultMsg(lovelaceConfig), nil
 		},
-	}
+	})
 
 	ctx := context.Background()
-	config, err := impl.GetLovelaceConfig(ctx)
+	config, err := impl.GetLovelaceConfig(ctx, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -874,20 +697,6 @@ func TestWSClientImpl_GetLovelaceConfig(t *testing.T) {
 	if config["title"] != "Home" {
 		t.Errorf("title mismatch: got %v, want Home", config["title"])
 	}
-}
-
-func (t *testableWSClientImplV2) GetLovelaceConfig(ctx context.Context) (map[string]any, error) {
-	result, err := t.sendCommand(ctx, "lovelace/config", nil)
-	if err != nil {
-		return nil, fmt.Errorf("get lovelace config failed: %w", err)
-	}
-
-	var config map[string]any
-	if err := json.Unmarshal(result.Result, &config); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal lovelace config: %w", err)
-	}
-
-	return config, nil
 }
 
 func TestWSClientImpl_BrowseMedia(t *testing.T) {
@@ -902,14 +711,14 @@ func TestWSClientImpl_BrowseMedia(t *testing.T) {
 		},
 	}
 
-	impl := &testableWSClientImplV2{
-		sendCommand: func(_ context.Context, cmdType string, _ map[string]any) (*WSResultMessage, error) {
+	impl := newWSClientImplWithSender(&mockWSClientSender{
+		sendCommandFunc: func(_ context.Context, cmdType string, _ map[string]any) (*WSResultMessage, error) {
 			if cmdType != "media_source/browse_media" {
 				t.Errorf("unexpected command: %s", cmdType)
 			}
 			return makeWSResultMsg(browseResult), nil
 		},
-	}
+	})
 
 	ctx := context.Background()
 	result, err := impl.BrowseMedia(ctx, "")
@@ -926,25 +735,6 @@ func TestWSClientImpl_BrowseMedia(t *testing.T) {
 	}
 }
 
-func (t *testableWSClientImplV2) BrowseMedia(ctx context.Context, mediaContentID string) (*MediaBrowseResult, error) {
-	params := map[string]any{}
-	if mediaContentID != "" {
-		params["media_content_id"] = mediaContentID
-	}
-
-	result, err := t.sendCommand(ctx, "media_source/browse_media", params)
-	if err != nil {
-		return nil, fmt.Errorf("browse media failed: %w", err)
-	}
-
-	var browseResult MediaBrowseResult
-	if err := json.Unmarshal(result.Result, &browseResult); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal browse result: %w", err)
-	}
-
-	return &browseResult, nil
-}
-
 func TestWSClientImpl_GetStatistics(t *testing.T) {
 	t.Parallel()
 
@@ -959,8 +749,8 @@ func TestWSClientImpl_GetStatistics(t *testing.T) {
 		},
 	}
 
-	impl := &testableWSClientImplV2{
-		sendCommand: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
+	impl := newWSClientImplWithSender(&mockWSClientSender{
+		sendCommandFunc: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
 			if cmdType != "recorder/statistics_during_period" {
 				t.Errorf("unexpected command: %s", cmdType)
 			}
@@ -969,7 +759,7 @@ func TestWSClientImpl_GetStatistics(t *testing.T) {
 			}
 			return makeWSResultMsg(statsData), nil
 		},
-	}
+	})
 
 	ctx := context.Background()
 	stats, err := impl.GetStatistics(ctx, []string{"sensor.energy", "sensor.power"}, "hour")
@@ -1007,37 +797,6 @@ func float64Ptr(v float64) *float64 {
 	return &v
 }
 
-func (t *testableWSClientImplV2) GetStatistics(ctx context.Context, statIDs []string, period string) ([]StatisticsResult, error) {
-	startTime := time.Now().Add(-24 * time.Hour)
-
-	params := map[string]any{
-		"statistic_ids": statIDs,
-		"period":        period,
-		"start_time":    startTime.Format(time.RFC3339),
-	}
-
-	result, err := t.sendCommand(ctx, "recorder/statistics_during_period", params)
-	if err != nil {
-		return nil, fmt.Errorf("get statistics failed: %w", err)
-	}
-
-	var statsMap map[string][]StatisticsResult
-	if err := json.Unmarshal(result.Result, &statsMap); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal statistics: %w", err)
-	}
-
-	var allStats []StatisticsResult
-	for statID, stats := range statsMap {
-		// Populate StatisticID from map key (HA API returns it only as key, not in entries)
-		for i := range stats {
-			stats[i].StatisticID = statID
-		}
-		allStats = append(allStats, stats...)
-	}
-
-	return allStats, nil
-}
-
 func TestWSClientImpl_GetCameraStream(t *testing.T) {
 	t.Parallel()
 
@@ -1045,8 +804,8 @@ func TestWSClientImpl_GetCameraStream(t *testing.T) {
 		URL: "http://192.168.1.100:8123/api/hls/abc123/playlist.m3u8",
 	}
 
-	impl := &testableWSClientImplV2{
-		sendCommand: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
+	impl := newWSClientImplWithSender(&mockWSClientSender{
+		sendCommandFunc: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
 			if cmdType != "camera/stream" {
 				t.Errorf("unexpected command: %s", cmdType)
 			}
@@ -1055,7 +814,7 @@ func TestWSClientImpl_GetCameraStream(t *testing.T) {
 			}
 			return makeWSResultMsg(streamInfo), nil
 		},
-	}
+	})
 
 	ctx := context.Background()
 	info, err := impl.GetCameraStream(ctx, "camera.front_door")
@@ -1068,22 +827,6 @@ func TestWSClientImpl_GetCameraStream(t *testing.T) {
 	}
 }
 
-func (t *testableWSClientImplV2) GetCameraStream(ctx context.Context, entityID string) (*StreamInfo, error) {
-	result, err := t.sendCommand(ctx, "camera/stream", map[string]any{
-		"entity_id": entityID,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("get camera stream failed: %w", err)
-	}
-
-	var info StreamInfo
-	if err := json.Unmarshal(result.Result, &info); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal stream info: %w", err)
-	}
-
-	return &info, nil
-}
-
 func TestWSClientImpl_ListScripts(t *testing.T) {
 	t.Parallel()
 
@@ -1093,14 +836,14 @@ func TestWSClientImpl_ListScripts(t *testing.T) {
 		{EntityID: "script.goodnight", State: "off"},
 	}
 
-	impl := &testableWSClientImplV2{
-		sendCommand: func(_ context.Context, cmdType string, _ map[string]any) (*WSResultMessage, error) {
+	impl := newWSClientImplWithSender(&mockWSClientSender{
+		sendCommandFunc: func(_ context.Context, cmdType string, _ map[string]any) (*WSResultMessage, error) {
 			if cmdType == cmdGetStates {
 				return makeWSResultMsg(entities), nil
 			}
 			return nil, errors.New("unexpected command")
 		},
-	}
+	})
 
 	ctx := context.Background()
 	scripts, err := impl.ListScripts(ctx)
@@ -1113,22 +856,6 @@ func TestWSClientImpl_ListScripts(t *testing.T) {
 	}
 }
 
-func (t *testableWSClientImplV2) ListScripts(ctx context.Context) ([]Entity, error) {
-	entities, err := t.GetStates(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	var scripts []Entity
-	for _, entity := range entities {
-		if len(entity.EntityID) > 7 && entity.EntityID[:7] == "script." {
-			scripts = append(scripts, entity)
-		}
-	}
-
-	return scripts, nil
-}
-
 func TestWSClientImpl_ListScenes(t *testing.T) {
 	t.Parallel()
 
@@ -1138,14 +865,14 @@ func TestWSClientImpl_ListScenes(t *testing.T) {
 		{EntityID: "scene.dinner", State: "scening"},
 	}
 
-	impl := &testableWSClientImplV2{
-		sendCommand: func(_ context.Context, cmdType string, _ map[string]any) (*WSResultMessage, error) {
+	impl := newWSClientImplWithSender(&mockWSClientSender{
+		sendCommandFunc: func(_ context.Context, cmdType string, _ map[string]any) (*WSResultMessage, error) {
 			if cmdType == cmdGetStates {
 				return makeWSResultMsg(entities), nil
 			}
 			return nil, errors.New("unexpected command")
 		},
-	}
+	})
 
 	ctx := context.Background()
 	scenes, err := impl.ListScenes(ctx)
@@ -1156,22 +883,6 @@ func TestWSClientImpl_ListScenes(t *testing.T) {
 	if len(scenes) != 2 {
 		t.Errorf("got %d scenes, want 2", len(scenes))
 	}
-}
-
-func (t *testableWSClientImplV2) ListScenes(ctx context.Context) ([]Entity, error) {
-	entities, err := t.GetStates(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	var scenes []Entity
-	for _, entity := range entities {
-		if len(entity.EntityID) > 6 && entity.EntityID[:6] == "scene." {
-			scenes = append(scenes, entity)
-		}
-	}
-
-	return scenes, nil
 }
 
 func TestWSClientImpl_ListHelpers(t *testing.T) {
@@ -1186,14 +897,14 @@ func TestWSClientImpl_ListHelpers(t *testing.T) {
 		{EntityID: "input_datetime.alarm_time", State: "07:00:00"},
 	}
 
-	impl := &testableWSClientImplV2{
-		sendCommand: func(_ context.Context, cmdType string, _ map[string]any) (*WSResultMessage, error) {
+	impl := newWSClientImplWithSender(&mockWSClientSender{
+		sendCommandFunc: func(_ context.Context, cmdType string, _ map[string]any) (*WSResultMessage, error) {
 			if cmdType == "get_states" {
 				return makeWSResultMsg(entities), nil
 			}
 			return nil, errors.New("unexpected command")
 		},
-	}
+	})
 
 	ctx := context.Background()
 	helpers, err := impl.ListHelpers(ctx)
@@ -1204,33 +915,6 @@ func TestWSClientImpl_ListHelpers(t *testing.T) {
 	if len(helpers) != 5 {
 		t.Errorf("got %d helpers, want 5", len(helpers))
 	}
-}
-
-func (t *testableWSClientImplV2) ListHelpers(ctx context.Context) ([]Entity, error) {
-	entities, err := t.GetStates(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	prefixes := []string{
-		"input_boolean.",
-		"input_number.",
-		"input_text.",
-		"input_select.",
-		"input_datetime.",
-	}
-
-	var helpers []Entity
-	for _, entity := range entities {
-		for _, prefix := range prefixes {
-			if len(entity.EntityID) > len(prefix) && entity.EntityID[:len(prefix)] == prefix {
-				helpers = append(helpers, entity)
-				break
-			}
-		}
-	}
-
-	return helpers, nil
 }
 
 // TestDomainPrefixConstants verifies the domain prefix constants are correctly defined.
