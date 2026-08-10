@@ -2953,14 +2953,15 @@ func TestManageAutomation_PatchReload(t *testing.T) {
 	t.Run("patch reloads automation domain after a real change", func(t *testing.T) {
 		t.Parallel()
 		var reloadDomain, reloadService string
+		var reloadData map[string]any
 		client := &UniversalMockClient{}
 		client.GetAutomationFn = func(context.Context, string) (*homeassistant.Automation, error) {
 			cfg := *baseConfig
 			return &homeassistant.Automation{EntityID: "automation.morning_routine", Config: &cfg}, nil
 		}
 		client.UpdateAutomationFn = func(context.Context, string, homeassistant.AutomationConfig) error { return nil }
-		client.CallServiceFn = func(_ context.Context, domain, service string, _ map[string]any) ([]homeassistant.Entity, error) {
-			reloadDomain, reloadService = domain, service
+		client.CallServiceFn = func(_ context.Context, domain, service string, data map[string]any) ([]homeassistant.Entity, error) {
+			reloadDomain, reloadService, reloadData = domain, service, data
 			return nil, nil
 		}
 		client.GetEntityRegistryFn = storageManagedRegistry("automation.morning_routine")
@@ -2974,6 +2975,50 @@ func TestManageAutomation_PatchReload(t *testing.T) {
 		}
 		if reloadDomain != "automation" || reloadService != "reload" {
 			t.Errorf("expected automation.reload to be called, got domain=%q service=%q", reloadDomain, reloadService)
+		}
+		// The reload must be scoped to the edited automation's config id so other automations'
+		// in-flight "for:" trigger timers are not reset as collateral damage (#163).
+		if reloadData["id"] != "morning_routine" {
+			t.Errorf("expected targeted reload with id=morning_routine, got data=%v", reloadData)
+		}
+	})
+
+	t.Run("patch falls back to a full reload when the targeted reload call fails", func(t *testing.T) {
+		t.Parallel()
+		var calls []map[string]any
+		client := &UniversalMockClient{}
+		client.GetAutomationFn = func(context.Context, string) (*homeassistant.Automation, error) {
+			cfg := *baseConfig
+			return &homeassistant.Automation{EntityID: "automation.morning_routine", Config: &cfg}, nil
+		}
+		client.UpdateAutomationFn = func(context.Context, string, homeassistant.AutomationConfig) error { return nil }
+		client.CallServiceFn = func(_ context.Context, _, _ string, data map[string]any) ([]homeassistant.Entity, error) {
+			calls = append(calls, data)
+			if data != nil && data["id"] != nil {
+				return nil, errors.New("id field not supported on this HA version")
+			}
+			return nil, nil
+		}
+		client.GetEntityRegistryFn = storageManagedRegistry("automation.morning_routine")
+
+		result, err := h.handleManageAutomation(fastCtx(), client, patchArgs)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("expected success via full-reload fallback, got error: %s", result.Content[0].Text)
+		}
+		if strings.Contains(result.Content[0].Text, "reload after save failed") {
+			t.Errorf("fallback full reload succeeded, should not report reload failure: %s", result.Content[0].Text)
+		}
+		if len(calls) != 2 {
+			t.Fatalf("expected targeted reload attempt followed by a full-reload fallback, got %d calls: %v", len(calls), calls)
+		}
+		if calls[0]["id"] != "morning_routine" {
+			t.Errorf("expected first call to be targeted, got %v", calls[0])
+		}
+		if calls[1] != nil {
+			t.Errorf("expected fallback call to be a full reload (nil data), got %v", calls[1])
 		}
 	})
 
@@ -3190,11 +3235,12 @@ func TestManageAutomation_UpdateReload(t *testing.T) {
 	t.Run("update reloads automation domain after a real change", func(t *testing.T) {
 		t.Parallel()
 		var reloadDomain, reloadService string
+		var reloadData map[string]any
 		client := &UniversalMockClient{}
 		client.GetAutomationFn = func(context.Context, string) (*homeassistant.Automation, error) { return makeAuto(), nil }
 		client.UpdateAutomationFn = func(context.Context, string, homeassistant.AutomationConfig) error { return nil }
-		client.CallServiceFn = func(_ context.Context, domain, service string, _ map[string]any) ([]homeassistant.Entity, error) {
-			reloadDomain, reloadService = domain, service
+		client.CallServiceFn = func(_ context.Context, domain, service string, data map[string]any) ([]homeassistant.Entity, error) {
+			reloadDomain, reloadService, reloadData = domain, service, data
 			return nil, nil
 		}
 		client.GetEntityRegistryFn = storageManagedRegistry("automation.test_automation")
@@ -3208,6 +3254,47 @@ func TestManageAutomation_UpdateReload(t *testing.T) {
 		}
 		if reloadDomain != "automation" || reloadService != "reload" {
 			t.Errorf("expected automation.reload to be called, got domain=%q service=%q", reloadDomain, reloadService)
+		}
+		// Scoped to the edited automation's config id so other automations' in-flight
+		// "for:" trigger timers are preserved (#163).
+		if reloadData["id"] != "test_automation" {
+			t.Errorf("expected targeted reload with id=test_automation, got data=%v", reloadData)
+		}
+	})
+
+	t.Run("update falls back to a full reload when the targeted reload call fails", func(t *testing.T) {
+		t.Parallel()
+		var calls []map[string]any
+		client := &UniversalMockClient{}
+		client.GetAutomationFn = func(context.Context, string) (*homeassistant.Automation, error) { return makeAuto(), nil }
+		client.UpdateAutomationFn = func(context.Context, string, homeassistant.AutomationConfig) error { return nil }
+		client.CallServiceFn = func(_ context.Context, _, _ string, data map[string]any) ([]homeassistant.Entity, error) {
+			calls = append(calls, data)
+			if data != nil && data["id"] != nil {
+				return nil, errors.New("id field not supported on this HA version")
+			}
+			return nil, nil
+		}
+		client.GetEntityRegistryFn = storageManagedRegistry("automation.test_automation")
+
+		result, err := h.handleManageAutomation(fastCtx(), client, updateArgs)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("expected success via full-reload fallback, got error: %s", result.Content[0].Text)
+		}
+		if strings.Contains(result.Content[0].Text, "reload after save failed") {
+			t.Errorf("fallback full reload succeeded, should not report reload failure: %s", result.Content[0].Text)
+		}
+		if len(calls) != 2 {
+			t.Fatalf("expected targeted reload attempt followed by a full-reload fallback, got %d calls: %v", len(calls), calls)
+		}
+		if calls[0]["id"] != "test_automation" {
+			t.Errorf("expected first call to be targeted, got %v", calls[0])
+		}
+		if calls[1] != nil {
+			t.Errorf("expected fallback call to be a full reload (nil data), got %v", calls[1])
 		}
 	})
 
@@ -3253,6 +3340,83 @@ func TestManageAutomation_UpdateReload(t *testing.T) {
 		}
 		if reloadCalled {
 			t.Error("no-op update must not trigger a reload")
+		}
+	})
+}
+
+// TestManageAutomation_CreateReload verifies that a successful create triggers a reload scoped
+// to the newly-created automation's config id, rather than a full-domain reload that would reset
+// every other automation's in-flight "for:" trigger timers (#163).
+func TestManageAutomation_CreateReload(t *testing.T) {
+	t.Parallel()
+
+	h := &AutomationHandlers{}
+	fastCtx := func() context.Context {
+		return mcp.WithWaitConfig(context.Background(), mcp.WaitConfig{Timeout: 50 * time.Millisecond, PollInterval: 5 * time.Millisecond})
+	}
+	createArgs := map[string]any{
+		"action":            "create",
+		"alias":             "Morning Routine",
+		"trigger":           []any{map[string]any{"trigger": "time", "at": "07:00"}},
+		"automation_action": []any{map[string]any{"action": "light.turn_on"}},
+	}
+
+	t.Run("create reloads only the new automation's config id", func(t *testing.T) {
+		t.Parallel()
+		var reloadData map[string]any
+		client := &UniversalMockClient{}
+		client.CreateAutomationFn = func(context.Context, homeassistant.AutomationConfig) error { return nil }
+		client.CallServiceFn = func(_ context.Context, _, _ string, data map[string]any) ([]homeassistant.Entity, error) {
+			reloadData = data
+			return nil, nil
+		}
+		client.GetStateFn = func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+			return &homeassistant.Entity{EntityID: entityID, State: "on"}, nil
+		}
+
+		result, err := h.handleManageAutomation(fastCtx(), client, createArgs)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("expected success, got error: %s", result.Content[0].Text)
+		}
+		if reloadData["id"] != "morning_routine" {
+			t.Errorf("expected targeted reload with id=morning_routine, got data=%v", reloadData)
+		}
+	})
+
+	t.Run("create falls back to a full reload when the targeted reload call fails", func(t *testing.T) {
+		t.Parallel()
+		var calls []map[string]any
+		client := &UniversalMockClient{}
+		client.CreateAutomationFn = func(context.Context, homeassistant.AutomationConfig) error { return nil }
+		client.CallServiceFn = func(_ context.Context, _, _ string, data map[string]any) ([]homeassistant.Entity, error) {
+			calls = append(calls, data)
+			if data != nil && data["id"] != nil {
+				return nil, errors.New("id field not supported on this HA version")
+			}
+			return nil, nil
+		}
+		client.GetStateFn = func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+			return &homeassistant.Entity{EntityID: entityID, State: "on"}, nil
+		}
+
+		result, err := h.handleManageAutomation(fastCtx(), client, createArgs)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("expected success, got error: %s", result.Content[0].Text)
+		}
+		if len(calls) != 2 {
+			t.Fatalf("expected targeted reload attempt followed by a full-reload fallback, got %d calls: %v", len(calls), calls)
+		}
+		if calls[0]["id"] != "morning_routine" {
+			t.Errorf("expected first call to be targeted, got %v", calls[0])
+		}
+		if calls[1] != nil {
+			t.Errorf("expected fallback call to be a full reload (nil data), got %v", calls[1])
 		}
 	})
 }

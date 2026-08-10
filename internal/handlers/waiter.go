@@ -157,6 +157,32 @@ func reloadDomain(ctx context.Context, client homeassistant.Client, domain strin
 	return err == nil
 }
 
+// reloadDomainTargeted reloads a single config entity by its bare config id, so in-flight
+// "for:" trigger timers on OTHER entities of the domain are preserved (a full reload resets
+// them all). Home Assistant's automation.reload service reads an undocumented "id" field from
+// service data to reload just that entity; on HA versions without this feature the extra key is
+// ignored and every entity is reloaded, which is why a failed targeted call falls back to a full
+// reload rather than being treated as an error (the config write itself already succeeded, and
+// #126 requires the change to become visible via some reload). Returns true when either call
+// succeeds.
+func reloadDomainTargeted(ctx context.Context, client homeassistant.Client, domain, configID string) bool {
+	if configID != "" {
+		if _, err := client.CallService(ctx, domain, "reload", map[string]any{"id": configID}); err == nil {
+			return true
+		}
+	}
+	_, err := client.CallService(ctx, domain, "reload", nil)
+	return err == nil
+}
+
+// reloadTargetedAndWaitForEntity is the create-path counterpart to reloadAndWaitForEntity: it
+// scopes the post-create reload to the new entity's config id (see reloadDomainTargeted) before
+// waiting for the entity to appear.
+func reloadTargetedAndWaitForEntity(ctx context.Context, client homeassistant.Client, domain, configID, entityID string) (*homeassistant.Entity, bool) {
+	reloadDomainTargeted(ctx, client, domain, configID)
+	return waitForEntityAppear(ctx, client, entityID)
+}
+
 // waitForTraces polls trace/list until at least one trace is returned or the timeout expires.
 // Returns the trace list and whether any were found before the timeout.
 // Used when wait=true on manage_trace:list to handle async trace recording.

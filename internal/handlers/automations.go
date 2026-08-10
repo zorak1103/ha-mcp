@@ -32,11 +32,16 @@ const (
 
 // automationForTimerReloadWarning is appended to patch/update success messages when the
 // automation has triggers with a "for:" duration. Update/patch trigger an explicit
-// automation.reload after a successful config write (see reloadDomain in waiter.go) so the
-// change is immediately visible to a subsequent get (#126) — but that reload tears down
-// trigger runtime state (including in-flight "for:" timers). If the monitored entity is
-// already in the target state, no new transition occurs and the timer never re-fires —
-// leaving actuators stuck until the next full state cycle.
+// automation.reload scoped to the edited automation's config id after a successful config write
+// (see reloadDomainTargeted in waiter.go) so the change is immediately visible to a subsequent
+// get (#126) — but that reload tears down the edited automation's own trigger runtime state
+// (including any in-flight "for:" timer); HA rebuilds triggers on reload even for a single
+// entity, and a state-trigger's "for:" countdown only starts on a state transition, so it cannot
+// be resumed. Scoping the reload to just this automation's config id (#163) means OTHER
+// automations' in-flight "for:" timers are no longer reset as collateral damage — only the one
+// actually being edited is affected. If its monitored entity is already in the target state, no
+// new transition occurs and the timer never re-fires — leaving actuators stuck until the next
+// full state cycle.
 const automationForTimerReloadWarning = " (warning: saving reloads the automation in Home Assistant, " +
 	"which resets any in-flight 'for:' trigger timer; if the monitored entity is already in the " +
 	"target state the trigger will not re-fire until the next state transition — verify dependent " +
@@ -416,7 +421,7 @@ func (h *AutomationHandlers) handleCreate(ctx context.Context, client homeassist
 		successMsg += " (manual-only: placeholder trigger inserted)"
 	}
 
-	if _, appeared := reloadAndWaitForEntity(ctx, client, "automation", entityID); !appeared {
+	if _, appeared := reloadTargetedAndWaitForEntity(ctx, client, "automation", id, entityID); !appeared {
 		successMsg += " (warning: automation entity not yet visible, reload may be pending)"
 	}
 
@@ -474,7 +479,7 @@ func (h *AutomationHandlers) handleUpdate(ctx context.Context, client homeassist
 	}
 
 	successMsg := fmt.Sprintf("Automation '%s' updated successfully", automationID)
-	if !reloadDomain(ctx, client, "automation") {
+	if !reloadDomainTargeted(ctx, client, "automation", actualConfigID) {
 		successMsg += automationReloadFailedWarning
 	} else if triggersHaveForTimer(current.Config.Triggers) {
 		successMsg += automationForTimerReloadWarning
@@ -630,7 +635,7 @@ func applyPatchedAutomationWrite(
 	}
 
 	successMsg := fmt.Sprintf("Automation '%s' patched successfully (%d operations applied)", automationID, numOps)
-	if !reloadDomain(ctx, client, "automation") {
+	if !reloadDomainTargeted(ctx, client, "automation", actualConfigID) {
 		successMsg += automationReloadFailedWarning
 	} else if triggersHaveForTimer(newConfig.Triggers) || triggersHaveForTimer(oldTriggers) {
 		// Warn when either the old or the new config uses "for:" triggers — the reload resets any
