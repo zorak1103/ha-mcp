@@ -178,8 +178,8 @@ func unloadedConfigHint(seg, fullPath string, rest, available []string) string {
 			return "" // at least one structural key is present - a genuine path error, not an unloaded config
 		}
 	}
-	return "the base config for this patch looks unloaded (no triggers/actions/conditions/sequence present) - " +
-		"list operations don't populate Config; fetch the full config via 'get' first"
+	return "the base config for this patch is missing all of triggers/actions/conditions/sequence at the root - " +
+		"if this is an automation or script, list operations don't populate Config; fetch the full config via 'get' first"
 }
 
 // describeLocation renders a navigation-failure location: the JSON Pointer prefix

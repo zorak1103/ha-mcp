@@ -406,7 +406,7 @@ func TestGet_ActionBlockHints(t *testing.T) {
 				"alias": "Example",
 			},
 			path:    "/triggers/0/entity_id",
-			wantMsg: []string{"looks unloaded", "get"},
+			wantMsg: []string{"missing all of", "get"},
 		},
 		{
 			name: "root-level miss on unloaded script config (sequence) gives unloaded-config hint, not the choose/repeat hint",
@@ -414,7 +414,7 @@ func TestGet_ActionBlockHints(t *testing.T) {
 				"alias": "Example Script",
 			},
 			path:      "/sequence/0",
-			wantMsg:   []string{"looks unloaded"},
+			wantMsg:   []string{"missing all of"},
 			wantNoMsg: []string{`"choose"`, `"repeat"`},
 		},
 		{
@@ -426,7 +426,7 @@ func TestGet_ActionBlockHints(t *testing.T) {
 				"triggers": []any{map[string]any{"platform": "state"}},
 			},
 			path:      "/actions/0",
-			wantNoMsg: []string{"looks unloaded"},
+			wantNoMsg: []string{"missing all of"},
 		},
 	}
 
