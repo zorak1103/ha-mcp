@@ -160,11 +160,12 @@ func reloadDomain(ctx context.Context, client homeassistant.Client, domain strin
 // reloadDomainTargeted reloads a single config entity by its bare config id, so in-flight
 // "for:" trigger timers on OTHER entities of the domain are preserved (a full reload resets
 // them all). Home Assistant's automation.reload service reads an undocumented "id" field from
-// service data to reload just that entity; on HA versions without this feature the extra key is
-// ignored and every entity is reloaded, which is why a failed targeted call falls back to a full
-// reload rather than being treated as an error (the config write itself already succeeded, and
-// #126 requires the change to become visible via some reload). Returns true when either call
-// succeeds.
+// service data to reload just that entity. HA versions without "id" support degrade one of two
+// ways: they either ignore the unknown key (a full reload runs and the call still succeeds — no
+// targeted benefit, but the write stays visible) or they reject it (the call errors and we fall
+// back to an explicit full reload below). Either way the config write remains visible (#126); a
+// targeted failure is never surfaced as an error because the write itself already succeeded.
+// Returns true when either call succeeds.
 func reloadDomainTargeted(ctx context.Context, client homeassistant.Client, domain, configID string) bool {
 	if configID != "" {
 		if _, err := client.CallService(ctx, domain, "reload", map[string]any{"id": configID}); err == nil {
