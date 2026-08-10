@@ -147,7 +147,7 @@ func addHelperManagementTools(result map[string]ToolClassification) {
 	}
 	result["manage_config_entry"] = ToolClassification{
 		ParamName: "action",
-		Actions:   map[string]ActionCategory{"list": CategoryRead, "get": CategoryRead},
+		Actions:   map[string]ActionCategory{"list": CategoryRead, "get": CategoryRead, "delete": CategoryWrite},
 	}
 }
 

@@ -125,6 +125,14 @@ func TestToolFilterEngine_ReadOnly(t *testing.T) {
 	if !filter.IsActionAllowed("manage_automation", map[string]any{"action": "list"}) {
 		t.Error("manage_automation:list should be allowed in read-only mode")
 	}
+
+	if filter.IsActionAllowed("manage_config_entry", map[string]any{"action": "delete"}) {
+		t.Error("manage_config_entry:delete should be blocked in read-only mode")
+	}
+
+	if !filter.IsActionAllowed("manage_config_entry", map[string]any{"action": "list"}) {
+		t.Error("manage_config_entry:list should be allowed in read-only mode")
+	}
 }
 
 // TestToolFilterEngine_Blacklist_Tool verifies blacklisting entire tools.
