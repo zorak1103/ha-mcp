@@ -331,6 +331,10 @@ func (m *mockClient) GetConfigEntryOptions(context.Context, string) (map[string]
 	return map[string]any{}, nil
 }
 
+func (m *mockClient) DeleteConfigEntry(ctx context.Context, entryID string) error {
+	return nil
+}
+
 func (m *mockClient) SendHACSCommand(ctx context.Context, command string, data map[string]any) (any, error) {
 	return nil, nil
 }
@@ -834,5 +838,45 @@ func TestCachedClient_InvalidationAfterUpdateDeviceRegistry(t *testing.T) {
 	}
 	if mock.deviceRegistryCallCount != 2 {
 		t.Errorf("Expected 2 API calls (cache invalidated), got %d", mock.deviceRegistryCallCount)
+	}
+}
+
+func TestCachedClient_InvalidationAfterDeleteConfigEntry(t *testing.T) {
+	mock := &mockClient{}
+	cfg := config.CacheConfig{
+		Enabled:         true,
+		ServicesTTLMin:  60,
+		ConfigTTLMin:    30,
+		EntityRegTTLMin: 10,
+		DeviceRegTTLMin: 10,
+		AreaRegTTLMin:   30,
+	}
+	logger := logging.New(logging.LevelError)
+	client := NewCachedClient(mock, cfg, logger)
+
+	ctx := context.Background()
+
+	// Populate entity registry cache
+	_, err := client.GetEntityRegistry(ctx)
+	if err != nil {
+		t.Fatalf("GetEntityRegistry failed: %v", err)
+	}
+	if mock.entityRegistryCallCount != 1 {
+		t.Errorf("Expected 1 API call, got %d", mock.entityRegistryCallCount)
+	}
+
+	// Delete a config entry - should invalidate registry caches
+	err = client.DeleteConfigEntry(ctx, "abc123")
+	if err != nil {
+		t.Fatalf("DeleteConfigEntry failed: %v", err)
+	}
+
+	// Next call should hit API again (cache invalidated)
+	_, err = client.GetEntityRegistry(ctx)
+	if err != nil {
+		t.Fatalf("GetEntityRegistry failed: %v", err)
+	}
+	if mock.entityRegistryCallCount != 2 {
+		t.Errorf("Expected 2 API calls (cache invalidated), got %d", mock.entityRegistryCallCount)
 	}
 }

@@ -1231,6 +1231,13 @@ func (c *HybridClient) GetConfigEntryOptions(ctx context.Context, entryID string
 	return extractOptionsFromSchema(result.DataSchema), nil
 }
 
+// DeleteConfigEntry deletes a config entry and all its associated devices/entities.
+// REST-only: Home Assistant has no reliable config_entries/{delete,remove} WS command,
+// same class of gap as automation/script/scene CRUD (see CLAUDE.md).
+func (c *HybridClient) DeleteConfigEntry(ctx context.Context, entryID string) error {
+	return c.rest.DeleteConfigEntry(ctx, entryID)
+}
+
 // navigateOptionsFlowMenu navigates an options flow menu to the correct form step.
 func (c *HybridClient) navigateOptionsFlowMenu(ctx context.Context, entryID string, result *OptionsFlowResult) (*OptionsFlowResult, error) {
 	// Find the entity domain for this config entry

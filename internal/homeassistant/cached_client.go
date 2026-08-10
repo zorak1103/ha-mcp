@@ -957,6 +957,16 @@ func (c *CachedClient) GetConfigEntryOptions(ctx context.Context, entryID string
 	return c.client.GetConfigEntryOptions(ctx, entryID)
 }
 
+// DeleteConfigEntry deletes a config entry and invalidates registry caches, since
+// removing a config entry removes its associated devices and entities.
+func (c *CachedClient) DeleteConfigEntry(ctx context.Context, entryID string) error {
+	err := c.client.DeleteConfigEntry(ctx, entryID)
+	if err == nil {
+		c.InvalidateRegistryCaches()
+	}
+	return err
+}
+
 //nolint:revive // Delegated method
 func (c *CachedClient) SendHACSCommand(ctx context.Context, command string, data map[string]any) (any, error) {
 	return c.client.SendHACSCommand(ctx, command, data)

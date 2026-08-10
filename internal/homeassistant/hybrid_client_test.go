@@ -2439,3 +2439,25 @@ func TestExtractOptionsFromSchema_SkipsNilSuggestedValue(t *testing.T) {
 		t.Errorf("hysteresis (a real zero value, not nil) must still be included, got %v", options["hysteresis"])
 	}
 }
+
+func TestHybridClient_DeleteConfigEntry(t *testing.T) {
+	t.Parallel()
+
+	var gotEntryID string
+	rest := &mockRESTOperations{
+		deleteConfigEntryFunc: func(_ context.Context, entryID string) error {
+			gotEntryID = entryID
+			return nil
+		},
+	}
+	ws := &mockWSOperations{}
+	client := NewHybridClientWithInterfaces(ws, rest)
+
+	err := client.DeleteConfigEntry(context.Background(), "abc123")
+	if err != nil {
+		t.Fatalf("DeleteConfigEntry failed: %v", err)
+	}
+	if gotEntryID != "abc123" {
+		t.Errorf("expected entry_id 'abc123' forwarded to REST client, got %q", gotEntryID)
+	}
+}
