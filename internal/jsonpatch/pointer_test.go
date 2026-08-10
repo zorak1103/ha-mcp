@@ -399,6 +399,35 @@ func TestGet_ActionBlockHints(t *testing.T) {
 			path:      "/actions/0/notarealkey",
 			wantNoMsg: []string{"sibling", "nested inside"},
 		},
+		{
+			name: "root-level miss on unloaded automation config gives unloaded-config hint",
+			doc: map[string]any{
+				"id":    "1",
+				"alias": "Example",
+			},
+			path:    "/triggers/0/entity_id",
+			wantMsg: []string{"looks unloaded", "get"},
+		},
+		{
+			name: "root-level miss on unloaded script config (sequence) gives unloaded-config hint, not the choose/repeat hint",
+			doc: map[string]any{
+				"alias": "Example Script",
+			},
+			path:      "/sequence/0",
+			wantMsg:   []string{"looks unloaded"},
+			wantNoMsg: []string{`"choose"`, `"repeat"`},
+		},
+		{
+			name: "root-level miss on a structural key is suppressed when a DIFFERENT structural key is already present",
+			doc: map[string]any{
+				// "triggers" is present (a loaded, if minimal, automation config) - the missing
+				// "actions" key here is far more likely a genuinely empty/omitted actions list
+				// or a real typo than an unloaded config, so the hint must NOT fire.
+				"triggers": []any{map[string]any{"platform": "state"}},
+			},
+			path:      "/actions/0",
+			wantNoMsg: []string{"looks unloaded"},
+		},
 	}
 
 	for _, tt := range tests {

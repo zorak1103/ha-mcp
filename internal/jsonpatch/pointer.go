@@ -156,6 +156,32 @@ func actionBlockKeyHint(key string) string {
 	}
 }
 
+// unloadedConfigHint detects the common case where a patch's base config came from a `list`
+// call (which omits automation/script bodies, per ListAutomations/ListScripts/ListScenes not
+// populating Config) rather than `get`, surfacing a clearer error than a bare "key not found".
+// Fires only for a root-level miss on one of automation/script's top-level structural keys,
+// and only when NONE of those keys are present anywhere in the available set - a genuinely
+// nested miss, or a root-level miss where some structural keys ARE present (more likely a typo
+// in the path than an unloaded config), is left to actionBlockKeyHint or the bare error.
+func unloadedConfigHint(seg, fullPath string, rest, available []string) string {
+	switch seg {
+	case "triggers", "conditions", "actions", "sequence":
+	default:
+		return ""
+	}
+	if navigatedPrefix(fullPath, rest) != "" {
+		return "" // not a root-level miss
+	}
+	for _, k := range available {
+		switch k {
+		case "triggers", "conditions", "actions", "sequence":
+			return "" // at least one structural key is present - a genuine path error, not an unloaded config
+		}
+	}
+	return "the base config for this patch looks unloaded (no triggers/actions/conditions/sequence present) - " +
+		"list operations don't populate Config; fetch the full config via 'get' first"
+}
+
 // describeLocation renders a navigation-failure location: the JSON Pointer prefix
 // successfully navigated before the failing segment, or a "document root" descriptor
 // when the failure occurred on the first segment. Shared by all navigation-failure
@@ -174,6 +200,9 @@ func describeLocation(fullPath string, rest []string) string {
 // Home Assistant action-block keyword (see actionBlockKeyHint).
 func keyNotFoundError(seg, fullPath string, rest, available []string) error {
 	err := fmt.Errorf("key %q not found at %s (available keys: %v)", seg, describeLocation(fullPath, rest), available)
+	if hint := unloadedConfigHint(seg, fullPath, rest, available); hint != "" {
+		return fmt.Errorf("%w; %s", err, hint)
+	}
 	if hint := actionBlockKeyHint(seg); hint != "" {
 		err = fmt.Errorf("%w; %s", err, hint)
 	}
