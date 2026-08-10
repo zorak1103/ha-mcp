@@ -63,7 +63,7 @@ func (f *NaturalFormatter) FormatEntities(_ context.Context, entities []homeassi
 	// Group by domain or list entities
 	switch {
 	case opts.GroupByDomain:
-		parts = append(parts, f.formatEntitiesByDomain(entities, opts.Verbose))
+		parts = append(parts, f.formatEntitiesByDomain(entities))
 	case opts.Verbose:
 		// List all entities with full detail
 		for _, e := range entities {
@@ -77,7 +77,7 @@ func (f *NaturalFormatter) FormatEntities(_ context.Context, entities []homeassi
 		}
 		lines := make([]string, 0, len(capped)+1)
 		for _, e := range capped {
-			lines = append(lines, f.formatEntityCompact(e))
+			lines = append(lines, "- "+f.formatEntityNL(e, false))
 		}
 		if len(entities) > compactListCap {
 			lines = append(lines, fmt.Sprintf("... and %d more (use pagination or verbose=true for full list)", len(entities)-compactListCap))
@@ -86,17 +86,6 @@ func (f *NaturalFormatter) FormatEntities(_ context.Context, entities []homeassi
 	}
 
 	return strings.Join(parts, "\n\n"), nil
-}
-
-// formatEntityCompact returns a compact single-line summary of an entity:
-// "- entity_id (Friendly Name) — state".
-func (f *NaturalFormatter) formatEntityCompact(e homeassistant.Entity) string {
-	name := GetFriendlyName(e.EntityID, e.Attributes)
-	if name == e.EntityID {
-		// No distinct friendly name — omit the redundant parens
-		return fmt.Sprintf("- %s — %s", e.EntityID, e.State)
-	}
-	return fmt.Sprintf("- %s (%s) — %s", e.EntityID, name, e.State)
 }
 
 // FormatHistory formats history entries in natural language.
@@ -237,7 +226,7 @@ func (f *NaturalFormatter) formatEntityNL(entity homeassistant.Entity, includeTi
 		details = fmt.Sprintf("is %s", state)
 	}
 
-	result := fmt.Sprintf("%s %s", name, details)
+	result := fmt.Sprintf("%s (%s) %s", name, entity.EntityID, details)
 
 	if includeTime && !entity.LastChanged.IsZero() {
 		timeSince := FormatTimeSince(entity.LastChanged, f.now)
@@ -458,7 +447,7 @@ func (f *NaturalFormatter) buildEntitiesSummary(entities []homeassistant.Entity)
 }
 
 // formatEntitiesByDomain groups entities by domain and formats them.
-func (f *NaturalFormatter) formatEntitiesByDomain(entities []homeassistant.Entity, verbose bool) string {
+func (f *NaturalFormatter) formatEntitiesByDomain(entities []homeassistant.Entity) string {
 	// Group by domain
 	byDomain := make(map[string][]homeassistant.Entity)
 	for _, e := range entities {
@@ -476,14 +465,14 @@ func (f *NaturalFormatter) formatEntitiesByDomain(entities []homeassistant.Entit
 	var parts []string
 	for _, domain := range sortedDomains {
 		domainEntities := byDomain[domain]
-		parts = append(parts, f.formatDomainGroup(domain, domainEntities, verbose))
+		parts = append(parts, f.formatDomainGroup(domain, domainEntities))
 	}
 
 	return strings.Join(parts, "\n\n")
 }
 
 // formatDomainGroup formats a group of entities from the same domain.
-func (f *NaturalFormatter) formatDomainGroup(domain string, entities []homeassistant.Entity, _ bool) string {
+func (f *NaturalFormatter) formatDomainGroup(domain string, entities []homeassistant.Entity) string {
 	var parts []string
 
 	// Domain header with count

@@ -30,7 +30,7 @@ func TestNaturalFormatter_FormatEntity(t *testing.T) {
 				},
 				LastChanged: now.Add(-2 * time.Hour),
 			},
-			contains: []string{"Living Room Light", "is on", "80% brightness", "2 hours ago"},
+			contains: []string{"Living Room Light", "light.living_room", "is on", "80% brightness", "2 hours ago"},
 		},
 		{
 			name: "light off",
@@ -42,7 +42,7 @@ func TestNaturalFormatter_FormatEntity(t *testing.T) {
 				},
 				LastChanged: now.Add(-30 * time.Minute),
 			},
-			contains: []string{"Bedroom Light", "is off", "30 mins ago"},
+			contains: []string{"Bedroom Light", "light.bedroom", "is off", "30 mins ago"},
 		},
 		{
 			name: "climate heating",
@@ -56,7 +56,7 @@ func TestNaturalFormatter_FormatEntity(t *testing.T) {
 				},
 				LastChanged: now.Add(-1 * time.Hour),
 			},
-			contains: []string{"Thermostat", "is heat", "21.5°", "target: 23.0°"},
+			contains: []string{"Thermostat", "climate.thermostat", "is heat", "21.5°", "target: 23.0°"},
 		},
 		{
 			name: "sensor with unit",
@@ -69,7 +69,7 @@ func TestNaturalFormatter_FormatEntity(t *testing.T) {
 				},
 				LastChanged: now.Add(-5 * time.Minute),
 			},
-			contains: []string{"Temperature Sensor", "is 22.5 °C"},
+			contains: []string{"Temperature Sensor", "sensor.temperature", "is 22.5 °C"},
 		},
 		{
 			name: "binary_sensor motion detected",
@@ -82,7 +82,7 @@ func TestNaturalFormatter_FormatEntity(t *testing.T) {
 				},
 				LastChanged: now.Add(-1 * time.Minute),
 			},
-			contains: []string{"Motion Sensor", "detected motion", "1 min ago"},
+			contains: []string{"Motion Sensor", "binary_sensor.motion", "detected motion", "1 min ago"},
 		},
 		{
 			name: "binary_sensor door open",
@@ -95,7 +95,7 @@ func TestNaturalFormatter_FormatEntity(t *testing.T) {
 				},
 				LastChanged: now.Add(-10 * time.Minute),
 			},
-			contains: []string{"Front Door", "is open"},
+			contains: []string{"Front Door", "binary_sensor.front_door", "is open"},
 		},
 		{
 			name: "media player playing",
@@ -109,7 +109,7 @@ func TestNaturalFormatter_FormatEntity(t *testing.T) {
 				},
 				LastChanged: now.Add(-15 * time.Minute),
 			},
-			contains: []string{"Living Room Speaker", "is playing", "Bohemian Rhapsody", "by Queen"},
+			contains: []string{"Living Room Speaker", "media_player.speaker", "is playing", "Bohemian Rhapsody", "by Queen"},
 		},
 		{
 			name: "update available",
@@ -123,7 +123,7 @@ func TestNaturalFormatter_FormatEntity(t *testing.T) {
 				},
 				LastChanged: now.Add(-1 * time.Hour),
 			},
-			contains: []string{"Home Assistant Core Update", "Update available", "2024.1.0", "2024.1.5"},
+			contains: []string{"Home Assistant Core Update", "update.home_assistant_core", "Update available", "2024.1.0", "2024.1.5"},
 		},
 		{
 			name: "update up to date",
@@ -137,7 +137,7 @@ func TestNaturalFormatter_FormatEntity(t *testing.T) {
 				},
 				LastChanged: now.Add(-2 * time.Hour),
 			},
-			contains: []string{"HACS", "Up to date", "1.34.0"},
+			contains: []string{"HACS", "update.hacs", "Up to date", "1.34.0"},
 		},
 		{
 			name: "update in progress",
@@ -152,7 +152,7 @@ func TestNaturalFormatter_FormatEntity(t *testing.T) {
 				},
 				LastChanged: now.Add(-5 * time.Minute),
 			},
-			contains: []string{"ESPHome", "Installing update"},
+			contains: []string{"ESPHome", "update.esphome", "Installing update"},
 		},
 	}
 
@@ -169,6 +169,32 @@ func TestNaturalFormatter_FormatEntity(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestNaturalFormatter_FormatEntity_CanonicalShape(t *testing.T) {
+	t.Parallel()
+	f := NewNaturalFormatter()
+
+	entity := homeassistant.Entity{
+		EntityID:   "light.living_room",
+		State:      "on",
+		Attributes: map[string]any{"friendly_name": "Living Room Light"},
+	}
+
+	result, err := f.FormatEntity(context.Background(), entity)
+	if err != nil {
+		t.Fatalf("FormatEntity() error = %v", err)
+	}
+
+	nameIdx := strings.Index(result, "Living Room Light")
+	idIdx := strings.Index(result, "(light.living_room)")
+	stateIdx := strings.Index(result, "is on")
+	if nameIdx == -1 || idIdx == -1 || stateIdx == -1 {
+		t.Fatalf("expected name, parenthesized id, and state all present, got: %q", result)
+	}
+	if !(nameIdx < idIdx && idIdx < stateIdx) {
+		t.Errorf("expected order name < (id) < state, got positions %d, %d, %d in: %q", nameIdx, idIdx, stateIdx, result)
 	}
 }
 
@@ -582,6 +608,12 @@ func TestNaturalFormatter_FormatEntities_CompactList(t *testing.T) {
 	// Should still include summary
 	if !strings.Contains(result, "2 entities") {
 		t.Errorf("FormatEntities(CompactList=true) should contain entity count, got %q", result)
+	}
+
+	// After retiring formatEntityCompact, compact lines use the same domain-aware
+	// phrasing as verbose/domain-grouped output, not a bare "— state" suffix.
+	if !strings.Contains(result, "is on") {
+		t.Errorf("FormatEntities(CompactList=true) should use domain-aware phrasing ('is on'), got %q", result)
 	}
 }
 
