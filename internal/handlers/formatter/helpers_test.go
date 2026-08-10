@@ -197,6 +197,15 @@ func TestNaturalHelperFormatter_FormatList_HelperStates(t *testing.T) {
 			t.Errorf("FormatList() missing helper name %q, got:\n%s", name, result)
 		}
 	}
+
+	// Check entity_ids appear alongside names, so entities with colliding
+	// friendly names remain distinguishable (issue #147)
+	expectedIDs := []string{"counter.visitors", "input_boolean.vacation_mode", "timer.pomodoro"}
+	for _, id := range expectedIDs {
+		if !strings.Contains(result, id) {
+			t.Errorf("FormatList() missing entity_id %q, got:\n%s", id, result)
+		}
+	}
 }
 
 func TestNaturalHelperFormatter_FormatList_Verbose(t *testing.T) {

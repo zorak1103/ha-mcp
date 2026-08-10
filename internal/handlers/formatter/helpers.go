@@ -635,7 +635,7 @@ func (f *NaturalHelperFormatter) writeHelperLine(result *strings.Builder, h home
 	helperType := f.extractType(h.EntityID)
 	stateInfo := f.formatStateForType(helperType, h)
 
-	fmt.Fprintf(result, "  • %s: %s\n", name, stateInfo)
+	fmt.Fprintf(result, "  • %s (%s): %s\n", name, h.EntityID, stateInfo)
 
 	if verbose {
 		f.writeVerboseDetails(result, h)
