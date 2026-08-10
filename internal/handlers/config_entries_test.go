@@ -45,8 +45,8 @@ func TestConfigEntryHandlers_ManageConfigEntryTool_Schema(t *testing.T) {
 	if !ok {
 		t.Fatal("action property not found in schema")
 	}
-	if len(actionSchema.Enum) != 2 {
-		t.Errorf("action enum has %d values, want 2", len(actionSchema.Enum))
+	if len(actionSchema.Enum) != 3 {
+		t.Errorf("action enum has %d values, want 3", len(actionSchema.Enum))
 	}
 
 	// Verify format enum has exactly 2 values
@@ -239,6 +239,73 @@ func TestConfigEntryHandlers_HandleGetConfigEntry(t *testing.T) {
 		{
 			name:         "missing entry_id",
 			args:         map[string]any{"action": "get"},
+			wantError:    true,
+			wantContains: []string{"entry_id is required"},
+		},
+	}
+
+	runHandlerTestCases(t, tests, h.handleManageConfigEntry)
+}
+
+func TestConfigEntryHandlers_HandleDeleteConfigEntry(t *testing.T) {
+	t.Parallel()
+
+	h := NewConfigEntryHandlers()
+
+	tests := []handlerTestCase{
+		{
+			name: "delete entry - success",
+			args: map[string]any{"action": "delete", "entry_id": "abc123"},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetConfigEntryFn = func(_ context.Context, entryID string) (*homeassistant.ConfigEntryFull, error) {
+					if entryID != "abc123" {
+						t.Errorf("expected entry_id 'abc123', got %q", entryID)
+					}
+					return &homeassistant.ConfigEntryFull{
+						EntryID: "abc123",
+						Domain:  "mobile_app",
+						Title:   "Old Phone",
+						State:   "loaded",
+					}, nil
+				}
+				m.DeleteConfigEntryFn = func(_ context.Context, entryID string) error {
+					if entryID != "abc123" {
+						t.Errorf("expected entry_id 'abc123', got %q", entryID)
+					}
+					return nil
+				}
+			},
+			wantError:    false,
+			wantContains: []string{"Old Phone", "mobile_app", "abc123"},
+		},
+		{
+			name: "delete entry - config entry not found on preflight get",
+			args: map[string]any{"action": "delete", "entry_id": "nonexistent"},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetConfigEntryFn = func(_ context.Context, _ string) (*homeassistant.ConfigEntryFull, error) {
+					return nil, errors.New("config entry not found: nonexistent")
+				}
+			},
+			wantError:    true,
+			wantContains: []string{"error", "config entry not found"},
+		},
+		{
+			name: "delete entry - delete call fails",
+			args: map[string]any{"action": "delete", "entry_id": "abc123"},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetConfigEntryFn = func(_ context.Context, _ string) (*homeassistant.ConfigEntryFull, error) {
+					return &homeassistant.ConfigEntryFull{EntryID: "abc123", Domain: "mobile_app", Title: "Old Phone"}, nil
+				}
+				m.DeleteConfigEntryFn = func(_ context.Context, _ string) error {
+					return errors.New("forbidden: insufficient permissions to delete config entry")
+				}
+			},
+			wantError:    true,
+			wantContains: []string{"error", "forbidden"},
+		},
+		{
+			name:         "missing entry_id",
+			args:         map[string]any{"action": "delete"},
 			wantError:    true,
 			wantContains: []string{"entry_id is required"},
 		},

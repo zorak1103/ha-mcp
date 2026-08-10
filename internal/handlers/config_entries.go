@@ -13,8 +13,9 @@ import (
 )
 
 const (
-	configEntryActionList = "list"
-	configEntryActionGet  = "get"
+	configEntryActionList   = "list"
+	configEntryActionGet    = "get"
+	configEntryActionDelete = "delete"
 )
 
 // ConfigEntryHandlers provides MCP tool handlers for config entry operations.
@@ -40,9 +41,11 @@ func (h *ConfigEntryHandlers) manageConfigEntryTool() mcp.Tool {
 			Description: "Config entry management parameters",
 			Properties: map[string]mcp.JSONSchema{
 				"action": {
-					Type:        "string",
-					Description: "Action to perform: 'list' (list config entries, optionally filtered by domain), 'get' (get a single config entry by entry_id)",
-					Enum:        []string{configEntryActionList, configEntryActionGet},
+					Type: "string",
+					Description: "Action to perform: 'list' (list config entries, optionally filtered by domain), " +
+						"'get' (get a single config entry by entry_id), 'delete' (remove a config entry and all its " +
+						"associated devices/entities — requires entry_id; destructive, blocked in read-only mode)",
+					Enum: []string{configEntryActionList, configEntryActionGet, configEntryActionDelete},
 				},
 				"domain": {
 					Type:        "string",
@@ -79,8 +82,10 @@ func (h *ConfigEntryHandlers) handleManageConfigEntry(
 		return h.handleListConfigEntries(ctx, client, args)
 	case configEntryActionGet:
 		return h.handleGetConfigEntry(ctx, client, args)
+	case configEntryActionDelete:
+		return h.handleDeleteConfigEntry(ctx, client, args)
 	default:
-		return errorResult(fmt.Sprintf("invalid action %q, must be one of: list, get", action)), nil
+		return errorResult(fmt.Sprintf("invalid action %q, must be one of: list, get, delete", action)), nil
 	}
 }
 
@@ -127,6 +132,36 @@ func (h *ConfigEntryHandlers) handleGetConfigEntry(
 	}
 
 	return h.formatGetJSON(entry)
+}
+
+// handleDeleteConfigEntry handles requests to delete a config entry and its
+// associated devices/entities. Fetches the entry first so the success message
+// can name what was removed, and so an unknown entry_id fails before any mutation.
+func (h *ConfigEntryHandlers) handleDeleteConfigEntry(
+	ctx context.Context,
+	client homeassistant.Client,
+	args map[string]any,
+) (*mcp.ToolsCallResult, error) {
+	entryID := getString(args, "entry_id")
+	if entryID == "" {
+		return errorResult("entry_id is required"), nil
+	}
+
+	entry, err := client.GetConfigEntry(ctx, entryID)
+	if err != nil {
+		return errorResult(fmt.Sprintf("error getting config entry: %v", err)), nil
+	}
+
+	if err := client.DeleteConfigEntry(ctx, entryID); err != nil {
+		return errorResult(fmt.Sprintf("error deleting config entry: %v", err)), nil
+	}
+
+	return &mcp.ToolsCallResult{
+		Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf(
+			"Deleted config entry '%s' (domain: %s, entry_id: %s) and its associated devices/entities.",
+			entry.Title, entry.Domain, entryID,
+		))},
+	}, nil
 }
 
 // formatListNatural formats config entry list in natural language.
