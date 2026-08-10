@@ -193,7 +193,7 @@ func TestNaturalFormatter_FormatEntity_CanonicalShape(t *testing.T) {
 	if nameIdx == -1 || idIdx == -1 || stateIdx == -1 {
 		t.Fatalf("expected name, parenthesized id, and state all present, got: %q", result)
 	}
-	if !(nameIdx < idIdx && idIdx < stateIdx) {
+	if nameIdx >= idIdx || idIdx >= stateIdx {
 		t.Errorf("expected order name < (id) < state, got positions %d, %d, %d in: %q", nameIdx, idIdx, stateIdx, result)
 	}
 }
