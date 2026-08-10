@@ -198,6 +198,35 @@ func TestNaturalFormatter_FormatEntity_CanonicalShape(t *testing.T) {
 	}
 }
 
+// TestNaturalFormatter_FormatEntity_NoFriendlyName verifies that when an entity has
+// no friendly_name/title attribute (GetFriendlyName falls back to the entity_id itself),
+// the formatted line does not duplicate the entity_id in parentheses.
+func TestNaturalFormatter_FormatEntity_NoFriendlyName(t *testing.T) {
+	t.Parallel()
+	f := NewNaturalFormatter()
+
+	entity := homeassistant.Entity{
+		EntityID:   "light.kitchen",
+		State:      "on",
+		Attributes: map[string]any{},
+	}
+
+	result, err := f.FormatEntity(context.Background(), entity)
+	if err != nil {
+		t.Fatalf("FormatEntity() error = %v", err)
+	}
+
+	if strings.Contains(result, "(light.kitchen)") {
+		t.Errorf("FormatEntity() = %q, expected no parenthesized duplication of entity_id", result)
+	}
+	if count := strings.Count(result, "light.kitchen"); count != 1 {
+		t.Errorf("FormatEntity() = %q, expected entity_id to appear exactly once, got %d", result, count)
+	}
+	if !strings.Contains(result, "light.kitchen is on") {
+		t.Errorf("FormatEntity() = %q, expected %q to be followed directly by %q", result, "light.kitchen", "is on")
+	}
+}
+
 func TestNaturalFormatter_FormatEntities_Empty(t *testing.T) {
 	f := NewNaturalFormatter()
 	result, err := f.FormatEntities(context.Background(), nil, EntityListOptions{})

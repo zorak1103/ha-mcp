@@ -69,6 +69,10 @@ type Formatter interface {
 	// FormatEntity formats a single entity.
 	FormatEntity(ctx context.Context, entity homeassistant.Entity) (string, error)
 
+	// FormatEntityCompact formats a single entity without a timestamp suffix
+	// (entity_id is still included). Used for non-verbose grouped entity lists.
+	FormatEntityCompact(ctx context.Context, entity homeassistant.Entity) (string, error)
+
 	// FormatEntities formats a list of entities.
 	FormatEntities(ctx context.Context, entities []homeassistant.Entity, opts EntityListOptions) (string, error)
 

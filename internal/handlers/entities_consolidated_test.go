@@ -1091,7 +1091,7 @@ func TestQueryEntities_Current_Grouping(t *testing.T) {
 	t.Parallel()
 
 	testStates := []homeassistant.Entity{
-		{EntityID: "light.living_room", State: "on", Attributes: map[string]any{"friendly_name": "Living Room"}},
+		{EntityID: "light.living_room", State: "on", Attributes: map[string]any{"friendly_name": "Living Room"}, LastChanged: time.Now().Add(-2 * time.Hour)},
 		{EntityID: "light.bedroom", State: "off", Attributes: map[string]any{"friendly_name": "Bedroom"}},
 		{EntityID: "switch.kitchen", State: "on", Attributes: map[string]any{"friendly_name": "Kitchen"}},
 	}
@@ -1132,6 +1132,41 @@ func TestQueryEntities_Current_Grouping(t *testing.T) {
 			},
 			wantError:    false,
 			wantContains: []string{"Area: living_room", "Area: bedroom", "Living Room (light.living_room) is on", "Kitchen (switch.kitchen) is on"},
+		},
+		{
+			name: "group by area_id non-verbose omits timestamp but keeps entity_id",
+			args: map[string]any{"mode": modeCurrent, "group_by": "area_id", "format": "natural", "verbose": false},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetStatesFn = func(_ context.Context) ([]homeassistant.Entity, error) {
+					return testStates, nil
+				}
+				m.GetEntityRegistryFn = func(_ context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+					return entityRegistry, nil
+				}
+				m.GetDeviceRegistryFn = func(_ context.Context) ([]homeassistant.DeviceRegistryEntry, error) {
+					return deviceRegistry, nil
+				}
+			},
+			wantError:       false,
+			wantContains:    []string{"Living Room (light.living_room) is on"},
+			wantNotContains: []string{"Changed"},
+		},
+		{
+			name: "group by area_id verbose includes timestamp and entity_id",
+			args: map[string]any{"mode": modeCurrent, "group_by": "area_id", "format": "natural", "verbose": true},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetStatesFn = func(_ context.Context) ([]homeassistant.Entity, error) {
+					return testStates, nil
+				}
+				m.GetEntityRegistryFn = func(_ context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+					return entityRegistry, nil
+				}
+				m.GetDeviceRegistryFn = func(_ context.Context) ([]homeassistant.DeviceRegistryEntry, error) {
+					return deviceRegistry, nil
+				}
+			},
+			wantError:    false,
+			wantContains: []string{"Living Room (light.living_room) is on", "Changed"},
 		},
 		{
 			name: "invalid group_by",

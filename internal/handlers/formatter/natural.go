@@ -47,6 +47,12 @@ func (f *NaturalFormatter) FormatEntity(_ context.Context, entity homeassistant.
 	return f.formatEntityNL(entity, true), nil
 }
 
+// FormatEntityCompact formats a single entity in natural language without the
+// "Changed X ago" timestamp suffix (entity_id is still included).
+func (f *NaturalFormatter) FormatEntityCompact(_ context.Context, entity homeassistant.Entity) (string, error) {
+	return f.formatEntityNL(entity, false), nil
+}
+
 // FormatEntities formats a list of entities in natural language.
 func (f *NaturalFormatter) FormatEntities(_ context.Context, entities []homeassistant.Entity, opts EntityListOptions) (string, error) {
 	if len(entities) == 0 {
@@ -226,7 +232,12 @@ func (f *NaturalFormatter) formatEntityNL(entity homeassistant.Entity, includeTi
 		details = fmt.Sprintf("is %s", state)
 	}
 
-	result := fmt.Sprintf("%s (%s) %s", name, entity.EntityID, details)
+	var result string
+	if name == entity.EntityID {
+		result = fmt.Sprintf("%s %s", entity.EntityID, details)
+	} else {
+		result = fmt.Sprintf("%s (%s) %s", name, entity.EntityID, details)
+	}
 
 	if includeTime && !entity.LastChanged.IsZero() {
 		timeSince := FormatTimeSince(entity.LastChanged, f.now)
