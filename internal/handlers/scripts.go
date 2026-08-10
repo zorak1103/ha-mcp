@@ -319,6 +319,31 @@ func (h *ScriptHandlers) findScriptByID(ctx context.Context, client homeassistan
 	return nil, fmt.Errorf("script not found: %s (tried as entity_id and alias/friendly_name)", searchID)
 }
 
+// resolveScriptForWrite fetches the current script config for a write operation (update/patch),
+// falling back to findScriptByID (alias/friendly-name search) when a direct GetScript lookup
+// using the guessed entity_id fails. Returns the entity_id and config_id re-derived from the
+// entity actually resolved - not the raw guess from normalizeScriptID - since the fallback
+// search may match a different underlying entity than what the caller's input implied.
+func (h *ScriptHandlers) resolveScriptForWrite(
+	ctx context.Context,
+	client homeassistant.Client,
+	scriptID string,
+) (entityID, configID string, current *homeassistant.Script, err error) {
+	guessedEntityID, guessedConfigID := normalizeScriptID(scriptID)
+
+	current, err = client.GetScript(ctx, guessedEntityID)
+	if err != nil {
+		current, err = h.findScriptByID(ctx, client, scriptID)
+		if err != nil {
+			return "", "", nil, err
+		}
+		entityID, configID = normalizeScriptID(current.EntityID)
+		return entityID, configID, current, nil
+	}
+
+	return guessedEntityID, guessedConfigID, current, nil
+}
+
 func (h *ScriptHandlers) handleCreate(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
 	scriptID, ok := args["script_id"].(string)
 	if !ok || scriptID == "" {
@@ -406,30 +431,20 @@ func (h *ScriptHandlers) handleUpdate(ctx context.Context, client homeassistant.
 		return errorResult("script_id is required for update action"), nil
 	}
 
-	// Normalize ID to handle prefix variations
-	entityID, configID := normalizeScriptID(scriptID)
-
-	// Get current script configuration to preserve existing values
-	current, err := client.GetScript(ctx, entityID)
+	entityID, configID, current, err := h.resolveScriptForWrite(ctx, client, scriptID)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Error getting current script: %v", err)), nil
 	}
 
-	// Start with existing config to preserve all fields
-	config := homeassistant.ScriptConfig{}
-	if current.Config != nil {
-		config = *current.Config
-	} else {
-		// Fallback: at least preserve the alias from friendly_name
-		config.Alias = current.FriendlyName
+	if current.Config == nil {
+		return errorResult(fmt.Sprintf("script '%s' has no configuration to update", scriptID)), nil
 	}
+	config := *current.Config
 
 	// Snapshot config before mutation so we can detect no-op updates.
 	// No-op writes cause a needless script.reload.
 	beforeMap, _ := configToMap(config)
-
 	applyScriptConfigUpdates(&config, args)
-
 	afterMap, _ := configToMap(config)
 	if reflect.DeepEqual(beforeMap, afterMap) {
 		return successResult(fmt.Sprintf("Script '%s': no changes detected, skipping write (reload avoided)", scriptID)), nil
@@ -442,7 +457,6 @@ func (h *ScriptHandlers) handleUpdate(ctx context.Context, client homeassistant.
 		return guardErr, nil
 	}
 
-	// Use configID (without prefix) for REST API
 	if err := client.UpdateScript(ctx, configID, config); err != nil {
 		msg := fmt.Sprintf("Error updating script: %v", err)
 		return errorResult(enrichConfigError(msg, err, scriptErrorHints)), nil
@@ -563,14 +577,9 @@ func (h *ScriptHandlers) handlePatch(ctx context.Context, client homeassistant.C
 		return errResult, nil
 	}
 
-	entityID, configID := normalizeScriptID(scriptID)
-
-	current, err := client.GetScript(ctx, entityID)
+	entityID, configID, current, err := h.resolveScriptForWrite(ctx, client, scriptID)
 	if err != nil {
-		current, err = h.findScriptByID(ctx, client, scriptID)
-		if err != nil {
-			return errorResult(fmt.Sprintf("error getting script: %v", err)), nil
-		}
+		return errorResult(fmt.Sprintf("error getting script: %v", err)), nil
 	}
 
 	if current.Config == nil {

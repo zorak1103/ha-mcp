@@ -1882,6 +1882,17 @@ func TestScriptHandlers_IDNormalization(t *testing.T) {
 			client := &mockScriptClient{
 				// Storage-managed so the isYAMLDefinedEntity write guard (#122) lets update proceed.
 				getEntityRegistryFn: storageManagedRegistry("script.morning_routine"),
+				// Non-nil Config so the update action's "no configuration to update" guard doesn't
+				// refuse the write - this test only cares about ID normalization.
+				getScriptFn: func(context.Context, string) (*homeassistant.Script, error) {
+					return &homeassistant.Script{
+						EntityID: "script.morning_routine",
+						Config: &homeassistant.ScriptConfig{
+							Alias:    "Morning Routine",
+							Sequence: []any{map[string]any{"service": "light.turn_on"}},
+						},
+					}, nil
+				},
 			}
 			h := &ScriptHandlers{}
 
@@ -1990,6 +2001,143 @@ func TestScriptHandlers_UpdateDataPreservation(t *testing.T) {
 	// Check that the alias was updated
 	if client.lastUpdateConfig.Alias != "Updated Name" {
 		t.Errorf("Alias not updated: got %q, want %q", client.lastUpdateConfig.Alias, "Updated Name")
+	}
+}
+
+func TestScriptHandlers_Update_FallbackSearch(t *testing.T) {
+	t.Parallel()
+
+	// normalizeScriptID("My Script Alias") guesses entity_id "script.My Script Alias",
+	// which won't match anything — GetScript must fail, forcing the alias-search fallback.
+	resolvedScript := &homeassistant.Script{
+		EntityID:     "script.actual_slug",
+		FriendlyName: "My Script Alias",
+		Config: &homeassistant.ScriptConfig{
+			Alias:    "My Script Alias",
+			Sequence: []any{map[string]any{"service": "light.turn_on"}},
+		},
+	}
+
+	client := &mockScriptClient{
+		getScriptFn: func(_ context.Context, entityID string) (*homeassistant.Script, error) {
+			// findScriptByID's alias-search loop calls GetScript with the bare configID
+			// ("actual_slug"), while the initial guessed-entity-id lookup uses the full
+			// entity_id ("script.actual_slug") - accept both, mirroring how the real
+			// client normalizes either form internally.
+			if entityID == "script.actual_slug" || entityID == "actual_slug" {
+				return resolvedScript, nil
+			}
+			return nil, errors.New("not found")
+		},
+		listScriptsFn: func(context.Context) ([]homeassistant.Entity, error) {
+			return []homeassistant.Entity{{EntityID: "script.actual_slug", Attributes: map[string]any{"friendly_name": "My Script Alias"}}}, nil
+		},
+		getEntityRegistryFn: storageManagedRegistry("script.actual_slug"),
+	}
+
+	h := &ScriptHandlers{}
+	args := map[string]any{
+		"action":    "update",
+		"script_id": "My Script Alias",
+		"alias":     "Renamed",
+	}
+
+	result, err := h.handleManageScript(context.Background(), client, args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success via fallback search, got error: %s", result.Content[0].Text)
+	}
+	if client.lastUpdateScriptID != "actual_slug" {
+		t.Errorf("UpdateScript called with config_id %q, want %q (re-derived from resolved entity, not the raw guess)", client.lastUpdateScriptID, "actual_slug")
+	}
+	if client.lastUpdateConfig == nil || len(client.lastUpdateConfig.Sequence) != 1 {
+		t.Error("expected the resolved script's full Config (including Sequence) to be the update base, not a degraded empty config")
+	}
+}
+
+func TestScriptHandlers_Update_RefusesWhenConfigNil(t *testing.T) {
+	t.Parallel()
+
+	client := &mockScriptClient{
+		getScriptFn: func(context.Context, string) (*homeassistant.Script, error) {
+			// GetScript succeeded but returned no Config - the exact case the old code
+			// silently degraded on (`config.Alias = current.FriendlyName`).
+			return &homeassistant.Script{EntityID: "script.test_script", FriendlyName: "Test Script", Config: nil}, nil
+		},
+	}
+
+	h := &ScriptHandlers{}
+	args := map[string]any{
+		"action":    "update",
+		"script_id": "test_script",
+		"alias":     "New Name",
+	}
+
+	result, err := h.handleManageScript(context.Background(), client, args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected refusal when Config is nil, got success: %s", result.Content[0].Text)
+	}
+	if !strings.Contains(result.Content[0].Text, "no configuration") {
+		t.Errorf("expected a 'no configuration to update' style refusal, got: %s", result.Content[0].Text)
+	}
+	if client.lastUpdateConfig != nil {
+		t.Error("UpdateScript must NOT be called when Config is nil")
+	}
+}
+
+func TestScriptHandlers_Patch_ReDerivesWriteTargetFromFallback(t *testing.T) {
+	t.Parallel()
+
+	resolvedScript := &homeassistant.Script{
+		EntityID: "script.actual_slug",
+		Config: &homeassistant.ScriptConfig{
+			Alias:    "My Script Alias",
+			Sequence: []any{map[string]any{"service": "light.turn_on"}},
+		},
+	}
+
+	var capturedConfigID string
+	client := &mockScriptClient{
+		getScriptFn: func(_ context.Context, entityID string) (*homeassistant.Script, error) {
+			// See TestScriptHandlers_Update_FallbackSearch for why both forms are accepted.
+			if entityID == "script.actual_slug" || entityID == "actual_slug" {
+				return resolvedScript, nil
+			}
+			return nil, errors.New("not found")
+		},
+		listScriptsFn: func(context.Context) ([]homeassistant.Entity, error) {
+			return []homeassistant.Entity{{EntityID: "script.actual_slug", Attributes: map[string]any{"friendly_name": "My Script Alias"}}}, nil
+		},
+		updateScriptFn: func(_ context.Context, configID string, _ homeassistant.ScriptConfig) error {
+			capturedConfigID = configID
+			return nil
+		},
+		getEntityRegistryFn: storageManagedRegistry("script.actual_slug"),
+	}
+
+	h := &ScriptHandlers{}
+	args := map[string]any{
+		"action":    "patch",
+		"script_id": "My Script Alias",
+		"operations": []any{
+			map[string]any{"op": "replace", "path": "/alias", "value": "Renamed"},
+		},
+	}
+
+	result, err := h.handleManageScript(context.Background(), client, args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got error: %s", result.Content[0].Text)
+	}
+	if capturedConfigID != "actual_slug" {
+		t.Errorf("UpdateScript called with config_id %q, want %q (re-derived from resolved entity)", capturedConfigID, "actual_slug")
 	}
 }
 
