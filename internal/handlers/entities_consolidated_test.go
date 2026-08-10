@@ -1131,7 +1131,7 @@ func TestQueryEntities_Current_Grouping(t *testing.T) {
 				}
 			},
 			wantError:    false,
-			wantContains: []string{"Area: living_room", "Area: bedroom"},
+			wantContains: []string{"Area: living_room", "Area: bedroom", "Living Room (light.living_room) is on", "Kitchen (switch.kitchen) is on"},
 		},
 		{
 			name: "invalid group_by",

@@ -699,13 +699,13 @@ func (h *ConsolidatedEntityQueryHandlers) handleCurrent(
 	if filterParams.format == formatter.FormatNatural {
 		// Handle special grouping modes
 		if filterParams.groupBy == "area_id" {
-			return h.formatStatesNaturalByArea(ctx, client, paginated, filterParams)
+			return h.formatStatesNaturalByArea(ctx, client, paginated)
 		}
 		if filterParams.groupBy == "device_class" {
-			return h.formatStatesNaturalByDeviceClass(paginated, filterParams)
+			return h.formatStatesNaturalByDeviceClass(paginated)
 		}
 		if filterParams.groupBy == platformIntegration {
-			return h.formatStatesNaturalByIntegration(ctx, client, paginated, filterParams)
+			return h.formatStatesNaturalByIntegration(ctx, client, paginated)
 		}
 		return h.formatStatesNatural(ctx, paginated, filterParams)
 	}
@@ -766,7 +766,6 @@ func (h *ConsolidatedEntityQueryHandlers) formatStatesNaturalByArea(
 	ctx context.Context,
 	client homeassistant.Client,
 	paginated PaginatedResponse[homeassistant.Entity],
-	params stateFilterParams,
 ) (*mcp.ToolsCallResult, error) {
 	// Build entity -> area mapping
 	entityToArea, err := buildEntityToAreaMap(ctx, client)
@@ -778,7 +777,7 @@ func (h *ConsolidatedEntityQueryHandlers) formatStatesNaturalByArea(
 	areaGroups, noAreaEntities := groupEntitiesByArea(paginated.Items, entityToArea)
 
 	// Build output
-	output := formatAreaGroups(ctx, areaGroups, noAreaEntities, params)
+	output := formatAreaGroups(ctx, areaGroups, noAreaEntities)
 
 	// Add pagination info if paginated
 	if paginated.Pagination.HasMore && paginated.Pagination.NextCursor != nil {
@@ -842,7 +841,7 @@ func groupEntitiesByArea(entities []homeassistant.Entity, entityToArea map[strin
 }
 
 // formatAreaGroups formats grouped entities by area.
-func formatAreaGroups(ctx context.Context, areaGroups map[string][]homeassistant.Entity, noAreaEntities []homeassistant.Entity, params stateFilterParams) string {
+func formatAreaGroups(ctx context.Context, areaGroups map[string][]homeassistant.Entity, noAreaEntities []homeassistant.Entity) string {
 	var output strings.Builder
 	f := formatter.NewNaturalFormatter()
 
@@ -865,40 +864,33 @@ func formatAreaGroups(ctx context.Context, areaGroups map[string][]homeassistant
 	for _, areaName := range areaNames {
 		entities := areaGroups[areaName]
 		fmt.Fprintf(&output, "Area: %s (%d entities)\n", areaName, len(entities))
-		writeEntityList(ctx, &output, f, entities, params.verbose)
+		writeEntityList(ctx, &output, f, entities)
 		output.WriteString("\n")
 	}
 
 	// Handle entities without area
 	if len(noAreaEntities) > 0 {
 		fmt.Fprintf(&output, "No Area (%d entities)\n", len(noAreaEntities))
-		writeEntityList(ctx, &output, f, noAreaEntities, params.verbose)
+		writeEntityList(ctx, &output, f, noAreaEntities)
 	}
 
 	return strings.TrimSuffix(output.String(), "\n")
 }
 
 // writeEntityList writes a list of entities to the output.
-func writeEntityList(ctx context.Context, output *strings.Builder, f formatter.Formatter, entities []homeassistant.Entity, verbose bool) {
-	if verbose {
-		for _, entity := range entities {
-			formatted, err := f.FormatEntity(ctx, entity)
-			if err != nil {
-				continue
-			}
-			fmt.Fprintf(output, "  %s\n", formatted)
+func writeEntityList(ctx context.Context, output *strings.Builder, f formatter.Formatter, entities []homeassistant.Entity) {
+	for _, entity := range entities {
+		formatted, err := f.FormatEntity(ctx, entity)
+		if err != nil {
+			continue
 		}
-	} else {
-		for _, entity := range entities {
-			fmt.Fprintf(output, "  - %s\n", entity.EntityID)
-		}
+		fmt.Fprintf(output, "  %s\n", formatted)
 	}
 }
 
 // formatStatesNaturalByDeviceClass formats states grouped by device_class.
 func (h *ConsolidatedEntityQueryHandlers) formatStatesNaturalByDeviceClass(
 	paginated PaginatedResponse[homeassistant.Entity],
-	params stateFilterParams,
 ) (*mcp.ToolsCallResult, error) {
 	// Group entities by device_class
 	deviceClassGroups := make(map[string][]homeassistant.Entity)
@@ -928,13 +920,13 @@ func (h *ConsolidatedEntityQueryHandlers) formatStatesNaturalByDeviceClass(
 	for _, deviceClass := range deviceClasses {
 		entities := deviceClassGroups[deviceClass]
 		fmt.Fprintf(&output, "\n**Device Class: %s** (%d entities)\n", deviceClass, len(entities))
-		writeEntityList(ctx, &output, f, entities, params.verbose)
+		writeEntityList(ctx, &output, f, entities)
 	}
 
 	// Add entities without device_class
 	if len(noDeviceClassEntities) > 0 {
 		fmt.Fprintf(&output, "\n**Other** (%d entities)\n", len(noDeviceClassEntities))
-		writeEntityList(ctx, &output, f, noDeviceClassEntities, params.verbose)
+		writeEntityList(ctx, &output, f, noDeviceClassEntities)
 	}
 
 	// Add pagination info if paginated
@@ -954,7 +946,6 @@ func (h *ConsolidatedEntityQueryHandlers) formatStatesNaturalByIntegration(
 	ctx context.Context,
 	client homeassistant.Client,
 	paginated PaginatedResponse[homeassistant.Entity],
-	params stateFilterParams,
 ) (*mcp.ToolsCallResult, error) {
 	// Load entity registry to get platform information
 	entityRegistry, err := client.GetEntityRegistry(ctx)
@@ -996,13 +987,13 @@ func (h *ConsolidatedEntityQueryHandlers) formatStatesNaturalByIntegration(
 	for _, platform := range platforms {
 		entities := platformGroups[platform]
 		fmt.Fprintf(&output, "\n**Integration: %s** (%d entities)\n", platform, len(entities))
-		writeEntityList(ctx, &output, f, entities, params.verbose)
+		writeEntityList(ctx, &output, f, entities)
 	}
 
 	// Add entities without platform
 	if len(noPlatformEntities) > 0 {
 		fmt.Fprintf(&output, "\n**Unknown Integration** (%d entities)\n", len(noPlatformEntities))
-		writeEntityList(ctx, &output, f, noPlatformEntities, params.verbose)
+		writeEntityList(ctx, &output, f, noPlatformEntities)
 	}
 
 	// Add pagination info if paginated
