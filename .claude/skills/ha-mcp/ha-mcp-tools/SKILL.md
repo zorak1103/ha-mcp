@@ -68,7 +68,7 @@ description: "Use when choosing which ha-mcp tool or action to call. Examples: \
 | `manage_zone`         | list, get                                        | create, update, delete                          |
 | `manage_person`       | list, get                                        | create, update, delete                          |
 | `manage_tag`          | list, get                                        | create, update, delete                          |
-| `manage_config_entry` | list, get                                        | (none — read-only)                              |
+| `manage_config_entry` | list, get                                        | delete (removes entry + its devices/entities)   |
 | `manage_hacs`         | info, list, get, releases, release_notes, critical | download, uninstall, add_repository, remove_repository, refresh, toggle_beta |
 | `manage_trace`        | list, get, debug                                 | (none — read-only)                              |
 | `manage_blueprint`    | list                                             | import                                          |

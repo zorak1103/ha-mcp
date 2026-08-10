@@ -141,7 +141,7 @@ Three MCP server projects expose Home Assistant functionality to AI assistants:
 | List services          | `list_services`                                                                                                                      | via `ha_get_integration`                                                            | ---                     |
 | System info            | `get_system_info`                                                                                                                    | `ha_get_system_info`                                                                | ---                     |
 | Validate config        | `validate_config`                                                                                                                    | `ha_check_config`                                                                   | ---                     |
-| Config entries         | `manage_config_entry` (actions: list, get; format: natural/json)                                                                     | Integration options flow tools                                                      | ---                     |
+| Config entries         | `manage_config_entry` (actions: list, get, delete; format: natural/json)                                                             | Integration options flow tools                                                      | ---                     |
 | Integration info       | via `manage_config_entry`                                                                                                            | `ha_get_integration`, `ha_get_entity_integration_source`                            | ---                     |
 
 ### Analysis & Advanced

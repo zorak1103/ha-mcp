@@ -43,7 +43,7 @@ Whenever the user mentions HA entities, automations, scripts, scenes, helpers, d
 - `manage_entity` — entity registry update/delete (rename, reassign area, labels, aliases)
 - `manage_device` — device registry update/delete (labels, area, disable)
 - `manage_label` / `manage_floor` / `manage_zone` / `manage_person` / `manage_tag` — registry CRUD
-- `manage_config_entry` — list/get config entries (read-only)
+- `manage_config_entry` — list/get config entries, delete a config entry (and its devices/entities)
 
 **Automations / Scripts / Scenes**
 - `manage_automation` — list/get/create/update/delete/toggle/coverage/patch
