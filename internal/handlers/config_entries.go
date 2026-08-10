@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/zorak1103/ha-mcp/internal/handlers/formatter"
@@ -152,16 +153,68 @@ func (h *ConfigEntryHandlers) handleDeleteConfigEntry(
 		return errorResult(fmt.Sprintf("error getting config entry: %v", err)), nil
 	}
 
+	// Counted before deletion: once the entry is gone, the registries no longer
+	// show these entities/devices as belonging to it (and the registry cache is
+	// invalidated), so counting after deletion would always yield zero.
+	entityCount, deviceCount := countConfigEntryResources(ctx, client, entryID)
+
 	if err := client.DeleteConfigEntry(ctx, entryID); err != nil {
 		return errorResult(fmt.Sprintf("error deleting config entry: %v", err)), nil
 	}
 
 	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf(
-			"Deleted config entry '%s' (domain: %s, entry_id: %s) and its associated devices/entities.",
-			entry.Title, entry.Domain, entryID,
-		))},
+		Content: []mcp.ContentBlock{mcp.NewTextContent(
+			buildDeleteConfigEntryMessage(entry, entryID, entityCount, deviceCount),
+		)},
 	}, nil
+}
+
+// countConfigEntryResources counts how many entity registry entries and device
+// registry entries belong to the given config entry, for use in the delete
+// success message. A registry fetch failure is non-fatal (best-effort,
+// -1 signals "unknown") — the delete itself has already been validated via the
+// preflight GetConfigEntry call and should not be blocked by this enrichment.
+func countConfigEntryResources(ctx context.Context, client homeassistant.Client, entryID string) (entityCount, deviceCount int) {
+	entityCount = -1
+	if entries, err := client.GetEntityRegistry(ctx); err == nil {
+		entityCount = 0
+		for _, entry := range entries {
+			if entry.ConfigEntryID == entryID {
+				entityCount++
+			}
+		}
+	}
+
+	deviceCount = -1
+	if devices, err := client.GetDeviceRegistry(ctx); err == nil {
+		deviceCount = 0
+		for _, device := range devices {
+			if slices.Contains(device.ConfigEntries, entryID) {
+				deviceCount++
+			}
+		}
+	}
+
+	return entityCount, deviceCount
+}
+
+// buildDeleteConfigEntryMessage builds the delete success message, including
+// entity/device counts when known. Either count may be -1 (unknown) if its
+// registry fetch failed; the wording degrades gracefully in that case rather
+// than reporting a misleading zero.
+func buildDeleteConfigEntryMessage(entry *homeassistant.ConfigEntryFull, entryID string, entityCount, deviceCount int) string {
+	base := fmt.Sprintf("Deleted config entry '%s' (domain: %s, entry_id: %s)", entry.Title, entry.Domain, entryID)
+
+	switch {
+	case entityCount >= 0 && deviceCount >= 0:
+		return fmt.Sprintf("%s and its %d associated entities and %d associated devices.", base, entityCount, deviceCount)
+	case entityCount >= 0:
+		return fmt.Sprintf("%s and its %d associated entities (device count unknown: registry lookup failed).", base, entityCount)
+	case deviceCount >= 0:
+		return fmt.Sprintf("%s and its %d associated devices (entity count unknown: registry lookup failed).", base, deviceCount)
+	default:
+		return fmt.Sprintf("%s (entity/device counts unknown: registry lookup failed).", base)
+	}
 }
 
 // formatListNatural formats config entry list in natural language.

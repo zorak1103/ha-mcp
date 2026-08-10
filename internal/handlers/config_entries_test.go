@@ -268,6 +268,19 @@ func TestConfigEntryHandlers_HandleDeleteConfigEntry(t *testing.T) {
 						State:   "loaded",
 					}, nil
 				}
+				m.GetEntityRegistryFn = func(_ context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+					return []homeassistant.EntityRegistryEntry{
+						{EntityID: "sensor.old_phone_battery", ConfigEntryID: "abc123"},
+						{EntityID: "sensor.old_phone_charging", ConfigEntryID: "abc123"},
+						{EntityID: "sensor.unrelated", ConfigEntryID: "def456"},
+					}, nil
+				}
+				m.GetDeviceRegistryFn = func(_ context.Context) ([]homeassistant.DeviceRegistryEntry, error) {
+					return []homeassistant.DeviceRegistryEntry{
+						{ID: "device1", ConfigEntries: []string{"abc123"}},
+						{ID: "device2", ConfigEntries: []string{"def456"}},
+					}, nil
+				}
 				m.DeleteConfigEntryFn = func(_ context.Context, entryID string) error {
 					if entryID != "abc123" {
 						t.Errorf("expected entry_id 'abc123', got %q", entryID)
@@ -276,7 +289,35 @@ func TestConfigEntryHandlers_HandleDeleteConfigEntry(t *testing.T) {
 				}
 			},
 			wantError:    false,
-			wantContains: []string{"Old Phone", "mobile_app", "abc123"},
+			wantContains: []string{"Old Phone", "mobile_app", "abc123", "2 associated entities", "1 associated devices"},
+		},
+		{
+			name: "delete entry - registry lookup fails, delete still proceeds",
+			args: map[string]any{"action": "delete", "entry_id": "abc123"},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetConfigEntryFn = func(_ context.Context, _ string) (*homeassistant.ConfigEntryFull, error) {
+					return &homeassistant.ConfigEntryFull{
+						EntryID: "abc123",
+						Domain:  "mobile_app",
+						Title:   "Old Phone",
+						State:   "loaded",
+					}, nil
+				}
+				m.GetEntityRegistryFn = func(_ context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+					return nil, errors.New("registry unavailable")
+				}
+				m.GetDeviceRegistryFn = func(_ context.Context) ([]homeassistant.DeviceRegistryEntry, error) {
+					return nil, errors.New("registry unavailable")
+				}
+				m.DeleteConfigEntryFn = func(_ context.Context, entryID string) error {
+					if entryID != "abc123" {
+						t.Errorf("expected entry_id 'abc123', got %q", entryID)
+					}
+					return nil
+				}
+			},
+			wantError:    false,
+			wantContains: []string{"Old Phone", "mobile_app", "abc123", "counts unknown"},
 		},
 		{
 			name: "delete entry - config entry not found on preflight get",
