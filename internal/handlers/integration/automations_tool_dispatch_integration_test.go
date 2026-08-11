@@ -106,3 +106,55 @@ func (s *AutomationToolDispatchTestSuite) TestAutomationUpdateAndPatchViaTool() 
 	s.Require().True(ok, "trigger should be a map")
 	s.Equal("00:00:05", trigger["for"], "trigger should have 'for' field added via semantic patch")
 }
+
+// TestAutomationUpdate_ConfigFileEntryExists_StorageManaged verifies the config-file existence
+// guard (#122, #164) does not falsely refuse a storage-managed automation created through the
+// tool — the regression this change must not introduce.
+func (s *AutomationToolDispatchTestSuite) TestAutomationUpdate_ConfigFileEntryExists_StorageManaged() {
+	triggerName := GenerateTestID("auto_probe_trigger")
+	triggerEntityID := BuildEntityID("input_button", triggerName)
+	automationID := GenerateTestID("auto_probe")
+
+	s.RegisterCleanup(func() {
+		_ = s.Client().DeleteAutomation(s.Context(), automationID)
+		_ = s.Client().DeleteHelper(s.Context(), triggerEntityID)
+	})
+
+	err := s.Client().CreateHelper(s.Context(), homeassistant.HelperConfig{
+		Platform: "input_button",
+		Config:   map[string]any{"name": triggerName},
+	})
+	s.Require().NoError(err, "Failed to create trigger input_button")
+	_, err = s.WaitForEntity(triggerEntityID, 30*time.Second)
+	s.Require().NoError(err)
+
+	automationConfig := homeassistant.AutomationConfig{
+		ID:          automationID,
+		Alias:       automationID,
+		Description: "original description",
+		Mode:        "single",
+		Triggers: []any{
+			map[string]any{"platform": "state", "entity_id": triggerEntityID},
+		},
+		Actions: []any{
+			map[string]any{"service": "input_button.press", "target": map[string]any{"entity_id": triggerEntityID}},
+		},
+	}
+	err = s.Client().CreateAutomation(s.Context(), automationConfig)
+	s.Require().NoError(err, "Failed to create automation")
+	_, err = s.WaitForAutomation(automationID, 30*time.Second)
+	s.Require().NoError(err, "Automation did not appear")
+
+	// Confirm the probe itself reports true for a real storage-managed automation.
+	exists, err := s.Client().ConfigFileEntryExists(s.Context(), "automation", automationID)
+	s.Require().NoError(err)
+	s.True(exists, "a storage-managed automation must probe as present in automations.yaml")
+
+	// And the real tool path must still succeed end-to-end.
+	updateResult := s.CallTool("manage_automation", map[string]any{
+		"action":        "update",
+		"automation_id": automationID,
+		"description":   "updated via config-file-guard probe test",
+	})
+	s.Require().False(updateResult.IsError, "update on a storage-managed automation must succeed, got: %s", resultText(updateResult))
+}
