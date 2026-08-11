@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -595,6 +596,19 @@ func TestManageHelper_Create_SourceDomainMismatch(t *testing.T) {
 			wantContains: []string{"created", "sensor.test_utility_meter"},
 		},
 		{
+			name: "malformed source entity_id omits the wrapper recipe",
+			args: map[string]any{
+				"action": "create",
+				"type":   "utility_meter",
+				"id":     "test_meter",
+				"name":   "Test Utility Meter",
+				"source": "input_number.x') }}{{ 7*7 }}",
+			},
+			wantError:       true,
+			wantContains:    []string{"requires a sensor"},
+			wantNotContains: []string{"Wrap it first", "{{ states("},
+		},
+		{
 			name: "unconstrained type with any entity_id domain unaffected",
 			args: map[string]any{
 				"action":    "create",
@@ -611,6 +625,155 @@ func TestManageHelper_Create_SourceDomainMismatch(t *testing.T) {
 
 	h := NewConsolidatedHelperHandlers()
 	runHandlerTestCases(t, tests, h.handleManageHelper)
+}
+
+// TestManageHelper_Update_SourceDomainMismatch verifies that update, not just
+// create, rejects a source-entity domain mismatch for domain-constrained
+// Config Entry helpers. On update, ParseHelperEntityID only recovers the
+// entity DOMAIN (e.g. "sensor" for a statistics helper) - not the helper
+// type - so the check must resolve the real integration platform via the
+// entity registry's Platform field instead of a helperTypes map lookup.
+//
+// Only utility_meter/generic_thermostat/generic_hygrostat are exercised
+// here, not statistics/trend/filter/switch_as_x: those four types constrain
+// a field literally named "entity_id", which on update IS the tool's own
+// "which helper are we updating" identifier (handleUpdate reads args
+// ["entity_id"] for that) and is never forwarded to HA as a config value
+// (see CLAUDE.md's buildConfigEntryUpdateConfig gotcha) - so there is no
+// caller-suppliable value to validate for those four on update.
+func TestManageHelper_Update_SourceDomainMismatch(t *testing.T) {
+	t.Parallel()
+
+	tests := []handlerTestCase{
+		{
+			name: "utility_meter update with input_number source rejected",
+			args: map[string]any{
+				"action":    "update",
+				"entity_id": "sensor.my_meter",
+				"source":    "input_number.x",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetEntityRegistryFn = func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+					return []homeassistant.EntityRegistryEntry{
+						{EntityID: "sensor.my_meter", Platform: "utility_meter", ConfigEntryID: "config123"},
+					}, nil
+				}
+			},
+			wantError:    true,
+			wantContains: []string{"requires a sensor"},
+		},
+		{
+			name: "generic_thermostat update with input_boolean heater_entity_id rejected",
+			args: map[string]any{
+				"action":           "update",
+				"entity_id":        "climate.my_thermostat",
+				"heater_entity_id": "input_boolean.x",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetEntityRegistryFn = func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+					return []homeassistant.EntityRegistryEntry{
+						{EntityID: "climate.my_thermostat", Platform: "generic_thermostat", ConfigEntryID: "config123"},
+					}, nil
+				}
+			},
+			wantError:    true,
+			wantContains: []string{"requires a switch"},
+		},
+		{
+			name: "utility_meter update with sensor source proceeds unaffected",
+			args: map[string]any{
+				"action":    "update",
+				"entity_id": "sensor.my_meter",
+				"source":    "sensor.x",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetEntityRegistryFn = func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+					return []homeassistant.EntityRegistryEntry{
+						{EntityID: "sensor.my_meter", Platform: "utility_meter", ConfigEntryID: "config123"},
+					}, nil
+				}
+				m.UpdateHelperFn = func(context.Context, string, homeassistant.HelperConfig) error {
+					return nil
+				}
+			},
+			wantError:    false,
+			wantContains: []string{"updated"},
+		},
+		{
+			name: "registry lookup failure degrades to unchecked update",
+			args: map[string]any{
+				"action":    "update",
+				"entity_id": "sensor.my_meter",
+				"source":    "input_number.x",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetEntityRegistryFn = func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+					return nil, errors.New("registry unavailable")
+				}
+				m.UpdateHelperFn = func(context.Context, string, homeassistant.HelperConfig) error {
+					return nil
+				}
+			},
+			wantError:    false,
+			wantContains: []string{"updated"},
+		},
+	}
+
+	h := NewConsolidatedHelperHandlers()
+	runHandlerTestCases(t, tests, h.handleManageHelper)
+}
+
+// TestUpdatableSourceEntities_ExcludesEntityIDField guards the collision
+// checkUpdateSourceEntityDomain must avoid: a sourceEntityConstraint whose
+// field is "entity_id" is, on update, the tool's own "which helper is being
+// updated" identifier (handleUpdate reads args["entity_id"] for that) - not
+// a caller-suppliable source value - so it must never be validated against
+// on the update path. Exercised directly (rather than through the handler)
+// because switch_as_x's real target domains (cover/fan/light/lock/siren/
+// valve) aren't in HelperPlatforms, so a handler-level test can't reach this
+// case via ParseHelperEntityID at all.
+func TestUpdatableSourceEntities_ExcludesEntityIDField(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		constraint []sourceEntityConstraint
+		wantEmpty  bool
+	}{
+		{
+			name:       "entity_id-only constraint (switch_as_x, statistics, trend, filter) filtered to empty",
+			constraint: helperTypes["switch_as_x"].sourceEntities,
+			wantEmpty:  true,
+		},
+		{
+			name:       "source field (utility_meter) survives unfiltered",
+			constraint: helperTypes["utility_meter"].sourceEntities,
+			wantEmpty:  false,
+		},
+		{
+			name:       "mixed constraints (generic_thermostat) keep the non-entity_id field only",
+			constraint: helperTypes["generic_thermostat"].sourceEntities,
+			wantEmpty:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := updatableSourceEntities(tt.constraint)
+			if tt.wantEmpty && len(got) != 0 {
+				t.Errorf("updatableSourceEntities(%+v) = %+v, want empty", tt.constraint, got)
+			}
+			if !tt.wantEmpty && len(got) == 0 {
+				t.Errorf("updatableSourceEntities(%+v) = empty, want at least one constraint", tt.constraint)
+			}
+			for _, c := range got {
+				if c.field == attrEntityID {
+					t.Errorf("updatableSourceEntities leaked an %q-field constraint: %+v", attrEntityID, c)
+				}
+			}
+		})
+	}
 }
 
 // =============================================================================
@@ -1551,15 +1714,23 @@ func TestManageHelper_Update_PreservesName(t *testing.T) {
 // TestManageHelper_Update_StateFetchFails_DegradesGracefully verifies that a
 // failed current-state fetch degrades to args-only behavior (today's
 // behavior) rather than failing the update.
-func TestManageHelper_Update_StateFetchFails_DegradesGracefully(t *testing.T) {
+// TestManageHelper_Update_StateFetchFails_ReturnsError verifies that a failed
+// current-state fetch fails the update instead of silently proceeding with a
+// partial config. WS "<platform>/update" commands replace the entire config,
+// so writing a partial payload on a degraded read would reset every omitted
+// field to its schema default (issue #161's failure mode, reintroduced on
+// the error path). UpdateHelper must never be called in this case.
+func TestManageHelper_Update_StateFetchFails_ReturnsError(t *testing.T) {
 	t.Parallel()
 
 	entityID := "input_number.test_number"
+	updateHelperCalled := false
 	client := &UniversalMockClient{}
 	client.GetStateFn = func(_ context.Context, _ string) (*homeassistant.Entity, error) {
 		return nil, errors.New("boom")
 	}
 	client.UpdateHelperFn = func(_ context.Context, _ string, _ homeassistant.HelperConfig) error {
+		updateHelperCalled = true
 		return nil
 	}
 
@@ -1578,8 +1749,53 @@ func TestManageHelper_Update_StateFetchFails_DegradesGracefully(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.IsError {
-		t.Fatalf("expected update to succeed despite failed state fetch, got error: %s", result.Content[0].Text)
+	if !result.IsError {
+		t.Fatal("expected update to fail when the current-state fetch fails, got success")
+	}
+	if updateHelperCalled {
+		t.Error("UpdateHelper must not be called when the current-state fetch fails")
+	}
+}
+
+// TestManageHelper_Update_ScheduleConfigFetchFails_DoesNotWipe is the
+// regression guard for the most severe form of the merge-fetch-failure bug:
+// a schedule's weekday fields (vol.Optional(day, default=[])) are erased if
+// an update payload omits them. If GetScheduleConfig fails and the merge
+// proceeded anyway, an update passing only "name" would silently wipe every
+// weekday's schedule. UpdateHelper must never be called in this case.
+func TestManageHelper_Update_ScheduleConfigFetchFails_DoesNotWipe(t *testing.T) {
+	t.Parallel()
+
+	entityID := "schedule.work_hours"
+	updateHelperCalled := false
+	client := &UniversalMockClient{}
+	client.GetScheduleConfigFn = func(_ context.Context, _ string) (map[string]any, error) {
+		return nil, errors.New("boom")
+	}
+	client.UpdateHelperFn = func(_ context.Context, _ string, _ homeassistant.HelperConfig) error {
+		updateHelperCalled = true
+		return nil
+	}
+
+	ctx := mcp.WithWaitConfig(context.Background(), mcp.WaitConfig{
+		Timeout:      50 * time.Millisecond,
+		PollInterval: 5 * time.Millisecond,
+	})
+
+	h := NewConsolidatedHelperHandlers()
+	result, err := h.handleManageHelper(ctx, client, map[string]any{
+		"action":    "update",
+		"entity_id": entityID,
+		"name":      "New",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected update to fail when GetScheduleConfig fails, got success")
+	}
+	if updateHelperCalled {
+		t.Error("UpdateHelper must not be called when GetScheduleConfig fails - it would wipe every weekday's schedule")
 	}
 }
 
@@ -3302,76 +3518,148 @@ func TestHelperTypeMetadata(t *testing.T) {
 // TestHelperTypeMetadata_SourceEntityFields asserts that exactly the 7 helper
 // types with a source-entity domain constraint carry sourceEntityDomains and
 // sourceEntityField, and every other helper type is left at the zero value.
-func TestHelperTypeMetadata_SourceEntityFields(t *testing.T) {
+// TestHelperTypeMetadata_SourceEntityConstraints asserts the exact set of
+// domain-constrained source-entity fields per helper type, including both
+// constraints on generic_thermostat/generic_hygrostat (actuator field AND
+// target_sensor_entity_id) - a prior version of this test checked only the
+// first constraint and would not have caught a missing second one. Also
+// asserts every constraint has a non-empty field and non-empty domains list,
+// since an empty field would silently look up args[""] at runtime.
+func TestHelperTypeMetadata_SourceEntityConstraints(t *testing.T) {
 	t.Parallel()
 
-	sourceEntityTypes := map[string]struct {
-		field   string
-		domains []string
-	}{
-		"utility_meter":      {field: "source", domains: []string{"sensor"}},
-		"statistics":         {field: "entity_id", domains: []string{"sensor"}},
-		"trend":              {field: "entity_id", domains: []string{"sensor"}},
-		"filter":             {field: "entity_id", domains: []string{"sensor"}},
-		"generic_thermostat": {field: "heater_entity_id", domains: []string{"switch"}},
-		"switch_as_x":        {field: "entity_id", domains: []string{"switch"}},
-		"generic_hygrostat":  {field: "humidifier_entity_id", domains: []string{"switch"}},
+	want := map[string][]sourceEntityConstraint{
+		"utility_meter": {{field: "source", domains: []string{"sensor"}}},
+		"statistics":    {{field: "entity_id", domains: []string{"sensor"}}},
+		"trend":         {{field: "entity_id", domains: []string{"sensor"}}},
+		"filter":        {{field: "entity_id", domains: []string{"sensor"}}},
+		"switch_as_x":   {{field: "entity_id", domains: []string{"switch"}}},
+		"generic_thermostat": {
+			{field: "heater_entity_id", domains: []string{"switch"}},
+			{field: "target_sensor_entity_id", domains: []string{"sensor"}},
+		},
+		"generic_hygrostat": {
+			{field: "humidifier_entity_id", domains: []string{"switch"}},
+			{field: "target_sensor_entity_id", domains: []string{"sensor"}},
+		},
 	}
 
 	for name, meta := range helperTypes {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			want, isSourceEntityType := sourceEntityTypes[name]
-			if isSourceEntityType {
-				if meta.sourceEntityField != want.field {
-					t.Errorf("helperTypes[%q].sourceEntityField = %q, want %q", name, meta.sourceEntityField, want.field)
-				}
-				if len(meta.sourceEntityDomains) == 0 {
-					t.Errorf("helperTypes[%q].sourceEntityDomains should be non-empty", name)
-				} else if meta.sourceEntityDomains[0] != want.domains[0] {
-					t.Errorf("helperTypes[%q].sourceEntityDomains = %v, want %v", name, meta.sourceEntityDomains, want.domains)
-				}
-				return
+
+			wantConstraints := want[name] // nil for unconstrained types
+			if !reflect.DeepEqual(meta.sourceEntities, wantConstraints) {
+				t.Errorf("helperTypes[%q].sourceEntities = %+v, want %+v", name, meta.sourceEntities, wantConstraints)
 			}
-			if meta.sourceEntityField != "" {
-				t.Errorf("helperTypes[%q].sourceEntityField should be empty, got %q", name, meta.sourceEntityField)
-			}
-			if len(meta.sourceEntityDomains) != 0 {
-				t.Errorf("helperTypes[%q].sourceEntityDomains should be empty, got %v", name, meta.sourceEntityDomains)
+			for _, c := range meta.sourceEntities {
+				if c.field == "" {
+					t.Errorf("helperTypes[%q] has a sourceEntityConstraint with an empty field", name)
+				}
+				if len(c.domains) == 0 {
+					t.Errorf("helperTypes[%q] sourceEntityConstraint %q has no domains", name, c.field)
+				}
 			}
 		})
 	}
 }
 
-// TestHelperTypeMetadata_UpdatableFieldNames asserts updatableFieldNames()
-// returns requiredFields concatenated with optionalFields (in that order)
-// for a representative WS helper type, Config Entry type, and a type with
-// empty requiredFields.
-func TestHelperTypeMetadata_UpdatableFieldNames(t *testing.T) {
+// updatableFieldSentinel returns a type-appropriate probe value for field on
+// helper type name, matching whatever Go type assertion the real update
+// builder (buildHelperConfig for WS types, buildConfigEntryUpdateConfig for
+// Config Entry types) performs on that args key. "initial" is the only name
+// whose expected type varies by helper type (bool/float64/string/int-via-
+// float64), so it's special-cased; every other name has one consistent type
+// across every helper type that declares it.
+func updatableFieldSentinel(name, field string) any {
+	if field == "initial" {
+		switch name {
+		case "input_boolean":
+			return true
+		case "input_number", "counter":
+			return float64(5)
+		default: // input_text, input_select, input_datetime: string
+			return "test-value"
+		}
+	}
+
+	switch field {
+	case "options", "entities", "tariffs", "filters", "entity_ids",
+		"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday":
+		return []any{"probe"}
+	case "has_date", "has_time", "restore", "all", "delta_values", "net_consumption",
+		"periodically_resetting", "invert", "ac_mode":
+		return true
+	case "lower", "upper", "hysteresis", "min", "max", "step", "offset", "percentile",
+		"min_gradient", "sample_duration", "min_temp", "max_temp", "target_temp",
+		"cold_tolerance", "hot_tolerance", "min_humidity", "max_humidity",
+		"target_humidity", "dry_tolerance", "wet_tolerance", "minimum", "maximum",
+		"round", "time_window", "round_digits", "sampling_size", "precision",
+		"min_samples", "max_samples", "delay_on", "delay_off":
+		// addOptionalInt/addOptionalFloat and the two manual delay_on/delay_off
+		// assertions in buildConfigEntryUpdateConfig all assert .(float64).
+		return float64(1)
+	default:
+		// icon, state, source, unit_of_measurement, device_class, state_class,
+		// unit_time, unit_prefix, method, group_type, mode, pattern, duration,
+		// cycle, max_age, after_time, before_time, after_offset, before_offset,
+		// heater_entity_id, target_sensor_entity_id, humidifier_entity_id,
+		// target_domain: every remaining name is read as a plain string.
+		return "test-value"
+	}
+}
+
+// updateConfigKeyAliases maps an args field name to the config key it lands
+// under after the update builder runs, for the few fields HA's API renames.
+// See CLAUDE.md's "Config Entry API Field Mapping" gotcha.
+var updateConfigKeyAliases = map[string]string{
+	"heater_entity_id":        "heater",
+	"target_sensor_entity_id": "target_sensor",
+	"humidifier_entity_id":    "humidifier",
+}
+
+// TestUpdatableFields_AreActuallyReadByUpdatePath asserts every field name
+// updatableFieldNames() advertises as accepted on update is actually
+// consumed by the real update builder - the property updateExcludedFields
+// exists to make explicit. Without this, the generated per-type description
+// in manage_helper's schema can silently drift from the update code (as it
+// already had for "entity_id", "filter", and min_max's "type" - all three
+// are excluded via updateExcludedFields, not just documented as such).
+func TestUpdatableFields_AreActuallyReadByUpdatePath(t *testing.T) {
 	t.Parallel()
 
-	tests := []string{"input_number", "threshold", "input_boolean"}
-
-	for _, name := range tests {
+	for name, meta := range helperTypes {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			meta, ok := helperTypes[name]
-			if !ok {
-				t.Fatalf("helperTypes missing entry for %q", name)
+
+			fields := meta.updatableFieldNames()
+			args := make(map[string]any, len(fields))
+			for _, field := range fields {
+				args[field] = updatableFieldSentinel(name, field)
 			}
 
-			want := make([]string, 0, len(meta.requiredFields)+len(meta.optionalFields))
-			want = append(want, meta.requiredFields...)
-			want = append(want, meta.optionalFields...)
-
-			got := meta.updatableFieldNames()
-
-			if len(got) != len(want) {
-				t.Fatalf("updatableFieldNames() = %v, want %v", got, want)
+			var config map[string]any
+			if homeassistant.RequiresConfigEntryFlow(meta.platform) {
+				// Mirrors handleUpdate: buildConfigEntryUpdateConfig is called
+				// with the entity DOMAIN (meta.entityPrefix), not the
+				// helperTypes map key - that distinction matters for the
+				// platform=="humidifier" device_class default gate.
+				config = buildConfigEntryUpdateConfig(meta.entityPrefix, args)
+			} else {
+				var err error
+				config, err = buildHelperConfig(name, "Test Name", args)
+				if err != nil {
+					t.Fatalf("buildHelperConfig(%q, ...) returned error: %v", name, err)
+				}
 			}
-			for i := range want {
-				if got[i] != want[i] {
-					t.Errorf("updatableFieldNames()[%d] = %q, want %q", i, got[i], want[i])
+
+			for _, field := range fields {
+				key := field
+				if alias, ok := updateConfigKeyAliases[field]; ok {
+					key = alias
+				}
+				if _, present := config[key]; !present {
+					t.Errorf("field %q (config key %q) is listed as updatable for %q but was not read by the update builder - add it to updateExcludedFields or fix the builder", field, key, name)
 				}
 			}
 		})
@@ -3381,6 +3669,14 @@ func TestHelperTypeMetadata_UpdatableFieldNames(t *testing.T) {
 // TestManageHelperTool_DescriptionListsUpdatableFields asserts the tool
 // description documents per-type accepted update fields, generated from
 // helperTypes, and that the summary line no longer omits "update".
+// TestManageHelperTool_DescriptionListsUpdatableFields asserts structural
+// properties of the generated per-type field list rather than hardcoding
+// its exact contents (a hardcoded expectation would have hidden the W2
+// inaccuracies this test replaces - it can't catch a field wrongly listed
+// as updatable if the expectation was copy-pasted from the same wrong
+// list): every helperTypes entry appears exactly once, no
+// updateExcludedFields member ever leaks into a per-type line, and "icon"
+// is hoisted out (documented once) rather than repeated 25 times.
 func TestManageHelperTool_DescriptionListsUpdatableFields(t *testing.T) {
 	t.Parallel()
 
@@ -3390,15 +3686,44 @@ func TestManageHelperTool_DescriptionListsUpdatableFields(t *testing.T) {
 	if !strings.Contains(desc, "Manage Home Assistant helpers - list, create, update, delete, or get details.") {
 		t.Error("description summary line should mention update")
 	}
-
-	wantSnippets := []string{
-		"input_number: min, max, icon, step, initial, mode, unit_of_measurement",
-		"utility_meter: source, icon, cycle, offset, delta_values, net_consumption, periodically_resetting, tariffs",
-		"input_boolean: icon, initial",
+	if !strings.Contains(desc, "icon is accepted on every type") {
+		t.Error("description should document icon once instead of per-type")
 	}
-	for _, snippet := range wantSnippets {
-		if !strings.Contains(desc, snippet) {
-			t.Errorf("description missing expected per-type field list: %q", snippet)
+
+	generated := updatableFieldsDescription()
+	if !strings.Contains(desc, generated) {
+		t.Fatal("description does not embed updatableFieldsDescription()'s current output - tool wiring drifted")
+	}
+
+	seen := make(map[string]bool, len(helperTypes))
+	for _, line := range strings.Split(strings.TrimPrefix(generated, "\n"), "\n") {
+		parts := strings.SplitN(line, ": ", 2)
+		if len(parts) != 2 {
+			t.Fatalf("malformed generated line: %q", line)
+		}
+		name := strings.TrimPrefix(parts[0], "  - ")
+		if seen[name] {
+			t.Errorf("helper type %q listed more than once", name)
+		}
+		seen[name] = true
+
+		if _, known := helperTypes[name]; !known {
+			t.Errorf("generated line references unknown helper type %q", name)
+		}
+
+		for _, field := range strings.Split(parts[1], ", ") {
+			if field == "icon" {
+				t.Errorf("%q: icon should be hoisted out of per-type lines, not repeated", name)
+			}
+			if updateExcludedFields[field] {
+				t.Errorf("%q: excluded field %q leaked into the generated description", name, field)
+			}
+		}
+	}
+
+	for name := range helperTypes {
+		if !seen[name] {
+			t.Errorf("helper type %q missing from generated description", name)
 		}
 	}
 }

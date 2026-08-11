@@ -3,7 +3,9 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -46,31 +48,79 @@ const (
 	helperActionUpdate             = "update"
 )
 
+// sourceEntityConstraint restricts one args field of a helper type to a set
+// of allowed entity domains (e.g. generic_thermostat's heater_entity_id must
+// be a switch.*). A helper type can have more than one constrained field -
+// generic_thermostat and generic_hygrostat each constrain both their
+// actuator field and their target_sensor_entity_id field.
+type sourceEntityConstraint struct {
+	field   string   // args key holding the source entity_id; never empty
+	domains []string // allowed domains for that entity_id; never empty
+}
+
 // helperTypeMetadata defines metadata for each helper type.
 type helperTypeMetadata struct {
-	platform            string   // Home Assistant platform name
-	entityPrefix        string   // Prefix for resulting entity_id (e.g., "sensor" for derivative)
-	supportedActions    []string // Actions supported by this helper type
-	requiredFields      []string // Fields required for create operation
-	optionalFields      []string // Optional fields for create operation
-	validEntityDomains  []string // Valid domains for delete/action validation
-	sourceEntityDomains []string // Required domain(s) of the SOURCE entity; empty = unconstrained
-	sourceEntityField   string   // Which args key holds the source entity_id; empty = sourceEntityDomains also empty
+	platform           string                   // Home Assistant platform name
+	entityPrefix       string                   // Prefix for resulting entity_id (e.g., "sensor" for derivative)
+	supportedActions   []string                 // Actions supported by this helper type
+	requiredFields     []string                 // Fields required for create operation
+	optionalFields     []string                 // Optional fields for create operation
+	validEntityDomains []string                 // Valid domains for delete/action validation
+	sourceEntities     []sourceEntityConstraint // Domain constraints on source-entity args fields; empty = unconstrained
+}
+
+// updateExcludedFields lists create-time field names that are NOT actually
+// consumed by the update path, despite appearing in a type's
+// requiredFields/optionalFields. These exist for two different reasons:
+//   - "entity_id": on update this is the tool's own "which helper are we
+//     updating" identifier (handleUpdate reads args["entity_id"] for that),
+//     not a per-platform config value. buildConfigEntryUpdateConfig
+//     deliberately never forwards it (see CLAUDE.md's gotcha on this - a
+//     prior version forwarded it and silently overwrote e.g. a threshold's
+//     monitored entity with the helper's own id).
+//   - "filter": the filter-type selector consumed only by the create-time
+//     builder (buildFilterConfig, helpers_config_builders_extended.go) to
+//     pick which filter algorithm to seed; addExtendedConfigEntryFields only
+//     ever reads the plural "filters" (the configured filter chain) on
+//     update, never singular "filter".
+//   - "type" (min_max only): the min/max/mean/etc. calculation selector.
+//     addExtendedConfigEntryFields's min_max section forwards only
+//     entity_ids and round_digits on update - "type" simply isn't wired up,
+//     so it cannot be changed via manage_helper update today. Unlike
+//     entity_id/filter this isn't a deliberate exclusion, it's a real gap;
+//     documented here rather than silently advertised as working.
+//
+// TestUpdatableFields_AreActuallyReadByUpdatePath enforces that every
+// remaining name in updatableFieldNames() actually round-trips through the
+// real update builder, so a future field that stops being read on update
+// fails a test rather than silently drifting from the generated docs.
+var updateExcludedFields = map[string]bool{
+	attrEntityID: true,
+	"filter":     true,
+	"type":       true,
 }
 
 // updatableFieldNames returns the field names accepted on update for this
 // helper type: requiredFields (required only at create time) plus
-// optionalFields — buildHelperConfig/buildConfigEntryUpdateConfig already
-// read from the same arg names regardless of action, so no type needs a
-// smaller updatable set than its create-time field set.
+// optionalFields, minus updateExcludedFields (names that collide with
+// something else on update and are never forwarded to HA - see its doc).
 func (m helperTypeMetadata) updatableFieldNames() []string {
-	return append(append([]string{}, m.requiredFields...), m.optionalFields...)
+	all := append(append([]string{}, m.requiredFields...), m.optionalFields...)
+	names := make([]string, 0, len(all))
+	for _, name := range all {
+		if !updateExcludedFields[name] {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // updatableFieldsDescription renders a compact per-type "what update
 // accepts" reference, generated from helperTypes so it can never drift
 // from the code — same intent as manage_entity/manage_device's generated
-// "Safe fields" lists.
+// "Safe fields" lists. "icon" is omitted from every per-type line (it's
+// accepted on all 25 types, so listing it 25 times would triple this
+// block's size for zero information) - the caller documents it once instead.
 func updatableFieldsDescription() string {
 	names := make([]string, 0, len(helperTypes))
 	for name := range helperTypes {
@@ -80,7 +130,12 @@ func updatableFieldsDescription() string {
 
 	var b strings.Builder
 	for _, name := range names {
-		fields := helperTypes[name].updatableFieldNames()
+		fields := make([]string, 0, len(helperTypes[name].updatableFieldNames()))
+		for _, field := range helperTypes[name].updatableFieldNames() {
+			if field != "icon" {
+				fields = append(fields, field)
+			}
+		}
 		fmt.Fprintf(&b, "\n  - %s: %s", name, strings.Join(fields, ", "))
 	}
 	return b.String()
@@ -209,14 +264,13 @@ var helperTypes = map[string]helperTypeMetadata{
 		validEntityDomains: []string{"sensor"},
 	},
 	"utility_meter": {
-		platform:            platformUtilityMeter,
-		entityPrefix:        "sensor",
-		supportedActions:    []string{"calibrate"},
-		requiredFields:      []string{"source"},
-		optionalFields:      []string{"icon", "cycle", "offset", "delta_values", "net_consumption", "periodically_resetting", "tariffs"},
-		validEntityDomains:  []string{"sensor", "select"},
-		sourceEntityDomains: []string{"sensor"},
-		sourceEntityField:   "source",
+		platform:           platformUtilityMeter,
+		entityPrefix:       "sensor",
+		supportedActions:   []string{"calibrate"},
+		requiredFields:     []string{"source"},
+		optionalFields:     []string{"icon", "cycle", "offset", "delta_values", "net_consumption", "periodically_resetting", "tariffs"},
+		validEntityDomains: []string{"sensor", "select"},
+		sourceEntities:     []sourceEntityConstraint{{field: "source", domains: []string{"sensor"}}},
 	},
 	"min_max": {
 		platform:           platformMinMax,
@@ -227,24 +281,22 @@ var helperTypes = map[string]helperTypeMetadata{
 		validEntityDomains: []string{"sensor"},
 	},
 	"statistics": {
-		platform:            platformStatistics,
-		entityPrefix:        "sensor",
-		supportedActions:    []string{},
-		requiredFields:      []string{"entity_id"},
-		optionalFields:      []string{"icon", "state_characteristic", "sampling_size", "max_age", "percentile", "precision"},
-		validEntityDomains:  []string{"sensor"},
-		sourceEntityDomains: []string{"sensor"},
-		sourceEntityField:   attrEntityID,
+		platform:           platformStatistics,
+		entityPrefix:       "sensor",
+		supportedActions:   []string{},
+		requiredFields:     []string{"entity_id"},
+		optionalFields:     []string{"icon", "state_characteristic", "sampling_size", "max_age", "percentile", "precision"},
+		validEntityDomains: []string{"sensor"},
+		sourceEntities:     []sourceEntityConstraint{{field: attrEntityID, domains: []string{"sensor"}}},
 	},
 	"trend": {
-		platform:            platformTrend,
-		entityPrefix:        "binary_sensor",
-		supportedActions:    []string{},
-		requiredFields:      []string{"entity_id"},
-		optionalFields:      []string{"icon", "min_gradient", "min_samples", "sample_duration", "max_samples", "invert"},
-		validEntityDomains:  []string{"binary_sensor"},
-		sourceEntityDomains: []string{"sensor"},
-		sourceEntityField:   attrEntityID,
+		platform:           platformTrend,
+		entityPrefix:       "binary_sensor",
+		supportedActions:   []string{},
+		requiredFields:     []string{"entity_id"},
+		optionalFields:     []string{"icon", "min_gradient", "min_samples", "sample_duration", "max_samples", "invert"},
+		validEntityDomains: []string{"binary_sensor"},
+		sourceEntities:     []sourceEntityConstraint{{field: attrEntityID, domains: []string{"sensor"}}},
 	},
 	"random_sensor": {
 		platform:           platformRandom,
@@ -263,14 +315,13 @@ var helperTypes = map[string]helperTypeMetadata{
 		validEntityDomains: []string{"binary_sensor"},
 	},
 	"filter": {
-		platform:            platformFilter,
-		entityPrefix:        "sensor",
-		supportedActions:    []string{},
-		requiredFields:      []string{"entity_id", "filter"},
-		optionalFields:      []string{"icon", "filters"},
-		validEntityDomains:  []string{"sensor"},
-		sourceEntityDomains: []string{"sensor"},
-		sourceEntityField:   attrEntityID,
+		platform:           platformFilter,
+		entityPrefix:       "sensor",
+		supportedActions:   []string{},
+		requiredFields:     []string{"entity_id", "filter"},
+		optionalFields:     []string{"icon", "filters"},
+		validEntityDomains: []string{"sensor"},
+		sourceEntities:     []sourceEntityConstraint{{field: attrEntityID, domains: []string{"sensor"}}},
 	},
 	"tod": {
 		platform:           platformTod,
@@ -281,34 +332,37 @@ var helperTypes = map[string]helperTypeMetadata{
 		validEntityDomains: []string{"binary_sensor"},
 	},
 	"generic_thermostat": {
-		platform:            platformGenericThermostat,
-		entityPrefix:        "climate",
-		supportedActions:    []string{},
-		requiredFields:      []string{"heater_entity_id", "target_sensor_entity_id"},
-		optionalFields:      []string{"icon", "ac_mode", "min_temp", "max_temp", "target_temp", "cold_tolerance", "hot_tolerance"},
-		validEntityDomains:  []string{"climate"},
-		sourceEntityDomains: []string{"switch"},
-		sourceEntityField:   "heater_entity_id",
+		platform:           platformGenericThermostat,
+		entityPrefix:       "climate",
+		supportedActions:   []string{},
+		requiredFields:     []string{"heater_entity_id", "target_sensor_entity_id"},
+		optionalFields:     []string{"icon", "ac_mode", "min_temp", "max_temp", "target_temp", "cold_tolerance", "hot_tolerance"},
+		validEntityDomains: []string{"climate"},
+		sourceEntities: []sourceEntityConstraint{
+			{field: "heater_entity_id", domains: []string{"switch"}},
+			{field: "target_sensor_entity_id", domains: []string{"sensor"}},
+		},
 	},
 	"switch_as_x": {
-		platform:            platformSwitchAsX,
-		entityPrefix:        "light",
-		supportedActions:    []string{},
-		requiredFields:      []string{"entity_id", "target_domain"},
-		optionalFields:      []string{"icon", "invert"},
-		validEntityDomains:  []string{"cover", "fan", "light", "lock", "siren", "valve"},
-		sourceEntityDomains: []string{"switch"},
-		sourceEntityField:   attrEntityID,
+		platform:           platformSwitchAsX,
+		entityPrefix:       "light",
+		supportedActions:   []string{},
+		requiredFields:     []string{"entity_id", "target_domain"},
+		optionalFields:     []string{"icon", "invert"},
+		validEntityDomains: []string{"cover", "fan", "light", "lock", "siren", "valve"},
+		sourceEntities:     []sourceEntityConstraint{{field: attrEntityID, domains: []string{"switch"}}},
 	},
 	"generic_hygrostat": {
-		platform:            platformGenericHygrostat,
-		entityPrefix:        "humidifier",
-		supportedActions:    []string{},
-		requiredFields:      []string{"humidifier_entity_id", "target_sensor_entity_id"},
-		optionalFields:      []string{"icon", "min_humidity", "max_humidity", "target_humidity", "dry_tolerance", "wet_tolerance"},
-		validEntityDomains:  []string{"humidifier"},
-		sourceEntityDomains: []string{"switch"},
-		sourceEntityField:   "humidifier_entity_id",
+		platform:           platformGenericHygrostat,
+		entityPrefix:       "humidifier",
+		supportedActions:   []string{},
+		requiredFields:     []string{"humidifier_entity_id", "target_sensor_entity_id"},
+		optionalFields:     []string{"icon", "min_humidity", "max_humidity", "target_humidity", "dry_tolerance", "wet_tolerance"},
+		validEntityDomains: []string{"humidifier"},
+		sourceEntities: []sourceEntityConstraint{
+			{field: "humidifier_entity_id", domains: []string{"switch"}},
+			{field: "target_sensor_entity_id", domains: []string{"sensor"}},
+		},
 	},
 }
 
@@ -578,7 +632,7 @@ Helper Types:
 Actions:
 - list: List all helpers (optional: format=natural|json, verbose=true|false)
 - create: Create a new helper (requires type, id, name)
-- update: Update an existing helper (requires entity_id; supports all helper types including Config Entry helpers via Options Flow). Fields accepted per type:` + updatableFieldsDescription() + `
+- update: Update an existing helper (requires entity_id; supports all helper types including Config Entry helpers via Options Flow). icon is accepted on every type. Other fields accepted per type:` + updatableFieldsDescription() + `
 - delete: Delete an existing helper (requires entity_id)
 - get_details: Get helper details (requires entity_id)`,
 		InputSchema: mcp.JSONSchema{
@@ -712,7 +766,7 @@ func (h *ConsolidatedHelperHandlers) handleCreate(ctx context.Context, client ho
 		return errorResult(fmt.Sprintf("invalid helper type: %s (valid types: %s)", helperType, strings.Join(allHelperTypeNames, ", "))), nil
 	}
 
-	if err := checkSourceEntityDomain(helperType, meta, args); err != nil {
+	if err := checkSourceEntityDomain(helperType, meta.sourceEntities, args); err != nil {
 		return errorResult(err.Error()), nil
 	}
 
@@ -876,6 +930,15 @@ func (h *ConsolidatedHelperHandlers) handleUpdate(ctx context.Context, client ho
 		return errorResult(err.Error()), nil
 	}
 
+	// Re-validate domain-constrained source fields (utility_meter,
+	// generic_thermostat, generic_hygrostat) before touching them - create's
+	// checkSourceEntityDomain preflight doesn't cover update, which can
+	// repoint the same fields at a mismatched entity and only surface HA's
+	// opaque config-flow error.
+	if err := checkUpdateSourceEntityDomain(ctx, client, entityID, args); err != nil {
+		return errorResult(err.Error()), nil
+	}
+
 	// Extract platform and helper ID from entity_id
 	platform, helperID := ParseHelperEntityID(entityID)
 	if platform == "" || helperID == "" {
@@ -927,30 +990,38 @@ func (h *ConsolidatedHelperHandlers) handleUpdate(ctx context.Context, client ho
 
 // buildKnownTypeUpdateConfig builds the update config for a helperType that
 // has an entry in helperTypes. The map key matching the platform does NOT by
-// itself mean this is a WebSocket helper: "group" is a key in helperTypes
-// (platform == "group") but is a genuine Config Entry Flow platform
-// (homeassistant.RequiresConfigEntryFlow("group") == true). Only genuine
-// WebSocket helper types get the current-state merge (issue #161) - group
-// keeps taking the pre-#161 unmerged path, matching its Config Entry Flow
-// update semantics (mergeOptionsFlowConfig, a different layer, already
-// handles that merge for it).
+// itself mean this is a WebSocket helper: "group" (and, since their platform
+// name also equals their map key, "threshold" and "derivative") are keys in
+// helperTypes but are genuine Config Entry Flow platforms
+// (homeassistant.RequiresConfigEntryFlow(...) == true). Only genuine
+// WebSocket helper types get the current-state merge (issue #161) - these
+// Config Entry types keep taking the pre-#161 unmerged path, matching their
+// Config Entry Flow update semantics (mergeOptionsFlowConfig, a different
+// layer, already handles that merge for them).
 func buildKnownTypeUpdateConfig(ctx context.Context, client homeassistant.Client, entityID, helperType string, meta helperTypeMetadata, args map[string]any) (map[string]any, error) {
 	var updateName string
 	effectiveArgs := args
 
 	if homeassistant.RequiresConfigEntryFlow(meta.platform) {
-		// Config Entry platform reached via the metadata branch (group) -
-		// behave exactly as before the #161 fix: unmerged args only.
+		// Config Entry platform reached via the metadata branch - behave
+		// exactly as before the #161 fix: unmerged args only.
 		updateName, _ = args["name"].(string)
 	} else {
 		// Known WebSocket helper type - merge current state so an update that
 		// omits an optional/required field keeps its current value instead of
 		// HA's <platform>/update resetting it to empty (#161).
-		effectiveArgs = mergeCurrentHelperState(ctx, client, entityID, meta, args)
+		merged, currentName, ok := mergeCurrentHelperState(ctx, client, entityID, meta, args)
+		if !ok {
+			return nil, fmt.Errorf(
+				"cannot update %s: failed to read its current configuration, and %s's update API replaces all fields (omitted fields would be reset to their defaults). Retry, or verify the entity exists",
+				entityID, meta.platform,
+			)
+		}
+		effectiveArgs = merged
 		if name, hasName := args["name"].(string); hasName && name != "" {
 			updateName = name
-		} else if fn, hasFriendlyName := effectiveArgs["friendly_name"].(string); hasFriendlyName {
-			updateName = fn
+		} else {
+			updateName = currentName
 		}
 	}
 
@@ -974,36 +1045,47 @@ func buildKnownTypeUpdateConfig(ctx context.Context, client homeassistant.Client
 // an optional/required field keeps the current value instead of HA
 // resetting it to empty (issue #161). Filters strictly to
 // meta.updatableFieldNames() - state attributes include runtime-only keys
-// (editable, friendly_name is handled separately below) that must not be
-// echoed back into an update payload verbatim under their own name.
-// Best-effort: a failed state fetch degrades to args-only (today's
-// behavior), it does not fail the update - mirrors the existing
+// that must not be echoed back into an update payload verbatim under their
+// own name.
+//
+// The returned ok is false when the current-state fetch itself failed. WS
+// "<platform>/update" commands replace the entire config, so a partial
+// payload built from a failed fetch would reset every field the caller
+// didn't explicitly supply to its schema default - for "schedule" that
+// means erasing every weekday's blocks. The caller must fail the update
+// rather than proceed when ok is false; this is deliberately NOT the
 // isYAMLDefinedEntity "checked=false, proceed anyway" convention
-// (yaml_defined.go:19-20).
-func mergeCurrentHelperState(ctx context.Context, client homeassistant.Client, entityID string, meta helperTypeMetadata, args map[string]any) map[string]any {
-	merged := make(map[string]any)
+// (yaml_defined.go:19-20), because skipping that check only skips a
+// nice-to-have validation, while skipping this one silently destroys data.
+func mergeCurrentHelperState(ctx context.Context, client homeassistant.Client, entityID string, meta helperTypeMetadata, args map[string]any) (merged map[string]any, currentName string, ok bool) {
+	merged = make(map[string]any)
 
 	if meta.platform == platformSchedule {
-		if current, err := client.GetScheduleConfig(ctx, entityID); err == nil {
-			for _, field := range meta.updatableFieldNames() {
-				if v, ok := current[field]; ok {
-					merged[field] = v
-				}
+		current, err := client.GetScheduleConfig(ctx, entityID)
+		if err != nil {
+			return nil, "", false
+		}
+		for _, field := range meta.updatableFieldNames() {
+			if v, exists := current[field]; exists {
+				merged[field] = v
 			}
 		}
-	} else if state, err := client.GetState(ctx, entityID); err == nil {
+	} else {
+		state, err := client.GetState(ctx, entityID)
+		if err != nil {
+			return nil, "", false
+		}
 		for _, field := range meta.updatableFieldNames() {
-			if v, ok := state.Attributes[field]; ok {
+			if v, exists := state.Attributes[field]; exists {
 				merged[field] = v
 			}
 		}
 		// Also preserve the display name: HA's <platform>/update requires
 		// "name" in every payload, but "name" isn't itself in
 		// updatableFieldNames() (it's not a create/update field, it's
-		// passed as buildHelperConfig's separate name argument). Surface
-		// it here so the caller can fall back to it when args has no name.
-		if fn, ok := state.Attributes["friendly_name"].(string); ok && fn != "" {
-			merged["friendly_name"] = fn
+		// passed as buildHelperConfig's separate name argument).
+		if fn, exists := state.Attributes["friendly_name"].(string); exists && fn != "" {
+			currentName = fn
 		}
 	}
 
@@ -1011,7 +1093,7 @@ func mergeCurrentHelperState(ctx context.Context, client homeassistant.Client, e
 		merged[k] = v // caller-supplied values always win
 	}
 
-	return merged
+	return merged, currentName, true
 }
 
 func (h *ConsolidatedHelperHandlers) handleDelete(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
@@ -2070,31 +2152,104 @@ func validateRequiredFields(helperType string, meta helperTypeMetadata, args map
 	return nil
 }
 
-// checkSourceEntityDomain validates that the source entity referenced by a
+// checkSourceEntityDomain validates that every source entity referenced by a
 // domain-restricted Config Entry helper (utility_meter, statistics, trend,
 // filter, generic_thermostat, switch_as_x, generic_hygrostat) has the
 // domain HA's config flow actually requires, failing with an actionable
 // wrapper recipe instead of letting an opaque HA-side validation error
-// through.
-func checkSourceEntityDomain(helperType string, meta helperTypeMetadata, args map[string]any) error {
-	if len(meta.sourceEntityDomains) == 0 {
-		return nil // this type has no source-domain constraint
+// through. A type may constrain more than one field (generic_thermostat and
+// generic_hygrostat each constrain both their actuator field and
+// target_sensor_entity_id); every constraint is checked, not just the first.
+func checkSourceEntityDomain(helperType string, constraints []sourceEntityConstraint, args map[string]any) error {
+	for _, constraint := range constraints {
+		sourceEntityID, _ := args[constraint.field].(string)
+		if sourceEntityID == "" {
+			continue // missing entirely - let the existing validateRequiredFields report it, don't duplicate that error
+		}
+		domain := extractDomain(sourceEntityID)
+		if slices.Contains(constraint.domains, domain) {
+			continue
+		}
+		msg := fmt.Sprintf(
+			"%s field %q requires a %s.* entity, got %q (domain %q).",
+			helperType, constraint.field, strings.Join(constraint.domains, "/"), sourceEntityID, domain,
+		)
+		// Only append the wrapper recipe when sourceEntityID is a well-formed
+		// entity_id. wrapperRecipeFor interpolates it unescaped into a Jinja
+		// template string inside a ready-to-run manage_helper call; a
+		// malformed value (e.g. containing "') }}{{ ") could otherwise turn
+		// an error message into a template-injection payload that an agent
+		// might copy-paste and execute.
+		if ValidateEntityID(sourceEntityID) == nil {
+			msg += " " + wrapperRecipeFor(constraint.domains[0], sourceEntityID)
+		}
+		return errors.New(msg)
 	}
-	sourceEntityID, _ := args[meta.sourceEntityField].(string)
-	if sourceEntityID == "" {
-		return nil // missing entirely - let the existing validateRequiredFields report it, don't duplicate that error
-	}
-	domain := extractDomain(sourceEntityID)
-	for _, allowed := range meta.sourceEntityDomains {
-		if domain == allowed {
-			return nil
+	return nil
+}
+
+// sourceConstrainedTypes indexes helperTypes entries that have at least one
+// sourceEntityConstraint, keyed by their platform name. Used by
+// checkUpdateSourceEntityDomain to resolve the real integration platform via
+// the entity registry - ParseHelperEntityID (used elsewhere in handleUpdate)
+// only recovers the entity DOMAIN (e.g. "sensor" for a statistics helper),
+// which is not sufficient to look up helperTypes by key. All 7 constrained
+// types happen to have map key == platform, so this index is a clean 1:1.
+var sourceConstrainedTypes = buildSourceConstrainedTypes()
+
+func buildSourceConstrainedTypes() map[string]helperTypeMetadata {
+	result := make(map[string]helperTypeMetadata, len(helperTypes))
+	for _, meta := range helperTypes {
+		if len(meta.sourceEntities) > 0 {
+			result[meta.platform] = meta
 		}
 	}
-	return fmt.Errorf(
-		"%s requires a %s.* source entity, got %q (domain %q). %s",
-		helperType, strings.Join(meta.sourceEntityDomains, "/"), sourceEntityID, domain,
-		wrapperRecipeFor(meta.sourceEntityDomains[0], sourceEntityID),
-	)
+	return result
+}
+
+// updatableSourceEntities filters out any constraint whose field is
+// "entity_id". On update, args["entity_id"] is the tool's own identifier of
+// which helper is being updated (handleUpdate reads it for exactly that) -
+// it is never forwarded to HA as a config value (see CLAUDE.md's
+// buildConfigEntryUpdateConfig gotcha), so there is no caller-suppliable
+// value behind that constraint on update. Validating it anyway would either
+// vacuously pass (statistics/trend/filter, whose own domain always matches)
+// or always fail (switch_as_x, whose own domain never matches "switch").
+func updatableSourceEntities(constraints []sourceEntityConstraint) []sourceEntityConstraint {
+	filtered := make([]sourceEntityConstraint, 0, len(constraints))
+	for _, c := range constraints {
+		if c.field == attrEntityID {
+			continue
+		}
+		filtered = append(filtered, c)
+	}
+	return filtered
+}
+
+// checkUpdateSourceEntityDomain re-validates domain-constrained source
+// fields on update (create-time validation alone left #135-style helpers
+// updatable into a mismatched source with no preflight, since update never
+// reused checkSourceEntityDomain). A registry lookup failure degrades to an
+// unchecked update rather than blocking a legitimate edit, mirroring
+// isYAMLDefinedEntity's "checked=false, proceed anyway" convention
+// (yaml_defined.go:19-20) - unlike the C1 merge-fetch failure, skipping this
+// check only skips a nice-to-have validation, it does not risk data loss.
+func checkUpdateSourceEntityDomain(ctx context.Context, client homeassistant.Client, entityID string, args map[string]any) error {
+	entries, err := client.GetEntityRegistry(ctx)
+	if err != nil {
+		return nil //nolint:nilerr // registry lookup failure degrades to an unchecked update, see doc comment above
+	}
+	for _, entry := range entries {
+		if entry.EntityID != entityID {
+			continue
+		}
+		meta, ok := sourceConstrainedTypes[entry.Platform]
+		if !ok {
+			return nil
+		}
+		return checkSourceEntityDomain(entry.Platform, updatableSourceEntities(meta.sourceEntities), args)
+	}
+	return nil
 }
 
 // wrapperRecipeFor returns an actionable next step for a source-domain
@@ -2107,7 +2262,7 @@ func checkSourceEntityDomain(helperType string, meta helperTypeMetadata, args ma
 func wrapperRecipeFor(requiredDomain, sourceEntityID string) string {
 	if requiredDomain == platformSensorEntity {
 		return fmt.Sprintf(
-			`Wrap it first: manage_helper(action="create", type="template_sensor", id="<wrapper_id>", name="<Wrapper Name>", state="{{ states('%s') | float }}")`,
+			`Wrap it first: manage_helper(action="create", type="template_sensor", id="<wrapper_id>", name="<Wrapper Name>", state="{{ states('%s') | float(0) }}", unit_of_measurement="<unit>", state_class="measurement")`,
 			sourceEntityID,
 		)
 	}
