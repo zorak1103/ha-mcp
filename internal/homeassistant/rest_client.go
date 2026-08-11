@@ -543,6 +543,46 @@ func (c *RESTClient) GetScene(ctx context.Context, sceneID string) (*Scene, erro
 	}, nil
 }
 
+// ConfigFileEntryExists reports whether configID exists in the config file Home Assistant's
+// config API manages for domain ("automation" -> automations.yaml, "script" -> scripts.yaml,
+// "scene" -> scenes.yaml). A false result means a POST to /api/config/{domain}/config/{id}
+// would append a new entry instead of editing one in place, silently creating a duplicate
+// orphan entity (<entity>_2) instead of updating the original (#122, #164).
+func (c *RESTClient) ConfigFileEntryExists(ctx context.Context, domain, configID string) (bool, error) {
+	url := fmt.Sprintf("%s/api/config/%s/config/%s", c.baseURL, domain, configID)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
+	if err != nil {
+		return false, fmt.Errorf("creating config file entry check request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.doRequest(ctx, req)
+	if err != nil {
+		return false, fmt.Errorf("executing config file entry check request: %w", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return true, nil
+	case http.StatusNotFound:
+		return false, nil
+	default:
+		body, _ := io.ReadAll(resp.Body)
+		return false, handleConfigError(resp.StatusCode, body, configErrorInfo{
+			typeName:   domain,
+			entityID:   configID,
+			actionName: "check",
+		})
+	}
+}
+
 // CreateScene creates a new scene using the REST API.
 // The WebSocket API does not support scene creation reliably.
 // Endpoint: POST /api/config/scene/config/{scene_id}

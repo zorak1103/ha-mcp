@@ -1919,3 +1919,96 @@ func TestRESTClient_GetScene(t *testing.T) {
 		})
 	}
 }
+
+func TestRESTClient_ConfigFileEntryExists(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		domain         string
+		configID       string
+		serverResponse func(w http.ResponseWriter, r *http.Request)
+		wantExists     bool
+		wantErr        bool
+		wantErrMsg     string
+	}{
+		{
+			name:     "entry present in the config file",
+			domain:   "automation",
+			configID: "morning_routine",
+			serverResponse: func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet {
+					t.Errorf("method = %q, want GET", r.Method)
+				}
+				if r.URL.Path != "/api/config/automation/config/morning_routine" {
+					t.Errorf("path = %q, want /api/config/automation/config/morning_routine", r.URL.Path)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"id": "morning_routine", "alias": "Morning Routine"}`))
+			},
+			wantExists: true,
+		},
+		{
+			name:     "entry absent from the config file",
+			domain:   "script",
+			configID: "example_toggle",
+			serverResponse: func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/config/script/config/example_toggle" {
+					t.Errorf("path = %q, want /api/config/script/config/example_toggle", r.URL.Path)
+				}
+				w.WriteHeader(http.StatusNotFound)
+			},
+			wantExists: false,
+		},
+		{
+			name:     "unauthorized surfaces as an error, not a missing entry",
+			domain:   "scene",
+			configID: "test_scene",
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusUnauthorized)
+			},
+			wantErr:    true,
+			wantErrMsg: "unauthorized: invalid or expired token",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var capturedRequest *http.Request
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				capturedRequest = r
+				tt.serverResponse(w, r)
+			}))
+			defer server.Close()
+
+			client := NewRESTClient(server.URL, "test-token")
+			exists, err := client.ConfigFileEntryExists(context.Background(), tt.domain, tt.configID)
+
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ConfigFileEntryExists() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if capturedRequest != nil {
+				if auth := capturedRequest.Header.Get("Authorization"); auth != "Bearer test-token" {
+					t.Errorf("Authorization = %q, want %q", auth, "Bearer test-token")
+				}
+			}
+			if tt.wantErr {
+				var apiErr *APIError
+				if errors.As(err, &apiErr) {
+					if !strings.Contains(apiErr.Message, tt.wantErrMsg) {
+						t.Errorf("error message = %q, want to contain %q", apiErr.Message, tt.wantErrMsg)
+					}
+				} else if !strings.Contains(err.Error(), tt.wantErrMsg) {
+					t.Errorf("error = %q, want to contain %q", err.Error(), tt.wantErrMsg)
+				}
+				return
+			}
+			if exists != tt.wantExists {
+				t.Errorf("exists = %v, want %v", exists, tt.wantExists)
+			}
+		})
+	}
+}
