@@ -621,6 +621,69 @@ func TestManageHelper_Create_SourceDomainMismatch(t *testing.T) {
 			wantError:    false,
 			wantContains: []string{"binary_sensor.temperature_high", "created"},
 		},
+		{
+			name: "generic_thermostat with sensor target lacking temperature device_class rejected",
+			args: map[string]any{
+				"action":                  "create",
+				"type":                    "generic_thermostat",
+				"id":                      "test_thermostat",
+				"name":                    "Test Thermostat",
+				"heater_entity_id":        "switch.heater",
+				"target_sensor_entity_id": "sensor.humidity_sensor",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetStateFn = func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+					return &homeassistant.Entity{
+						EntityID:   entityID,
+						Attributes: map[string]any{"device_class": "humidity"},
+					}, nil
+				}
+			},
+			wantError:    true,
+			wantContains: []string{"requires a sensor", "device_class", "temperature", "Wrap it first"},
+		},
+		{
+			name: "generic_thermostat with sensor target carrying temperature device_class proceeds",
+			args: map[string]any{
+				"action":                  "create",
+				"type":                    "generic_thermostat",
+				"id":                      "test_thermostat",
+				"name":                    "Test Thermostat",
+				"heater_entity_id":        "switch.heater",
+				"target_sensor_entity_id": "sensor.temp_sensor",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetStateFn = func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+					return &homeassistant.Entity{
+						EntityID:   entityID,
+						Attributes: map[string]any{"device_class": "temperature"},
+					}, nil
+				}
+			},
+			wantError:    false,
+			wantContains: []string{"created"},
+		},
+		{
+			name: "generic_thermostat with fan heater unaffected by widened domain",
+			args: map[string]any{
+				"action":                  "create",
+				"type":                    "generic_thermostat",
+				"id":                      "test_thermostat",
+				"name":                    "Test Thermostat",
+				"heater_entity_id":        "fan.heater",
+				"target_sensor_entity_id": "sensor.temp_sensor",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetStateFn = func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+					return &homeassistant.Entity{
+						EntityID:   entityID,
+						Attributes: map[string]any{"device_class": "temperature"},
+					}, nil
+				}
+			},
+			wantError:    false,
+			wantContains: []string{"created"},
+		},
 	}
 
 	h := NewConsolidatedHelperHandlers()
@@ -709,6 +772,55 @@ func TestManageHelper_Update_SourceDomainMismatch(t *testing.T) {
 			setupMock: func(m *UniversalMockClient) {
 				m.GetEntityRegistryFn = func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
 					return nil, errors.New("registry unavailable")
+				}
+				m.UpdateHelperFn = func(context.Context, string, homeassistant.HelperConfig) error {
+					return nil
+				}
+			},
+			wantError:    false,
+			wantContains: []string{"updated"},
+		},
+		{
+			name: "generic_thermostat update with wrong device_class target_sensor_entity_id rejected",
+			args: map[string]any{
+				"action":                  "update",
+				"entity_id":               "climate.my_thermostat",
+				"target_sensor_entity_id": "sensor.humidity_sensor",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetEntityRegistryFn = func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+					return []homeassistant.EntityRegistryEntry{
+						{EntityID: "climate.my_thermostat", Platform: "generic_thermostat", ConfigEntryID: "config123"},
+					}, nil
+				}
+				m.GetStateFn = func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+					return &homeassistant.Entity{
+						EntityID:   entityID,
+						Attributes: map[string]any{"device_class": "humidity"},
+					}, nil
+				}
+			},
+			wantError:    true,
+			wantContains: []string{"requires a sensor", "device_class", "temperature"},
+		},
+		{
+			name: "generic_thermostat update with correct device_class target_sensor_entity_id proceeds",
+			args: map[string]any{
+				"action":                  "update",
+				"entity_id":               "climate.my_thermostat",
+				"target_sensor_entity_id": "sensor.temp_sensor",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetEntityRegistryFn = func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+					return []homeassistant.EntityRegistryEntry{
+						{EntityID: "climate.my_thermostat", Platform: "generic_thermostat", ConfigEntryID: "config123"},
+					}, nil
+				}
+				m.GetStateFn = func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+					return &homeassistant.Entity{
+						EntityID:   entityID,
+						Attributes: map[string]any{"device_class": "temperature"},
+					}, nil
 				}
 				m.UpdateHelperFn = func(context.Context, string, homeassistant.HelperConfig) error {
 					return nil
@@ -1585,11 +1697,8 @@ func TestManageHelper_Update_PartialInputNumber(t *testing.T) {
 	entityID := "input_number.test_number"
 	var capturedConfig homeassistant.HelperConfig
 	client := &UniversalMockClient{}
-	client.GetStateFn = func(_ context.Context, _ string) (*homeassistant.Entity, error) {
-		return &homeassistant.Entity{
-			EntityID:   entityID,
-			Attributes: map[string]any{"min": 10.0, "max": 100.0, "step": 1.0},
-		}, nil
+	client.GetHelperConfigFn = func(_ context.Context, _, _ string) (map[string]any, error) {
+		return map[string]any{"min": 10.0, "max": 100.0, "step": 1.0}, nil
 	}
 	client.UpdateHelperFn = func(_ context.Context, _ string, cfg homeassistant.HelperConfig) error {
 		capturedConfig = cfg
@@ -1630,11 +1739,8 @@ func TestManageHelper_Update_PartialInputSelect(t *testing.T) {
 	entityID := "input_select.mode"
 	var capturedConfig homeassistant.HelperConfig
 	client := &UniversalMockClient{}
-	client.GetStateFn = func(_ context.Context, _ string) (*homeassistant.Entity, error) {
-		return &homeassistant.Entity{
-			EntityID:   entityID,
-			Attributes: map[string]any{"options": []any{"a", "b", "c"}},
-		}, nil
+	client.GetHelperConfigFn = func(_ context.Context, _, _ string) (map[string]any, error) {
+		return map[string]any{"options": []any{"a", "b", "c"}}, nil
 	}
 	client.UpdateHelperFn = func(_ context.Context, _ string, cfg homeassistant.HelperConfig) error {
 		capturedConfig = cfg
@@ -1675,8 +1781,7 @@ func TestManageHelper_Update_PartialInputSelect(t *testing.T) {
 }
 
 // TestManageHelper_Update_PartialSchedule verifies the merge for the
-// schedule helper type, which fetches current config via GetScheduleConfig
-// rather than GetState.
+// schedule helper type.
 // TestManageHelper_Update_PartialSchedule verifies that updating a schedule
 // while omitting both "name" and every day but the one being changed
 // preserves the existing day blocks AND the current name - regression test
@@ -1690,7 +1795,7 @@ func TestManageHelper_Update_PartialSchedule(t *testing.T) {
 	entityID := "schedule.work_hours"
 	var capturedConfig homeassistant.HelperConfig
 	client := &UniversalMockClient{}
-	client.GetScheduleConfigFn = func(_ context.Context, _ string) (map[string]any, error) {
+	client.GetHelperConfigFn = func(_ context.Context, _, _ string) (map[string]any, error) {
 		return map[string]any{
 			"name": "Work Hours",
 			"monday": []any{
@@ -1726,11 +1831,60 @@ func TestManageHelper_Update_PartialSchedule(t *testing.T) {
 
 	monday, ok := capturedConfig.Config["monday"].([]any)
 	if !ok || len(monday) != 1 {
-		t.Fatalf("Config[\"monday\"] = %v, want the day-block from GetScheduleConfig to survive", capturedConfig.Config["monday"])
+		t.Fatalf("Config[\"monday\"] = %v, want the day-block from GetHelperConfig to survive", capturedConfig.Config["monday"])
 	}
 	block, ok := monday[0].(map[string]any)
 	if !ok || block["from"] != "08:00:00" || block["to"] != "09:00:00" {
 		t.Errorf("Config[\"monday\"][0] = %v, want {from: 08:00:00, to: 09:00:00}", monday[0])
+	}
+}
+
+// TestManageHelper_Update_ExplicitNullDoesNotOverwriteMergedValue guards
+// against a caller-supplied JSON null defeating the #161 merge: this API has
+// no "clear this field" spelling, so a stray {"tuesday": null} must not
+// overwrite the day block mergeCurrentHelperState already recovered from the
+// entity's current stored config. Before this fix, mergeCurrentHelperState's
+// final maps.Copy(merged, args) copied args unconditionally, so an explicit
+// null in args always won over the merged value - and since a nil value then
+// fails buildScheduleConfig's args[day].([]any) type assertion, the field
+// silently vanished from the outgoing payload and HA's schedule/update reset
+// that day to its default ([]).
+func TestManageHelper_Update_ExplicitNullDoesNotOverwriteMergedValue(t *testing.T) {
+	t.Parallel()
+
+	entityID := "schedule.work_hours"
+	tuesdayBlock := []any{map[string]any{"from": "10:00:00", "to": "11:00:00"}}
+	var capturedConfig homeassistant.HelperConfig
+	client := &UniversalMockClient{}
+	client.GetHelperConfigFn = func(_ context.Context, _, _ string) (map[string]any, error) {
+		return map[string]any{"name": "Work Hours", "tuesday": tuesdayBlock}, nil
+	}
+	client.UpdateHelperFn = func(_ context.Context, _ string, cfg homeassistant.HelperConfig) error {
+		capturedConfig = cfg
+		return nil
+	}
+
+	ctx := mcp.WithWaitConfig(context.Background(), mcp.WaitConfig{
+		Timeout:      50 * time.Millisecond,
+		PollInterval: 5 * time.Millisecond,
+	})
+
+	h := NewConsolidatedHelperHandlers()
+	result, err := h.handleManageHelper(ctx, client, map[string]any{
+		"action":    "update",
+		"entity_id": entityID,
+		"tuesday":   nil,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+	}
+
+	tuesday, ok := capturedConfig.Config["tuesday"].([]any)
+	if !ok || len(tuesday) != 1 {
+		t.Fatalf("Config[\"tuesday\"] = %v, want the merged day-block to survive an explicit null in args", capturedConfig.Config["tuesday"])
 	}
 }
 
@@ -1743,11 +1897,8 @@ func TestManageHelper_Update_PreservesName(t *testing.T) {
 	entityID := "input_number.test_number"
 	var capturedConfig homeassistant.HelperConfig
 	client := &UniversalMockClient{}
-	client.GetStateFn = func(_ context.Context, _ string) (*homeassistant.Entity, error) {
-		return &homeassistant.Entity{
-			EntityID:   entityID,
-			Attributes: map[string]any{"friendly_name": "Old Display Name"},
-		}, nil
+	client.GetHelperConfigFn = func(_ context.Context, _, _ string) (map[string]any, error) {
+		return map[string]any{"name": "Old Display Name"}, nil
 	}
 	client.UpdateHelperFn = func(_ context.Context, _ string, cfg homeassistant.HelperConfig) error {
 		capturedConfig = cfg
@@ -1792,7 +1943,7 @@ func TestManageHelper_Update_StateFetchFails_ReturnsError(t *testing.T) {
 	entityID := "input_number.test_number"
 	updateHelperCalled := false
 	client := &UniversalMockClient{}
-	client.GetStateFn = func(_ context.Context, _ string) (*homeassistant.Entity, error) {
+	client.GetHelperConfigFn = func(_ context.Context, _, _ string) (map[string]any, error) {
 		return nil, errors.New("boom")
 	}
 	client.UpdateHelperFn = func(_ context.Context, _ string, _ homeassistant.HelperConfig) error {
@@ -1823,10 +1974,49 @@ func TestManageHelper_Update_StateFetchFails_ReturnsError(t *testing.T) {
 	}
 }
 
+// TestManageHelper_Update_NotFoundInStorage_HintsYAMLDefined verifies that
+// when GetHelperConfig fails specifically because the entity isn't in the
+// platform's storage list (the exact error wsClientImpl.GetHelperConfig
+// returns for an entity that exists only via YAML configuration), the
+// resulting error names YAML-definition as the likely cause instead of the
+// generic "verify the entity exists" - a YAML-defined input_number does
+// exist, so that generic phrasing would send the caller looking in the
+// wrong place.
+func TestManageHelper_Update_NotFoundInStorage_HintsYAMLDefined(t *testing.T) {
+	t.Parallel()
+
+	entityID := "input_number.yaml_defined"
+	client := &UniversalMockClient{}
+	client.GetHelperConfigFn = func(_ context.Context, _, _ string) (map[string]any, error) {
+		return nil, fmt.Errorf("input_number not found: %s", entityID)
+	}
+
+	ctx := mcp.WithWaitConfig(context.Background(), mcp.WaitConfig{
+		Timeout:      50 * time.Millisecond,
+		PollInterval: 5 * time.Millisecond,
+	})
+
+	h := NewConsolidatedHelperHandlers()
+	result, err := h.handleManageHelper(ctx, client, map[string]any{
+		"action":    "update",
+		"entity_id": entityID,
+		"min":       10.0,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected update to fail when the entity isn't in the storage list, got success")
+	}
+	if !strings.Contains(result.Content[0].Text, "configuration.yaml") {
+		t.Errorf("error message = %q, want it to mention configuration.yaml as the likely cause", result.Content[0].Text)
+	}
+}
+
 // TestManageHelper_Update_ScheduleConfigFetchFails_DoesNotWipe is the
 // regression guard for the most severe form of the merge-fetch-failure bug:
 // a schedule's weekday fields (vol.Optional(day, default=[])) are erased if
-// an update payload omits them. If GetScheduleConfig fails and the merge
+// an update payload omits them. If GetHelperConfig fails and the merge
 // proceeded anyway, an update passing only "name" would silently wipe every
 // weekday's schedule. UpdateHelper must never be called in this case.
 func TestManageHelper_Update_ScheduleConfigFetchFails_DoesNotWipe(t *testing.T) {
@@ -1835,7 +2025,7 @@ func TestManageHelper_Update_ScheduleConfigFetchFails_DoesNotWipe(t *testing.T) 
 	entityID := "schedule.work_hours"
 	updateHelperCalled := false
 	client := &UniversalMockClient{}
-	client.GetScheduleConfigFn = func(_ context.Context, _ string) (map[string]any, error) {
+	client.GetHelperConfigFn = func(_ context.Context, _, _ string) (map[string]any, error) {
 		return nil, errors.New("boom")
 	}
 	client.UpdateHelperFn = func(_ context.Context, _ string, _ homeassistant.HelperConfig) error {
@@ -1858,10 +2048,10 @@ func TestManageHelper_Update_ScheduleConfigFetchFails_DoesNotWipe(t *testing.T) 
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !result.IsError {
-		t.Fatal("expected update to fail when GetScheduleConfig fails, got success")
+		t.Fatal("expected update to fail when GetHelperConfig fails, got success")
 	}
 	if updateHelperCalled {
-		t.Error("UpdateHelper must not be called when GetScheduleConfig fails - it would wipe every weekday's schedule")
+		t.Error("UpdateHelper must not be called when GetHelperConfig fails - it would wipe every weekday's schedule")
 	}
 }
 
@@ -1987,7 +2177,7 @@ func TestManageHelper_GetDetails(t *testing.T) {
 						},
 					}, nil
 				}
-				m.GetScheduleConfigFn = func(_ context.Context, _ string) (map[string]any, error) {
+				m.GetHelperConfigFn = func(_ context.Context, _, _ string) (map[string]any, error) {
 					return map[string]any{
 						"monday": []any{
 							map[string]any{"from": "09:00:00", "to": "17:00:00"},
@@ -2015,7 +2205,7 @@ func TestManageHelper_GetDetails(t *testing.T) {
 						},
 					}, nil
 				}
-				m.GetScheduleConfigFn = func(_ context.Context, _ string) (map[string]any, error) {
+				m.GetHelperConfigFn = func(_ context.Context, _, _ string) (map[string]any, error) {
 					return map[string]any{
 						"monday": []any{
 							map[string]any{"from": "09:00:00", "to": "17:00:00"},
@@ -3658,6 +3848,31 @@ func TestSourceConstrainedTypes_PlatformsAreUnique(t *testing.T) {
 	}
 }
 
+// TestSourceConstrainedTypes_AreAllConfigEntryFlow enforces the reachability
+// invariant handleUpdate's comment asserts only in prose: no
+// source-constrained helper type can reach the
+// "ok && !RequiresConfigEntryFlow" merge branch, so
+// checkUpdateSourceEntityDomain's skip on that branch is safe. If a future
+// source-constrained type were ever added as a genuine WS helper (not a
+// Config Entry Flow platform), this invariant would silently break and
+// update-time domain validation would stop running for it, with no test
+// failure pointing at the cause.
+func TestSourceConstrainedTypes_AreAllConfigEntryFlow(t *testing.T) {
+	t.Parallel()
+
+	for name, meta := range helperTypes {
+		if len(meta.sourceEntities) == 0 {
+			continue
+		}
+		if !homeassistant.RequiresConfigEntryFlow(meta.platform) {
+			t.Errorf("helperTypes[%q] has sourceEntities but platform %q is not a Config Entry Flow platform - "+
+				"handleUpdate's merge branch (ok && !RequiresConfigEntryFlow) would reach this type, and its "+
+				"skip of checkUpdateSourceEntityDomain on that branch assumes this can never happen",
+				name, meta.platform)
+		}
+	}
+}
+
 // TestWrapperRecipeFor_RejectsInjectionPayloads pins the security guard on
 // wrapperRecipeFor: it interpolates a caller-supplied entity_id unescaped
 // into a Jinja template string inside a ready-to-run, copy-pasteable
@@ -3681,11 +3896,13 @@ func TestWrapperRecipeFor_RejectsInjectionPayloads(t *testing.T) {
 		".x",
 	}
 
+	sensorConstraint := sourceEntityConstraint{field: attrEntityID, domains: []string{"sensor"}}
+
 	for _, payload := range payloads {
 		t.Run(payload, func(t *testing.T) {
 			t.Parallel()
-			if got := wrapperRecipeFor(platformSensorEntity, payload); got != "" {
-				t.Errorf("wrapperRecipeFor(%q, %q) = %q, want empty string for a malformed/injection-shaped entity_id", platformSensorEntity, payload, got)
+			if got := wrapperRecipeFor(sensorConstraint, payload); got != "" {
+				t.Errorf("wrapperRecipeFor(%+v, %q) = %q, want empty string for a malformed/injection-shaped entity_id", sensorConstraint, payload, got)
 			}
 		})
 	}
@@ -3696,17 +3913,17 @@ func TestHelperTypeMetadata_SourceEntityConstraints(t *testing.T) {
 
 	want := map[string][]sourceEntityConstraint{
 		"utility_meter": {{field: "source", domains: []string{"sensor"}}},
-		"statistics":    {{field: "entity_id", domains: []string{"sensor"}}},
-		"trend":         {{field: "entity_id", domains: []string{"sensor"}}},
+		"statistics":    {{field: "entity_id", domains: []string{"sensor", "binary_sensor"}}},
+		"trend":         {{field: "entity_id", domains: []string{"sensor", "counter"}}},
 		"filter":        {{field: "entity_id", domains: []string{"sensor"}}},
 		"switch_as_x":   {{field: "entity_id", domains: []string{"switch"}}},
 		"generic_thermostat": {
-			{field: "heater_entity_id", domains: []string{"switch"}},
-			{field: "target_sensor_entity_id", domains: []string{"sensor"}},
+			{field: "heater_entity_id", domains: []string{"switch", "fan"}},
+			{field: "target_sensor_entity_id", domains: []string{"sensor"}, deviceClasses: []string{"temperature"}},
 		},
 		"generic_hygrostat": {
-			{field: "humidifier_entity_id", domains: []string{"switch"}},
-			{field: "target_sensor_entity_id", domains: []string{"sensor"}},
+			{field: "humidifier_entity_id", domains: []string{"switch", "fan"}},
+			{field: "target_sensor_entity_id", domains: []string{"sensor"}, deviceClasses: []string{"humidity"}},
 		},
 	}
 
@@ -3832,54 +4049,62 @@ func TestUpdatableFields_AreActuallyReadByUpdatePath(t *testing.T) {
 	}
 }
 
-// realHelperStateAttributes returns the exact set of attribute keys real
-// Home Assistant exposes for a WebSocket helper type's entity state (via
-// GetState) or, for schedule, its stored config (via GetScheduleConfig) -
-// verified against Home Assistant core's extra_state_attributes/
-// capability_attributes for each platform (input_number, input_text,
-// input_select: NumberEntity/TextEntity/SelectEntity capability_attributes;
-// input_datetime: capability_attributes for has_date/has_time but NOT
-// "initial", which no input_* type re-exposes except input_number/counter).
-// "icon" is added by the caller for every type (a standard Entity attribute,
-// not platform-specific), and schedule's day-of-week blocks are added by the
-// caller too (schedule/list returns the stored config verbatim, not a
-// derived entity state, so every configured field round-trips - that's the
-// reason mergeCurrentHelperState special-cases schedule to call
-// GetScheduleConfig instead of GetState). Deliberately excludes "initial"
-// everywhere except input_number/counter, mirroring
-// perTypeUpdateExcludedFields - this is what makes
-// TestMergeCurrentHelperState_OnlyAdvertisesRecoverableFields a genuine
-// regression guard rather than a tautology: if it listed whatever
-// updatableFieldNames() currently returns, it could never catch a mismatch
-// between the two.
+// realHelperStorageConfig models the stored-config keys real Home Assistant
+// returns from a WebSocket helper platform's "<platform>/list" command (what
+// mergeCurrentHelperState now reads via GetHelperConfig, for every genuine WS
+// helper type - not just schedule, which is why this fixture no longer
+// special-cases it) - verified against each component's STORAGE_FIELDS
+// vol.Schema in Home Assistant core
+// (homeassistant/components/<platform>/__init__.py). Unlike entity state
+// attributes (GetState), which are a runtime, sometimes-conditional
+// projection of config, "<platform>/list" echoes back the raw stored
+// config verbatim: every field the helper was created or updated with is
+// present, whether or not the entity's current state happens to surface it.
+// "icon" is added by the caller for every type (STORAGE_FIELDS declares it
+// uniformly as vol.Optional(CONF_ICON) with no default, so it is only
+// present when actually set - the caller sets it to model that case).
 //
-// NOT every listed attribute is unconditionally present in real HA state:
-// timer's "restore" is emitted by TimerEntity only when true (the false
-// case omits the key entirely). This fixture hardcodes restore=true so
-// TestMergeCurrentHelperState_OnlyAdvertisesRecoverableFields can still
-// assert the field is recoverable in the case where it IS present -
-// TestMergeCurrentHelperState_TimerRestoreAbsentDoesNotBreakMerge covers the
-// absent case separately, since the two fixture shapes can't share one test.
-func realHelperStateAttributes(typeName string) map[string]any {
+// This fixture models "the helper was created with every optional field
+// explicitly set" - the case that matters for merge recoverability, since a
+// field genuinely never configured has nothing to preserve.
+//
+// This is deliberately the true STORAGE_FIELDS set for each platform, NOT a
+// copy of updatableFieldNames() - a fixture that mirrored updatableFieldNames
+// could never disagree with it, making
+// TestMergeCurrentHelperState_OnlyAdvertisesRecoverableFields a tautology
+// instead of a genuine regression guard. Both directions are checked against
+// this one independent model: every updatableFieldNames() entry must appear
+// here (a field advertised as updatable that real HA never stores would be
+// silently unrecoverable), and every key here must appear in
+// updatableFieldNames() or perTypeUpdateExcludedFields (a real stored field
+// missing from updatableFieldNames() is exactly how counter's "restore" went
+// unnoticed - HA stores and returns it, but it was absent from counter's
+// optionalFields, so mergeCurrentHelperState silently dropped it on every
+// update).
+func realHelperStorageConfig(typeName string) map[string]any {
 	switch typeName {
-	case "input_boolean", "input_button":
-		return map[string]any{"editable": true}
+	case "input_boolean":
+		return map[string]any{"initial": true}
+	case "input_button":
+		// input_button has no "initial" STORAGE_FIELD - a momentary press has
+		// no value to restore, only icon (added by the caller below).
+		return map[string]any{}
 	case "input_number":
 		return map[string]any{
-			"editable": true, "initial": 5.0, "min": 0.0, "max": 100.0,
+			"initial": 5.0, "min": 0.0, "max": 100.0,
 			"step": 1.0, "mode": "slider", "unit_of_measurement": "%",
 		}
 	case "input_text":
 		return map[string]any{
-			"editable": true, "min": 0.0, "max": 100.0, "mode": "text", "pattern": "^[a-z]+$",
+			"min": 0.0, "max": 100.0, "mode": "text", "pattern": "^[a-z]+$", "initial": "hello",
 		}
 	case "input_select":
-		return map[string]any{"editable": true, "options": []any{"a", "b"}}
+		return map[string]any{"options": []any{"a", "b"}, "initial": "a"}
 	case "input_datetime":
-		return map[string]any{"editable": true, "has_date": true, "has_time": true}
+		return map[string]any{"has_date": true, "has_time": true, "initial": "2024-01-01"}
 	case "counter":
 		return map[string]any{
-			"editable": true, "initial": 0.0, "step": 1.0, "minimum": 0.0, "maximum": 100.0,
+			"initial": 0.0, "step": 1.0, "minimum": 0.0, "maximum": 100.0, "restore": true,
 		}
 	case "timer":
 		return map[string]any{"duration": "0:05:00", "restore": true}
@@ -3898,15 +4123,21 @@ func realHelperStateAttributes(typeName string) map[string]any {
 // of TestUpdatableFields_AreActuallyReadByUpdatePath: that test proves every
 // updatableFieldNames() entry is READ by the update builder given the field;
 // this test proves every entry can actually be RECOVERED by
-// mergeCurrentHelperState from what real Home Assistant exposes, given a
-// caller who omits every optional field. Without this, updatableFieldNames()
-// can advertise a field the merge can never fill in (as it did for
-// input_boolean/input_select/input_text/input_datetime's "initial" before
-// perTypeUpdateExcludedFields added them - GetState's real Attributes never
-// contain "initial" for those four types, so a caller-omitted "initial"
-// silently vanished from the update payload instead of round-tripping,
-// despite the tool description and the create/update-symmetry assumption
-// both promising it would).
+// mergeCurrentHelperState from what real Home Assistant's "<platform>/list"
+// stored config exposes, given a helper that was created with every optional
+// field explicitly set. Without this, updatableFieldNames() can advertise a
+// field the merge can never fill in.
+//
+// The reverse direction also matters and is checked here too: every key
+// realHelperStorageConfig models for a type must be reachable via either
+// updatableFieldNames() or perTypeUpdateExcludedFields - otherwise a field
+// real Home Assistant stores and returns (and would happily preserve across
+// an update) is invisible to helperTypes entirely, so mergeCurrentHelperState
+// filters it out and every update to that helper silently resets it to HA's
+// default. This is precisely how counter's "restore" field went unnoticed:
+// storage config always returns it, but it was absent from
+// counter.optionalFields, so no assertion in either direction previously
+// caught the gap.
 func TestMergeCurrentHelperState_OnlyAdvertisesRecoverableFields(t *testing.T) {
 	t.Parallel()
 
@@ -3920,77 +4151,136 @@ func TestMergeCurrentHelperState_OnlyAdvertisesRecoverableFields(t *testing.T) {
 
 			entityID := meta.entityPrefix + ".test_entity"
 			client := &UniversalMockClient{}
-			attrs := realHelperStateAttributes(name)
-			attrs["icon"] = "mdi:test"
-			if meta.platform == platformSchedule {
-				client.GetScheduleConfigFn = func(context.Context, string) (map[string]any, error) {
-					config := make(map[string]any, len(attrs)+1)
-					for k, v := range attrs {
-						config[k] = v
-					}
-					config["name"] = "Current Name"
-					return config, nil
-				}
-			} else {
-				client.GetStateFn = func(context.Context, string) (*homeassistant.Entity, error) {
-					return &homeassistant.Entity{EntityID: entityID, Attributes: attrs}, nil
-				}
+			config := realHelperStorageConfig(name)
+			config["icon"] = "mdi:test"
+			config["name"] = "Current Name"
+			client.GetHelperConfigFn = func(context.Context, string, string) (map[string]any, error) {
+				return config, nil
 			}
 
-			merged, _, ok := mergeCurrentHelperState(context.Background(), client, entityID, name, meta, map[string]any{})
-			if !ok {
-				t.Fatalf("mergeCurrentHelperState returned ok=false")
+			merged, _, err := mergeCurrentHelperState(context.Background(), client, entityID, name, meta, map[string]any{})
+			if err != nil {
+				t.Fatalf("mergeCurrentHelperState returned err: %v", err)
 			}
 
 			for _, field := range updatableFieldNames(name) {
 				if _, present := merged[field]; !present {
-					t.Errorf("field %q is advertised as updatable for %q but real Home Assistant state/config does not expose it, so an omitted value can never be recovered - add it to perTypeUpdateExcludedFields", field, name)
+					t.Errorf("field %q is advertised as updatable for %q but real Home Assistant's stored config does not expose it, so an omitted value can never be recovered - add it to perTypeUpdateExcludedFields", field, name)
 				}
+			}
+
+			updatable := make(map[string]bool, len(updatableFieldNames(name)))
+			for _, field := range updatableFieldNames(name) {
+				updatable[field] = true
+			}
+			for field := range realHelperStorageConfig(name) {
+				if updatable[field] || perTypeUpdateExcludedFields[name][field] {
+					continue
+				}
+				t.Errorf("field %q is a real stored-config field for %q (per realHelperStorageConfig) but is not in updatableFieldNames() or perTypeUpdateExcludedFields - "+
+					"it will be silently dropped by mergeCurrentHelperState and reset to Home Assistant's default on every update; add it to optionalFields (or requiredFields) for this type", field, name)
 			}
 		})
 	}
 }
 
-// TestMergeCurrentHelperState_TimerRestoreAbsentDoesNotBreakMerge is the W2
-// regression check for a gap TestMergeCurrentHelperState_OnlyAdvertisesRecoverableFields
-// couldn't catch: Home Assistant's TimerEntity only emits the "restore"
-// attribute when it is true (conditional presence, unlike every other
-// updatable field in realHelperStateAttributes which is unconditionally
-// present whenever the type exposes it at all). The fixture in
-// realHelperStateAttributes' "timer" case hardcodes restore=true, so the
-// false/absent path was never exercised by any test - this test covers it
-// directly. When "restore" is absent from state (the false case) and the
-// caller also omits it, the merge must not fabricate the key: an absent
-// "restore" in the merged config, followed by buildHelperConfig's
-// addOptionalBool skipping unset optional fields, reproduces HA's own
-// default (False) - correct, but only by coincidence rather than by
-// construction, which is exactly the assumption this test pins down.
-func TestMergeCurrentHelperState_TimerRestoreAbsentDoesNotBreakMerge(t *testing.T) {
+// TestMergeCurrentHelperState_TimerRestoreFalseSurvivesMerge guards a
+// specific way the merge could silently regress: timer's "restore" field
+// has an explicit default in Home Assistant's STORAGE_FIELDS
+// (vol.Optional(CONF_RESTORE, default=DEFAULT_RESTORE)), so "<platform>/list"
+// always returns it - including the common case where it's false. The merge
+// filters on `v != nil`, not `v != false`/`v != ""`/etc., specifically so a
+// zero-value config field still round-trips; this test pins that down for
+// the boolean case, where "reset to zero value" and "field absent" are easy
+// to conflate.
+func TestMergeCurrentHelperState_TimerRestoreFalseSurvivesMerge(t *testing.T) {
 	t.Parallel()
 
 	entityID := "timer.test_entity"
 	client := &UniversalMockClient{
-		GetStateFn: func(context.Context, string) (*homeassistant.Entity, error) {
-			return &homeassistant.Entity{
-				EntityID: entityID,
-				// restore deliberately absent - mirrors real HA's TimerEntity
-				// state when restore=false, unlike the always-true fixture in
-				// realHelperStateAttributes.
-				Attributes: map[string]any{"duration": "0:05:00", "icon": "mdi:test"},
-			}, nil
+		GetHelperConfigFn: func(context.Context, string, string) (map[string]any, error) {
+			return map[string]any{"duration": "0:05:00", "restore": false, "icon": "mdi:test"}, nil
 		},
 	}
 
-	merged, _, ok := mergeCurrentHelperState(context.Background(), client, entityID, "timer", helperTypes["timer"], map[string]any{})
-	if !ok {
-		t.Fatalf("mergeCurrentHelperState returned ok=false")
+	merged, _, err := mergeCurrentHelperState(context.Background(), client, entityID, "timer", helperTypes["timer"], map[string]any{})
+	if err != nil {
+		t.Fatalf("mergeCurrentHelperState returned err: %v", err)
 	}
 
-	if _, present := merged["restore"]; present {
-		t.Errorf(`merged["restore"] should be absent when state doesn't expose it and the caller didn't supply it, got %v`, merged["restore"])
+	if restore, present := merged["restore"]; !present || restore != false {
+		t.Errorf(`merged["restore"] = %v (present=%v), want false (present=true) to survive the merge`, restore, present)
 	}
 	if merged["duration"] != "0:05:00" {
 		t.Errorf(`merged["duration"] = %v, want "0:05:00"`, merged["duration"])
+	}
+}
+
+// TestMergeCurrentHelperState_CounterRestoreFalseSurvivesMerge is counter's
+// analog of TestMergeCurrentHelperState_TimerRestoreFalseSurvivesMerge:
+// counter's STORAGE_FIELDS also declares
+// vol.Optional(CONF_RESTORE, default=DEFAULT_RESTORE), so a counter created
+// with restore=false must keep it on an update that doesn't mention restore
+// at all, rather than having it silently reset to the default.
+func TestMergeCurrentHelperState_CounterRestoreFalseSurvivesMerge(t *testing.T) {
+	t.Parallel()
+
+	entityID := "counter.test_entity"
+	client := &UniversalMockClient{
+		GetHelperConfigFn: func(context.Context, string, string) (map[string]any, error) {
+			return map[string]any{"step": 1.0, "restore": false, "icon": "mdi:test"}, nil
+		},
+	}
+
+	merged, _, err := mergeCurrentHelperState(context.Background(), client, entityID, "counter", helperTypes["counter"], map[string]any{"step": 2.0})
+	if err != nil {
+		t.Fatalf("mergeCurrentHelperState returned err: %v", err)
+	}
+
+	if restore, present := merged["restore"]; !present || restore != false {
+		t.Errorf(`merged["restore"] = %v (present=%v), want false (present=true) to survive the merge`, restore, present)
+	}
+}
+
+// TestManageHelper_Update_CounterPreservesRestore is the end-to-end
+// regression test for the counter.restore data-loss bug found in review:
+// updating a counter without mentioning "restore" must not reset it to
+// Home Assistant's default (true) for a counter that was configured with
+// restore=false.
+func TestManageHelper_Update_CounterPreservesRestore(t *testing.T) {
+	t.Parallel()
+
+	entityID := "counter.test_entity"
+	var capturedConfig homeassistant.HelperConfig
+	client := &UniversalMockClient{}
+	client.GetHelperConfigFn = func(_ context.Context, _, _ string) (map[string]any, error) {
+		return map[string]any{"name": "Test Counter", "step": 1.0, "restore": false}, nil
+	}
+	client.UpdateHelperFn = func(_ context.Context, _ string, cfg homeassistant.HelperConfig) error {
+		capturedConfig = cfg
+		return nil
+	}
+
+	ctx := mcp.WithWaitConfig(context.Background(), mcp.WaitConfig{
+		Timeout:      50 * time.Millisecond,
+		PollInterval: 5 * time.Millisecond,
+	})
+
+	h := NewConsolidatedHelperHandlers()
+	result, err := h.handleManageHelper(ctx, client, map[string]any{
+		"action":    "update",
+		"entity_id": entityID,
+		"step":      2.0,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+	}
+
+	if restore, ok := capturedConfig.Config["restore"].(bool); !ok || restore != false {
+		t.Errorf("Config[\"restore\"] = %v (ok=%v), want false - update must not reset restore to HA's default", capturedConfig.Config["restore"], ok)
 	}
 }
 

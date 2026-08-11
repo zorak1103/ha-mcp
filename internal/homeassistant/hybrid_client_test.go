@@ -486,7 +486,7 @@ type mockWSOperations struct {
 	getConditionsForTargetFunc  func(ctx context.Context, target Target, expandGroup *bool) ([]string, error)
 	getServicesForTargetFunc    func(ctx context.Context, target Target, expandGroup *bool) ([]string, error)
 	extractFromTargetFunc       func(ctx context.Context, target Target, expandGroup *bool) (*ExtractFromTargetResult, error)
-	getScheduleConfigFunc       func(ctx context.Context, scheduleID string) (map[string]any, error)
+	getHelperConfigFunc         func(ctx context.Context, platform, entityID string) (map[string]any, error)
 	getConfigEntriesFunc        func(ctx context.Context, domain string) ([]ConfigEntryFull, error)
 	getConfigEntryFunc          func(ctx context.Context, entryID string) (*ConfigEntryFull, error)
 	sendHACSCommandFunc         func(ctx context.Context, command string, data map[string]any) (any, error)
@@ -951,9 +951,9 @@ func (m *mockWSOperations) ExtractFromTarget(ctx context.Context, target Target,
 	return nil, nil
 }
 
-func (m *mockWSOperations) GetScheduleConfig(ctx context.Context, scheduleID string) (map[string]any, error) {
-	if m.getScheduleConfigFunc != nil {
-		return m.getScheduleConfigFunc(ctx, scheduleID)
+func (m *mockWSOperations) GetHelperConfig(ctx context.Context, platform, entityID string) (map[string]any, error) {
+	if m.getHelperConfigFunc != nil {
+		return m.getHelperConfigFunc(ctx, platform, entityID)
 	}
 	return nil, nil
 }
@@ -1902,7 +1902,7 @@ func TestHybridClient_WSOperations_Config(t *testing.T) {
 		getLovelaceConfigFunc: func(_ context.Context, _ string) (map[string]any, error) {
 			return map[string]any{"title": "Home"}, nil
 		},
-		getScheduleConfigFunc: func(_ context.Context, _ string) (map[string]any, error) {
+		getHelperConfigFunc: func(_ context.Context, _, _ string) (map[string]any, error) {
 			return map[string]any{"name": "Test Schedule"}, nil
 		},
 	}
@@ -1919,8 +1919,8 @@ func TestHybridClient_WSOperations_Config(t *testing.T) {
 		}
 	})
 
-	t.Run("GetScheduleConfig", func(t *testing.T) {
-		config, err := client.GetScheduleConfig(context.Background(), "schedule.test")
+	t.Run("GetHelperConfig", func(t *testing.T) {
+		config, err := client.GetHelperConfig(context.Background(), "schedule", "schedule.test")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

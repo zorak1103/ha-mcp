@@ -308,7 +308,7 @@ func (m *mockClient) GetServicesForTarget(ctx context.Context, target Target, ex
 func (m *mockClient) ExtractFromTarget(ctx context.Context, target Target, expandGroup *bool) (*ExtractFromTargetResult, error) {
 	return nil, nil
 }
-func (m *mockClient) GetScheduleConfig(ctx context.Context, scheduleID string) (map[string]any, error) {
+func (m *mockClient) GetHelperConfig(ctx context.Context, platform, entityID string) (map[string]any, error) {
 	return nil, nil
 }
 func (m *mockClient) RenderTemplate(ctx context.Context, template string) (string, error) {

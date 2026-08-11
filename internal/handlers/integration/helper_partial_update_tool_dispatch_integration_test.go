@@ -13,8 +13,8 @@ import (
 // HelperPartialUpdateToolDispatchTestSuite verifies the #161 partial-update
 // merge (mergeCurrentHelperState, helpers_consolidated.go) against a real
 // Home Assistant instance. The merge's correctness rests entirely on
-// realHelperStateAttributes, a hand-transcribed model of which attributes
-// HA's GetState/GetScheduleConfig actually expose per WS helper type
+// realHelperStorageConfig, a hand-transcribed model of which fields HA's
+// "<platform>/list" (GetHelperConfig) actually returns per WS helper type
 // (helpers_consolidated_test.go). Unit tests can only ever check that model
 // against itself - CLAUDE.md documents this exact failure mode already
 // (script entities' "sequence" attribute: correct against mocks, silently
@@ -321,7 +321,7 @@ func (s *HelperPartialUpdateToolDispatchTestSuite) TestSchedulePartialUpdatePres
 
 	time.Sleep(1 * time.Second)
 
-	config, err := s.Client().GetScheduleConfig(s.Context(), entityID)
+	config, err := s.Client().GetHelperConfig(s.Context(), "schedule", entityID)
 	s.Require().NoError(err, "failed to read back schedule config")
 
 	s.Equal("mdi:calendar-clock", config["icon"], "icon should survive an update that omitted it")

@@ -372,6 +372,12 @@ func TestManageHelper_GenericThermostat(t *testing.T) {
 				m.CreateHelperFn = func(context.Context, homeassistant.HelperConfig) error {
 					return nil
 				}
+				m.GetStateFn = func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+					return &homeassistant.Entity{
+						EntityID:   entityID,
+						Attributes: map[string]any{"device_class": "temperature"},
+					}, nil
+				}
 			},
 			wantContains: []string{"created", "climate.test_thermo"},
 		},
@@ -383,6 +389,14 @@ func TestManageHelper_GenericThermostat(t *testing.T) {
 				"id":                      "test_thermo",
 				"name":                    "Test Thermostat",
 				"target_sensor_entity_id": "sensor.room_temp",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetStateFn = func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+					return &homeassistant.Entity{
+						EntityID:   entityID,
+						Attributes: map[string]any{"device_class": "temperature"},
+					}, nil
+				}
 			},
 			wantError:    true,
 			wantContains: []string{"heater_entity_id", "required"},
@@ -472,6 +486,12 @@ func TestManageHelper_GenericHygrostat(t *testing.T) {
 				m.CreateHelperFn = func(context.Context, homeassistant.HelperConfig) error {
 					return nil
 				}
+				m.GetStateFn = func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+					return &homeassistant.Entity{
+						EntityID:   entityID,
+						Attributes: map[string]any{"device_class": "humidity"},
+					}, nil
+				}
 			},
 			wantContains: []string{"created", "humidifier.test_hygro"},
 		},
@@ -483,6 +503,14 @@ func TestManageHelper_GenericHygrostat(t *testing.T) {
 				"id":                      "test_hygro",
 				"name":                    "Test Hygrostat",
 				"target_sensor_entity_id": "sensor.room_humidity",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetStateFn = func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+					return &homeassistant.Entity{
+						EntityID:   entityID,
+						Attributes: map[string]any{"device_class": "humidity"},
+					}, nil
+				}
 			},
 			wantError:    true,
 			wantContains: []string{"humidifier_entity_id", "required"},
