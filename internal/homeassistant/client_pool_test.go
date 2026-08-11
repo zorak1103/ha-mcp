@@ -340,7 +340,7 @@ func (m *mockClientForPool) GetServicesForTarget(_ context.Context, _ Target, _ 
 func (m *mockClientForPool) ExtractFromTarget(_ context.Context, _ Target, _ *bool) (*ExtractFromTargetResult, error) {
 	return nil, nil
 }
-func (m *mockClientForPool) GetScheduleConfig(_ context.Context, _ string) (map[string]any, error) {
+func (m *mockClientForPool) GetHelperConfig(_ context.Context, _, _ string) (map[string]any, error) {
 	return nil, nil
 }
 func (m *mockClientForPool) GetServices(_ context.Context) ([]Service, error) { return nil, nil }

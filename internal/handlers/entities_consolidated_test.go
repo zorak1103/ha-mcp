@@ -3,10 +3,12 @@ package handlers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/zorak1103/ha-mcp/internal/handlers/formatter"
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
@@ -1091,7 +1093,7 @@ func TestQueryEntities_Current_Grouping(t *testing.T) {
 	t.Parallel()
 
 	testStates := []homeassistant.Entity{
-		{EntityID: "light.living_room", State: "on", Attributes: map[string]any{"friendly_name": "Living Room"}},
+		{EntityID: "light.living_room", State: "on", Attributes: map[string]any{"friendly_name": "Living Room"}, LastChanged: time.Now().Add(-2 * time.Hour)},
 		{EntityID: "light.bedroom", State: "off", Attributes: map[string]any{"friendly_name": "Bedroom"}},
 		{EntityID: "switch.kitchen", State: "on", Attributes: map[string]any{"friendly_name": "Kitchen"}},
 	}
@@ -1103,6 +1105,17 @@ func TestQueryEntities_Current_Grouping(t *testing.T) {
 	}
 
 	deviceRegistry := []homeassistant.DeviceRegistryEntry{}
+
+	// Dedicated fixture for the timestamp-suffix assertions below, independent of
+	// testStates — mutating testStates for an unrelated subtest must not silently
+	// change what these two verbose/non-verbose cases are actually asserting (issue
+	// #147 follow-up, N5).
+	timestampFixtureStates := []homeassistant.Entity{
+		{EntityID: "light.living_room", State: "on", Attributes: map[string]any{"friendly_name": "Living Room"}, LastChanged: time.Now().Add(-2 * time.Hour)},
+	}
+	timestampFixtureRegistry := []homeassistant.EntityRegistryEntry{
+		{EntityID: "light.living_room", AreaID: "living_room"},
+	}
 
 	tests := []handlerTestCase{
 		{
@@ -1131,7 +1144,42 @@ func TestQueryEntities_Current_Grouping(t *testing.T) {
 				}
 			},
 			wantError:    false,
-			wantContains: []string{"Area: living_room", "Area: bedroom"},
+			wantContains: []string{"Area: living_room", "Area: bedroom", "- Living Room (light.living_room) is on", "Kitchen (switch.kitchen) is on"},
+		},
+		{
+			name: "group by area_id non-verbose omits timestamp but keeps entity_id",
+			args: map[string]any{"mode": modeCurrent, "group_by": "area_id", "format": "natural", "verbose": false},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetStatesFn = func(_ context.Context) ([]homeassistant.Entity, error) {
+					return timestampFixtureStates, nil
+				}
+				m.GetEntityRegistryFn = func(_ context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+					return timestampFixtureRegistry, nil
+				}
+				m.GetDeviceRegistryFn = func(_ context.Context) ([]homeassistant.DeviceRegistryEntry, error) {
+					return deviceRegistry, nil
+				}
+			},
+			wantError:       false,
+			wantContains:    []string{"Living Room (light.living_room) is on"},
+			wantNotContains: []string{". Changed"},
+		},
+		{
+			name: "group by area_id verbose includes timestamp and entity_id",
+			args: map[string]any{"mode": modeCurrent, "group_by": "area_id", "format": "natural", "verbose": true},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetStatesFn = func(_ context.Context) ([]homeassistant.Entity, error) {
+					return timestampFixtureStates, nil
+				}
+				m.GetEntityRegistryFn = func(_ context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+					return timestampFixtureRegistry, nil
+				}
+				m.GetDeviceRegistryFn = func(_ context.Context) ([]homeassistant.DeviceRegistryEntry, error) {
+					return deviceRegistry, nil
+				}
+			},
+			wantError:    false,
+			wantContains: []string{"Living Room (light.living_room) is on", ". Changed"},
 		},
 		{
 			name: "invalid group_by",
@@ -1143,6 +1191,58 @@ func TestQueryEntities_Current_Grouping(t *testing.T) {
 			},
 			wantError:    true,
 			wantContains: []string{"invalid group_by"},
+		},
+	}
+
+	h := NewConsolidatedEntityQueryHandlers()
+	runHandlerTestCases(t, tests, h.handleQueryEntities)
+}
+
+// TestQueryEntities_Current_GroupingCapped verifies that writeEntityList (used by
+// group_by=area_id/device_class/integration) caps its per-group output the same way
+// the ungrouped CompactList path already does. Before this fix, these grouped natural
+// paths had no cap at all and no default limit applies (limit=0 means "no limit"), so
+// a single large area could return every entity's full domain-aware detail line in one
+// uncapped response (issue #147 follow-up, C2).
+func TestQueryEntities_Current_GroupingCapped(t *testing.T) {
+	t.Parallel()
+
+	const totalInArea = formatter.CompactListCap + 10
+
+	testStates := make([]homeassistant.Entity, 0, totalInArea)
+	entityRegistry := make([]homeassistant.EntityRegistryEntry, 0, totalInArea)
+	for i := 0; i < totalInArea; i++ {
+		entityID := fmt.Sprintf("light.office_%03d", i)
+		testStates = append(testStates, homeassistant.Entity{
+			EntityID:   entityID,
+			State:      "on",
+			Attributes: map[string]any{"friendly_name": fmt.Sprintf("Office Light %03d", i)},
+		})
+		entityRegistry = append(entityRegistry, homeassistant.EntityRegistryEntry{
+			EntityID: entityID,
+			AreaID:   "office",
+		})
+	}
+	lastEntityID := testStates[totalInArea-1].EntityID
+
+	tests := []handlerTestCase{
+		{
+			name: "group by area_id caps per-group output and notes the overflow",
+			args: map[string]any{"mode": modeCurrent, "group_by": "area_id", "format": "natural", "verbose": false},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetStatesFn = func(_ context.Context) ([]homeassistant.Entity, error) {
+					return testStates, nil
+				}
+				m.GetEntityRegistryFn = func(_ context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+					return entityRegistry, nil
+				}
+				m.GetDeviceRegistryFn = func(_ context.Context) ([]homeassistant.DeviceRegistryEntry, error) {
+					return nil, nil
+				}
+			},
+			wantError:       false,
+			wantContains:    []string{"and 10 more (use pagination or verbose=true for full list)"},
+			wantNotContains: []string{lastEntityID},
 		},
 	}
 

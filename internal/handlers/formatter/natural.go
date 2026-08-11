@@ -15,9 +15,17 @@ const (
 	domainLight = "light"
 )
 
-// compactListCap is the maximum number of entities shown in CompactList mode before
-// an overflow note is appended. Keeps non-verbose output token-bounded (~3k chars max).
-const compactListCap = 50
+// CompactListCap is the maximum number of entities shown in a single compact or
+// per-group natural-language entity list before an overflow note is appended. Keeps
+// non-verbose output token-bounded (~3k chars max) regardless of how many entities
+// matched a query or fell into one group.
+const CompactListCap = 50
+
+// FormatOverflowNote returns the note appended when a list is truncated at
+// CompactListCap, so callers outside this package produce byte-identical wording.
+func FormatOverflowNote(remaining int) string {
+	return fmt.Sprintf("... and %d more (use pagination or verbose=true for full list)", remaining)
+}
 
 // State constants
 const (
@@ -47,6 +55,12 @@ func (f *NaturalFormatter) FormatEntity(_ context.Context, entity homeassistant.
 	return f.formatEntityNL(entity, true), nil
 }
 
+// FormatEntityCompact formats a single entity in natural language without the
+// "Changed X ago" timestamp suffix (entity_id is still included).
+func (f *NaturalFormatter) FormatEntityCompact(_ context.Context, entity homeassistant.Entity) (string, error) {
+	return f.formatEntityNL(entity, false), nil
+}
+
 // FormatEntities formats a list of entities in natural language.
 func (f *NaturalFormatter) FormatEntities(_ context.Context, entities []homeassistant.Entity, opts EntityListOptions) (string, error) {
 	if len(entities) == 0 {
@@ -65,38 +79,28 @@ func (f *NaturalFormatter) FormatEntities(_ context.Context, entities []homeassi
 	case opts.GroupByDomain:
 		parts = append(parts, f.formatEntitiesByDomain(entities, opts.Verbose))
 	case opts.Verbose:
-		// List all entities with full detail
+		// List all entities with full detail, including the "Changed X ago" suffix —
+		// what distinguishes verbose from the CompactList branch below.
 		for _, e := range entities {
-			parts = append(parts, "- "+f.formatEntityNL(e, false))
+			parts = append(parts, "- "+f.formatEntityNL(e, true))
 		}
 	case opts.CompactList:
-		// Compact per-entity list capped at compactListCap — makes non-verbose output actionable
+		// Compact per-entity list capped at CompactListCap — makes non-verbose output actionable
 		capped := entities
-		if len(capped) > compactListCap {
-			capped = capped[:compactListCap]
+		if len(capped) > CompactListCap {
+			capped = capped[:CompactListCap]
 		}
 		lines := make([]string, 0, len(capped)+1)
 		for _, e := range capped {
-			lines = append(lines, f.formatEntityCompact(e))
+			lines = append(lines, "- "+f.formatEntityNL(e, false))
 		}
-		if len(entities) > compactListCap {
-			lines = append(lines, fmt.Sprintf("... and %d more (use pagination or verbose=true for full list)", len(entities)-compactListCap))
+		if len(entities) > CompactListCap {
+			lines = append(lines, FormatOverflowNote(len(entities)-CompactListCap))
 		}
 		parts = append(parts, strings.Join(lines, "\n"))
 	}
 
 	return strings.Join(parts, "\n\n"), nil
-}
-
-// formatEntityCompact returns a compact single-line summary of an entity:
-// "- entity_id (Friendly Name) — state".
-func (f *NaturalFormatter) formatEntityCompact(e homeassistant.Entity) string {
-	name := GetFriendlyName(e.EntityID, e.Attributes)
-	if name == e.EntityID {
-		// No distinct friendly name — omit the redundant parens
-		return fmt.Sprintf("- %s — %s", e.EntityID, e.State)
-	}
-	return fmt.Sprintf("- %s (%s) — %s", e.EntityID, name, e.State)
 }
 
 // FormatHistory formats history entries in natural language.
@@ -237,7 +241,8 @@ func (f *NaturalFormatter) formatEntityNL(entity homeassistant.Entity, includeTi
 		details = fmt.Sprintf("is %s", state)
 	}
 
-	result := fmt.Sprintf("%s %s", name, details)
+	result := FormatNameWithID(name, entity.EntityID)
+	result = fmt.Sprintf("%s %s", result, details)
 
 	if includeTime && !entity.LastChanged.IsZero() {
 		timeSince := FormatTimeSince(entity.LastChanged, f.now)
@@ -483,7 +488,7 @@ func (f *NaturalFormatter) formatEntitiesByDomain(entities []homeassistant.Entit
 }
 
 // formatDomainGroup formats a group of entities from the same domain.
-func (f *NaturalFormatter) formatDomainGroup(domain string, entities []homeassistant.Entity, _ bool) string {
+func (f *NaturalFormatter) formatDomainGroup(domain string, entities []homeassistant.Entity, verbose bool) string {
 	var parts []string
 
 	// Domain header with count
@@ -506,7 +511,7 @@ func (f *NaturalFormatter) formatDomainGroup(domain string, entities []homeassis
 	// Always show entities when domain grouping is used (explicit grouping)
 	// Use compact format if not verbose
 	for _, e := range entities {
-		parts = append(parts, "- "+f.formatEntityNL(e, false))
+		parts = append(parts, "- "+f.formatEntityNL(e, verbose))
 	}
 
 	return strings.Join(parts, "\n")

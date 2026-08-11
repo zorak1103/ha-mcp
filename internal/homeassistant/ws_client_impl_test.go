@@ -1885,7 +1885,7 @@ func TestWSClientImplWithSender_ListScenes(t *testing.T) {
 	}
 }
 
-func TestWSClientImplWithSender_GetScheduleConfig(t *testing.T) {
+func TestWSClientImplWithSender_GetHelperConfig_Schedule(t *testing.T) {
 	t.Parallel()
 
 	schedules := []map[string]any{
@@ -1903,7 +1903,7 @@ func TestWSClientImplWithSender_GetScheduleConfig(t *testing.T) {
 	}
 
 	client := newWSClientImplWithSender(mock)
-	config, err := client.GetScheduleConfig(context.Background(), "schedule.test")
+	config, err := client.GetHelperConfig(context.Background(), "schedule", "schedule.test")
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1913,7 +1913,7 @@ func TestWSClientImplWithSender_GetScheduleConfig(t *testing.T) {
 	}
 }
 
-func TestWSClientImplWithSender_GetScheduleConfig_NotFound(t *testing.T) {
+func TestWSClientImplWithSender_GetHelperConfig_NotFound(t *testing.T) {
 	t.Parallel()
 
 	mock := &mockWSClientSender{
@@ -1923,13 +1923,39 @@ func TestWSClientImplWithSender_GetScheduleConfig_NotFound(t *testing.T) {
 	}
 
 	client := newWSClientImplWithSender(mock)
-	_, err := client.GetScheduleConfig(context.Background(), "nonexistent")
+	_, err := client.GetHelperConfig(context.Background(), "schedule", "nonexistent")
 
 	if err == nil {
 		t.Fatal("expected error for not found schedule")
 	}
 	if !strings.Contains(err.Error(), "schedule not found") {
 		t.Errorf("error should mention not found: %v", err)
+	}
+}
+
+// TestWSClientImplWithSender_GetHelperConfig_RejectsConfigEntryPlatform
+// mirrors UpdateHelper's own isWSHelperPlatform gate: a Config Entry
+// platform (e.g. "threshold") has no "<platform>/list" WS command, so
+// GetHelperConfig must reject it before sending a command HA never
+// registered, rather than surfacing HA's opaque unknown_command error.
+func TestWSClientImplWithSender_GetHelperConfig_RejectsConfigEntryPlatform(t *testing.T) {
+	t.Parallel()
+
+	mock := &mockWSClientSender{
+		sendCommandFunc: func(context.Context, string, map[string]any) (*WSResultMessage, error) {
+			t.Fatal("SendCommand must not be called for a non-WS-helper platform")
+			return nil, nil
+		},
+	}
+
+	client := newWSClientImplWithSender(mock)
+	_, err := client.GetHelperConfig(context.Background(), "threshold", "binary_sensor.test")
+
+	if err == nil {
+		t.Fatal("expected error for a config-entry platform")
+	}
+	if !strings.Contains(err.Error(), "config-entry helpers") {
+		t.Errorf("error should explain the config-entry-helper gate: %v", err)
 	}
 }
 
@@ -2598,7 +2624,7 @@ func TestWSClientImplWithSender_ListScenes_Error(t *testing.T) {
 	}
 }
 
-func TestWSClientImplWithSender_GetScheduleConfig_Error(t *testing.T) {
+func TestWSClientImplWithSender_GetHelperConfig_Error(t *testing.T) {
 	t.Parallel()
 
 	mock := &mockWSClientSender{
@@ -2608,14 +2634,14 @@ func TestWSClientImplWithSender_GetScheduleConfig_Error(t *testing.T) {
 	}
 
 	client := newWSClientImplWithSender(mock)
-	_, err := client.GetScheduleConfig(context.Background(), "test")
+	_, err := client.GetHelperConfig(context.Background(), "schedule", "test")
 
 	if err == nil || !strings.Contains(err.Error(), "get schedule list failed") {
 		t.Errorf("expected get schedule list failed error, got: %v", err)
 	}
 }
 
-func TestWSClientImplWithSender_GetScheduleConfig_UnmarshalError(t *testing.T) {
+func TestWSClientImplWithSender_GetHelperConfig_UnmarshalError(t *testing.T) {
 	t.Parallel()
 
 	mock := &mockWSClientSender{
@@ -2625,7 +2651,7 @@ func TestWSClientImplWithSender_GetScheduleConfig_UnmarshalError(t *testing.T) {
 	}
 
 	client := newWSClientImplWithSender(mock)
-	_, err := client.GetScheduleConfig(context.Background(), "test")
+	_, err := client.GetHelperConfig(context.Background(), "schedule", "test")
 
 	if err == nil || !strings.Contains(err.Error(), "failed to unmarshal") {
 		t.Errorf("expected unmarshal error, got: %v", err)
@@ -3199,7 +3225,7 @@ func TestWSClientImplWithSender_SetHelperValue_UnsupportedPlatform(t *testing.T)
 	}
 }
 
-func TestWSClientImplWithSender_GetScheduleConfig_NoMatchingID(t *testing.T) {
+func TestWSClientImplWithSender_GetHelperConfig_NoMatchingID(t *testing.T) {
 	t.Parallel()
 
 	schedules := []map[string]any{
@@ -3213,7 +3239,7 @@ func TestWSClientImplWithSender_GetScheduleConfig_NoMatchingID(t *testing.T) {
 	}
 
 	client := newWSClientImplWithSender(mock)
-	_, err := client.GetScheduleConfig(context.Background(), "schedule.nonexistent")
+	_, err := client.GetHelperConfig(context.Background(), "schedule", "schedule.nonexistent")
 
 	if err == nil || !strings.Contains(err.Error(), "schedule not found") {
 		t.Errorf("expected schedule not found error, got: %v", err)

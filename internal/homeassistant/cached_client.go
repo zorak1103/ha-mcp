@@ -898,8 +898,8 @@ func (c *CachedClient) ExtractFromTarget(ctx context.Context, target Target, exp
 }
 
 //nolint:revive // Delegated method
-func (c *CachedClient) GetScheduleConfig(ctx context.Context, scheduleID string) (map[string]any, error) {
-	return c.client.GetScheduleConfig(ctx, scheduleID)
+func (c *CachedClient) GetHelperConfig(ctx context.Context, platform, entityID string) (map[string]any, error) {
+	return c.client.GetHelperConfig(ctx, platform, entityID)
 }
 
 //nolint:revive // Delegated method

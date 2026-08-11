@@ -133,7 +133,7 @@ type WSOperations interface {
 	GetConditionsForTarget(ctx context.Context, target Target, expandGroup *bool) ([]string, error)
 	GetServicesForTarget(ctx context.Context, target Target, expandGroup *bool) ([]string, error)
 	ExtractFromTarget(ctx context.Context, target Target, expandGroup *bool) (*ExtractFromTargetResult, error)
-	GetScheduleConfig(ctx context.Context, scheduleID string) (map[string]any, error)
+	GetHelperConfig(ctx context.Context, platform, entityID string) (map[string]any, error)
 	GetConfigEntries(ctx context.Context, domain string) ([]ConfigEntryFull, error)
 	GetConfigEntry(ctx context.Context, entryID string) (*ConfigEntryFull, error)
 	SendHACSCommand(ctx context.Context, command string, data map[string]any) (any, error)
@@ -1184,9 +1184,9 @@ func (c *HybridClient) ExtractFromTarget(ctx context.Context, target Target, exp
 // Schedule Config Operations (delegated to WebSocket)
 // =============================================================================
 
-// GetScheduleConfig retrieves the full configuration of a schedule helper.
-func (c *HybridClient) GetScheduleConfig(ctx context.Context, scheduleID string) (map[string]any, error) {
-	return c.ws.GetScheduleConfig(ctx, scheduleID)
+// GetHelperConfig retrieves the full stored configuration of a WebSocket helper entity.
+func (c *HybridClient) GetHelperConfig(ctx context.Context, platform, entityID string) (map[string]any, error) {
+	return c.ws.GetHelperConfig(ctx, platform, entityID)
 }
 
 // =============================================================================

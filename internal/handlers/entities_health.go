@@ -448,8 +448,8 @@ func formatHealthReportNatural(report HealthReport, staleDays int) string {
 		label := categoryLabel(cat, staleDays)
 		fmt.Fprintf(&b, "--- %s (%d) ---\n", label, len(issues))
 		for _, issue := range issues {
-			fmt.Fprintf(&b, "  %s (%s) [%s] - %s\n",
-				issue.EntityID, issue.Name, issue.Platform, issue.Details)
+			fmt.Fprintf(&b, "  %s [%s] - %s\n",
+				formatter.FormatNameWithID(issue.Name, issue.EntityID), issue.Platform, issue.Details)
 		}
 		b.WriteString("\n")
 	}

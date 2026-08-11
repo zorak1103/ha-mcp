@@ -403,7 +403,7 @@ func (m *mockNonCloserClient) GetServicesForTarget(_ context.Context, _ Target, 
 func (m *mockNonCloserClient) ExtractFromTarget(_ context.Context, _ Target, _ *bool) (*ExtractFromTargetResult, error) {
 	return &ExtractFromTargetResult{}, nil
 }
-func (m *mockNonCloserClient) GetScheduleConfig(_ context.Context, _ string) (map[string]any, error) {
+func (m *mockNonCloserClient) GetHelperConfig(_ context.Context, _, _ string) (map[string]any, error) {
 	return map[string]any{}, nil
 }
 func (m *mockNonCloserClient) GetServices(_ context.Context) ([]Service, error) {

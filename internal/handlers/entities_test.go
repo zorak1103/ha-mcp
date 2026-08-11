@@ -137,7 +137,7 @@ func TestEntityHandlers_GetState_Batch(t *testing.T) {
 				}
 			},
 			wantError:    false,
-			wantContains: []string{"Living Room Light is on", "Bedroom Light is off", "Kitchen Switch is on"},
+			wantContains: []string{"Living Room Light (light.living_room) is on", "Bedroom Light (light.bedroom) is off", "Kitchen Switch (switch.kitchen) is on"},
 		},
 		{
 			name: "multiple entities - json format",

@@ -83,6 +83,12 @@ description: "Use when choosing which ha-mcp tool or action to call. Examples: \
 | `get_logbook`         | entries, correlation                             | (none)                                          |
 | `helper_action`       | (contextual)                                     | toggle, set, increment, decrement, reset, calibrate, start, pause, cancel, finish, change, press, select, set_options, reload, add_entities, remove_entities |
 
+`manage_helper`'s `update` action documents exactly which fields each of the
+26 helper types accepts, generated from the `helperTypes` metadata table
+(`internal/handlers/helpers_consolidated.go`) so it can't drift from the
+code — read the tool's own `Description` for the per-type field list rather
+than guessing.
+
 ## manage_automation / manage_script — create/update Parameters
 
 Key non-obvious parameters for `create` and `update` actions:

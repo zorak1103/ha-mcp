@@ -268,7 +268,7 @@ func formatPresenceNatural(report PresenceReport) string {
 	if len(report.Persons) > 0 {
 		result.WriteString("Persons:\n")
 		for _, person := range report.Persons {
-			fmt.Fprintf(&result, "  %s (%s):\n", person.Name, person.State)
+			fmt.Fprintf(&result, "  %s (%s) is %s\n", person.Name, person.EntityID, person.State)
 			if len(person.Trackers) > 0 {
 				fmt.Fprintf(&result, "    Trackers (%d): %s\n", person.TrackerCount, strings.Join(person.Trackers, ", "))
 			} else {
@@ -294,7 +294,7 @@ func formatPresenceNatural(report PresenceReport) string {
 		if len(report.TrackersWithoutPerson) > 0 {
 			fmt.Fprintf(&result, "  Trackers not assigned to any person (%d):\n", len(report.TrackersWithoutPerson))
 			for _, tracker := range report.TrackersWithoutPerson {
-				fmt.Fprintf(&result, "    - %s (%s)\n", tracker.Name, tracker.State)
+				fmt.Fprintf(&result, "    - %s (%s) is %s\n", tracker.Name, tracker.EntityID, tracker.State)
 			}
 		}
 	}

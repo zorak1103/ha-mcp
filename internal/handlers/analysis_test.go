@@ -2753,3 +2753,38 @@ func TestHandleAnalyzeEntity_MultipleFailedSourcesAllReported(t *testing.T) {
 		t.Errorf("FailedSources = %v, want %v", got, want)
 	}
 }
+
+// TestAnalysisHandlers_FormatAnalysisNatural_NameOrder pins the "Name (entity_id) is
+// state" line shape to match query_entities' natural formatter (internal/handlers/
+// formatter/natural.go), so an LLM reading both tools' output can rely on the same
+// positional rule to recover the addressable id. Before this fix, analyze_entity
+// rendered the inverse "entity_id (Name) is state" order (issue #147 follow-up).
+func TestAnalysisHandlers_FormatAnalysisNatural_NameOrder(t *testing.T) {
+	t.Parallel()
+
+	h := NewAnalysisHandlers()
+
+	withName := &EntityAnalysis{
+		EntityID:     "light.living_room",
+		FriendlyName: "Living Room Light",
+		State:        "on",
+		References:   &EntityReferences{},
+	}
+	result := h.formatAnalysisNatural(withName, false)
+	if !strings.Contains(result, "Living Room Light (light.living_room) is on") {
+		t.Errorf("formatAnalysisNatural() = %q, want it to contain %q", result, "Living Room Light (light.living_room) is on")
+	}
+
+	noName := &EntityAnalysis{
+		EntityID:   "light.kitchen",
+		State:      "on",
+		References: &EntityReferences{},
+	}
+	result = h.formatAnalysisNatural(noName, false)
+	if strings.Contains(result, "(light.kitchen)") {
+		t.Errorf("formatAnalysisNatural() = %q, expected no parenthesized duplication when there is no friendly name", result)
+	}
+	if count := strings.Count(result, "light.kitchen"); count != 1 {
+		t.Errorf("formatAnalysisNatural() = %q, expected entity_id to appear exactly once, got %d", result, count)
+	}
+}
