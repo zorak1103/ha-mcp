@@ -156,25 +156,38 @@ func actionBlockKeyHint(key string) string {
 	}
 }
 
-// unloadedConfigHint detects the common case where a patch's base config came from a `list`
-// call (which omits automation/script bodies, per ListAutomations/ListScripts/ListScenes not
-// populating Config) rather than `get`, surfacing a clearer error than a bare "key not found".
-// Fires only for a root-level miss on one of automation/script's top-level structural keys,
-// and only when NONE of those keys are present anywhere in the available set - a genuinely
-// nested miss, or a root-level miss where some structural keys ARE present (more likely a typo
-// in the path than an unloaded config), is left to actionBlockKeyHint or the bare error.
-func unloadedConfigHint(seg, fullPath string, rest, available []string) string {
-	switch seg {
+// isStructuralConfigKey reports whether key is one of automation/script's top-level structural
+// keys. Shared by unloadedConfigHint's trigger check and its available-keys scan so the two
+// lists cannot drift apart.
+func isStructuralConfigKey(key string) bool {
+	switch key {
 	case "triggers", "conditions", "actions", "sequence":
+		return true
 	default:
+		return false
+	}
+}
+
+// unloadedConfigHint is a defensive hint for a root-level miss on one of automation/script's
+// top-level structural keys, surfacing a clearer error than a bare "key not found" for the case
+// where the patch's base config carries none of those keys at all - most plausibly because it
+// was built from something other than a full config fetch. No handler in internal/handlers is
+// currently known to hit this: every patch handler (scripts.go, automations.go, scenes.go)
+// sources its base via a Get* call and already refuses a nil Config before patching, so this
+// hint guards against a config that is present but empty of structure, not a specific reachable
+// caller mistake. Fires only for a root-level miss, and only when NONE of the structural keys
+// are present anywhere in the available set - a genuinely nested miss, or a root-level miss
+// where some structural keys ARE present (more likely a typo in the path than an unloaded
+// config), is left to actionBlockKeyHint or the bare error.
+func unloadedConfigHint(seg, fullPath string, rest, available []string) string {
+	if !isStructuralConfigKey(seg) {
 		return ""
 	}
 	if navigatedPrefix(fullPath, rest) != "" {
 		return "" // not a root-level miss
 	}
 	for _, k := range available {
-		switch k {
-		case "triggers", "conditions", "actions", "sequence":
+		if isStructuralConfigKey(k) {
 			return "" // at least one structural key is present - a genuine path error, not an unloaded config
 		}
 	}

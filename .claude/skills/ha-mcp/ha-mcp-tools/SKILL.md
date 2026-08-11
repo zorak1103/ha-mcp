@@ -105,6 +105,7 @@ Key non-obvious parameters for `create` and `update` actions:
 - mode (string, optional): `single` | `restart` | `queued` | `parallel` (HA default: single)
 - max (integer, optional): concurrent run limit; only for mode=parallel|queued (HA default 10)
 - sequence (array): script steps
+- script_id resolution (get/update/patch): accepts entity_id or an alias/friendly_name substring match. `update`/`patch` refuse with an "ambiguous" error listing candidates if the identifier matches more than one script — use the exact entity_id in that case. `delete`/`execute` accept entity_id or bare id only, no alias/friendly_name matching.
 
 ## Read vs. Write
 

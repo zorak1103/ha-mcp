@@ -56,13 +56,13 @@ func (h *ScriptHandlers) manageScriptTool() mcp.Tool {
 
 Actions:
 - list: List all scripts in Home Assistant
-- get: Get details of a specific script (requires script_id)
+- get: Get details of a specific script (requires script_id; accepts entity_id or alias/friendly_name)
 - create: Create a new script (requires script_id, alias, sequence)
-- update: Update an existing script (requires script_id)
-- delete: Delete a script (requires script_id)
-- execute: Execute a script (requires script_id, optional variables)
+- update: Update an existing script (requires script_id; accepts entity_id or an UNAMBIGUOUS alias/friendly_name match - refuses if the identifier matches more than one script)
+- delete: Delete a script (requires script_id; entity_id or bare id only, no alias/friendly_name matching)
+- execute: Execute a script (requires script_id, optional variables; entity_id or bare id only, no alias/friendly_name matching)
 
-- patch: Apply RFC 6902 JSON Patch operations (requires script_id, operations)`,
+- patch: Apply RFC 6902 JSON Patch operations (requires script_id, operations; accepts entity_id or an UNAMBIGUOUS alias/friendly_name match - refuses if the identifier matches more than one script)`,
 		InputSchema: mcp.JSONSchema{
 			Type:        "object",
 			Description: "Script management operation",
@@ -74,7 +74,7 @@ Actions:
 				},
 				"script_id": {
 					Type:        "string",
-					Description: "Script identifier. For create: use bare ID without 'script.' prefix (e.g., 'morning_routine'). For other actions: accepts entity_id (script.xyz) or alias/friendly_name (case-insensitive partial match).",
+					Description: "Script identifier. For create: use bare ID without 'script.' prefix (e.g., 'morning_routine'). For get/update/patch: accepts entity_id (script.xyz) or an alias/friendly_name match (case-insensitive substring, but update/patch refuse an ambiguous match that hits more than one script - use the exact entity_id if so). For delete/execute: entity_id or bare id only, no alias/friendly_name matching.",
 				},
 				"alias": {
 					Type:        "string",
@@ -320,10 +320,13 @@ func (h *ScriptHandlers) findScriptByID(ctx context.Context, client homeassistan
 }
 
 // resolveScriptForWrite fetches the current script config for a write operation (update/patch),
-// falling back to findScriptByID (alias/friendly-name search) when a direct GetScript lookup
-// using the guessed entity_id fails. Returns the entity_id and config_id re-derived from the
-// entity actually resolved - not the raw guess from normalizeScriptID - since the fallback
-// search may match a different underlying entity than what the caller's input implied.
+// falling back to findScriptForWrite (alias/friendly-name search) when a direct GetScript lookup
+// using the guessed entity_id returns a not-found error. Any other error (transient WS/REST
+// failure, timeout, auth) is returned as-is without triggering the fallback search - a momentary
+// hiccup on an otherwise-correct script_id must not silently retarget a write via fuzzy matching.
+// Returns the entity_id and config_id re-derived from the entity actually resolved - not the raw
+// guess from normalizeScriptID - since the fallback search may match a different underlying
+// entity than what the caller's input implied.
 func (h *ScriptHandlers) resolveScriptForWrite(
 	ctx context.Context,
 	client homeassistant.Client,
@@ -331,17 +334,110 @@ func (h *ScriptHandlers) resolveScriptForWrite(
 ) (entityID, configID string, current *homeassistant.Script, err error) {
 	guessedEntityID, guessedConfigID := normalizeScriptID(scriptID)
 
-	current, err = client.GetScript(ctx, guessedEntityID)
-	if err != nil {
-		current, err = h.findScriptByID(ctx, client, scriptID)
-		if err != nil {
-			return "", "", nil, err
-		}
-		entityID, configID = normalizeScriptID(current.EntityID)
-		return entityID, configID, current, nil
+	script, getErr := client.GetScript(ctx, guessedEntityID)
+	if getErr == nil {
+		return guessedEntityID, guessedConfigID, script, nil
+	}
+	if !isNotFoundError(getErr) {
+		return "", "", nil, fmt.Errorf("error getting script %q: %w", scriptID, getErr)
 	}
 
-	return guessedEntityID, guessedConfigID, current, nil
+	resolved, findErr := h.findScriptForWrite(ctx, client, scriptID)
+	if findErr != nil {
+		return "", "", nil, fmt.Errorf("%w (direct lookup also failed: %w)", findErr, getErr)
+	}
+	if resolved.EntityID == "" {
+		return "", "", nil, fmt.Errorf("resolved script for %q has no entity_id", scriptID)
+	}
+	entityID, configID = normalizeScriptID(resolved.EntityID)
+	return entityID, configID, resolved, nil
+}
+
+// findScriptForWrite resolves a script for a write operation (update/patch) by alias/
+// friendly-name search, refusing an ambiguous match rather than silently picking the first
+// candidate HA happens to list (issue #160 follow-up: a write must never guess between two
+// scripts). Search order mirrors findScriptByID's: exact entity_id first (inherently
+// unambiguous), then case-insensitive alias/friendly_name substring match - but here a
+// substring match is only accepted automatically when it is the sole substring match, or when
+// exactly one of several substring matches is also an EXACT (not just substring) case-
+// insensitive match.
+func (h *ScriptHandlers) findScriptForWrite(ctx context.Context, client homeassistant.Client, searchID string) (*homeassistant.Script, error) {
+	scripts, err := client.ListScripts(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list scripts: %w", err)
+	}
+
+	if strings.HasPrefix(searchID, "script.") {
+		for _, s := range scripts {
+			if s.EntityID == searchID {
+				return client.GetScript(ctx, s.EntityID)
+			}
+		}
+	}
+
+	searchLower := strings.ToLower(searchID)
+	var substringMatches, exactMatches []*homeassistant.Script
+	for _, s := range scripts {
+		full, getErr := client.GetScript(ctx, s.EntityID)
+		if getErr != nil {
+			continue
+		}
+
+		alias := ""
+		if full.Config != nil {
+			alias = full.Config.Alias
+		}
+		friendly := full.FriendlyName
+
+		if !strings.Contains(strings.ToLower(alias), searchLower) &&
+			!strings.Contains(strings.ToLower(friendly), searchLower) {
+			continue
+		}
+		substringMatches = append(substringMatches, full)
+		if strings.EqualFold(alias, searchID) || strings.EqualFold(friendly, searchID) {
+			exactMatches = append(exactMatches, full)
+		}
+	}
+
+	switch {
+	case len(exactMatches) == 1:
+		return exactMatches[0], nil
+	case len(substringMatches) == 1:
+		return substringMatches[0], nil
+	case len(substringMatches) > 1:
+		return nil, fmt.Errorf("script identifier %q is ambiguous, matches %d scripts: %s - use the exact entity_id",
+			searchID, len(substringMatches), joinScriptCandidates(substringMatches))
+	default:
+		return nil, fmt.Errorf("script not found: %s (tried as entity_id and alias/friendly_name)", searchID)
+	}
+}
+
+// joinScriptCandidates renders a comma-separated "Name (entity_id)" list for the ambiguous-match
+// error in findScriptForWrite, so the caller can see exactly which scripts matched and pick the
+// exact entity_id instead of retrying the same ambiguous alias.
+func joinScriptCandidates(scripts []*homeassistant.Script) string {
+	names := make([]string, 0, len(scripts))
+	for _, s := range scripts {
+		name := s.FriendlyName
+		if s.Config != nil && s.Config.Alias != "" {
+			name = s.Config.Alias
+		}
+		names = append(names, fmt.Sprintf("%s (%s)", name, s.EntityID))
+	}
+	return strings.Join(names, ", ")
+}
+
+// describeScriptTarget renders the caller-facing target description for a script write result.
+// When write-path resolution (resolveScriptForWrite) matched the entity the caller's literal
+// input already implied, only the caller's own identifier is shown. When resolution took the
+// alias/friendly-name fallback and landed on a different entity, the resolved entity_id is
+// appended so the response is auditable (the write may not be the entity the caller named).
+func describeScriptTarget(scriptID, entityID string) string {
+	guessedEntityID, _ := normalizeScriptID(scriptID)
+	if guessedEntityID == entityID {
+		return fmt.Sprintf("'%s'", scriptID)
+	}
+	return fmt.Sprintf("'%s' (%s)", scriptID, entityID)
 }
 
 func (h *ScriptHandlers) handleCreate(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
@@ -435,9 +531,10 @@ func (h *ScriptHandlers) handleUpdate(ctx context.Context, client homeassistant.
 	if err != nil {
 		return errorResult(fmt.Sprintf("Error getting current script: %v", err)), nil
 	}
+	target := describeScriptTarget(scriptID, entityID)
 
-	if current.Config == nil {
-		return errorResult(fmt.Sprintf("script '%s' has no configuration to update", scriptID)), nil
+	if current.Config == nil || len(current.Config.Sequence) == 0 {
+		return errorResult(fmt.Sprintf("script %s has no configuration to update (missing sequence)", target)), nil
 	}
 	config := *current.Config
 
@@ -447,7 +544,7 @@ func (h *ScriptHandlers) handleUpdate(ctx context.Context, client homeassistant.
 	applyScriptConfigUpdates(&config, args)
 	afterMap, _ := configToMap(config)
 	if reflect.DeepEqual(beforeMap, afterMap) {
-		return successResult(fmt.Sprintf("Script '%s': no changes detected, skipping write (reload avoided)", scriptID)), nil
+		return successResult(fmt.Sprintf("Script %s: no changes detected, skipping write (reload avoided)", target)), nil
 	}
 
 	// Refuse to write YAML-defined scripts: the config API silently creates a duplicate
@@ -462,7 +559,7 @@ func (h *ScriptHandlers) handleUpdate(ctx context.Context, client homeassistant.
 		return errorResult(enrichConfigError(msg, err, scriptErrorHints)), nil
 	}
 
-	successMsg := fmt.Sprintf("Script '%s' updated successfully", scriptID)
+	successMsg := fmt.Sprintf("Script %s updated successfully", target)
 	if !reloadDomain(ctx, client, "script") {
 		successMsg += scriptReloadFailedWarning
 	}
@@ -582,8 +679,9 @@ func (h *ScriptHandlers) handlePatch(ctx context.Context, client homeassistant.C
 		return errorResult(fmt.Sprintf("error getting script: %v", err)), nil
 	}
 
-	if current.Config == nil {
-		return errorResult(fmt.Sprintf("script '%s' has no configuration to patch", scriptID)), nil
+	if current.Config == nil || len(current.Config.Sequence) == 0 {
+		return errorResult(fmt.Sprintf("script %s has no configuration to patch (missing sequence)",
+			describeScriptTarget(scriptID, entityID))), nil
 	}
 
 	configMap, err := configToMap(current.Config)
@@ -619,8 +717,9 @@ func applyPatchedScriptWrite(
 	configMap, patchedMap map[string]any,
 	numOps int,
 ) (*mcp.ToolsCallResult, error) {
+	target := describeScriptTarget(scriptID, entityID)
 	if reflect.DeepEqual(configMap, patchedMap) {
-		return successResult(fmt.Sprintf("Script '%s': no changes detected, skipping write (reload avoided)", scriptID)), nil
+		return successResult(fmt.Sprintf("Script %s: no changes detected, skipping write (reload avoided)", target)), nil
 	}
 
 	if guardErr := yamlWriteGuardError(ctx, client, "script", "patch", scriptID, entityID); guardErr != nil {
@@ -637,7 +736,7 @@ func applyPatchedScriptWrite(
 		return errorResult(enrichConfigError(msg, err, scriptErrorHints)), nil
 	}
 
-	successMsg := fmt.Sprintf("Script '%s' patched successfully (%d operations applied)", scriptID, numOps)
+	successMsg := fmt.Sprintf("Script %s patched successfully (%d operations applied)", target, numOps)
 	if !reloadDomain(ctx, client, "script") {
 		successMsg += scriptReloadFailedWarning
 	}

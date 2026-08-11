@@ -48,7 +48,18 @@ func (m *mockScriptClient) GetScript(ctx context.Context, scriptID string) (*hom
 	if m.getScriptFn != nil {
 		return m.getScriptFn(ctx, scriptID)
 	}
-	return &homeassistant.Script{}, nil
+	// Realistic default: wsClientImpl.GetScript always populates EntityID and a non-nil
+	// Config with a non-empty Sequence - a script with none of those is not a shape the
+	// real client can produce. An empty &homeassistant.Script{} default previously let
+	// tests silently exercise a state that cannot occur against live HA (#160 review, N4).
+	return &homeassistant.Script{
+		EntityID:     "script.test_script",
+		FriendlyName: "Test Script",
+		Config: &homeassistant.ScriptConfig{
+			Alias:    "Test Script",
+			Sequence: []any{map[string]any{"service": "light.turn_on"}},
+		},
+	}, nil
 }
 
 func (m *mockScriptClient) CreateScript(ctx context.Context, scriptID string, config homeassistant.ScriptConfig) error {
@@ -611,7 +622,8 @@ func TestScriptHandlers_ManageScript_Update(t *testing.T) {
 						State:        "off",
 						FriendlyName: "Morning Routine",
 						Config: &homeassistant.ScriptConfig{
-							Alias: "Morning Routine",
+							Alias:    "Morning Routine",
+							Sequence: []any{map[string]any{"service": "light.turn_on"}},
 						},
 					}, nil
 				},
@@ -1255,7 +1267,7 @@ func TestManageScript_UpdateReload(t *testing.T) {
 		return &homeassistant.Script{
 			EntityID:     "script.morning_routine",
 			FriendlyName: "Morning Routine",
-			Config:       &homeassistant.ScriptConfig{Alias: "Morning Routine"},
+			Config:       &homeassistant.ScriptConfig{Alias: "Morning Routine", Sequence: []any{map[string]any{"service": "light.turn_on"}}},
 		}
 	}
 	h := NewScriptHandlers()
@@ -2138,6 +2150,161 @@ func TestScriptHandlers_Patch_ReDerivesWriteTargetFromFallback(t *testing.T) {
 	}
 	if capturedConfigID != "actual_slug" {
 		t.Errorf("UpdateScript called with config_id %q, want %q (re-derived from resolved entity)", capturedConfigID, "actual_slug")
+	}
+}
+
+func TestScriptHandlers_Update_AmbiguousMatchRefused(t *testing.T) {
+	t.Parallel()
+
+	// Neither alias equals the search term "Light" exactly, so both are substring-only
+	// matches - the ambiguous case findScriptForWrite must refuse rather than silently
+	// picking whichever ListScripts happened to return first (#160 review, C1).
+	kitchenLight := &homeassistant.Script{
+		EntityID: "script.kitchen_light",
+		Config:   &homeassistant.ScriptConfig{Alias: "Kitchen Light", Sequence: []any{map[string]any{"service": "light.turn_on"}}},
+	}
+	livingRoomLight := &homeassistant.Script{
+		EntityID: "script.living_room_light",
+		Config:   &homeassistant.ScriptConfig{Alias: "Living Room Light", Sequence: []any{map[string]any{"service": "light.turn_on"}}},
+	}
+
+	client := &mockScriptClient{
+		getScriptFn: func(_ context.Context, entityID string) (*homeassistant.Script, error) {
+			switch entityID {
+			case "script.kitchen_light", "kitchen_light":
+				return kitchenLight, nil
+			case "script.living_room_light", "living_room_light":
+				return livingRoomLight, nil
+			default:
+				return nil, errors.New("not found")
+			}
+		},
+		listScriptsFn: func(context.Context) ([]homeassistant.Entity, error) {
+			return []homeassistant.Entity{
+				{EntityID: "script.kitchen_light"},
+				{EntityID: "script.living_room_light"},
+			}, nil
+		},
+	}
+
+	h := &ScriptHandlers{}
+	args := map[string]any{
+		"action":    "update",
+		"script_id": "Light",
+		"mode":      "restart",
+	}
+
+	result, err := h.handleManageScript(context.Background(), client, args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected refusal for an ambiguous alias match, got success: %s", result.Content[0].Text)
+	}
+	if !strings.Contains(result.Content[0].Text, "ambiguous") {
+		t.Errorf("expected an 'ambiguous' refusal, got: %s", result.Content[0].Text)
+	}
+	if client.lastUpdateConfig != nil {
+		t.Error("UpdateScript must NOT be called when the identifier matches more than one script")
+	}
+}
+
+func TestScriptHandlers_Update_NonNotFoundError_NoFallback(t *testing.T) {
+	t.Parallel()
+
+	listScriptsCalled := false
+	client := &mockScriptClient{
+		getScriptFn: func(context.Context, string) (*homeassistant.Script, error) {
+			// A transient failure (WS disconnect, timeout, 500) - NOT "not found" - must
+			// propagate as-is and must never trigger the alias-search fallback, which would
+			// otherwise silently retarget the write via fuzzy matching (#160 review, C2).
+			return nil, errors.New("connection timeout")
+		},
+		listScriptsFn: func(context.Context) ([]homeassistant.Entity, error) {
+			listScriptsCalled = true
+			return []homeassistant.Entity{{EntityID: "script.kitchen_light"}}, nil
+		},
+	}
+
+	h := &ScriptHandlers{}
+	args := map[string]any{
+		"action":    "update",
+		"script_id": "kitchen_light",
+		"mode":      "restart",
+	}
+
+	result, err := h.handleManageScript(context.Background(), client, args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected an error for a transient GetScript failure, got success: %s", result.Content[0].Text)
+	}
+	if !strings.Contains(result.Content[0].Text, "connection timeout") {
+		t.Errorf("expected the original transient error to propagate, got: %s", result.Content[0].Text)
+	}
+	if strings.Contains(result.Content[0].Text, "tried as entity_id and alias/friendly_name") {
+		t.Errorf("transient error must not degrade into the fallback's not-found message, got: %s", result.Content[0].Text)
+	}
+	if listScriptsCalled {
+		t.Error("ListScripts (the alias-search fallback) must not be called for a non-not-found GetScript error")
+	}
+	if client.lastUpdateConfig != nil {
+		t.Error("UpdateScript must NOT be called when the initial lookup fails transiently")
+	}
+}
+
+func TestScriptHandlers_Update_FallbackResolvesToYAMLDefinedScript_Refuses(t *testing.T) {
+	t.Parallel()
+
+	resolvedScript := &homeassistant.Script{
+		EntityID: "script.actual_slug",
+		Config: &homeassistant.ScriptConfig{
+			Alias:    "My Script Alias",
+			Sequence: []any{map[string]any{"service": "light.turn_on"}},
+		},
+	}
+
+	client := &mockScriptClient{
+		getScriptFn: func(_ context.Context, entityID string) (*homeassistant.Script, error) {
+			if entityID == "script.actual_slug" || entityID == "actual_slug" {
+				return resolvedScript, nil
+			}
+			return nil, errors.New("not found")
+		},
+		listScriptsFn: func(context.Context) ([]homeassistant.Entity, error) {
+			return []homeassistant.Entity{{EntityID: "script.actual_slug", Attributes: map[string]any{"friendly_name": "My Script Alias"}}}, nil
+		},
+		// No matching registry entry for script.actual_slug - isYAMLDefinedEntity treats an
+		// absent registry entry as YAML-defined (yaml_defined.go), same as a fresh YAML script
+		// that was never imported into storage.
+		getEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+			return []homeassistant.EntityRegistryEntry{}, nil
+		},
+	}
+
+	h := &ScriptHandlers{}
+	args := map[string]any{
+		"action":    "update",
+		"script_id": "My Script Alias",
+		"alias":     "Renamed",
+	}
+
+	result, err := h.handleManageScript(context.Background(), client, args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected the YAML-defined guard to refuse a write resolved via the fallback search, got success: %s", result.Content[0].Text)
+	}
+	if !strings.Contains(result.Content[0].Text, "YAML-defined") {
+		t.Errorf("expected a YAML-defined refusal, got: %s", result.Content[0].Text)
+	}
+	if !strings.Contains(result.Content[0].Text, "script.actual_slug") {
+		t.Errorf("expected the refusal to name the entity actually resolved via fallback, not just the caller's alias input, got: %s", result.Content[0].Text)
+	}
+	if client.lastUpdateConfig != nil {
+		t.Error("UpdateScript must NOT be called when the fallback-resolved entity is YAML-defined")
 	}
 }
 

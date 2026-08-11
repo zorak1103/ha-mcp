@@ -147,9 +147,11 @@ Universal tool for runtime helper operations:
 | --------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | `manage_script` | Consolidated script management (actions: list, get, create, update, delete, execute, patch (RFC 6902 JSON Patch + semantic patch); format: natural/json for list/get) |
 
-**Flexible ID Lookup**: The `script_id` parameter accepts multiple formats:
+**Flexible ID Lookup**: For `get`, `update`, and `patch`, the `script_id` parameter accepts multiple formats:
 - Entity ID: `script.morning_routine`
-- Alias or friendly name: `morning routine` (case-insensitive partial match)
+- Alias or friendly name: `morning routine` (case-insensitive partial match). `update`/`patch` refuse with an "ambiguous" error listing candidates if the identifier matches more than one script — use the exact entity_id in that case.
+
+`delete` and `execute` accept only an entity_id or bare id, no alias/friendly-name matching.
 
 **Key Parameters (create/update):**
 
