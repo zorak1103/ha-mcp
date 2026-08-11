@@ -75,7 +75,7 @@ func TestQueryEntities_Presence(t *testing.T) {
 				}
 			},
 			wantError:    false,
-			wantContains: []string{"Presence Tracking Analysis", "Persons", "Device Trackers", "John", "Jane"},
+			wantContains: []string{"Presence Tracking Analysis", "Persons", "Device Trackers", "John", "Jane", "person.john", "person.jane", "device_tracker.guest_wifi"},
 		},
 		{
 			name: "presence analysis with json format",

@@ -5,6 +5,7 @@ package homeassistant
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -521,45 +522,57 @@ func (c *wsClientImpl) ListScenes(ctx context.Context) ([]Entity, error) {
 }
 
 // =============================================================================
-// Schedule Config Operations (WebSocket-only)
+// Helper Config Operations (WebSocket-only)
 // =============================================================================
 
-// GetScheduleConfig retrieves the full configuration of a schedule helper.
-// Uses the schedule/list WebSocket command to get all schedules with their time blocks,
-// then filters for the requested schedule.
-func (c *wsClientImpl) GetScheduleConfig(ctx context.Context, scheduleID string) (map[string]any, error) {
-	// Build entity_id from schedule_id if needed
-	entityID := scheduleID
-	if !strings.HasPrefix(scheduleID, "schedule.") {
-		entityID = "schedule." + scheduleID
+// ErrHelperNotFoundInStorage is returned by GetHelperConfig when
+// entityID's object_id isn't present in "<platform>/list"'s result. This can
+// mean the entity was defined in configuration.yaml (never registered in
+// storage) or that it was renamed via the entity registry after creation -
+// storage keeps the id assigned at creation time, so a later entity_id
+// change desyncs it from the object_id GetHelperConfig looks up by. Callers
+// needing to tell the caller which is more likely should use errors.Is
+// against this rather than matching on error text.
+var ErrHelperNotFoundInStorage = errors.New("not found in storage list")
+
+// GetHelperConfig retrieves the full stored configuration of a WebSocket
+// helper entity for platform (e.g. "schedule", "input_number", "timer").
+// Every such platform registers "<platform>/list" alongside "<platform>/update"
+// via the same collection.StorageCollectionWebsocket setup
+// (homeassistant/helpers/collection.py) - it returns the raw stored config
+// for every entity of that platform, unlike GetState's entity attributes,
+// which are a lossy, sometimes-conditional projection of it (e.g. timer's
+// "restore" attribute is only present when true; template config fields
+// like input_number's "initial" don't appear in state attributes at all
+// for several input_* types).
+func (c *wsClientImpl) GetHelperConfig(ctx context.Context, platform, entityID string) (map[string]any, error) {
+	if !isWSHelperPlatform(platform) {
+		return nil, fmt.Errorf("cannot get %s helper config via websocket: config-entry helpers have no \"<platform>/list\" command (entity may be missing from the registry)", platform)
 	}
 
-	// Extract the ID part without "schedule." prefix
+	// Extract the object_id part without the "<platform>." prefix.
 	id := entityID
-	if strings.HasPrefix(entityID, "schedule.") {
-		id = entityID[len("schedule."):]
+	if prefix := platform + "."; strings.HasPrefix(entityID, prefix) {
+		id = entityID[len(prefix):]
 	}
 
-	// Use schedule/list to get all schedules with their configurations
-	result, err := c.ws.SendCommand(ctx, "schedule/list", nil)
+	result, err := c.ws.SendCommand(ctx, platform+"/list", nil)
 	if err != nil {
-		return nil, fmt.Errorf("get schedule list failed: %w", err)
+		return nil, fmt.Errorf("get %s list failed: %w", platform, err)
 	}
 
-	// schedule/list returns an array of schedule configurations
-	var schedules []map[string]any
-	if err := json.Unmarshal(result.Result, &schedules); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal schedule list: %w", err)
+	var items []map[string]any
+	if err := json.Unmarshal(result.Result, &items); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal %s list: %w", platform, err)
 	}
 
-	// Find the requested schedule by ID
-	for _, schedule := range schedules {
-		if scheduleID, ok := schedule["id"].(string); ok && scheduleID == id {
-			return schedule, nil
+	for _, item := range items {
+		if itemID, ok := item["id"].(string); ok && itemID == id {
+			return item, nil
 		}
 	}
 
-	return nil, fmt.Errorf("schedule not found: %s", entityID)
+	return nil, fmt.Errorf("%s not found: %s: %w", platform, entityID, ErrHelperNotFoundInStorage)
 }
 
 // =============================================================================

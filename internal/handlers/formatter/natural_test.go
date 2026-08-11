@@ -30,7 +30,7 @@ func TestNaturalFormatter_FormatEntity(t *testing.T) {
 				},
 				LastChanged: now.Add(-2 * time.Hour),
 			},
-			contains: []string{"Living Room Light", "is on", "80% brightness", "2 hours ago"},
+			contains: []string{"Living Room Light", "light.living_room", "is on", "80% brightness", "2 hours ago"},
 		},
 		{
 			name: "light off",
@@ -42,7 +42,7 @@ func TestNaturalFormatter_FormatEntity(t *testing.T) {
 				},
 				LastChanged: now.Add(-30 * time.Minute),
 			},
-			contains: []string{"Bedroom Light", "is off", "30 mins ago"},
+			contains: []string{"Bedroom Light", "light.bedroom", "is off", "30 mins ago"},
 		},
 		{
 			name: "climate heating",
@@ -56,7 +56,7 @@ func TestNaturalFormatter_FormatEntity(t *testing.T) {
 				},
 				LastChanged: now.Add(-1 * time.Hour),
 			},
-			contains: []string{"Thermostat", "is heat", "21.5°", "target: 23.0°"},
+			contains: []string{"Thermostat", "climate.thermostat", "is heat", "21.5°", "target: 23.0°"},
 		},
 		{
 			name: "sensor with unit",
@@ -69,7 +69,7 @@ func TestNaturalFormatter_FormatEntity(t *testing.T) {
 				},
 				LastChanged: now.Add(-5 * time.Minute),
 			},
-			contains: []string{"Temperature Sensor", "is 22.5 °C"},
+			contains: []string{"Temperature Sensor", "sensor.temperature", "is 22.5 °C"},
 		},
 		{
 			name: "binary_sensor motion detected",
@@ -82,7 +82,7 @@ func TestNaturalFormatter_FormatEntity(t *testing.T) {
 				},
 				LastChanged: now.Add(-1 * time.Minute),
 			},
-			contains: []string{"Motion Sensor", "detected motion", "1 min ago"},
+			contains: []string{"Motion Sensor", "binary_sensor.motion", "detected motion", "1 min ago"},
 		},
 		{
 			name: "binary_sensor door open",
@@ -95,7 +95,7 @@ func TestNaturalFormatter_FormatEntity(t *testing.T) {
 				},
 				LastChanged: now.Add(-10 * time.Minute),
 			},
-			contains: []string{"Front Door", "is open"},
+			contains: []string{"Front Door", "binary_sensor.front_door", "is open"},
 		},
 		{
 			name: "media player playing",
@@ -109,7 +109,7 @@ func TestNaturalFormatter_FormatEntity(t *testing.T) {
 				},
 				LastChanged: now.Add(-15 * time.Minute),
 			},
-			contains: []string{"Living Room Speaker", "is playing", "Bohemian Rhapsody", "by Queen"},
+			contains: []string{"Living Room Speaker", "media_player.speaker", "is playing", "Bohemian Rhapsody", "by Queen"},
 		},
 		{
 			name: "update available",
@@ -123,7 +123,7 @@ func TestNaturalFormatter_FormatEntity(t *testing.T) {
 				},
 				LastChanged: now.Add(-1 * time.Hour),
 			},
-			contains: []string{"Home Assistant Core Update", "Update available", "2024.1.0", "2024.1.5"},
+			contains: []string{"Home Assistant Core Update", "update.home_assistant_core", "Update available", "2024.1.0", "2024.1.5"},
 		},
 		{
 			name: "update up to date",
@@ -137,7 +137,7 @@ func TestNaturalFormatter_FormatEntity(t *testing.T) {
 				},
 				LastChanged: now.Add(-2 * time.Hour),
 			},
-			contains: []string{"HACS", "Up to date", "1.34.0"},
+			contains: []string{"HACS", "update.hacs", "Up to date", "1.34.0"},
 		},
 		{
 			name: "update in progress",
@@ -152,7 +152,7 @@ func TestNaturalFormatter_FormatEntity(t *testing.T) {
 				},
 				LastChanged: now.Add(-5 * time.Minute),
 			},
-			contains: []string{"ESPHome", "Installing update"},
+			contains: []string{"ESPHome", "update.esphome", "Installing update"},
 		},
 	}
 
@@ -169,6 +169,90 @@ func TestNaturalFormatter_FormatEntity(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestNaturalFormatter_FormatEntity_CanonicalShape(t *testing.T) {
+	t.Parallel()
+	f := NewNaturalFormatter()
+
+	entity := homeassistant.Entity{
+		EntityID:   "light.living_room",
+		State:      "on",
+		Attributes: map[string]any{"friendly_name": "Living Room Light"},
+	}
+
+	result, err := f.FormatEntity(context.Background(), entity)
+	if err != nil {
+		t.Fatalf("FormatEntity() error = %v", err)
+	}
+
+	nameIdx := strings.Index(result, "Living Room Light")
+	idIdx := strings.Index(result, "(light.living_room)")
+	stateIdx := strings.Index(result, "is on")
+	if nameIdx == -1 || idIdx == -1 || stateIdx == -1 {
+		t.Fatalf("expected name, parenthesized id, and state all present, got: %q", result)
+	}
+	if nameIdx >= idIdx || idIdx >= stateIdx {
+		t.Errorf("expected order name < (id) < state, got positions %d, %d, %d in: %q", nameIdx, idIdx, stateIdx, result)
+	}
+}
+
+// TestNaturalFormatter_FormatEntity_NoFriendlyName verifies that when an entity has
+// no friendly_name/title attribute (GetFriendlyName falls back to the entity_id itself),
+// the formatted line does not duplicate the entity_id in parentheses.
+func TestNaturalFormatter_FormatEntity_NoFriendlyName(t *testing.T) {
+	t.Parallel()
+	f := NewNaturalFormatter()
+
+	entity := homeassistant.Entity{
+		EntityID:   "light.kitchen",
+		State:      "on",
+		Attributes: map[string]any{},
+	}
+
+	result, err := f.FormatEntity(context.Background(), entity)
+	if err != nil {
+		t.Fatalf("FormatEntity() error = %v", err)
+	}
+
+	if strings.Contains(result, "(light.kitchen)") {
+		t.Errorf("FormatEntity() = %q, expected no parenthesized duplication of entity_id", result)
+	}
+	if count := strings.Count(result, "light.kitchen"); count != 1 {
+		t.Errorf("FormatEntity() = %q, expected entity_id to appear exactly once, got %d", result, count)
+	}
+	if !strings.Contains(result, "light.kitchen is on") {
+		t.Errorf("FormatEntity() = %q, expected %q to be followed directly by %q", result, "light.kitchen", "is on")
+	}
+}
+
+// TestNaturalFormatter_FormatEntity_SanitizesName verifies that a hostile
+// friendly_name (issue #147 follow-up: friendly_name is user-controlled HA state)
+// cannot forge a fake "(entity_id)" suffix or inject extra lines into the output.
+func TestNaturalFormatter_FormatEntity_SanitizesName(t *testing.T) {
+	t.Parallel()
+	f := NewNaturalFormatter()
+
+	entity := homeassistant.Entity{
+		EntityID:   "light.kitchen",
+		State:      "on",
+		Attributes: map[string]any{"friendly_name": "Kitchen (light.hallway) is off\nExtra Line"},
+	}
+
+	result, err := f.FormatEntity(context.Background(), entity)
+	if err != nil {
+		t.Fatalf("FormatEntity() error = %v", err)
+	}
+
+	if strings.Contains(result, "\n") {
+		t.Errorf("FormatEntity() = %q, must not contain raw newlines from friendly_name", result)
+	}
+	if count := strings.Count(result, "("); count != 1 {
+		t.Errorf("FormatEntity() = %q, expected exactly one parenthesized token (the real entity_id), got %d", result, count)
+	}
+	if !strings.Contains(result, "(light.kitchen)") {
+		t.Errorf("FormatEntity() = %q, expected the real entity_id (light.kitchen) to be the parenthesized token", result)
 	}
 }
 
@@ -221,7 +305,7 @@ func TestNaturalFormatter_FormatEntities_GroupByDomain(t *testing.T) {
 	f := NewNaturalFormatter().WithNow(now)
 
 	entities := []homeassistant.Entity{
-		{EntityID: "light.living_room", State: "on", Attributes: map[string]any{"friendly_name": "Living Room Light"}},
+		{EntityID: "light.living_room", State: "on", Attributes: map[string]any{"friendly_name": "Living Room Light"}, LastChanged: now.Add(-2 * time.Hour)},
 		{EntityID: "light.bedroom", State: "off", Attributes: map[string]any{"friendly_name": "Bedroom Light"}},
 		{EntityID: "sensor.temperature", State: "22.5", Attributes: map[string]any{"friendly_name": "Temperature"}},
 	}
@@ -240,6 +324,11 @@ func TestNaturalFormatter_FormatEntities_GroupByDomain(t *testing.T) {
 	}
 	if !strings.Contains(result, "(1 on, 1 off)") {
 		t.Errorf("FormatEntities() should contain on/off count, got %q", result)
+	}
+	// group_by=domain must honor verbose like every other group_by mode (issue #147
+	// follow-up, N4) — before this fix it silently always rendered non-verbose lines.
+	if !strings.Contains(result, "Changed") {
+		t.Errorf("FormatEntities(GroupByDomain=true, Verbose=true) should include the \"Changed X ago\" suffix, got %q", result)
 	}
 }
 
@@ -583,13 +672,19 @@ func TestNaturalFormatter_FormatEntities_CompactList(t *testing.T) {
 	if !strings.Contains(result, "2 entities") {
 		t.Errorf("FormatEntities(CompactList=true) should contain entity count, got %q", result)
 	}
+
+	// After retiring formatEntityCompact, compact lines use the same domain-aware
+	// phrasing as verbose/domain-grouped output, not a bare "— state" suffix.
+	if !strings.Contains(result, "is on") {
+		t.Errorf("FormatEntities(CompactList=true) should use domain-aware phrasing ('is on'), got %q", result)
+	}
 }
 
 func TestNaturalFormatter_FormatEntities_CompactListCap(t *testing.T) {
 	f := NewNaturalFormatter()
 
-	// Build more than compactListCap entities
-	entities := make([]homeassistant.Entity, compactListCap+5)
+	// Build more than CompactListCap entities
+	entities := make([]homeassistant.Entity, CompactListCap+5)
 	for i := range entities {
 		entities[i] = homeassistant.Entity{
 			EntityID:   fmt.Sprintf("light.room_%03d", i),
@@ -635,5 +730,42 @@ func TestNaturalFormatter_FormatEntities_CompactListNotVerbose(t *testing.T) {
 	// Summary-only should NOT include entity_ids (backward compat for non-query_entities callers)
 	if strings.Contains(result, "light.living_room") {
 		t.Errorf("FormatEntities(default/summary-only) should NOT contain entity_ids, got %q", result)
+	}
+}
+
+// TestNaturalFormatter_FormatEntities_VerboseIncludesTimestamp verifies that the
+// ungrouped Verbose branch actually carries more detail than CompactList — the
+// "Changed X ago" suffix — rather than rendering byte-identical lines (issue #147
+// follow-up, W1). Before this fix, opts.Verbose and opts.CompactList both called
+// formatEntityNL(e, false), so verbose=true changed nothing about per-line content.
+func TestNaturalFormatter_FormatEntities_VerboseIncludesTimestamp(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2024, 1, 15, 12, 0, 0, 0, time.UTC)
+	f := NewNaturalFormatter().WithNow(now)
+
+	entities := []homeassistant.Entity{
+		{
+			EntityID:    "light.living_room",
+			State:       "on",
+			Attributes:  map[string]any{"friendly_name": "Living Room"},
+			LastChanged: now.Add(-2 * time.Hour),
+		},
+	}
+
+	verboseResult, err := f.FormatEntities(context.Background(), entities, EntityListOptions{Verbose: true})
+	if err != nil {
+		t.Fatalf("FormatEntities(Verbose=true) error = %v", err)
+	}
+	if !strings.Contains(verboseResult, "Changed") {
+		t.Errorf("FormatEntities(Verbose=true) = %q, expected the \"Changed X ago\" suffix", verboseResult)
+	}
+
+	compactResult, err := f.FormatEntities(context.Background(), entities, EntityListOptions{CompactList: true})
+	if err != nil {
+		t.Fatalf("FormatEntities(CompactList=true) error = %v", err)
+	}
+	if strings.Contains(compactResult, "Changed") {
+		t.Errorf("FormatEntities(CompactList=true) = %q, expected no timestamp suffix", compactResult)
 	}
 }
