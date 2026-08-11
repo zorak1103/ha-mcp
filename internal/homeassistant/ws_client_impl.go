@@ -5,6 +5,7 @@ package homeassistant
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -524,6 +525,16 @@ func (c *wsClientImpl) ListScenes(ctx context.Context) ([]Entity, error) {
 // Helper Config Operations (WebSocket-only)
 // =============================================================================
 
+// ErrHelperNotFoundInStorage is returned by GetHelperConfig when
+// entityID's object_id isn't present in "<platform>/list"'s result. This can
+// mean the entity was defined in configuration.yaml (never registered in
+// storage) or that it was renamed via the entity registry after creation -
+// storage keeps the id assigned at creation time, so a later entity_id
+// change desyncs it from the object_id GetHelperConfig looks up by. Callers
+// needing to tell the caller which is more likely should use errors.Is
+// against this rather than matching on error text.
+var ErrHelperNotFoundInStorage = errors.New("not found in storage list")
+
 // GetHelperConfig retrieves the full stored configuration of a WebSocket
 // helper entity for platform (e.g. "schedule", "input_number", "timer").
 // Every such platform registers "<platform>/list" alongside "<platform>/update"
@@ -561,7 +572,7 @@ func (c *wsClientImpl) GetHelperConfig(ctx context.Context, platform, entityID s
 		}
 	}
 
-	return nil, fmt.Errorf("%s not found: %s", platform, entityID)
+	return nil, fmt.Errorf("%s not found: %s: %w", platform, entityID, ErrHelperNotFoundInStorage)
 }
 
 // =============================================================================

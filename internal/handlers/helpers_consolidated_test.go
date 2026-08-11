@@ -1982,13 +1982,13 @@ func TestManageHelper_Update_StateFetchFails_ReturnsError(t *testing.T) {
 // generic "verify the entity exists" - a YAML-defined input_number does
 // exist, so that generic phrasing would send the caller looking in the
 // wrong place.
-func TestManageHelper_Update_NotFoundInStorage_HintsYAMLDefined(t *testing.T) {
+func TestManageHelper_Update_NotFoundInStorage_HintsYAMLDefinedOrRenamed(t *testing.T) {
 	t.Parallel()
 
 	entityID := "input_number.yaml_defined"
 	client := &UniversalMockClient{}
 	client.GetHelperConfigFn = func(_ context.Context, _, _ string) (map[string]any, error) {
-		return nil, fmt.Errorf("input_number not found: %s", entityID)
+		return nil, fmt.Errorf("input_number not found: %s: %w", entityID, homeassistant.ErrHelperNotFoundInStorage)
 	}
 
 	ctx := mcp.WithWaitConfig(context.Background(), mcp.WaitConfig{
@@ -2009,7 +2009,10 @@ func TestManageHelper_Update_NotFoundInStorage_HintsYAMLDefined(t *testing.T) {
 		t.Fatal("expected update to fail when the entity isn't in the storage list, got success")
 	}
 	if !strings.Contains(result.Content[0].Text, "configuration.yaml") {
-		t.Errorf("error message = %q, want it to mention configuration.yaml as the likely cause", result.Content[0].Text)
+		t.Errorf("error message = %q, want it to mention configuration.yaml as one likely cause", result.Content[0].Text)
+	}
+	if !strings.Contains(result.Content[0].Text, "renamed") {
+		t.Errorf("error message = %q, want it to mention a post-creation rename as the other likely cause", result.Content[0].Text)
 	}
 }
 

@@ -60,8 +60,8 @@ func (s *HelperPartialUpdateToolDispatchTestSuite) TestInputNumberPartialUpdateP
 	s.Require().NoError(err, "input_number did not appear")
 
 	// Update supplying only entity_id, name, and min - everything else
-	// (max, step, mode, unit_of_measurement, icon) is omitted and must
-	// survive via the merge.
+	// (max, step, initial, mode, unit_of_measurement, icon) is omitted and
+	// must survive via the merge.
 	result := s.CallTool("manage_helper", map[string]any{
 		"action":    "update",
 		"entity_id": entityID,
@@ -72,13 +72,18 @@ func (s *HelperPartialUpdateToolDispatchTestSuite) TestInputNumberPartialUpdateP
 
 	time.Sleep(1 * time.Second)
 
-	entity, err := s.Client().GetState(s.Context(), entityID)
-	s.Require().NoError(err)
-	s.InDelta(250.0, toFloat(entity.Attributes["max"]), 0.001, "max should survive an update that omitted it")
-	s.InDelta(5.0, toFloat(entity.Attributes["step"]), 0.001, "step should survive an update that omitted it")
-	s.Equal("box", entity.Attributes["mode"], "mode should survive an update that omitted it")
-	s.Equal("widgets", entity.Attributes["unit_of_measurement"], "unit_of_measurement should survive an update that omitted it")
-	s.Equal("mdi:numeric", entity.Attributes["icon"], "icon should survive an update that omitted it")
+	// Assert via GetHelperConfig, not GetState: "initial" is never exposed
+	// as a state attribute for input_number (state reflects the entity's
+	// *current* value, not the create-time starting value), so a GetState
+	// read cannot catch a merge that silently drops it.
+	config, err := s.Client().GetHelperConfig(s.Context(), "input_number", entityID)
+	s.Require().NoError(err, "failed to read back input_number config")
+	s.InDelta(10.0, toFloat(config["initial"]), 0.001, "initial should survive an update that omitted it")
+	s.InDelta(250.0, toFloat(config["max"]), 0.001, "max should survive an update that omitted it")
+	s.InDelta(5.0, toFloat(config["step"]), 0.001, "step should survive an update that omitted it")
+	s.Equal("box", config["mode"], "mode should survive an update that omitted it")
+	s.Equal("widgets", config["unit_of_measurement"], "unit_of_measurement should survive an update that omitted it")
+	s.Equal("mdi:numeric", config["icon"], "icon should survive an update that omitted it")
 
 	// Setting -60 should now succeed only if min was actually updated.
 	err = s.Client().SetHelperValue(s.Context(), entityID, -60.0)
@@ -95,6 +100,7 @@ func (s *HelperPartialUpdateToolDispatchTestSuite) TestInputSelectPartialUpdateP
 		Config: map[string]any{
 			"name":    testName,
 			"options": []string{"alpha", "beta", "gamma"},
+			"initial": "beta",
 			"icon":    "mdi:format-list-bulleted",
 		},
 	})
@@ -103,10 +109,8 @@ func (s *HelperPartialUpdateToolDispatchTestSuite) TestInputSelectPartialUpdateP
 	_, err = s.WaitForEntity(entityID, 5*time.Second)
 	s.Require().NoError(err, "input_select did not appear")
 
-	// input_select's only other updatable field is "options" itself
-	// (perTypeUpdateExcludedFields excludes "initial" for this type since HA
-	// never exposes it as a state attribute) - so this update omits options
-	// entirely and supplies only name, and icon must survive unmerged.
+	// Update omits options, initial, and icon entirely, supplying only
+	// entity_id and name.
 	result := s.CallTool("manage_helper", map[string]any{
 		"action":    "update",
 		"entity_id": entityID,
@@ -116,11 +120,16 @@ func (s *HelperPartialUpdateToolDispatchTestSuite) TestInputSelectPartialUpdateP
 
 	time.Sleep(1 * time.Second)
 
-	entity, err := s.Client().GetState(s.Context(), entityID)
-	s.Require().NoError(err)
-	s.Equal("mdi:format-list-bulleted", entity.Attributes["icon"], "icon should survive an update that omitted it")
-	options, ok := entity.Attributes["options"].([]any)
-	s.Require().True(ok, "options attribute should be a list")
+	// Assert via GetHelperConfig, not GetState: "initial" is never exposed
+	// as a state attribute for input_select (state reflects the currently
+	// selected option, not the create-time starting selection), so a
+	// GetState read cannot catch a merge that silently drops it.
+	config, err := s.Client().GetHelperConfig(s.Context(), "input_select", entityID)
+	s.Require().NoError(err, "failed to read back input_select config")
+	s.Equal("mdi:format-list-bulleted", config["icon"], "icon should survive an update that omitted it")
+	s.Equal("beta", config["initial"], "initial should survive an update that omitted it")
+	options, ok := config["options"].([]any)
+	s.Require().True(ok, "options config field should be a list")
 	s.ElementsMatch([]any{"alpha", "beta", "gamma"}, options, "options should survive an update that omitted them")
 }
 
@@ -137,6 +146,7 @@ func (s *HelperPartialUpdateToolDispatchTestSuite) TestInputTextPartialUpdatePre
 			"max":     50.0,
 			"mode":    "password",
 			"pattern": "^[a-z]+$",
+			"initial": "hello",
 			"icon":    "mdi:form-textbox",
 		},
 	})
@@ -155,12 +165,17 @@ func (s *HelperPartialUpdateToolDispatchTestSuite) TestInputTextPartialUpdatePre
 
 	time.Sleep(1 * time.Second)
 
-	entity, err := s.Client().GetState(s.Context(), entityID)
-	s.Require().NoError(err)
-	s.InDelta(2.0, toFloat(entity.Attributes["min"]), 0.001, "min should survive an update that omitted it")
-	s.Equal("password", entity.Attributes["mode"], "mode should survive an update that omitted it")
-	s.Equal("^[a-z]+$", entity.Attributes["pattern"], "pattern should survive an update that omitted it")
-	s.Equal("mdi:form-textbox", entity.Attributes["icon"], "icon should survive an update that omitted it")
+	// Assert via GetHelperConfig, not GetState: "initial" is never exposed
+	// as a state attribute for input_text (state reflects the current text
+	// value, not the create-time starting value), so a GetState read cannot
+	// catch a merge that silently drops it.
+	config, err := s.Client().GetHelperConfig(s.Context(), "input_text", entityID)
+	s.Require().NoError(err, "failed to read back input_text config")
+	s.InDelta(2.0, toFloat(config["min"]), 0.001, "min should survive an update that omitted it")
+	s.Equal("password", config["mode"], "mode should survive an update that omitted it")
+	s.Equal("^[a-z]+$", config["pattern"], "pattern should survive an update that omitted it")
+	s.Equal("hello", config["initial"], "initial should survive an update that omitted it")
+	s.Equal("mdi:form-textbox", config["icon"], "icon should survive an update that omitted it")
 }
 
 func (s *HelperPartialUpdateToolDispatchTestSuite) TestInputDatetimePartialUpdatePreservesFields() {
@@ -174,6 +189,7 @@ func (s *HelperPartialUpdateToolDispatchTestSuite) TestInputDatetimePartialUpdat
 			"name":     testName,
 			"has_date": true,
 			"has_time": true,
+			"initial":  "2024-06-01 08:00:00",
 			"icon":     "mdi:calendar-clock",
 		},
 	})
@@ -182,8 +198,8 @@ func (s *HelperPartialUpdateToolDispatchTestSuite) TestInputDatetimePartialUpdat
 	_, err = s.WaitForEntity(entityID, 5*time.Second)
 	s.Require().NoError(err, "input_datetime did not appear")
 
-	// Update omits has_date/has_time/icon entirely, supplying only the
-	// identifier and name.
+	// Update omits has_date/has_time/initial/icon entirely, supplying only
+	// the identifier and name.
 	result := s.CallTool("manage_helper", map[string]any{
 		"action":    "update",
 		"entity_id": entityID,
@@ -193,11 +209,56 @@ func (s *HelperPartialUpdateToolDispatchTestSuite) TestInputDatetimePartialUpdat
 
 	time.Sleep(1 * time.Second)
 
-	entity, err := s.Client().GetState(s.Context(), entityID)
-	s.Require().NoError(err)
-	s.Equal(true, entity.Attributes["has_date"], "has_date should survive an update that omitted it")
-	s.Equal(true, entity.Attributes["has_time"], "has_time should survive an update that omitted it")
-	s.Equal("mdi:calendar-clock", entity.Attributes["icon"], "icon should survive an update that omitted it")
+	// Assert via GetHelperConfig, not GetState: "initial" is never exposed
+	// as a state attribute for input_datetime (state reflects the current
+	// date/time value, not the create-time starting value), so a GetState
+	// read cannot catch a merge that silently drops it.
+	config, err := s.Client().GetHelperConfig(s.Context(), "input_datetime", entityID)
+	s.Require().NoError(err, "failed to read back input_datetime config")
+	s.Equal(true, config["has_date"], "has_date should survive an update that omitted it")
+	s.Equal(true, config["has_time"], "has_time should survive an update that omitted it")
+	s.Equal("2024-06-01 08:00:00", config["initial"], "initial should survive an update that omitted it")
+	s.Equal("mdi:calendar-clock", config["icon"], "icon should survive an update that omitted it")
+}
+
+// TestInputBooleanPartialUpdatePreservesFields closes the same coverage gap
+// as input_number/input_select/input_text/input_datetime above: "initial"
+// is never exposed as a state attribute for input_boolean (state reflects
+// the current on/off value, not the create-time starting value), so only a
+// GetHelperConfig-based assertion can catch a merge that silently drops it.
+func (s *HelperPartialUpdateToolDispatchTestSuite) TestInputBooleanPartialUpdatePreservesFields() {
+	testName := GenerateTestID("pu_input_boolean")
+	entityID := BuildEntityID("input_boolean", testName)
+	s.RegisterCleanup(func() { _ = s.Client().DeleteHelper(s.Context(), entityID) })
+
+	err := s.Client().CreateHelper(s.Context(), homeassistant.HelperConfig{
+		Platform: "input_boolean",
+		Config: map[string]any{
+			"name":    testName,
+			"initial": true,
+			"icon":    "mdi:toggle-switch",
+		},
+	})
+	s.Require().NoError(err, "failed to create input_boolean")
+
+	_, err = s.WaitForEntity(entityID, 5*time.Second)
+	s.Require().NoError(err, "input_boolean did not appear")
+
+	// Update omits initial/icon entirely, supplying only the identifier and
+	// name.
+	result := s.CallTool("manage_helper", map[string]any{
+		"action":    "update",
+		"entity_id": entityID,
+		"name":      testName,
+	})
+	s.Require().False(result.IsError, "manage_helper update should succeed, got: %s", resultText(result))
+
+	time.Sleep(1 * time.Second)
+
+	config, err := s.Client().GetHelperConfig(s.Context(), "input_boolean", entityID)
+	s.Require().NoError(err, "failed to read back input_boolean config")
+	s.Equal(true, config["initial"], "initial should survive an update that omitted it")
+	s.Equal("mdi:toggle-switch", config["icon"], "icon should survive an update that omitted it")
 }
 
 func (s *HelperPartialUpdateToolDispatchTestSuite) TestCounterPartialUpdatePreservesFields() {
@@ -213,6 +274,7 @@ func (s *HelperPartialUpdateToolDispatchTestSuite) TestCounterPartialUpdatePrese
 			"step":    2.0,
 			"minimum": 0.0,
 			"maximum": 1000.0,
+			"restore": true,
 			"icon":    "mdi:counter",
 		},
 	})
@@ -231,12 +293,18 @@ func (s *HelperPartialUpdateToolDispatchTestSuite) TestCounterPartialUpdatePrese
 
 	time.Sleep(1 * time.Second)
 
-	entity, err := s.Client().GetState(s.Context(), entityID)
-	s.Require().NoError(err)
-	s.InDelta(5.0, toFloat(entity.Attributes["initial"]), 0.001, "initial should survive an update that omitted it")
-	s.InDelta(0.0, toFloat(entity.Attributes["minimum"]), 0.001, "minimum should survive an update that omitted it")
-	s.InDelta(1000.0, toFloat(entity.Attributes["maximum"]), 0.001, "maximum should survive an update that omitted it")
-	s.Equal("mdi:counter", entity.Attributes["icon"], "icon should survive an update that omitted it")
+	// Assert via GetHelperConfig, not GetState: this is the exact fixed
+	// regression - "restore" was omitted from counter.optionalFields before
+	// this fix, and every update silently reset it to HA's default (false),
+	// but a GetState-only assertion couldn't have caught that because
+	// GetState was never checked for "restore" here to begin with.
+	config, err := s.Client().GetHelperConfig(s.Context(), "counter", entityID)
+	s.Require().NoError(err, "failed to read back counter config")
+	s.InDelta(5.0, toFloat(config["initial"]), 0.001, "initial should survive an update that omitted it")
+	s.InDelta(0.0, toFloat(config["minimum"]), 0.001, "minimum should survive an update that omitted it")
+	s.InDelta(1000.0, toFloat(config["maximum"]), 0.001, "maximum should survive an update that omitted it")
+	s.Equal(true, config["restore"], "restore should survive an update that omitted it")
+	s.Equal("mdi:counter", config["icon"], "icon should survive an update that omitted it")
 }
 
 // TestTimerPartialUpdatePreservesFields is also the W2 regression check for

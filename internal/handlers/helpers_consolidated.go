@@ -46,6 +46,7 @@ const (
 	helperTypeRandomBinarySensor   = "random_binary_sensor"
 	serviceSetValue                = "set_value"
 	helperActionUpdate             = "update"
+	entityDomainHumidifier         = "humidifier" // generic_hygrostat's validEntityDomains entry - an entity domain, not an integration platform name
 )
 
 // sourceEntityConstraint restricts one args field of a helper type to a set
@@ -82,18 +83,21 @@ var perTypeUpdateExcludedFields = map[string]map[string]bool{
 	"min_max": {"type": true},
 }
 
+// isUpdateIdentifierField reports whether field is the tool's own "which
+// helper are we updating" identifier for the update action (handleUpdate
+// reads args["entity_id"] for exactly that), rather than a per-platform
+// config value. "entity_id" is also a legitimate create-time config field
+// for several types (statistics, trend, filter, switch_as_x, threshold) -
+// on update the identifier meaning always wins, so no per-platform value
+// can ever be forwarded under that name. isUpdateExcludedField,
+// updatableSourceEntities, and buildConfigEntryUpdateConfig (which simply
+// never reads args["entity_id"]) all derive from this single answer.
+func isUpdateIdentifierField(field string) bool {
+	return field == attrEntityID
+}
+
 // isUpdateExcludedField reports whether field is never forwarded to HA on
 // update for helper type typeName.
-//
-// "entity_id" is excluded for every type rather than listed once per type
-// in perTypeUpdateExcludedFields: on update it is the tool's own "which
-// helper are we updating" identifier (handleUpdate reads args["entity_id"]
-// for that), not a per-platform config value - the same exclusion
-// buildConfigEntryUpdateConfig and updatableSourceEntities each apply for
-// their own call sites; see buildConfigEntryUpdateConfig's doc comment for
-// why. Every type that declares "entity_id" (statistics, trend, filter,
-// switch_as_x, threshold) hits the same collision, so it is checked
-// directly here instead.
 //
 // TestUpdatableFields_AreActuallyReadByUpdatePath enforces that every
 // remaining name updatableFieldNames() returns actually round-trips through
@@ -101,7 +105,7 @@ var perTypeUpdateExcludedFields = map[string]map[string]bool{
 // update fails a test rather than silently drifting from the generated
 // docs.
 func isUpdateExcludedField(typeName, field string) bool {
-	return field == attrEntityID || perTypeUpdateExcludedFields[typeName][field]
+	return isUpdateIdentifierField(field) || perTypeUpdateExcludedFields[typeName][field]
 }
 
 // updatableFieldNames returns the field names accepted on update for this
@@ -946,16 +950,21 @@ func (h *ConsolidatedHelperHandlers) handleUpdate(ctx context.Context, client ho
 		return errorResult(err.Error()), nil
 	}
 
-	// Extract platform and helper ID from entity_id
-	platform, helperID := ParseHelperEntityID(entityID)
-	if platform == "" || helperID == "" {
+	// Extract entity domain and helper ID from entity_id. entityDomain is the
+	// entity's domain (e.g. "sensor", "climate", "humidifier"), NOT the
+	// integration platform name (e.g. "statistics", "generic_hygrostat") -
+	// meta.platform and homeassistant.RequiresConfigEntryFlow below take the
+	// latter. Conflating the two here was the root cause update's
+	// source-domain check (checkUpdateSourceEntityDomain) had to work around.
+	entityDomain, helperID := ParseHelperEntityID(entityID)
+	if entityDomain == "" || helperID == "" {
 		return errorResult(fmt.Sprintf("invalid entity_id format: %s (expected format: 'domain.object_id')", entityID)), nil
 	}
 
-	// Determine helper type from platform
-	// For most platforms, the helper type matches the platform
+	// Determine helper type from entity domain
+	// For most platforms, the helper type matches the entity domain
 	// Special cases: sensor/binary_sensor could be template/threshold/derivative/integral/group
-	helperType := platform
+	helperType := entityDomain
 
 	// Get metadata for validation
 	meta, ok := helperTypes[helperType]
@@ -981,8 +990,8 @@ func (h *ConsolidatedHelperHandlers) handleUpdate(ctx context.Context, client ho
 	var err error
 
 	if ok {
-		// The map key matching platform ("ok") only tells us this platform has
-		// metadata - it does NOT mean it's a WebSocket helper. See
+		// The map key matching entityDomain ("ok") only tells us this entity
+		// domain has metadata - it does NOT mean it's a WebSocket helper. See
 		// buildKnownTypeUpdateConfig for why "group" must not take the merge path.
 		config, err = buildKnownTypeUpdateConfig(ctx, client, entityID, helperType, meta, args)
 		if err != nil {
@@ -991,12 +1000,12 @@ func (h *ConsolidatedHelperHandlers) handleUpdate(ctx context.Context, client ho
 	} else {
 		// Unknown helper type (sensor/binary_sensor without metadata)
 		// These are Config Entry Flow helpers - build loose config
-		config = buildConfigEntryUpdateConfig(platform, args)
+		config = buildConfigEntryUpdateConfig(entityDomain, args)
 	}
 
 	// Create UpdateHelper request
 	updateConfig := homeassistant.HelperConfig{
-		Platform: platform,
+		Platform: entityDomain,
 		Config:   config,
 	}
 
@@ -1078,8 +1087,8 @@ func buildKnownTypeUpdateConfig(ctx context.Context, client homeassistant.Client
 // optional/required field keeps the current value instead of HA resetting
 // it to empty (issue #161). Filters strictly to updatableFieldNames(typeName).
 //
-// ok is false when the fetch itself failed - the caller must fail the
-// update rather than proceed with a partial payload; see CLAUDE.md's
+// fetchErr is non-nil when the fetch itself failed - the caller must fail
+// the update rather than proceed with a partial payload; see CLAUDE.md's
 // "Merge-fetch failure hard-fails the update" gotcha for why this is NOT
 // the isYAMLDefinedEntity "checked=false, proceed anyway" convention.
 func mergeCurrentHelperState(ctx context.Context, client homeassistant.Client, entityID, typeName string, meta helperTypeMetadata, args map[string]any) (merged map[string]any, currentName string, fetchErr error) {
@@ -1122,24 +1131,20 @@ func mergeCurrentHelperState(ctx context.Context, client homeassistant.Client, e
 }
 
 // updateFetchFailureHint gives an actionable next step for a failed
-// mergeCurrentHelperState fetch. GetHelperConfig's "<platform>/list" only
-// enumerates storage-managed entities - a YAML-defined helper of the same
-// platform (e.g. an input_number declared in configuration.yaml) is a real,
-// readable entity that simply never appears there, so it fails with a "not
-// found" error indistinguishable in shape from an entity that plain doesn't
-// exist. Naming YAML-definition as the likely cause here (rather than
-// generically suggesting "verify the entity exists") mirrors what
-// isYAMLDefinedEntity already does for scripts/automations (yaml_defined.go)
-// - reusing that helper isn't viable here since its unique_id heuristic was
-// only verified against script/automation registry entries, not WS helper
-// platforms, but the underlying "not found in storage list" signal is
-// unambiguous on its own.
+// mergeCurrentHelperState fetch. When the failure is specifically
+// homeassistant.ErrHelperNotFoundInStorage, the two known causes are a
+// YAML-defined helper (never registered in storage) or one renamed via the
+// entity registry after creation (storage keeps the id assigned at
+// creation, so it desyncs from the object_id the lookup uses) - matched via
+// errors.Is rather than message text so an unrelated transport error whose
+// text happens to contain "not found" doesn't get misattributed to either.
 func updateFetchFailureHint(fetchErr error, entityID string) string {
-	if strings.Contains(fetchErr.Error(), "not found") {
+	if errors.Is(fetchErr, homeassistant.ErrHelperNotFoundInStorage) {
 		return fmt.Sprintf(
-			"%s was not found among storage-managed helpers of this type - if it was defined in "+
-				"configuration.yaml rather than created via manage_helper or the HA UI, it cannot be "+
-				"updated this way; edit the YAML file directly and reload instead.",
+			"%s was not found among storage-managed helpers of this type. Either it was defined in "+
+				"configuration.yaml rather than created via manage_helper or the HA UI (edit the YAML file "+
+				"directly and reload instead), or its entity_id was renamed via the entity registry after "+
+				"creation (retry using the entity's original entity_id, or recreate it).",
 			entityID,
 		)
 	}
@@ -1924,18 +1929,14 @@ func (h *ConsolidatedHelperHandlers) handleGroupEntities(ctx context.Context, cl
 // buildConfigEntryUpdateConfig builds a loose config for Config Entry helper
 // updates. Extracts all recognized Config Entry fields from args.
 //
-// Deliberately never forwards "entity_id": on update it is the tool's own
-// "which helper are we updating" identifier, not a per-platform config value
-// - forwarding it once silently overwrote e.g. a threshold's monitored
-// entity with the helper's own id (see CLAUDE.md's "buildConfigEntryUpdateConfig
-// leaked entity_id" gotcha). isUpdateExcludedField and updatableSourceEntities
-// encode the same exclusion for their own call sites (the update-field-docs
-// generator and the update-time source-domain check, respectively) - all
-// three must stay in sync if a platform's "which field is the identifier"
-// answer ever changes.
+// Deliberately never reads "entity_id" - see isUpdateIdentifierField for why
+// it's the tool's own "which helper are we updating" identifier, not a
+// per-platform config value. Forwarding it once silently overwrote e.g. a
+// threshold's monitored entity with the helper's own id (see CLAUDE.md's
+// "buildConfigEntryUpdateConfig leaked entity_id" gotcha).
 //
 //nolint:gocyclo // Routing to type-specific builders requires switch over all helper types
-func buildConfigEntryUpdateConfig(platform string, args map[string]any) map[string]any {
+func buildConfigEntryUpdateConfig(entityDomain string, args map[string]any) map[string]any {
 	config := make(map[string]any)
 
 	// Common fields
@@ -1979,7 +1980,7 @@ func buildConfigEntryUpdateConfig(platform string, args map[string]any) map[stri
 	}
 
 	// Add fields for extended helper types
-	addExtendedConfigEntryFields(config, args, platform)
+	addExtendedConfigEntryFields(config, args, entityDomain)
 
 	return config
 }
@@ -2317,20 +2318,16 @@ func buildSourceConstrainedTypes() map[string]helperTypeMetadata {
 	return result
 }
 
-// updatableSourceEntities filters out any constraint whose field is
-// "entity_id". On update, args["entity_id"] is the tool's own identifier of
-// which helper is being updated (handleUpdate reads it for exactly that) -
-// it is never forwarded to HA as a config value, the same exclusion
-// buildConfigEntryUpdateConfig and isUpdateExcludedField each apply for
-// their own call sites; see buildConfigEntryUpdateConfig's doc comment for
-// why. So there is no caller-suppliable value behind that constraint on
-// update. Validating it anyway would either vacuously pass
-// (statistics/trend/filter, whose own domain always matches) or always fail
-// (switch_as_x, whose own domain never matches "switch").
+// updatableSourceEntities filters out any constraint whose field is the
+// update-identifier field (see isUpdateIdentifierField). There is no
+// caller-suppliable value behind that constraint on update. Validating it
+// anyway would either vacuously pass (statistics/trend/filter, whose own
+// domain always matches) or always fail (switch_as_x, whose own domain
+// never matches "switch").
 func updatableSourceEntities(constraints []sourceEntityConstraint) []sourceEntityConstraint {
 	filtered := make([]sourceEntityConstraint, 0, len(constraints))
 	for _, c := range constraints {
-		if c.field == attrEntityID {
+		if isUpdateIdentifierField(c.field) {
 			continue
 		}
 		filtered = append(filtered, c)
