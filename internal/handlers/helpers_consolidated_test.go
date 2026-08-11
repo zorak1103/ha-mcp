@@ -544,6 +544,74 @@ func TestManageHelper_CreateIntegral(t *testing.T) {
 	runHandlerTestCases(t, tests, h.handleManageHelper)
 }
 
+// TestManageHelper_Create_SourceDomainMismatch asserts that manage_helper
+// create fails fast with an actionable message when the source entity
+// referenced by a domain-restricted Config Entry helper (utility_meter,
+// statistics, trend, filter, generic_thermostat, switch_as_x,
+// generic_hygrostat) has the wrong domain, instead of surfacing HA's opaque
+// config-entry-flow validation error. Types with no source-domain
+// constraint must remain unaffected.
+func TestManageHelper_Create_SourceDomainMismatch(t *testing.T) {
+	t.Parallel()
+
+	tests := []handlerTestCase{
+		{
+			name: "utility_meter with input_number source rejected",
+			args: map[string]any{
+				"action": "create",
+				"type":   "utility_meter",
+				"id":     "test_meter",
+				"name":   "Test Utility Meter",
+				"source": "input_number.x",
+			},
+			wantError:    true,
+			wantContains: []string{"requires a sensor", "template_sensor"},
+		},
+		{
+			name: "switch_as_x with input_boolean entity_id rejected",
+			args: map[string]any{
+				"action":        "create",
+				"type":          "switch_as_x",
+				"id":            "test_switch",
+				"name":          "Test Switch",
+				"entity_id":     "input_boolean.x",
+				"target_domain": "light",
+			},
+			wantError:       true,
+			wantContains:    []string{"requires a switch", "Template → Switch"},
+			wantNotContains: []string{`manage_helper(action="create", type="template_switch"`},
+		},
+		{
+			name: "utility_meter with sensor source proceeds unaffected",
+			args: map[string]any{
+				"action": "create",
+				"type":   "utility_meter",
+				"id":     "test_meter",
+				"name":   "Test Utility Meter",
+				"source": "sensor.x",
+			},
+			wantError:    false,
+			wantContains: []string{"created", "sensor.test_utility_meter"},
+		},
+		{
+			name: "unconstrained type with any entity_id domain unaffected",
+			args: map[string]any{
+				"action":    "create",
+				"type":      "threshold",
+				"id":        "temp_high",
+				"name":      "Temperature High",
+				"entity_id": "input_boolean.x",
+				"upper":     float64(25),
+			},
+			wantError:    false,
+			wantContains: []string{"binary_sensor.temperature_high", "created"},
+		},
+	}
+
+	h := NewConsolidatedHelperHandlers()
+	runHandlerTestCases(t, tests, h.handleManageHelper)
+}
+
 // =============================================================================
 // manage_helper - ID vs Name Entity Slug Tests
 // =============================================================================

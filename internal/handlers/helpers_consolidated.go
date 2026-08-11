@@ -712,6 +712,10 @@ func (h *ConsolidatedHelperHandlers) handleCreate(ctx context.Context, client ho
 		return errorResult(fmt.Sprintf("invalid helper type: %s (valid types: %s)", helperType, strings.Join(allHelperTypeNames, ", "))), nil
 	}
 
+	if err := checkSourceEntityDomain(helperType, meta, args); err != nil {
+		return errorResult(err.Error()), nil
+	}
+
 	id, _ := args["id"].(string)
 	if id == "" {
 		return errorResult("id is required for create action"), nil
@@ -1980,6 +1984,56 @@ func validateRequiredFields(helperType string, meta helperTypeMetadata, args map
 		}
 	}
 	return nil
+}
+
+// checkSourceEntityDomain validates that the source entity referenced by a
+// domain-restricted Config Entry helper (utility_meter, statistics, trend,
+// filter, generic_thermostat, switch_as_x, generic_hygrostat) has the
+// domain HA's config flow actually requires, failing with an actionable
+// wrapper recipe instead of letting an opaque HA-side validation error
+// through.
+func checkSourceEntityDomain(helperType string, meta helperTypeMetadata, args map[string]any) error {
+	if len(meta.sourceEntityDomains) == 0 {
+		return nil // this type has no source-domain constraint
+	}
+	sourceEntityID, _ := args[meta.sourceEntityField].(string)
+	if sourceEntityID == "" {
+		return nil // missing entirely - let the existing validateRequiredFields report it, don't duplicate that error
+	}
+	domain := extractDomain(sourceEntityID)
+	for _, allowed := range meta.sourceEntityDomains {
+		if domain == allowed {
+			return nil
+		}
+	}
+	return fmt.Errorf(
+		"%s requires a %s.* source entity, got %q (domain %q). %s",
+		helperType, strings.Join(meta.sourceEntityDomains, "/"), sourceEntityID, domain,
+		wrapperRecipeFor(meta.sourceEntityDomains[0], sourceEntityID),
+	)
+}
+
+// wrapperRecipeFor returns an actionable next step for a source-domain
+// mismatch. For a sensor requirement it's a ready-to-run manage_helper
+// template_sensor wrapper recipe (manage_helper can create that type
+// today). For a switch requirement it's an honest pointer at the Home
+// Assistant UI, since manage_helper cannot create a template switch
+// wrapper yet - fabricating a manage_helper call for a helper type that
+// doesn't exist would just trade one failure for another.
+func wrapperRecipeFor(requiredDomain, sourceEntityID string) string {
+	if requiredDomain == platformSensorEntity {
+		return fmt.Sprintf(
+			`Wrap it first: manage_helper(action="create", type="template_sensor", id="<wrapper_id>", name="<Wrapper Name>", state="{{ states('%s') | float }}")`,
+			sourceEntityID,
+		)
+	}
+	return fmt.Sprintf(
+		"manage_helper cannot create a template switch wrapper yet - create one via "+
+			"Settings → Devices & Services → Helpers → Template → Switch in the Home "+
+			"Assistant UI, with turn_on/turn_off calling input_boolean.turn_on/turn_off "+
+			"on %s, then retry with the wrapper's entity_id",
+		sourceEntityID,
+	)
 }
 
 //nolint:gocyclo // Validation switch with many specific field types
