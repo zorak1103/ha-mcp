@@ -1007,7 +1007,7 @@ type mockRESTOperations struct {
 	deleteSceneFunc                      func(ctx context.Context, sceneID string) error
 	initConfigEntryFlowFunc              func(ctx context.Context, handler string) (*ConfigEntryFlowResult, error)
 	submitConfigEntryFlowStepFunc        func(ctx context.Context, flowID string, data map[string]any) (*ConfigEntryFlowResult, error)
-	deleteConfigEntryFunc                func(ctx context.Context, entryID string) error
+	deleteConfigEntryFunc                func(ctx context.Context, entryID string) (bool, error)
 	getServicesFunc                      func(ctx context.Context) ([]Service, error)
 	getConfigFunc                        func(ctx context.Context) (*Config, error)
 	renderTemplateFunc                   func(ctx context.Context, template string) (string, error)
@@ -1105,11 +1105,11 @@ func (m *mockRESTOperations) SubmitConfigEntryFlowStep(ctx context.Context, flow
 	return nil, nil
 }
 
-func (m *mockRESTOperations) DeleteConfigEntry(ctx context.Context, entryID string) error {
+func (m *mockRESTOperations) DeleteConfigEntry(ctx context.Context, entryID string) (bool, error) {
 	if m.deleteConfigEntryFunc != nil {
 		return m.deleteConfigEntryFunc(ctx, entryID)
 	}
-	return nil
+	return false, nil
 }
 
 func (m *mockRESTOperations) InitConfigEntryOptionsFlow(ctx context.Context, entryID string) (*OptionsFlowResult, error) {
@@ -2445,19 +2445,22 @@ func TestHybridClient_DeleteConfigEntry(t *testing.T) {
 
 	var gotEntryID string
 	rest := &mockRESTOperations{
-		deleteConfigEntryFunc: func(_ context.Context, entryID string) error {
+		deleteConfigEntryFunc: func(_ context.Context, entryID string) (bool, error) {
 			gotEntryID = entryID
-			return nil
+			return true, nil
 		},
 	}
 	ws := &mockWSOperations{}
 	client := NewHybridClientWithInterfaces(ws, rest)
 
-	err := client.DeleteConfigEntry(context.Background(), "abc123")
+	requireRestart, err := client.DeleteConfigEntry(context.Background(), "abc123")
 	if err != nil {
 		t.Fatalf("DeleteConfigEntry failed: %v", err)
 	}
 	if gotEntryID != "abc123" {
 		t.Errorf("expected entry_id 'abc123' forwarded to REST client, got %q", gotEntryID)
+	}
+	if !requireRestart {
+		t.Error("expected requireRestart to be forwarded from REST client, got false")
 	}
 }

@@ -281,15 +281,110 @@ func TestConfigEntryHandlers_HandleDeleteConfigEntry(t *testing.T) {
 						{ID: "device2", ConfigEntries: []string{"def456"}},
 					}, nil
 				}
-				m.DeleteConfigEntryFn = func(_ context.Context, entryID string) error {
+				m.GetStateFn = func(_ context.Context, _ string) (*homeassistant.Entity, error) {
+					return nil, errors.New("not found")
+				}
+				m.DeleteConfigEntryFn = func(_ context.Context, entryID string) (bool, error) {
 					if entryID != "abc123" {
 						t.Errorf("expected entry_id 'abc123', got %q", entryID)
 					}
-					return nil
+					return false, nil
+				}
+			},
+			wantError:       false,
+			wantContains:    []string{"Old Phone", "mobile_app", "abc123", "2 associated entities", "1 associated device"},
+			wantNotContains: []string{"Warning"},
+		},
+		{
+			name: "delete entry - zero associated resources",
+			args: map[string]any{"action": "delete", "entry_id": "abc123"},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetConfigEntryFn = func(_ context.Context, _ string) (*homeassistant.ConfigEntryFull, error) {
+					return &homeassistant.ConfigEntryFull{EntryID: "abc123", Domain: "mobile_app", Title: "Old Phone"}, nil
+				}
+				m.GetEntityRegistryFn = func(_ context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+					return nil, nil
+				}
+				m.GetDeviceRegistryFn = func(_ context.Context) ([]homeassistant.DeviceRegistryEntry, error) {
+					return nil, nil
+				}
+				m.DeleteConfigEntryFn = func(_ context.Context, _ string) (bool, error) {
+					return false, nil
 				}
 			},
 			wantError:    false,
-			wantContains: []string{"Old Phone", "mobile_app", "abc123", "2 associated entities", "1 associated devices"},
+			wantContains: []string{"0 associated entities", "0 associated devices"},
+		},
+		{
+			name: "delete entry - device registry known, entity registry unknown",
+			args: map[string]any{"action": "delete", "entry_id": "abc123"},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetConfigEntryFn = func(_ context.Context, _ string) (*homeassistant.ConfigEntryFull, error) {
+					return &homeassistant.ConfigEntryFull{EntryID: "abc123", Domain: "mobile_app", Title: "Old Phone"}, nil
+				}
+				m.GetEntityRegistryFn = func(_ context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+					return nil, errors.New("registry unavailable")
+				}
+				m.GetDeviceRegistryFn = func(_ context.Context) ([]homeassistant.DeviceRegistryEntry, error) {
+					return []homeassistant.DeviceRegistryEntry{{ID: "device1", ConfigEntries: []string{"abc123"}}}, nil
+				}
+				m.DeleteConfigEntryFn = func(_ context.Context, _ string) (bool, error) {
+					return false, nil
+				}
+			},
+			wantError:    false,
+			wantContains: []string{"1 associated device", "entity count unknown"},
+		},
+		{
+			name: "delete entry - entity registry known, device registry unknown",
+			args: map[string]any{"action": "delete", "entry_id": "abc123"},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetConfigEntryFn = func(_ context.Context, _ string) (*homeassistant.ConfigEntryFull, error) {
+					return &homeassistant.ConfigEntryFull{EntryID: "abc123", Domain: "mobile_app", Title: "Old Phone"}, nil
+				}
+				m.GetEntityRegistryFn = func(_ context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+					return []homeassistant.EntityRegistryEntry{
+						{EntityID: "sensor.old_phone_battery", ConfigEntryID: "abc123"},
+						{EntityID: "sensor.old_phone_charging", ConfigEntryID: "abc123"},
+						{EntityID: "sensor.old_phone_signal", ConfigEntryID: "abc123"},
+					}, nil
+				}
+				m.GetDeviceRegistryFn = func(_ context.Context) ([]homeassistant.DeviceRegistryEntry, error) {
+					return nil, errors.New("registry unavailable")
+				}
+				m.GetStateFn = func(_ context.Context, _ string) (*homeassistant.Entity, error) {
+					return nil, errors.New("not found")
+				}
+				m.DeleteConfigEntryFn = func(_ context.Context, _ string) (bool, error) {
+					return false, nil
+				}
+			},
+			wantError:       false,
+			wantContains:    []string{"3 associated entities", "device count unknown"},
+			wantNotContains: []string{"Warning"},
+		},
+		{
+			name: "delete entry - entity still present after wait timeout appends warning",
+			args: map[string]any{"action": "delete", "entry_id": "abc123"},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetConfigEntryFn = func(_ context.Context, _ string) (*homeassistant.ConfigEntryFull, error) {
+					return &homeassistant.ConfigEntryFull{EntryID: "abc123", Domain: "mobile_app", Title: "Old Phone"}, nil
+				}
+				m.GetEntityRegistryFn = func(_ context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+					return []homeassistant.EntityRegistryEntry{
+						{EntityID: "sensor.old_phone_battery", ConfigEntryID: "abc123"},
+					}, nil
+				}
+				m.GetStateFn = func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+					// Entity never disappears - simulates a stuck unload.
+					return &homeassistant.Entity{EntityID: entityID, State: "unavailable"}, nil
+				}
+				m.DeleteConfigEntryFn = func(_ context.Context, _ string) (bool, error) {
+					return false, nil
+				}
+			},
+			wantError:    false,
+			wantContains: []string{"Warning", "restart may be required"},
 		},
 		{
 			name: "delete entry - registry lookup fails, delete still proceeds",
@@ -309,15 +404,43 @@ func TestConfigEntryHandlers_HandleDeleteConfigEntry(t *testing.T) {
 				m.GetDeviceRegistryFn = func(_ context.Context) ([]homeassistant.DeviceRegistryEntry, error) {
 					return nil, errors.New("registry unavailable")
 				}
-				m.DeleteConfigEntryFn = func(_ context.Context, entryID string) error {
+				m.DeleteConfigEntryFn = func(_ context.Context, entryID string) (bool, error) {
 					if entryID != "abc123" {
 						t.Errorf("expected entry_id 'abc123', got %q", entryID)
 					}
-					return nil
+					return false, nil
 				}
 			},
 			wantError:    false,
 			wantContains: []string{"Old Phone", "mobile_app", "abc123", "counts unknown"},
+		},
+		{
+			name: "delete entry - empty title falls back to domain",
+			args: map[string]any{"action": "delete", "entry_id": "abc123"},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetConfigEntryFn = func(_ context.Context, _ string) (*homeassistant.ConfigEntryFull, error) {
+					return &homeassistant.ConfigEntryFull{EntryID: "abc123", Domain: "mobile_app", Title: ""}, nil
+				}
+				m.DeleteConfigEntryFn = func(_ context.Context, _ string) (bool, error) {
+					return false, nil
+				}
+			},
+			wantError:    false,
+			wantContains: []string{"'mobile_app'"},
+		},
+		{
+			name: "delete entry - Home Assistant reports restart required",
+			args: map[string]any{"action": "delete", "entry_id": "abc123"},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetConfigEntryFn = func(_ context.Context, _ string) (*homeassistant.ConfigEntryFull, error) {
+					return &homeassistant.ConfigEntryFull{EntryID: "abc123", Domain: "mobile_app", Title: "Old Phone"}, nil
+				}
+				m.DeleteConfigEntryFn = func(_ context.Context, _ string) (bool, error) {
+					return true, nil
+				}
+			},
+			wantError:    false,
+			wantContains: []string{"restart is required"},
 		},
 		{
 			name: "delete entry - config entry not found on preflight get",
@@ -325,6 +448,10 @@ func TestConfigEntryHandlers_HandleDeleteConfigEntry(t *testing.T) {
 			setupMock: func(m *UniversalMockClient) {
 				m.GetConfigEntryFn = func(_ context.Context, _ string) (*homeassistant.ConfigEntryFull, error) {
 					return nil, errors.New("config entry not found: nonexistent")
+				}
+				m.DeleteConfigEntryFn = func(_ context.Context, _ string) (bool, error) {
+					t.Error("delete must not be called after a failed preflight get")
+					return false, nil
 				}
 			},
 			wantError:    true,
@@ -337,8 +464,8 @@ func TestConfigEntryHandlers_HandleDeleteConfigEntry(t *testing.T) {
 				m.GetConfigEntryFn = func(_ context.Context, _ string) (*homeassistant.ConfigEntryFull, error) {
 					return &homeassistant.ConfigEntryFull{EntryID: "abc123", Domain: "mobile_app", Title: "Old Phone"}, nil
 				}
-				m.DeleteConfigEntryFn = func(_ context.Context, _ string) error {
-					return errors.New("forbidden: insufficient permissions to delete config entry")
+				m.DeleteConfigEntryFn = func(_ context.Context, _ string) (bool, error) {
+					return false, errors.New("forbidden: insufficient permissions to delete config entry")
 				}
 			},
 			wantError:    true,

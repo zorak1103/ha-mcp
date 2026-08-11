@@ -136,7 +136,7 @@ type Client interface {
 	GetConfigEntries(ctx context.Context, domain string) ([]ConfigEntryFull, error)
 	GetConfigEntry(ctx context.Context, entryID string) (*ConfigEntryFull, error)
 	GetConfigEntryOptions(ctx context.Context, entryID string) (map[string]any, error)
-	DeleteConfigEntry(ctx context.Context, entryID string) error
+	DeleteConfigEntry(ctx context.Context, entryID string) (requireRestart bool, err error)
 
 	// Service discovery operations
 	GetServices(ctx context.Context) ([]Service, error)

@@ -128,7 +128,7 @@ type UniversalMockClient struct {
 	GetConfigEntryOptionsFn func(ctx context.Context, entryID string) (map[string]any, error)
 
 	// Config entry delete operations
-	DeleteConfigEntryFn func(ctx context.Context, entryID string) error
+	DeleteConfigEntryFn func(ctx context.Context, entryID string) (bool, error)
 
 	// Service discovery operations
 	GetServicesFn func(ctx context.Context) ([]homeassistant.Service, error)
@@ -731,11 +731,11 @@ func (m *UniversalMockClient) GetConfigEntryOptions(ctx context.Context, entryID
 	return map[string]any{}, nil
 }
 
-func (m *UniversalMockClient) DeleteConfigEntry(ctx context.Context, entryID string) error {
+func (m *UniversalMockClient) DeleteConfigEntry(ctx context.Context, entryID string) (bool, error) {
 	if m.DeleteConfigEntryFn != nil {
 		return m.DeleteConfigEntryFn(ctx, entryID)
 	}
-	return nil
+	return false, nil
 }
 
 // Service discovery operations implementation

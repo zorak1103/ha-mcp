@@ -165,7 +165,7 @@ type RESTOperations interface {
 	// Config Entry Flow operations (for helpers requiring HTTP-based flow)
 	InitConfigEntryFlow(ctx context.Context, handler string) (*ConfigEntryFlowResult, error)
 	SubmitConfigEntryFlowStep(ctx context.Context, flowID string, data map[string]any) (*ConfigEntryFlowResult, error)
-	DeleteConfigEntry(ctx context.Context, entryID string) error
+	DeleteConfigEntry(ctx context.Context, entryID string) (requireRestart bool, err error)
 
 	// Config Entry Options Flow operations (for reading current option values)
 	InitConfigEntryOptionsFlow(ctx context.Context, entryID string) (*OptionsFlowResult, error)
@@ -390,8 +390,12 @@ func (c *HybridClient) DeleteHelper(ctx context.Context, helperID string) error 
 	// Find the entity and check if it has a config_entry_id
 	for _, entry := range entries {
 		if entry.EntityID == helperID && entry.ConfigEntryID != "" {
-			// This is a Config Entry-based helper, delete via REST
-			return c.rest.DeleteConfigEntry(ctx, entry.ConfigEntryID)
+			// This is a Config Entry-based helper, delete via REST. require_restart is
+			// not surfaced here: DeleteHelper's contract is a plain error, and a helper
+			// stuck pending restart still reports success today (pre-existing behavior,
+			// unrelated to the manage_config_entry delete action added alongside this).
+			_, err := c.rest.DeleteConfigEntry(ctx, entry.ConfigEntryID)
+			return err
 		}
 	}
 
@@ -1234,7 +1238,7 @@ func (c *HybridClient) GetConfigEntryOptions(ctx context.Context, entryID string
 // DeleteConfigEntry deletes a config entry and all its associated devices/entities.
 // REST-only: Home Assistant has no reliable config_entries/{delete,remove} WS command,
 // same class of gap as automation/script/scene CRUD (see CLAUDE.md).
-func (c *HybridClient) DeleteConfigEntry(ctx context.Context, entryID string) error {
+func (c *HybridClient) DeleteConfigEntry(ctx context.Context, entryID string) (bool, error) {
 	return c.rest.DeleteConfigEntry(ctx, entryID)
 }
 

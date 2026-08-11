@@ -361,6 +361,110 @@ func TestRESTClient_DeleteScene(t *testing.T) {
 	}
 }
 
+func TestRESTClient_DeleteConfigEntry(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name               string
+		entryID            string
+		serverResponse     func(w http.ResponseWriter, r *http.Request)
+		wantErr            bool
+		wantErrMsg         string
+		wantRequireRestart bool
+	}{
+		{
+			name:    "successful deletion, no restart required",
+			entryID: "abc123",
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"require_restart": false}`))
+			},
+			wantErr:            false,
+			wantRequireRestart: false,
+		},
+		{
+			name:    "successful deletion, restart required",
+			entryID: "abc123",
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"require_restart": true}`))
+			},
+			wantErr:            false,
+			wantRequireRestart: true,
+		},
+		{
+			name:    "successful deletion, empty body (older HA versions)",
+			entryID: "abc123",
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusNoContent)
+			},
+			wantErr:            false,
+			wantRequireRestart: false,
+		},
+		{
+			name:    "successful deletion, garbage body degrades to false",
+			entryID: "abc123",
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`not json`))
+			},
+			wantErr:            false,
+			wantRequireRestart: false,
+		},
+		{
+			name:    "config entry not found",
+			entryID: "nonexistent",
+			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusNotFound)
+			},
+			wantErr:    true,
+			wantErrMsg: "config entry not found: nonexistent",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				expectedPath := "/api/config/config_entries/entry/" + tt.entryID
+				if r.URL.Path != expectedPath {
+					t.Errorf("path = %q, want %q", r.URL.Path, expectedPath)
+				}
+				if r.Method != http.MethodDelete {
+					t.Errorf("method = %q, want %q", r.Method, http.MethodDelete)
+				}
+				tt.serverResponse(w, r)
+			}))
+			defer server.Close()
+
+			client := NewRESTClient(server.URL, "test-token")
+			requireRestart, err := client.DeleteConfigEntry(context.Background(), tt.entryID)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("DeleteConfigEntry() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if tt.wantErr && err != nil {
+				var apiErr *APIError
+				if !errors.As(err, &apiErr) {
+					t.Errorf("error type = %T, want *APIError", err)
+					return
+				}
+				if apiErr.Message != tt.wantErrMsg {
+					t.Errorf("error message = %q, want %q", apiErr.Message, tt.wantErrMsg)
+				}
+				return
+			}
+
+			if requireRestart != tt.wantRequireRestart {
+				t.Errorf("requireRestart = %v, want %v", requireRestart, tt.wantRequireRestart)
+			}
+		})
+	}
+}
+
 func TestRESTClient_ContextCancellation(t *testing.T) {
 	t.Parallel()
 

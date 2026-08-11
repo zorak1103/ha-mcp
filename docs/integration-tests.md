@@ -112,6 +112,7 @@ go test -tags=integration -v ./internal/handlers/integration/... 2>&1 | tee test
 | `TestUpdateBlueprintIntegration` | list updates (pending filter), release_notes, list blueprints (automation/script) |
 | `TestCameraIntegration`    | list cameras, stream (HLS URL via manage_camera), get_snapshot (binary image data)                  |
 | `TestSystemLogIntegration` | GetSystemLog (list), ClearSystemLog (clear + verify empty)                                           |
+| `TestConfigEntriesIntegration` | list, list (filter by domain), get, get (not found), delete (via manage_config_entry tool dispatch, verifies entity + config entry are gone), options discovery |
 
 **Documented Exception (unit tests only):**
 

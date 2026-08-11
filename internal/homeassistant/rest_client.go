@@ -1013,12 +1013,17 @@ func (c *RESTClient) SubmitConfigEntryFlowStep(ctx context.Context, flowID strin
 
 // DeleteConfigEntry deletes a config entry by its entry ID.
 // Endpoint: DELETE /api/config/config_entries/entry/{entry_id}
-func (c *RESTClient) DeleteConfigEntry(ctx context.Context, entryID string) error {
+// Home Assistant's async_remove returns {"require_restart": bool} on success: true means the
+// integration could not be unloaded cleanly, so its devices/entities remain
+// registered until the next Home Assistant restart. A missing/unparseable body
+// (older HA versions, a 204 response) degrades to false rather than erroring,
+// since the delete itself already succeeded.
+func (c *RESTClient) DeleteConfigEntry(ctx context.Context, entryID string) (bool, error) {
 	url := fmt.Sprintf("%s/api/config/config_entries/entry/%s", c.baseURL, entryID)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, http.NoBody)
 	if err != nil {
-		return fmt.Errorf("creating delete config entry request: %w", err)
+		return false, fmt.Errorf("creating delete config entry request: %w", err)
 	}
 
 	req.Header.Set("Authorization", "Bearer "+c.token)
@@ -1026,18 +1031,22 @@ func (c *RESTClient) DeleteConfigEntry(ctx context.Context, entryID string) erro
 
 	resp, err := c.doRequest(ctx, req)
 	if err != nil {
-		return fmt.Errorf("executing delete config entry request: %w", err)
+		return false, fmt.Errorf("executing delete config entry request: %w", err)
 	}
 	defer func() {
-		_, _ = io.Copy(io.Discard, resp.Body)
 		_ = resp.Body.Close()
 	}()
 
+	body, _ := io.ReadAll(resp.Body)
+
 	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNoContent {
-		return nil
+		var result struct {
+			RequireRestart bool `json:"require_restart"`
+		}
+		_ = json.Unmarshal(body, &result)
+		return result.RequireRestart, nil
 	}
 
-	body, _ := io.ReadAll(resp.Body)
 	bodyStr := string(body)
 	if bodyStr == "" {
 		bodyStr = noResponseBody
@@ -1045,22 +1054,22 @@ func (c *RESTClient) DeleteConfigEntry(ctx context.Context, entryID string) erro
 
 	switch resp.StatusCode {
 	case http.StatusNotFound:
-		return &APIError{
+		return false, &APIError{
 			StatusCode: resp.StatusCode,
 			Message:    fmt.Sprintf("config entry not found: %s", entryID),
 		}
 	case http.StatusUnauthorized:
-		return &APIError{
+		return false, &APIError{
 			StatusCode: resp.StatusCode,
 			Message:    "unauthorized: invalid or expired token",
 		}
 	case http.StatusForbidden:
-		return &APIError{
+		return false, &APIError{
 			StatusCode: resp.StatusCode,
 			Message:    "forbidden: insufficient permissions to delete config entry",
 		}
 	default:
-		return &APIError{
+		return false, &APIError{
 			StatusCode: resp.StatusCode,
 			Message:    fmt.Sprintf("unexpected status %d: %s", resp.StatusCode, bodyStr),
 		}

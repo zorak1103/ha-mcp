@@ -61,6 +61,16 @@ server:
 export HA_MCP_TOOL_FILTER_WHITELIST="get_state,manage_automation:list,manage_automation:get"
 ```
 
+**Tool-level entries are forward-open, not a snapshot of today's actions.** Whitelisting an
+entire tool (e.g. `"manage_config_entry"`, with no `:action` suffix) allows every action that
+tool supports — including ones added in a later release. `manage_config_entry` gained a
+`delete` action (removes a config entry and all its associated devices/entities) after
+previously supporting only `list`/`get`; a deployment that whitelisted the bare tool name
+before that change was granted delete capability automatically, with no configuration change
+on its part. If a deployment needs to freeze what a whitelisted tool can do, use action-level
+entries instead of the bare tool name, e.g. `"manage_config_entry:list"` and
+`"manage_config_entry:get"` rather than `"manage_config_entry"`.
+
 ### Blacklist Mode
 
 When whitelist is empty, use blacklist to block specific tools/actions:

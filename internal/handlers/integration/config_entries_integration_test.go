@@ -256,3 +256,56 @@ func (s *ConfigEntriesIntegrationTestSuite) TestGetConfigEntryOptionsViaFlow() {
 	s.Require().True(ok, "Unit of measurement should be a string")
 	s.Equal(knownUnit, unit, "Unit should match the created unit")
 }
+
+// TestDeleteConfigEntryViaTool exercises the manage_config_entry delete action
+// through the real handler dispatch (not just the bare client method, which
+// the other tests in this suite already cover indirectly via DeleteHelper).
+// A template sensor's config entry is used as the target: template helpers
+// are Config Entry Flow platforms, so deleting the entry is the same
+// operation Home Assistant performs when a user removes an integration.
+func (s *ConfigEntriesIntegrationTestSuite) TestDeleteConfigEntryViaTool() {
+	templateName := GenerateTestID("cfg_entry_delete")
+	templateEntityID := BuildEntityID("sensor", templateName)
+
+	s.RegisterCleanup(func() {
+		_ = s.Client().DeleteHelper(s.Context(), templateEntityID)
+	})
+
+	err := s.Client().CreateHelper(s.Context(), homeassistant.HelperConfig{
+		Platform: "template",
+		Config: map[string]any{
+			"name":  templateName,
+			"state": "{{ 42 }}",
+		},
+	})
+	s.Require().NoError(err, "Failed to create template sensor")
+
+	_, err = s.WaitForEntity(templateEntityID, 5*time.Second)
+	s.Require().NoError(err, "Template sensor did not appear")
+
+	registry, err := s.Client().GetEntityRegistry(s.Context())
+	s.Require().NoError(err, "Failed to get entity registry")
+
+	var configEntryID string
+	for _, entry := range registry {
+		if entry.EntityID == templateEntityID {
+			configEntryID = entry.ConfigEntryID
+			break
+		}
+	}
+	s.Require().NotEmpty(configEntryID, "Template entity should have a config_entry_id")
+
+	// The action under test: delete via the real manage_config_entry tool.
+	result := s.CallTool("manage_config_entry", map[string]any{
+		"action":   "delete",
+		"entry_id": configEntryID,
+	})
+	s.Require().False(result.IsError, "manage_config_entry delete should succeed, got: %s", resultText(result))
+	s.Contains(resultText(result), configEntryID, "success message should name the deleted entry_id")
+
+	err = s.WaitForEntityGone(templateEntityID, 5*time.Second)
+	s.Require().NoError(err, "Template sensor entity should be gone after config entry deletion")
+
+	_, err = s.Client().GetConfigEntry(s.Context(), configEntryID)
+	s.Error(err, "Config entry should no longer be retrievable after deletion")
+}

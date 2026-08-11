@@ -156,16 +156,25 @@ func (h *ConfigEntryHandlers) handleDeleteConfigEntry(
 	// Counted before deletion: once the entry is gone, the registries no longer
 	// show these entities/devices as belonging to it (and the registry cache is
 	// invalidated), so counting after deletion would always yield zero.
-	entityCount, deviceCount := countConfigEntryResources(ctx, client, entryID)
+	entityCount, deviceCount, sampleEntityID := countConfigEntryResources(ctx, client, entryID)
 
-	if err := client.DeleteConfigEntry(ctx, entryID); err != nil {
+	requireRestart, err := client.DeleteConfigEntry(ctx, entryID)
+	if err != nil {
 		return errorResult(fmt.Sprintf("error deleting config entry: %v", err)), nil
 	}
 
+	msg := buildDeleteConfigEntryMessage(entry, entryID, entityCount, deviceCount, requireRestart)
+
+	// Smart Wait: config entry removal unloads asynchronously, so an immediate
+	// follow-up read can still see the entry's entities. Skip the probe when HA
+	// already reported require_restart — it told us directly that unload didn't
+	// finish, so polling one entity would just rediscover the same fact slower.
+	if !requireRestart && sampleEntityID != "" && !waitForEntityDisappear(ctx, client, sampleEntityID) {
+		msg += "\nWarning: at least one associated entity is still visible after the wait timeout; a Home Assistant restart may be required to finish removing it."
+	}
+
 	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{mcp.NewTextContent(
-			buildDeleteConfigEntryMessage(entry, entryID, entityCount, deviceCount),
-		)},
+		Content: []mcp.ContentBlock{mcp.NewTextContent(msg)},
 	}, nil
 }
 
@@ -174,13 +183,18 @@ func (h *ConfigEntryHandlers) handleDeleteConfigEntry(
 // success message. A registry fetch failure is non-fatal (best-effort,
 // -1 signals "unknown") — the delete itself has already been validated via the
 // preflight GetConfigEntry call and should not be blocked by this enrichment.
-func countConfigEntryResources(ctx context.Context, client homeassistant.Client, entryID string) (entityCount, deviceCount int) {
+// sampleEntityID is one arbitrary entity belonging to the entry (empty if none
+// found), used as a Smart Wait probe after the delete completes.
+func countConfigEntryResources(ctx context.Context, client homeassistant.Client, entryID string) (entityCount, deviceCount int, sampleEntityID string) {
 	entityCount = -1
 	if entries, err := client.GetEntityRegistry(ctx); err == nil {
 		entityCount = 0
 		for _, entry := range entries {
 			if entry.ConfigEntryID == entryID {
 				entityCount++
+				if sampleEntityID == "" {
+					sampleEntityID = entry.EntityID
+				}
 			}
 		}
 	}
@@ -195,26 +209,52 @@ func countConfigEntryResources(ctx context.Context, client homeassistant.Client,
 		}
 	}
 
-	return entityCount, deviceCount
+	return entityCount, deviceCount, sampleEntityID
 }
 
 // buildDeleteConfigEntryMessage builds the delete success message, including
 // entity/device counts when known. Either count may be -1 (unknown) if its
 // registry fetch failed; the wording degrades gracefully in that case rather
-// than reporting a misleading zero.
-func buildDeleteConfigEntryMessage(entry *homeassistant.ConfigEntryFull, entryID string, entityCount, deviceCount int) string {
-	base := fmt.Sprintf("Deleted config entry '%s' (domain: %s, entry_id: %s)", entry.Title, entry.Domain, entryID)
+// than reporting a misleading zero. Counts are phrased in the past tense
+// ("had") since they were measured before the delete call, not after —
+// Home Assistant does not report the actual resources removed.
+func buildDeleteConfigEntryMessage(entry *homeassistant.ConfigEntryFull, entryID string, entityCount, deviceCount int, requireRestart bool) string {
+	title := entry.Title
+	if title == "" {
+		title = entry.Domain
+	}
+	base := fmt.Sprintf("Deleted config entry '%s' (domain: %s, entry_id: %s)", title, entry.Domain, entryID)
 
+	entityPhrase := pluralCount(entityCount, "associated entity", "associated entities")
+	devicePhrase := pluralCount(deviceCount, "associated device", "associated devices")
+
+	var msg string
 	switch {
 	case entityCount >= 0 && deviceCount >= 0:
-		return fmt.Sprintf("%s and its %d associated entities and %d associated devices.", base, entityCount, deviceCount)
+		msg = fmt.Sprintf("%s — it had %s and %s.", base, entityPhrase, devicePhrase)
 	case entityCount >= 0:
-		return fmt.Sprintf("%s and its %d associated entities (device count unknown: registry lookup failed).", base, entityCount)
+		msg = fmt.Sprintf("%s — it had %s (device count unknown: registry lookup failed).", base, entityPhrase)
 	case deviceCount >= 0:
-		return fmt.Sprintf("%s and its %d associated devices (entity count unknown: registry lookup failed).", base, deviceCount)
+		msg = fmt.Sprintf("%s — it had %s (entity count unknown: registry lookup failed).", base, devicePhrase)
 	default:
-		return fmt.Sprintf("%s (entity/device counts unknown: registry lookup failed).", base)
+		msg = fmt.Sprintf("%s (entity/device counts unknown: registry lookup failed).", base)
 	}
+
+	if requireRestart {
+		msg += " Home Assistant reports a restart is required to finish unloading it; its entities/devices remain registered until Home Assistant restarts."
+	}
+
+	return msg
+}
+
+// pluralCount renders a count with the singular or plural form of a noun
+// phrase. A count of -1 (unknown) is never passed here — callers branch on
+// that before calling.
+func pluralCount(n int, singular, plural string) string {
+	if n == 1 {
+		return fmt.Sprintf("1 %s", singular)
+	}
+	return fmt.Sprintf("%d %s", n, plural)
 }
 
 // formatListNatural formats config entry list in natural language.
