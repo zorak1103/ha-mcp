@@ -3227,6 +3227,53 @@ func TestManageAutomation_YAMLDefinedGuard(t *testing.T) {
 			t.Errorf("expected the probe to receive the same config id UpdateAutomation is called with, got %q", probedConfigID)
 		}
 	})
+
+	t.Run("update probes the resolved Config.ID, not the input-derived config id, when they differ (UI-created automation)", func(t *testing.T) {
+		t.Parallel()
+		// Mirrors the mismatchTests scenario above: a UI-created automation whose stored
+		// Config.ID (a numeric HA-generated id) differs from the slug derived from the
+		// caller's input. If the guard-ordering fix (resolve actualConfigID before calling
+		// configWriteGuardError) were reverted, the probe would instead receive the
+		// input-derived "office_light_motion" here - this test only passes when it doesn't.
+		const inputDerivedConfigID = "office_light_motion"
+		const resolvedConfigID = "1702630691980"
+
+		var probedConfigID string
+		var updateCalledWith string
+		client := &UniversalMockClient{}
+		client.GetAutomationFn = func(context.Context, string) (*homeassistant.Automation, error) {
+			cfg := *baseConfig
+			cfg.ID = resolvedConfigID
+			return &homeassistant.Automation{EntityID: "automation.office_light_motion", Config: &cfg}, nil
+		}
+		client.UpdateAutomationFn = func(_ context.Context, configID string, _ homeassistant.AutomationConfig) error {
+			updateCalledWith = configID
+			return nil
+		}
+		client.ConfigFileEntryExistsFn = func(_ context.Context, _, configID string) (bool, error) {
+			probedConfigID = configID
+			return true, nil
+		}
+
+		mismatchArgs := map[string]any{
+			"action":        "update",
+			"automation_id": inputDerivedConfigID,
+			"alias":         "Updated Office Light",
+		}
+		result, err := h.handleManageAutomation(context.Background(), client, mismatchArgs)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("expected success, got error: %s", result.Content[0].Text)
+		}
+		if probedConfigID != resolvedConfigID {
+			t.Errorf("expected the probe to receive the resolved Config.ID %q, got %q", resolvedConfigID, probedConfigID)
+		}
+		if updateCalledWith != resolvedConfigID {
+			t.Errorf("expected UpdateAutomation to be called with the resolved Config.ID %q, got %q", resolvedConfigID, updateCalledWith)
+		}
+	})
 }
 
 // TestManageAutomation_UpdateReload verifies that a successful update write triggers

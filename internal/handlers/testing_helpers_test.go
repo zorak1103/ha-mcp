@@ -1018,9 +1018,11 @@ func testAutomation(id, state, friendlyName string) homeassistant.Automation {
 }
 
 // storageManagedRegistry returns a GetEntityRegistryFn reporting entityID as storage/UI-managed
-// (non-empty unique_id), so the isYAMLDefinedEntity write guard (#122) lets update/patch proceed.
-// Tests that exercise the update/patch write path must supply this — the mock's default empty
-// registry is otherwise indistinguishable from a YAML-defined entity.
+// (non-empty unique_id). The update/patch write guard no longer consults GetEntityRegistry at all
+// - it now probes ConfigFileEntryExists (defaulting to "present" unless a test explicitly
+// overrides it via ConfigFileEntryExistsFn), so this helper has no bearing on that guard. It
+// remains useful for tests that need a populated entity registry for other, genuinely
+// registry-related reasons (e.g. the manage_script delete registry fallback).
 func storageManagedRegistry(entityID string) func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
 	return func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
 		return []homeassistant.EntityRegistryEntry{
