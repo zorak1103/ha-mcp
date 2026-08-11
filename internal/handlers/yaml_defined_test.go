@@ -3,97 +3,121 @@ package handlers
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
-
-	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 )
 
-func TestIsYAMLDefinedEntity_StorageManaged(t *testing.T) {
+func TestConfigWriteGuardError_EntryExists_Proceeds(t *testing.T) {
 	client := &UniversalMockClient{
-		GetEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
-			return []homeassistant.EntityRegistryEntry{
-				{EntityID: "script.morning_routine", UniqueID: "01JABC123"},
-			}, nil
+		ConfigFileEntryExistsFn: func(context.Context, string, string) (bool, error) {
+			return true, nil
 		},
 	}
 
-	isYAML, checked := isYAMLDefinedEntity(context.Background(), client, "script.morning_routine")
-	if !checked {
-		t.Fatal("expected checked=true when registry lookup succeeds")
-	}
-	if isYAML {
-		t.Error("expected isYAML=false for a registry entry with a non-empty unique_id")
+	result := configWriteGuardError(context.Background(), client, "script", "update", "example_toggle", "script.example_toggle", "example_toggle")
+	if result != nil {
+		t.Fatalf("expected nil (proceed) when the probe confirms the entry exists, got: %s", result.Content[0].Text)
 	}
 }
 
-func TestIsYAMLDefinedEntity_EmptyUniqueID(t *testing.T) {
+func TestConfigWriteGuardError_EntryMissing_Refuses(t *testing.T) {
 	client := &UniversalMockClient{
-		GetEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
-			return []homeassistant.EntityRegistryEntry{
-				{EntityID: "script.example_toggle", UniqueID: ""},
-			}, nil
+		ConfigFileEntryExistsFn: func(context.Context, string, string) (bool, error) {
+			return false, nil
 		},
 	}
 
-	isYAML, checked := isYAMLDefinedEntity(context.Background(), client, "script.example_toggle")
-	if !checked {
-		t.Fatal("expected checked=true when registry lookup succeeds")
+	result := configWriteGuardError(context.Background(), client, "script", "update", "example_toggle", "script.example_toggle", "example_toggle")
+	if result == nil {
+		t.Fatal("expected a refusal when the probe confirms the entry is missing")
 	}
-	if !isYAML {
-		t.Error("expected isYAML=true for a registry entry with an empty unique_id")
-	}
-}
-
-func TestIsYAMLDefinedEntity_NoRegistryEntry(t *testing.T) {
-	client := &UniversalMockClient{
-		GetEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
-			return []homeassistant.EntityRegistryEntry{
-				{EntityID: "script.other_script", UniqueID: "01JXYZ999"},
-			}, nil
-		},
-	}
-
-	isYAML, checked := isYAMLDefinedEntity(context.Background(), client, "script.example_toggle")
-	if !checked {
-		t.Fatal("expected checked=true when registry lookup succeeds")
-	}
-	if !isYAML {
-		t.Error("expected isYAML=true when the entity has no registry entry at all")
-	}
-}
-
-func TestIsYAMLDefinedEntity_RegistryLookupFails(t *testing.T) {
-	client := &UniversalMockClient{
-		GetEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
-			return nil, errors.New("registry unavailable")
-		},
-	}
-
-	isYAML, checked := isYAMLDefinedEntity(context.Background(), client, "script.example_toggle")
-	if checked {
-		t.Fatal("expected checked=false when registry lookup fails, so caller proceeds with the write")
-	}
-	if isYAML {
-		t.Error("expected isYAML=false when checked=false (value should be ignored, but must not signal YAML)")
-	}
-}
-
-func TestYamlDefinedWriteError(t *testing.T) {
-	msg := yamlDefinedWriteError("script", "update", "example_toggle", "script.example_toggle")
-
-	assertContainsAll(t, msg, []string{
+	assertContainsAll(t, result.Content[0].Text, []string{
 		"example_toggle",
 		"script.example_toggle",
-		"YAML-defined",
+		"scripts.yaml",
 		"script.example_toggle_2",
 		"script.reload",
 	})
 }
 
-func TestYamlDefinedWriteError_UsesActionInMessage(t *testing.T) {
-	updateMsg := yamlDefinedWriteError("script", "update", "example_toggle", "script.example_toggle")
-	patchMsg := yamlDefinedWriteError("script", "patch", "example_toggle", "script.example_toggle")
+func TestConfigWriteGuardError_ProbeFails_Proceeds(t *testing.T) {
+	client := &UniversalMockClient{
+		ConfigFileEntryExistsFn: func(context.Context, string, string) (bool, error) {
+			return false, errors.New("connection reset")
+		},
+	}
 
-	assertContainsAll(t, updateMsg, []string{"cannot update"})
-	assertContainsAll(t, patchMsg, []string{"cannot patch"})
+	result := configWriteGuardError(context.Background(), client, "automation", "patch", "morning_routine", "automation.morning_routine", "morning_routine")
+	if result != nil {
+		t.Fatalf("expected nil (graceful degradation) when the probe itself fails, got: %s", result.Content[0].Text)
+	}
+}
+
+func TestConfigWriteGuardError_UsesActionInMessage(t *testing.T) {
+	client := &UniversalMockClient{
+		ConfigFileEntryExistsFn: func(context.Context, string, string) (bool, error) {
+			return false, nil
+		},
+	}
+
+	updateResult := configWriteGuardError(context.Background(), client, "script", "update", "x", "script.x", "x")
+	patchResult := configWriteGuardError(context.Background(), client, "script", "patch", "x", "script.x", "x")
+
+	assertContainsAll(t, updateResult.Content[0].Text, []string{"cannot update"})
+	assertContainsAll(t, patchResult.Content[0].Text, []string{"cannot patch"})
+}
+
+func TestConfigWriteGuardError_PatchMessage_MentionsDryRun(t *testing.T) {
+	client := &UniversalMockClient{
+		ConfigFileEntryExistsFn: func(context.Context, string, string) (bool, error) {
+			return false, nil
+		},
+	}
+
+	result := configWriteGuardError(context.Background(), client, "automation", "patch", "x", "automation.x", "x")
+	if !strings.Contains(result.Content[0].Text, "dry_run") {
+		t.Errorf("expected the patch refusal to point at dry_run for previewing the intended result, got: %s", result.Content[0].Text)
+	}
+}
+
+func TestConfigWriteGuardError_DomainSpecificFileNames(t *testing.T) {
+	client := &UniversalMockClient{
+		ConfigFileEntryExistsFn: func(context.Context, string, string) (bool, error) {
+			return false, nil
+		},
+	}
+
+	tests := []struct {
+		domain   string
+		wantFile string
+	}{
+		{"automation", "automations.yaml"},
+		{"script", "scripts.yaml"},
+		{"scene", "scenes.yaml"},
+	}
+	for _, tt := range tests {
+		result := configWriteGuardError(context.Background(), client, tt.domain, "update", "x", tt.domain+".x", "x")
+		if !strings.Contains(result.Content[0].Text, tt.wantFile) {
+			t.Errorf("domain %q: expected refusal to name %q, got: %s", tt.domain, tt.wantFile, result.Content[0].Text)
+		}
+	}
+}
+
+func TestConfigWriteGuardError_ProbeReceivesDomainAndConfigID(t *testing.T) {
+	var gotDomain, gotConfigID string
+	client := &UniversalMockClient{
+		ConfigFileEntryExistsFn: func(_ context.Context, domain, configID string) (bool, error) {
+			gotDomain, gotConfigID = domain, configID
+			return true, nil
+		},
+	}
+
+	configWriteGuardError(context.Background(), client, "automation", "update", "morning routine (display)", "automation.morning_routine", "morning_routine_actual_id")
+
+	if gotDomain != "automation" {
+		t.Errorf("expected probe domain %q, got %q", "automation", gotDomain)
+	}
+	if gotConfigID != "morning_routine_actual_id" {
+		t.Errorf("expected the probe to receive the exact id the write will target, not the display id, got %q", gotConfigID)
+	}
 }
