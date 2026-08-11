@@ -387,8 +387,6 @@ set -a && source .env.integration && set +a && go test -tags=integration -v ./in
 
 **File Editing Tool Priority**: Always use the dedicated file tools (Write, Edit) to create or modify files. Never use Bash with Python or shell commands to manipulate file content — the Write tool rewrites a complete file cleanly, the Edit tool makes surgical replacements. Python byte-level manipulation is error-prone, harder to read, and the wrong tool for the job.
 
-**CRLF Line Endings (Windows)**: `git config core.autocrlf=true` means working-directory files have CRLF line endings. The Edit tool silently fails to match multi-line strings in such files. When Edit fails unexpectedly on a file with many changes needed, use Write to rewrite the whole file instead of diagnosing the mismatch.
-
 ### Extending Consolidated Tools (Modes/Actions)
 
 When adding new modes/actions to consolidated tools (`manage_*`, `query_entities`, `get_logbook`):
