@@ -547,10 +547,10 @@ func (h *ScriptHandlers) handleUpdate(ctx context.Context, client homeassistant.
 		return successResult(fmt.Sprintf("Script %s: no changes detected, skipping write (reload avoided)", target)), nil
 	}
 
-	// Refuse to write YAML-defined scripts: the config API silently creates a duplicate
-	// orphan entity instead of updating them (#122).
+	// Refuse to write a script whose id is not present in scripts.yaml: the config API
+	// silently creates a duplicate orphan entity instead of updating it (#122, #164).
 	checkEntityID := resolveWriteCheckEntityID(entityID, current.EntityID)
-	if guardErr := yamlWriteGuardError(ctx, client, "script", "update", scriptID, checkEntityID); guardErr != nil {
+	if guardErr := configWriteGuardError(ctx, client, "script", "update", scriptID, checkEntityID, configID); guardErr != nil {
 		return guardErr, nil
 	}
 
@@ -722,7 +722,7 @@ func applyPatchedScriptWrite(
 		return successResult(fmt.Sprintf("Script %s: no changes detected, skipping write (reload avoided)", target)), nil
 	}
 
-	if guardErr := yamlWriteGuardError(ctx, client, "script", "patch", scriptID, entityID); guardErr != nil {
+	if guardErr := configWriteGuardError(ctx, client, "script", "patch", scriptID, entityID, configID); guardErr != nil {
 		return guardErr, nil
 	}
 
