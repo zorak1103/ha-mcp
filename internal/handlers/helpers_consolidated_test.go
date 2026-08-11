@@ -723,6 +723,61 @@ func TestManageHelper_Update_SourceDomainMismatch(t *testing.T) {
 	runHandlerTestCases(t, tests, h.handleManageHelper)
 }
 
+// TestCheckUpdateSourceEntityDomain_SkipsRegistryFetchWithoutConstrainedField
+// guards the W3 perf fix: checkUpdateSourceEntityDomain must not fetch the
+// entity registry at all when the update args touch none of the fields any
+// source constraint could apply to - checkSourceEntityDomain would return
+// nil anyway in that case (every constraint `continue`s past an absent
+// field), so paying for a registry fetch to reach the same nil answer is
+// pure waste, doubled up with the second, uncached fetch
+// HybridClient.UpdateHelper performs right after via c.ws.GetEntityRegistry.
+func TestCheckUpdateSourceEntityDomain_SkipsRegistryFetchWithoutConstrainedField(t *testing.T) {
+	t.Parallel()
+
+	client := &UniversalMockClient{
+		GetEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+			t.Fatal("GetEntityRegistry should not be called when args has no source-constrained field")
+			return nil, nil
+		},
+	}
+
+	err := checkUpdateSourceEntityDomain(context.Background(), client, "input_number.x", map[string]any{
+		"name": "New Name",
+		"min":  0.0,
+		"max":  100.0,
+	})
+	if err != nil {
+		t.Errorf("checkUpdateSourceEntityDomain() = %v, want nil", err)
+	}
+}
+
+// TestCheckUpdateSourceEntityDomain_FetchesRegistryWithConstrainedField is
+// the mirror of the skip test above: a constrained field present in args
+// must still trigger the registry fetch and the real validation.
+func TestCheckUpdateSourceEntityDomain_FetchesRegistryWithConstrainedField(t *testing.T) {
+	t.Parallel()
+
+	fetched := false
+	client := &UniversalMockClient{
+		GetEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+			fetched = true
+			return []homeassistant.EntityRegistryEntry{
+				{EntityID: "sensor.my_meter", Platform: "utility_meter", ConfigEntryID: "config123"},
+			}, nil
+		},
+	}
+
+	err := checkUpdateSourceEntityDomain(context.Background(), client, "sensor.my_meter", map[string]any{
+		"source": "input_number.x",
+	})
+	if !fetched {
+		t.Error("GetEntityRegistry should be called when args has a source-constrained field")
+	}
+	if err == nil {
+		t.Error("checkUpdateSourceEntityDomain() = nil, want a domain-mismatch error")
+	}
+}
+
 // TestUpdatableSourceEntities_ExcludesEntityIDField guards the collision
 // checkUpdateSourceEntityDomain must avoid: a sourceEntityConstraint whose
 // field is "entity_id" is, on update, the tool's own "which helper is being
@@ -3536,6 +3591,106 @@ func TestHelperTypeMetadata(t *testing.T) {
 // first constraint and would not have caught a missing second one. Also
 // asserts every constraint has a non-empty field and non-empty domains list,
 // since an empty field would silently look up args[""] at runtime.
+// TestPerTypeUpdateExcludedFields_KeysAreKnownHelperTypes guards
+// perTypeUpdateExcludedFields against silent drift: its keys are free
+// strings, not tied to helperTypes by the type system, so a typo or a
+// future rename of a helperTypes key would silently disable the exclusion -
+// re-advertising an unrecoverable field as updatable and reintroducing the
+// exact data-loss bug perTypeUpdateExcludedFields exists to prevent, with
+// no compile error. This also catches the mirror mistake: an excluded field
+// name that no longer appears in that type's required/optional fields (a
+// stale exclusion left behind after the field itself was removed).
+func TestPerTypeUpdateExcludedFields_KeysAreKnownHelperTypes(t *testing.T) {
+	t.Parallel()
+
+	for typeName, excluded := range perTypeUpdateExcludedFields {
+		t.Run(typeName, func(t *testing.T) {
+			t.Parallel()
+
+			meta, ok := helperTypes[typeName]
+			if !ok {
+				t.Fatalf("perTypeUpdateExcludedFields has key %q, which is not a known helperTypes entry", typeName)
+			}
+
+			allFields := make(map[string]bool, len(meta.requiredFields)+len(meta.optionalFields))
+			for _, f := range meta.requiredFields {
+				allFields[f] = true
+			}
+			for _, f := range meta.optionalFields {
+				allFields[f] = true
+			}
+
+			for field := range excluded {
+				if !allFields[field] {
+					t.Errorf("perTypeUpdateExcludedFields[%q] excludes field %q, which is not in helperTypes[%q]'s required/optional fields", typeName, field, typeName)
+				}
+			}
+		})
+	}
+}
+
+// TestSourceConstrainedTypes_PlatformsAreUnique guards
+// buildSourceConstrainedTypes against a silent platform collision.
+// sourceConstrainedTypes is keyed by platform, but helperTypes already has
+// two entries sharing platformTemplate (template_sensor,
+// template_binary_sensor) - harmless today since neither is constrained,
+// but if either ever gains a sourceEntities entry, buildSourceConstrainedTypes
+// would keep whichever one Go's random map iteration order visits last,
+// silently and nondeterministically dropping the other's constraint. This
+// test compares counts rather than iterating helperTypes and building a
+// second index (which would just duplicate buildSourceConstrainedTypes'
+// own logic and could share its bugs) - a real collision necessarily makes
+// the counts diverge.
+func TestSourceConstrainedTypes_PlatformsAreUnique(t *testing.T) {
+	t.Parallel()
+
+	constrainedTypeCount := 0
+	for _, meta := range helperTypes {
+		if len(meta.sourceEntities) > 0 {
+			constrainedTypeCount++
+		}
+	}
+
+	if constrainedTypeCount != len(sourceConstrainedTypes) {
+		t.Errorf("helperTypes has %d source-constrained types but sourceConstrainedTypes has %d entries - "+
+			"two constrained types share a platform name, so buildSourceConstrainedTypes silently dropped one",
+			constrainedTypeCount, len(sourceConstrainedTypes))
+	}
+}
+
+// TestWrapperRecipeFor_RejectsInjectionPayloads pins the security guard on
+// wrapperRecipeFor: it interpolates a caller-supplied entity_id unescaped
+// into a Jinja template string inside a ready-to-run, copy-pasteable
+// manage_helper(...) call. That's currently safe only because
+// ValidateEntityID's entityIDPattern (validation.go) admits no quotes or
+// braces - a control that lives in a different file, serves many unrelated
+// callers, and has no test tying it to this specific sink. If that pattern
+// is ever loosened for some unrelated caller, this test is what catches
+// wrapperRecipeFor turning into a live template-injection vector.
+func TestWrapperRecipeFor_RejectsInjectionPayloads(t *testing.T) {
+	t.Parallel()
+
+	payloads := []string{
+		`sensor.x') }}{{ states('secret`,
+		`sensor.x'); import os; #`,
+		`sensor.x"`,
+		"Sensor.X",
+		"no_dot",
+		"",
+		"sensor.",
+		".x",
+	}
+
+	for _, payload := range payloads {
+		t.Run(payload, func(t *testing.T) {
+			t.Parallel()
+			if got := wrapperRecipeFor(platformSensorEntity, payload); got != "" {
+				t.Errorf("wrapperRecipeFor(%q, %q) = %q, want empty string for a malformed/injection-shaped entity_id", platformSensorEntity, payload, got)
+			}
+		})
+	}
+}
+
 func TestHelperTypeMetadata_SourceEntityConstraints(t *testing.T) {
 	t.Parallel()
 
@@ -3643,7 +3798,7 @@ func TestUpdatableFields_AreActuallyReadByUpdatePath(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			fields := meta.updatableFieldNames(name)
+			fields := updatableFieldNames(name)
 			args := make(map[string]any, len(fields))
 			for _, field := range fields {
 				args[field] = updatableFieldSentinel(name, field)
@@ -3697,6 +3852,14 @@ func TestUpdatableFields_AreActuallyReadByUpdatePath(t *testing.T) {
 // regression guard rather than a tautology: if it listed whatever
 // updatableFieldNames() currently returns, it could never catch a mismatch
 // between the two.
+//
+// NOT every listed attribute is unconditionally present in real HA state:
+// timer's "restore" is emitted by TimerEntity only when true (the false
+// case omits the key entirely). This fixture hardcodes restore=true so
+// TestMergeCurrentHelperState_OnlyAdvertisesRecoverableFields can still
+// assert the field is recoverable in the case where it IS present -
+// TestMergeCurrentHelperState_TimerRestoreAbsentDoesNotBreakMerge covers the
+// absent case separately, since the two fixture shapes can't share one test.
 func realHelperStateAttributes(typeName string) map[string]any {
 	switch typeName {
 	case "input_boolean", "input_button":
@@ -3779,12 +3942,55 @@ func TestMergeCurrentHelperState_OnlyAdvertisesRecoverableFields(t *testing.T) {
 				t.Fatalf("mergeCurrentHelperState returned ok=false")
 			}
 
-			for _, field := range meta.updatableFieldNames(name) {
+			for _, field := range updatableFieldNames(name) {
 				if _, present := merged[field]; !present {
 					t.Errorf("field %q is advertised as updatable for %q but real Home Assistant state/config does not expose it, so an omitted value can never be recovered - add it to perTypeUpdateExcludedFields", field, name)
 				}
 			}
 		})
+	}
+}
+
+// TestMergeCurrentHelperState_TimerRestoreAbsentDoesNotBreakMerge is the W2
+// regression check for a gap TestMergeCurrentHelperState_OnlyAdvertisesRecoverableFields
+// couldn't catch: Home Assistant's TimerEntity only emits the "restore"
+// attribute when it is true (conditional presence, unlike every other
+// updatable field in realHelperStateAttributes which is unconditionally
+// present whenever the type exposes it at all). The fixture in
+// realHelperStateAttributes' "timer" case hardcodes restore=true, so the
+// false/absent path was never exercised by any test - this test covers it
+// directly. When "restore" is absent from state (the false case) and the
+// caller also omits it, the merge must not fabricate the key: an absent
+// "restore" in the merged config, followed by buildHelperConfig's
+// addOptionalBool skipping unset optional fields, reproduces HA's own
+// default (False) - correct, but only by coincidence rather than by
+// construction, which is exactly the assumption this test pins down.
+func TestMergeCurrentHelperState_TimerRestoreAbsentDoesNotBreakMerge(t *testing.T) {
+	t.Parallel()
+
+	entityID := "timer.test_entity"
+	client := &UniversalMockClient{
+		GetStateFn: func(context.Context, string) (*homeassistant.Entity, error) {
+			return &homeassistant.Entity{
+				EntityID: entityID,
+				// restore deliberately absent - mirrors real HA's TimerEntity
+				// state when restore=false, unlike the always-true fixture in
+				// realHelperStateAttributes.
+				Attributes: map[string]any{"duration": "0:05:00", "icon": "mdi:test"},
+			}, nil
+		},
+	}
+
+	merged, _, ok := mergeCurrentHelperState(context.Background(), client, entityID, "timer", helperTypes["timer"], map[string]any{})
+	if !ok {
+		t.Fatalf("mergeCurrentHelperState returned ok=false")
+	}
+
+	if _, present := merged["restore"]; present {
+		t.Errorf(`merged["restore"] should be absent when state doesn't expose it and the caller didn't supply it, got %v`, merged["restore"])
+	}
+	if merged["duration"] != "0:05:00" {
+		t.Errorf(`merged["duration"] = %v, want "0:05:00"`, merged["duration"])
 	}
 }
 
@@ -3837,7 +4043,7 @@ func TestManageHelperTool_DescriptionListsUpdatableFields(t *testing.T) {
 			if field == "icon" {
 				t.Errorf("%q: icon should be hoisted out of per-type lines, not repeated", name)
 			}
-			if globalUpdateExcludedFields[field] || perTypeUpdateExcludedFields[name][field] {
+			if isUpdateExcludedField(name, field) {
 				t.Errorf("%q: excluded field %q leaked into the generated description", name, field)
 			}
 		}

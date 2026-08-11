@@ -70,27 +70,6 @@ type helperTypeMetadata struct {
 	sourceEntities     []sourceEntityConstraint // Domain constraints on source-entity args fields; empty = unconstrained
 }
 
-// globalUpdateExcludedFields lists create-time field names that are NOT
-// actually consumed by the update path for ANY helper type that declares
-// them, because the name collides with something the update call itself
-// reserves:
-//   - "entity_id": on update this is the tool's own "which helper are we
-//     updating" identifier (handleUpdate reads args["entity_id"] for that),
-//     not a per-platform config value. buildConfigEntryUpdateConfig
-//     deliberately never forwards it (see CLAUDE.md's gotcha on this - a
-//     prior version forwarded it and silently overwrote e.g. a threshold's
-//     monitored entity with the helper's own id). Every type that declares
-//     "entity_id" (statistics, trend, filter, switch_as_x, threshold) hits
-//     the same collision, so this applies globally rather than per type.
-//
-// TestUpdatableFields_AreActuallyReadByUpdatePath enforces that every
-// remaining name in updatableFieldNames() actually round-trips through the
-// real update builder, so a future field that stops being read on update
-// fails a test rather than silently drifting from the generated docs.
-var globalUpdateExcludedFields = map[string]bool{
-	attrEntityID: true,
-}
-
 // perTypeUpdateExcludedFields lists (helper type -> field) exclusions that
 // apply only to that specific type, because a sibling type sharing the same
 // field name doesn't have the same problem:
@@ -123,17 +102,40 @@ var perTypeUpdateExcludedFields = map[string]map[string]bool{
 	"input_datetime": {"initial": true},
 }
 
+// isUpdateExcludedField reports whether field is never forwarded to HA on
+// update for helper type typeName.
+//
+// "entity_id" is excluded for every type rather than listed once per type
+// in perTypeUpdateExcludedFields: on update it is the tool's own "which
+// helper are we updating" identifier (handleUpdate reads args["entity_id"]
+// for that), not a per-platform config value. buildConfigEntryUpdateConfig
+// deliberately never forwards it (see CLAUDE.md's
+// "buildConfigEntryUpdateConfig leaked entity_id" gotcha - a prior version
+// forwarded it and silently overwrote e.g. a threshold's monitored entity
+// with the helper's own id). Every type that declares "entity_id"
+// (statistics, trend, filter, switch_as_x, threshold) hits the same
+// collision, so it is checked directly here instead.
+//
+// TestUpdatableFields_AreActuallyReadByUpdatePath enforces that every
+// remaining name updatableFieldNames() returns actually round-trips through
+// the real update builder, so a future field that stops being read on
+// update fails a test rather than silently drifting from the generated
+// docs.
+func isUpdateExcludedField(typeName, field string) bool {
+	return field == attrEntityID || perTypeUpdateExcludedFields[typeName][field]
+}
+
 // updatableFieldNames returns the field names accepted on update for this
 // helper type (identified by typeName, its key in helperTypes):
 // requiredFields (required only at create time) plus optionalFields, minus
-// globalUpdateExcludedFields and perTypeUpdateExcludedFields[typeName]
-// (names that are never forwarded to HA on update - see their docs above).
-func (m helperTypeMetadata) updatableFieldNames(typeName string) []string {
-	all := append(append([]string{}, m.requiredFields...), m.optionalFields...)
-	excludedForType := perTypeUpdateExcludedFields[typeName]
+// whatever isUpdateExcludedField reports as never forwarded to HA on
+// update.
+func updatableFieldNames(typeName string) []string {
+	meta := helperTypes[typeName]
+	all := append(append([]string{}, meta.requiredFields...), meta.optionalFields...)
 	names := make([]string, 0, len(all))
 	for _, name := range all {
-		if globalUpdateExcludedFields[name] || excludedForType[name] {
+		if isUpdateExcludedField(typeName, name) {
 			continue
 		}
 		names = append(names, name)
@@ -145,8 +147,16 @@ func (m helperTypeMetadata) updatableFieldNames(typeName string) []string {
 // accepts" reference, generated from helperTypes so it can never drift
 // from the code — same intent as manage_entity/manage_device's generated
 // "Safe fields" lists. "icon" is omitted from every per-type line (it's
-// accepted on all 25 types, so listing it 25 times would triple this
+// accepted on all 26 types, so listing it 26 times would triple this
 // block's size for zero information) - the caller documents it once instead.
+//
+// Currently renders to ~1.5KB (measured: 1495 chars), added to
+// manage_helper's tool description on every tools/list call. Only one group
+// of types (input_boolean/input_button/random_binary_sensor) shares an
+// identical remaining field set (icon-only, i.e. empty after the icon
+// hoist) - not enough duplication across the other 23 types to justify
+// grouping identical-field-set types onto shared lines; revisit if a future
+// helper type addition changes that balance.
 func updatableFieldsDescription() string {
 	names := make([]string, 0, len(helperTypes))
 	for name := range helperTypes {
@@ -156,7 +166,7 @@ func updatableFieldsDescription() string {
 
 	var b strings.Builder
 	for _, name := range names {
-		updatable := helperTypes[name].updatableFieldNames(name)
+		updatable := updatableFieldNames(name)
 		fields := make([]string, 0, len(updatable))
 		for _, field := range updatable {
 			if field != "icon" {
@@ -1025,23 +1035,21 @@ func (h *ConsolidatedHelperHandlers) handleUpdate(ctx context.Context, client ho
 }
 
 // buildKnownTypeUpdateConfig builds the update config for a helperType that
-// has an entry in helperTypes. The map key matching the platform does NOT by
-// itself mean this is a WebSocket helper: "group" is a key in helperTypes
-// but is a genuine Config Entry Flow platform
-// (homeassistant.RequiresConfigEntryFlow("group") == true). "threshold" and
-// "derivative" are also Config Entry Flow platforms and also happen to have
-// map key == platform name, but they never reach this function at all -
-// their entities live under binary_sensor.*/sensor.*, so
+// has an entry in helperTypes. See CLAUDE.md's "Partial update merge (#161)"
+// gotcha for why the merge gate below is !RequiresConfigEntryFlow(meta.platform)
+// rather than helperTypes key presence (group is a helperTypes key but a
+// Config Entry Flow platform, so it skips the merge).
+//
+// "threshold" and "derivative" are also Config Entry Flow platforms with map
+// key == platform name, but unlike "group" they never even reach this
+// function: their entities live under binary_sensor.*/sensor.*, so
 // ParseHelperEntityID's platform for them is "binary_sensor"/"sensor" (not
 // "threshold"/"derivative"), and handleUpdate's helperTypes[helperType]
-// lookup misses, routing them through buildConfigEntryUpdateConfig instead.
-// "group" is the only type where a helperTypes key match still requires
-// this Config-Entry-Flow branch, because plain "group" entities keep their
-// own domain as both their entity prefix and their map key. Only genuine
-// WebSocket helper types get the current-state merge (issue #161) - Config
-// Entry types keep taking the pre-#161 unmerged path, matching their Config
-// Entry Flow update semantics (mergeOptionsFlowConfig, a different layer,
-// already handles that merge for them).
+// lookup misses entirely, routing them through buildConfigEntryUpdateConfig
+// instead. "group" is the only type where a helperTypes key match still
+// requires the Config-Entry-Flow branch below, because plain "group"
+// entities keep their own domain as both their entity prefix and their map
+// key.
 func buildKnownTypeUpdateConfig(ctx context.Context, client homeassistant.Client, entityID, helperType string, meta helperTypeMetadata, args map[string]any) (map[string]any, error) {
 	var updateName string
 	effectiveArgs := args
@@ -1088,7 +1096,7 @@ func buildKnownTypeUpdateConfig(ctx context.Context, client homeassistant.Client
 // config-relevant attributes with the caller's args, so an update omitting
 // an optional/required field keeps the current value instead of HA
 // resetting it to empty (issue #161). Filters strictly to
-// meta.updatableFieldNames(typeName) - state attributes include runtime-only
+// updatableFieldNames(typeName) - state attributes include runtime-only
 // keys that must not be echoed back into an update payload verbatim under
 // their own name.
 //
@@ -1103,7 +1111,7 @@ func buildKnownTypeUpdateConfig(ctx context.Context, client homeassistant.Client
 // nice-to-have validation, while skipping this one silently destroys data.
 func mergeCurrentHelperState(ctx context.Context, client homeassistant.Client, entityID, typeName string, meta helperTypeMetadata, args map[string]any) (merged map[string]any, currentName string, ok bool) {
 	merged = make(map[string]any)
-	fields := meta.updatableFieldNames(typeName)
+	fields := updatableFieldNames(typeName)
 
 	if meta.platform == platformSchedule {
 		current, err := client.GetScheduleConfig(ctx, entityID)
@@ -2216,6 +2224,9 @@ func validateRequiredFields(helperType string, meta helperTypeMetadata, args map
 func checkSourceEntityDomain(helperType string, constraints []sourceEntityConstraint, args map[string]any) error {
 	var errs []error
 	for _, constraint := range constraints {
+		if len(constraint.domains) == 0 {
+			continue // malformed constraint (should never happen - see sourceEntityConstraint's doc comment); nothing to validate against
+		}
 		sourceEntityID, _ := args[constraint.field].(string)
 		if sourceEntityID == "" {
 			continue // missing entirely - let the existing validateRequiredFields report it, don't duplicate that error
@@ -2246,8 +2257,14 @@ func checkSourceEntityDomain(helperType string, constraints []sourceEntityConstr
 // checkUpdateSourceEntityDomain to resolve the real integration platform via
 // the entity registry - ParseHelperEntityID (used elsewhere in handleUpdate)
 // only recovers the entity DOMAIN (e.g. "sensor" for a statistics helper),
-// which is not sufficient to look up helperTypes by key. All 7 constrained
-// types happen to have map key == platform, so this index is a clean 1:1.
+// which is not sufficient to look up helperTypes by key. All 7 currently
+// constrained types have map key == platform, so today this index is a
+// clean 1:1 - but that is NOT structurally guaranteed: helperTypes already
+// has two entries sharing platformTemplate (template_sensor,
+// template_binary_sensor), and if either one ever gains a sourceEntities
+// entry, buildSourceConstrainedTypes below would silently keep whichever one
+// Go's map iteration visits last. TestSourceConstrainedTypes_PlatformsAreUnique
+// guards against that collision going unnoticed.
 var sourceConstrainedTypes = buildSourceConstrainedTypes()
 
 func buildSourceConstrainedTypes() map[string]helperTypeMetadata {
@@ -2279,6 +2296,39 @@ func updatableSourceEntities(constraints []sourceEntityConstraint) []sourceEntit
 	return filtered
 }
 
+// updatableSourceEntityFields is the set of args keys any
+// checkUpdateSourceEntityDomain call could possibly validate - every field
+// name updatableSourceEntities(meta.sourceEntities) keeps, across every
+// source-constrained type, built once from sourceConstrainedTypes so it can
+// never drift from the constraint table. Lets checkUpdateSourceEntityDomain
+// skip its entity-registry fetch entirely when the caller's update args
+// touch none of these fields: checkSourceEntityDomain would return nil
+// anyway in that case (it `continue`s past every constraint whose field is
+// absent from args), so the short-circuit reaches the same answer without
+// paying for a fetch - a real cost, since HybridClient.UpdateHelper does its
+// own registry lookup right after via c.ws.GetEntityRegistry, which
+// bypasses CachedClient entirely.
+var updatableSourceEntityFields = buildUpdatableSourceEntityFields()
+
+func buildUpdatableSourceEntityFields() map[string]bool {
+	fields := make(map[string]bool)
+	for _, meta := range sourceConstrainedTypes {
+		for _, c := range updatableSourceEntities(meta.sourceEntities) {
+			fields[c.field] = true
+		}
+	}
+	return fields
+}
+
+func hasAnyUpdatableSourceEntityField(args map[string]any) bool {
+	for field := range updatableSourceEntityFields {
+		if _, present := args[field]; present {
+			return true
+		}
+	}
+	return false
+}
+
 // checkUpdateSourceEntityDomain re-validates domain-constrained source
 // fields on update (create-time validation alone left #135-style helpers
 // updatable into a mismatched source with no preflight, since update never
@@ -2288,6 +2338,9 @@ func updatableSourceEntities(constraints []sourceEntityConstraint) []sourceEntit
 // (yaml_defined.go:19-20) - unlike the C1 merge-fetch failure, skipping this
 // check only skips a nice-to-have validation, it does not risk data loss.
 func checkUpdateSourceEntityDomain(ctx context.Context, client homeassistant.Client, entityID string, args map[string]any) error {
+	if !hasAnyUpdatableSourceEntityField(args) {
+		return nil
+	}
 	entries, err := client.GetEntityRegistry(ctx)
 	if err != nil {
 		// Degrades to an unchecked update rather than blocking a legitimate
