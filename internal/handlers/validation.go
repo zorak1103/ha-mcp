@@ -10,6 +10,14 @@ import (
 // entityIDPattern matches valid entity IDs in format domain.object_id.
 // Domain: lowercase letters and underscores.
 // Object ID: lowercase letters, numbers, and underscores.
+//
+// Security-relevant consumer: helpers_consolidated.go's wrapperRecipeFor
+// relies on this pattern admitting no quotes or braces to safely interpolate
+// a caller-supplied entity_id, unescaped, into a Jinja template string
+// inside a ready-to-run manage_helper(...) call. Loosening this pattern
+// (e.g. to allow uppercase, hyphens, or other punctuation) without
+// re-checking that call site risks turning it into a template-injection
+// vector - see TestWrapperRecipeFor_RejectsInjectionPayloads.
 var entityIDPattern = regexp.MustCompile(`^[a-z_]+\.[a-z0-9_]+$`)
 
 // ValidateEntityID validates entity ID format (domain.object_id).

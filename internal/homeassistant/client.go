@@ -130,7 +130,7 @@ type Client interface {
 	ExtractFromTarget(ctx context.Context, target Target, expandGroup *bool) (*ExtractFromTargetResult, error)
 
 	// Config operations - get full configuration for helpers
-	GetScheduleConfig(ctx context.Context, scheduleID string) (map[string]any, error)
+	GetHelperConfig(ctx context.Context, platform, entityID string) (map[string]any, error)
 
 	// Config entry operations - get config entries with full details
 	GetConfigEntries(ctx context.Context, domain string) ([]ConfigEntryFull, error)

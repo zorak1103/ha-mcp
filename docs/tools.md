@@ -98,9 +98,9 @@ Universal tool for helper lifecycle management:
 | ------------- | ---------------------------------------------------------------------------------------------------- |
 | `list`        | List all helpers with optional format (natural/json) and verbose mode                                |
 | `create`      | Create a new helper (requires `type`, `id`, `name`)                                                  |
-| `update`      | Update an existing helper (requires `entity_id`; supports all helper types)                          |
+| `update`      | Update an existing helper (requires `entity_id`); icon works on all types, other fields vary by type |
 | `delete`      | Delete an existing helper (requires `entity_id`)                                                     |
-| `get_details` | Get detailed configuration for any helper type (requires `entity_id`; format: natural/json) |
+| `get_details` | Get detailed configuration for any helper type (requires `entity_id`; format: natural/json)          |
 
 **Supported helper types (26 total):**
 - **Input helpers:** `input_boolean`, `input_number`, `input_text`, `input_select`, `input_datetime`, `input_button`

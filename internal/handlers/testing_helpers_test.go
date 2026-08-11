@@ -120,7 +120,7 @@ type UniversalMockClient struct {
 	ExtractFromTargetFn      func(ctx context.Context, target homeassistant.Target, expandGroup *bool) (*homeassistant.ExtractFromTargetResult, error)
 
 	// Config operations
-	GetScheduleConfigFn func(ctx context.Context, scheduleID string) (map[string]any, error)
+	GetHelperConfigFn func(ctx context.Context, platform, entityID string) (map[string]any, error)
 
 	// Config entry operations
 	GetConfigEntriesFn      func(ctx context.Context, domain string) ([]homeassistant.ConfigEntryFull, error)
@@ -698,9 +698,9 @@ func (m *UniversalMockClient) ExtractFromTarget(ctx context.Context, target home
 
 // Config operations implementation
 
-func (m *UniversalMockClient) GetScheduleConfig(ctx context.Context, scheduleID string) (map[string]any, error) {
-	if m.GetScheduleConfigFn != nil {
-		return m.GetScheduleConfigFn(ctx, scheduleID)
+func (m *UniversalMockClient) GetHelperConfig(ctx context.Context, platform, entityID string) (map[string]any, error) {
+	if m.GetHelperConfigFn != nil {
+		return m.GetHelperConfigFn(ctx, platform, entityID)
 	}
 	return map[string]any{}, nil
 }
