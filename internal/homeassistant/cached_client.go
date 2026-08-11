@@ -817,6 +817,12 @@ func (c *CachedClient) DeleteScene(ctx context.Context, sceneID string) error {
 	return c.client.DeleteScene(ctx, sceneID)
 }
 
+// ConfigFileEntryExists is intentionally never cached: a stale "exists" answer would defeat
+// the exact hazard this probe exists to catch (#122, #164).
+func (c *CachedClient) ConfigFileEntryExists(ctx context.Context, domain, configID string) (bool, error) {
+	return c.client.ConfigFileEntryExists(ctx, domain, configID)
+}
+
 //nolint:revive // Delegated method
 func (c *CachedClient) CallService(ctx context.Context, domain, service string, data map[string]any) ([]Entity, error) {
 	return c.client.CallService(ctx, domain, service, data)

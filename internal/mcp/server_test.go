@@ -131,6 +131,10 @@ func (m *mockHAClient) DeleteScene(_ context.Context, _ string) error {
 	return nil
 }
 
+func (m *mockHAClient) ConfigFileEntryExists(_ context.Context, _, _ string) (bool, error) {
+	return true, nil
+}
+
 func (m *mockHAClient) CallService(_ context.Context, _, _ string, _ map[string]any) ([]homeassistant.Entity, error) {
 	return nil, nil
 }

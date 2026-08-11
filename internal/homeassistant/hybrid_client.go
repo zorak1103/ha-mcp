@@ -948,6 +948,12 @@ func (c *HybridClient) DeleteScene(ctx context.Context, sceneID string) error {
 	return c.rest.DeleteScene(ctx, sceneID)
 }
 
+// ConfigFileEntryExists reports whether configID exists in the config file Home Assistant's
+// config API manages for domain, via the REST API.
+func (c *HybridClient) ConfigFileEntryExists(ctx context.Context, domain, configID string) (bool, error) {
+	return c.rest.ConfigFileEntryExists(ctx, domain, configID)
+}
+
 // =============================================================================
 // Registry Operations (delegated to WebSocket)
 // =============================================================================

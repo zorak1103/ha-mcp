@@ -24,6 +24,8 @@ type mockClient struct {
 	createHelperCallCount   int
 	deleteHelperCallCount   int
 	mu                      sync.Mutex
+
+	configFileEntryExistsFn func(ctx context.Context, domain, configID string) (bool, error)
 }
 
 func (m *mockClient) GetServices(ctx context.Context) ([]Service, error) {
@@ -246,6 +248,13 @@ func (m *mockClient) UpdateScene(ctx context.Context, sceneID string, scene Scen
 	return nil
 }
 func (m *mockClient) DeleteScene(ctx context.Context, sceneID string) error { return nil }
+
+func (m *mockClient) ConfigFileEntryExists(ctx context.Context, domain, configID string) (bool, error) {
+	if m.configFileEntryExistsFn != nil {
+		return m.configFileEntryExistsFn(ctx, domain, configID)
+	}
+	return true, nil
+}
 func (m *mockClient) CallService(ctx context.Context, domain, service string, data map[string]any) ([]Entity, error) {
 	return nil, nil
 }
@@ -878,5 +887,30 @@ func TestCachedClient_InvalidationAfterDeleteConfigEntry(t *testing.T) {
 	}
 	if mock.entityRegistryCallCount != 2 {
 		t.Errorf("Expected 2 API calls (cache invalidated), got %d", mock.entityRegistryCallCount)
+	}
+}
+
+func TestCachedClient_ConfigFileEntryExists_NotCached(t *testing.T) {
+	t.Parallel()
+	callCount := 0
+	mock := &mockClient{
+		configFileEntryExistsFn: func(context.Context, string, string) (bool, error) {
+			callCount++
+			return true, nil
+		},
+	}
+	cfg := config.CacheConfig{Enabled: true, ServicesTTLMin: 60, ConfigTTLMin: 30, EntityRegTTLMin: 10, DeviceRegTTLMin: 10, AreaRegTTLMin: 30}
+	logger := logging.New(logging.LevelError)
+	client := NewCachedClient(mock, cfg, logger)
+
+	ctx := context.Background()
+	if _, err := client.ConfigFileEntryExists(ctx, "automation", "morning_routine"); err != nil {
+		t.Fatalf("ConfigFileEntryExists failed: %v", err)
+	}
+	if _, err := client.ConfigFileEntryExists(ctx, "automation", "morning_routine"); err != nil {
+		t.Fatalf("ConfigFileEntryExists failed: %v", err)
+	}
+	if callCount != 2 {
+		t.Errorf("expected every call to hit the underlying client (no caching), got %d calls for 2 requests", callCount)
 	}
 }

@@ -231,6 +231,9 @@ func (m *mockNonCloserClient) UpdateScene(_ context.Context, _ string, _ SceneCo
 func (m *mockNonCloserClient) DeleteScene(_ context.Context, _ string) error {
 	return nil
 }
+func (m *mockNonCloserClient) ConfigFileEntryExists(_ context.Context, _, _ string) (bool, error) {
+	return true, nil
+}
 func (m *mockNonCloserClient) CallService(_ context.Context, _, _ string, _ map[string]any) ([]Entity, error) {
 	return []Entity{}, nil
 }

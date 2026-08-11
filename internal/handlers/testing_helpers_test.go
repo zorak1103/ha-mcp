@@ -54,6 +54,8 @@ type UniversalMockClient struct {
 	UpdateSceneFn func(ctx context.Context, sceneID string, config homeassistant.SceneConfig) error
 	DeleteSceneFn func(ctx context.Context, sceneID string) error
 
+	ConfigFileEntryExistsFn func(ctx context.Context, domain, configID string) (bool, error)
+
 	// Service operations
 	CallServiceFn             func(ctx context.Context, domain, service string, data map[string]any) ([]homeassistant.Entity, error)
 	CallServiceWithResponseFn func(ctx context.Context, domain, service string, data map[string]any) (map[string]any, error)
@@ -317,6 +319,13 @@ func (m *UniversalMockClient) GetScene(ctx context.Context, sceneID string) (*ho
 		return m.GetSceneFn(ctx, sceneID)
 	}
 	return &homeassistant.Scene{EntityID: "scene." + sceneID}, nil
+}
+
+func (m *UniversalMockClient) ConfigFileEntryExists(ctx context.Context, domain, configID string) (bool, error) {
+	if m.ConfigFileEntryExistsFn != nil {
+		return m.ConfigFileEntryExistsFn(ctx, domain, configID)
+	}
+	return true, nil
 }
 
 func (m *UniversalMockClient) CreateScene(ctx context.Context, sceneID string, config homeassistant.SceneConfig) error {

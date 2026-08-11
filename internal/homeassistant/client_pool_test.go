@@ -185,6 +185,10 @@ func (m *mockClientForPool) UpdateScene(_ context.Context, _ string, _ SceneConf
 	return nil
 }
 func (m *mockClientForPool) DeleteScene(_ context.Context, _ string) error { return nil }
+
+func (m *mockClientForPool) ConfigFileEntryExists(_ context.Context, _, _ string) (bool, error) {
+	return true, nil
+}
 func (m *mockClientForPool) GetEntityRegistry(_ context.Context) ([]EntityRegistryEntry, error) {
 	return nil, nil
 }

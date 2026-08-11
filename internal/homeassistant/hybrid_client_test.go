@@ -1019,6 +1019,7 @@ type mockRESTOperations struct {
 	getCalendarsFunc                     func(ctx context.Context) ([]CalendarEntry, error)
 	getCalendarEventsFunc                func(ctx context.Context, entityID, start, end string) ([]CalendarEvent, error)
 	getCameraSnapshotFunc                func(ctx context.Context, entityID string) ([]byte, string, error)
+	configFileEntryExistsFunc            func(ctx context.Context, domain, configID string) (bool, error)
 }
 
 func (m *mockRESTOperations) CreateAutomation(ctx context.Context, config AutomationConfig) error {
@@ -1068,6 +1069,13 @@ func (m *mockRESTOperations) GetScene(ctx context.Context, sceneID string) (*Sce
 		return m.getSceneFunc(ctx, sceneID)
 	}
 	return nil, nil
+}
+
+func (m *mockRESTOperations) ConfigFileEntryExists(ctx context.Context, domain, configID string) (bool, error) {
+	if m.configFileEntryExistsFunc != nil {
+		return m.configFileEntryExistsFunc(ctx, domain, configID)
+	}
+	return true, nil
 }
 
 func (m *mockRESTOperations) CreateScene(ctx context.Context, sceneID string, config SceneConfig) error {
@@ -1796,6 +1804,29 @@ func TestHybridClient_RESTOperations_GetScene(t *testing.T) {
 	}
 	if scene == nil || scene.Config == nil || scene.Config.Name != "Morning Scene" {
 		t.Errorf("unexpected scene: %+v", scene)
+	}
+}
+
+func TestHybridClient_ConfigFileEntryExists_DelegatesToREST(t *testing.T) {
+	t.Parallel()
+	var gotDomain, gotConfigID string
+	mockREST := &mockRESTOperations{
+		configFileEntryExistsFunc: func(_ context.Context, domain, configID string) (bool, error) {
+			gotDomain, gotConfigID = domain, configID
+			return false, nil
+		},
+	}
+	client := NewHybridClientWithInterfaces(&mockWSOperations{}, mockREST)
+
+	exists, err := client.ConfigFileEntryExists(context.Background(), "script", "example_toggle")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if exists {
+		t.Error("expected exists=false to propagate from the REST layer")
+	}
+	if gotDomain != "script" || gotConfigID != "example_toggle" {
+		t.Errorf("expected delegation with (script, example_toggle), got (%s, %s)", gotDomain, gotConfigID)
 	}
 }
 
