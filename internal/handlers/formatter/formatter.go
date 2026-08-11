@@ -36,9 +36,10 @@ type EntityListOptions struct {
 	IncludeSummary bool
 	GroupByDomain  bool
 	Limit          int
-	// CompactList emits a capped per-entity compact list (entity_id + friendly name + state)
-	// in non-verbose, non-grouped mode. Capped at compactListCap with an overflow note.
-	// Used by query_entities to make non-verbose output actionable without forcing verbose=true.
+	// CompactList emits a capped per-entity list ("Name (entity_id) is state" plus brief
+	// domain detail) in non-verbose, non-grouped mode. Capped at CompactListCap with an
+	// overflow note. Used by query_entities to make non-verbose output actionable without
+	// forcing verbose=true.
 	CompactList bool
 }
 

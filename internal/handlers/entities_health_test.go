@@ -441,3 +441,44 @@ func TestQueryEntities_Health_Analyze(t *testing.T) {
 		})
 	}
 }
+
+// TestFormatHealthReportNatural_NameOrder pins the "Name (entity_id) [platform] -
+// details" line shape to match query_entities' natural formatter (internal/handlers/
+// formatter/natural.go), so an LLM reading both tools' output can rely on the same
+// positional rule to recover the addressable id. Before this fix, the health report
+// rendered the inverse "entity_id (Name) [platform] - details" order (issue #147
+// follow-up).
+func TestFormatHealthReportNatural_NameOrder(t *testing.T) {
+	t.Parallel()
+
+	report := HealthReport{
+		Issues: []HealthIssue{
+			{
+				EntityID: "sensor.kitchen_temp",
+				Name:     "Kitchen Temp",
+				Category: "unavailable",
+				Platform: "sensor",
+				Details:  "unavailable for 3 days",
+			},
+			{
+				EntityID: "sensor.no_name",
+				Name:     "sensor.no_name",
+				Category: "unavailable",
+				Platform: "sensor",
+				Details:  "unavailable for 1 day",
+			},
+		},
+		Statistics: HealthStatistics{
+			ByCategory: map[string]int{"unavailable": 2},
+		},
+	}
+
+	result := formatHealthReportNatural(report, 7)
+
+	if !strings.Contains(result, "Kitchen Temp (sensor.kitchen_temp) [sensor] - unavailable for 3 days") {
+		t.Errorf("formatHealthReportNatural() = %q, expected Name (entity_id) order", result)
+	}
+	if strings.Contains(result, "(sensor.no_name)") {
+		t.Errorf("formatHealthReportNatural() = %q, expected no parenthesized duplication when name equals entity_id", result)
+	}
+}

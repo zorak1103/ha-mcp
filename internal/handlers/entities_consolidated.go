@@ -615,7 +615,7 @@ func queryEntitiesProperties() map[string]mcp.JSONSchema {
 		// Common parameters
 		"verbose": {
 			Type:        "boolean",
-			Description: "If true, return full details per entity. Default: false — non-verbose mode returns a compact list (entity_id, friendly name, state) capped at 50 entities, with a pagination note if more exist.",
+			Description: "If true, adds a \"Changed X ago\" timestamp per entity. Both modes render `Name (entity_id) is state` plus brief domain detail, capped at 50 entities (or 50 per group when group_by is set), with an overflow note if more exist.",
 		},
 		"limit": {
 			Type:        "integer",
@@ -880,9 +880,17 @@ func formatAreaGroups(ctx context.Context, areaGroups map[string][]homeassistant
 
 // writeEntityList writes a list of entities to the output. When verbose is
 // true, each line includes the "Changed X ago" timestamp suffix; otherwise
-// it's the same "Name (entity_id) is state" line without the suffix.
+// it's the same "Name (entity_id) is state" line without the suffix. Non-verbose
+// output is capped at formatter.CompactListCap per call (i.e. per group, for
+// group_by=area_id/device_class/integration) with an overflow note, matching the
+// ungrouped CompactList path's bound — a single large group must not be able to
+// return an unbounded number of full detail lines.
 func writeEntityList(ctx context.Context, output *strings.Builder, f formatter.Formatter, entities []homeassistant.Entity, verbose bool) {
-	for _, entity := range entities {
+	capped := entities
+	if !verbose && len(capped) > formatter.CompactListCap {
+		capped = capped[:formatter.CompactListCap]
+	}
+	for _, entity := range capped {
 		var formatted string
 		var err error
 		if verbose {
@@ -893,7 +901,10 @@ func writeEntityList(ctx context.Context, output *strings.Builder, f formatter.F
 		if err != nil {
 			continue
 		}
-		fmt.Fprintf(output, "  %s\n", formatted)
+		fmt.Fprintf(output, "  - %s\n", formatted)
+	}
+	if !verbose && len(entities) > formatter.CompactListCap {
+		fmt.Fprintf(output, "  - %s\n", formatter.FormatOverflowNote(len(entities)-formatter.CompactListCap))
 	}
 }
 

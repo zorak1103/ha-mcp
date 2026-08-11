@@ -268,7 +268,7 @@ func formatPresenceNatural(report PresenceReport) string {
 	if len(report.Persons) > 0 {
 		result.WriteString("Persons:\n")
 		for _, person := range report.Persons {
-			fmt.Fprintf(&result, "  %s (%s) is %s:\n", person.Name, person.EntityID, person.State)
+			fmt.Fprintf(&result, "  %s (%s) is %s\n", person.Name, person.EntityID, person.State)
 			if len(person.Trackers) > 0 {
 				fmt.Fprintf(&result, "    Trackers (%d): %s\n", person.TrackerCount, strings.Join(person.Trackers, ", "))
 			} else {

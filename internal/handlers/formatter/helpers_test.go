@@ -208,6 +208,30 @@ func TestNaturalHelperFormatter_FormatList_HelperStates(t *testing.T) {
 	}
 }
 
+// TestNaturalHelperFormatter_FormatList_NoFriendlyName verifies that a helper with no
+// friendly_name renders its full entity_id once, rather than duplicating it as both a
+// truncated object_id and the full id in parentheses (issue #147 follow-up).
+func TestNaturalHelperFormatter_FormatList_NoFriendlyName(t *testing.T) {
+	t.Parallel()
+
+	f := NewNaturalHelperFormatter()
+	helpers := []homeassistant.Entity{
+		testHelperEntity("input_boolean.vacation_mode", "off", map[string]any{}),
+	}
+
+	result, err := f.FormatList(context.Background(), helpers, HelperListOptions{})
+	if err != nil {
+		t.Fatalf("FormatList() error = %v", err)
+	}
+
+	if strings.Contains(result, "(input_boolean.vacation_mode)") {
+		t.Errorf("FormatList() = %q, expected no parenthesized duplication when there is no friendly name", result)
+	}
+	if count := strings.Count(result, "input_boolean.vacation_mode"); count != 1 {
+		t.Errorf("FormatList() = %q, expected entity_id to appear exactly once, got %d", result, count)
+	}
+}
+
 func TestNaturalHelperFormatter_FormatList_Verbose(t *testing.T) {
 	t.Parallel()
 
@@ -358,6 +382,136 @@ func TestNaturalHelperFormatter_FormatScheduleDetail_Empty(t *testing.T) {
 
 	if !strings.Contains(result, "Empty Schedule") {
 		t.Errorf("FormatScheduleDetail() missing name, got:\n%s", result)
+	}
+}
+
+// TestNaturalHelperFormatter_DetailRenderers_IncludeEntityID pins the canonical
+// "Name (entity_id)" shape (issue #147 follow-up) across every get_details renderer in
+// this file. Before this fix, Schedule/Toggle(input_boolean)/Group used "(state)" for
+// the parenthesized field instead of the id, and Counter/Timer/Sensor/Binary Sensor
+// omitted the entity_id entirely — disagreeing with manage_helper's `list` action,
+// which already carries the id, within the same tool.
+func TestNaturalHelperFormatter_DetailRenderers_IncludeEntityID(t *testing.T) {
+	t.Parallel()
+
+	f := NewNaturalHelperFormatter()
+
+	tests := []struct {
+		name       string
+		helperType string
+		detail     map[string]any
+		wantLine   string
+	}{
+		{
+			name:       "input_boolean (Toggle)",
+			helperType: "input_boolean",
+			detail: map[string]any{
+				"entity_id":     "input_boolean.vacation_mode",
+				"friendly_name": "Vacation Mode",
+				"state":         "on",
+				"editable":      true,
+			},
+			wantLine: "Toggle: Vacation Mode (input_boolean.vacation_mode) is on",
+		},
+		{
+			name:       "group",
+			helperType: "group",
+			detail: map[string]any{
+				"entity_id":     "group.downstairs",
+				"friendly_name": "Downstairs",
+				"state":         "on",
+			},
+			wantLine: "Group: Downstairs (group.downstairs) is on",
+		},
+		{
+			name:       "sensor",
+			helperType: "sensor",
+			detail: map[string]any{
+				"entity_id":     "sensor.outdoor_temp",
+				"friendly_name": "Outdoor Temp",
+				"state":         "21.5",
+			},
+			wantLine: "Sensor: Outdoor Temp (sensor.outdoor_temp)",
+		},
+		{
+			name:       "binary_sensor",
+			helperType: "binary_sensor",
+			detail: map[string]any{
+				"entity_id":     "binary_sensor.door",
+				"friendly_name": "Front Door",
+				"state":         "off",
+			},
+			wantLine: "Binary Sensor: Front Door (binary_sensor.door)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := f.FormatHelperDetail(context.Background(), tt.helperType, tt.detail)
+			if err != nil {
+				t.Fatalf("FormatHelperDetail(%q) error = %v", tt.helperType, err)
+			}
+			if !strings.Contains(result, tt.wantLine) {
+				t.Errorf("FormatHelperDetail(%q) = %q, want it to contain %q", tt.helperType, result, tt.wantLine)
+			}
+		})
+	}
+}
+
+func TestNaturalHelperFormatter_FormatCounterDetail_IncludesEntityID(t *testing.T) {
+	t.Parallel()
+
+	f := NewNaturalHelperFormatter()
+	detail := map[string]any{
+		"entity_id":     "counter.visitors",
+		"friendly_name": "Visitors",
+		"state":         "3",
+	}
+
+	result, err := f.FormatCounterDetail(context.Background(), detail)
+	if err != nil {
+		t.Fatalf("FormatCounterDetail() error = %v", err)
+	}
+	if !strings.Contains(result, "Counter: Visitors (counter.visitors)") {
+		t.Errorf("FormatCounterDetail() = %q, expected entity_id alongside name", result)
+	}
+}
+
+func TestNaturalHelperFormatter_FormatTimerDetail_IncludesEntityID(t *testing.T) {
+	t.Parallel()
+
+	f := NewNaturalHelperFormatter()
+	detail := map[string]any{
+		"entity_id":     "timer.pomodoro",
+		"friendly_name": "Pomodoro",
+		"state":         "active",
+	}
+
+	result, err := f.FormatTimerDetail(context.Background(), detail)
+	if err != nil {
+		t.Fatalf("FormatTimerDetail() error = %v", err)
+	}
+	if !strings.Contains(result, "Timer: Pomodoro (timer.pomodoro)") {
+		t.Errorf("FormatTimerDetail() = %q, expected entity_id alongside name", result)
+	}
+}
+
+func TestNaturalHelperFormatter_FormatScheduleDetail_NameOrder(t *testing.T) {
+	t.Parallel()
+
+	f := NewNaturalHelperFormatter()
+	detail := map[string]any{
+		"entity_id":     "schedule.work_hours",
+		"friendly_name": "Work Hours",
+		"state":         "on",
+	}
+
+	result, err := f.FormatScheduleDetail(context.Background(), detail)
+	if err != nil {
+		t.Fatalf("FormatScheduleDetail() error = %v", err)
+	}
+	if !strings.Contains(result, "Schedule: Work Hours (schedule.work_hours) is on") {
+		t.Errorf("FormatScheduleDetail() = %q, expected Name (entity_id) is state shape", result)
 	}
 }
 

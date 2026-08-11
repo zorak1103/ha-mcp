@@ -1,6 +1,7 @@
 package formatter
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -177,6 +178,67 @@ func TestGetFriendlyName(t *testing.T) {
 			result := GetFriendlyName(tt.entityID, tt.attributes)
 			if result != tt.expected {
 				t.Errorf("GetFriendlyName() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFormatNameWithID covers the canonical "Name (entity_id)" join used across
+// natural-format renderers (issue #147 and its follow-up consistency fix). name is
+// user-controlled (HA friendly_name/title), so the sanitization cases matter as much
+// as the happy path.
+func TestFormatNameWithID(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		entityID string
+		expected string
+	}{
+		{
+			name:     "distinct friendly name",
+			input:    "Living Room Light",
+			entityID: "light.living_room",
+			expected: "Living Room Light (light.living_room)",
+		},
+		{
+			name:     "name equals entity_id - no duplication",
+			input:    "light.kitchen",
+			entityID: "light.kitchen",
+			expected: "light.kitchen",
+		},
+		{
+			name:     "name containing parentheses is stripped so it cannot forge a fake id",
+			input:    "Kitchen (light.hallway) is off",
+			entityID: "light.kitchen",
+			expected: "Kitchen light.hallway is off (light.kitchen)",
+		},
+		{
+			name:     "name containing newline is collapsed to a single line",
+			input:    "Kitchen\nlight.hallway is off",
+			entityID: "light.kitchen",
+			expected: "Kitchen light.hallway is off (light.kitchen)",
+		},
+		{
+			name:     "name containing carriage return is collapsed to a single line",
+			input:    "Kitchen\r\nAttack",
+			entityID: "light.kitchen",
+			expected: "Kitchen Attack (light.kitchen)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatNameWithID(tt.input, tt.entityID)
+			if result != tt.expected {
+				t.Errorf("FormatNameWithID(%q, %q) = %q, want %q", tt.input, tt.entityID, result, tt.expected)
+			}
+			if strings.Contains(result, "\n") || strings.Contains(result, "\r") {
+				t.Errorf("FormatNameWithID(%q, %q) = %q, must not contain raw newlines", tt.input, tt.entityID, result)
+			}
+			// The real entity_id must be the only parenthesized token, so a caller can
+			// always recover it positionally.
+			if got := strings.Count(result, "("); got > 1 {
+				t.Errorf("FormatNameWithID(%q, %q) = %q, expected at most one '(' (the real id), got %d", tt.input, tt.entityID, result, got)
 			}
 		})
 	}

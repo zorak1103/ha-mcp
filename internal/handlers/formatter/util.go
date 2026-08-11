@@ -73,6 +73,32 @@ func GetFriendlyName(entityID string, attributes map[string]any) string {
 	return entityID
 }
 
+// FormatNameWithID formats an entity's display name alongside its entity_id in the
+// canonical "Name (entity_id)" shape used throughout natural-language output, so a
+// caller can always recover the addressable id positionally (issue #147). If name and
+// entityID are identical (no distinct friendly name), the id is not duplicated in
+// parentheses.
+//
+// name is user-controlled (Home Assistant friendly_name/title, editable via the UI or
+// customize.yaml) and is sanitized before interpolation: newlines/carriage returns are
+// collapsed to spaces so a single entity's name cannot inject additional lines into a
+// rendered list, and parentheses are stripped so a name cannot forge a fake
+// "(entity_id)" suffix that would displace the real one.
+func FormatNameWithID(name, entityID string) string {
+	sanitized := sanitizeDisplayName(name)
+	if sanitized == entityID {
+		return entityID
+	}
+	return sanitized + " (" + entityID + ")"
+}
+
+// sanitizeDisplayName strips characters from a user-controlled display name that could
+// be used to forge or break the "Name (entity_id)" line shape.
+func sanitizeDisplayName(name string) string {
+	replacer := strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ", "(", "", ")", "")
+	return replacer.Replace(name)
+}
+
 // ColorTempToDescription converts color temperature in Kelvin to a description.
 func ColorTempToDescription(kelvin int) string {
 	if kelvin <= 0 {

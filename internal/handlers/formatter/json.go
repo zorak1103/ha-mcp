@@ -25,8 +25,8 @@ func (f *JSONFormatter) FormatEntity(_ context.Context, entity homeassistant.Ent
 	return string(data), nil
 }
 
-// FormatEntityCompact formats a single entity as JSON. Verbose has no defined
-// meaning for JSON entity formatting, so this delegates to FormatEntity.
+// FormatEntityCompact formats a single entity as JSON. The natural formatter's
+// timestamp suffix has no JSON representation, so this delegates to FormatEntity.
 func (f *JSONFormatter) FormatEntityCompact(ctx context.Context, entity homeassistant.Entity) (string, error) {
 	return f.FormatEntity(ctx, entity)
 }

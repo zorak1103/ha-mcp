@@ -1333,7 +1333,7 @@ func (h *AnalysisHandlers) formatAnalysisNatural(analysis *EntityAnalysis, verbo
 		name = analysis.EntityID
 	}
 	parts = append(parts,
-		fmt.Sprintf("%s (%s) is %s", analysis.EntityID, name, analysis.State),
+		fmt.Sprintf("%s is %s", formatter.FormatNameWithID(name, analysis.EntityID), analysis.State),
 		fmt.Sprintf("Domain: %s | Last changed: %s", analysis.Domain, analysis.LastChanged),
 	)
 

@@ -111,9 +111,10 @@ func (f *NaturalHelperFormatter) FormatScheduleDetail(
 	if name == "" {
 		name = f.getDetailString(detail, "entity_id")
 	}
+	entityID := f.getDetailString(detail, "entity_id")
 	state := f.getDetailString(detail, "state")
 
-	fmt.Fprintf(&result, "Schedule: %s (%s)\n", name, state)
+	fmt.Fprintf(&result, "Schedule: %s is %s\n", FormatNameWithID(name, entityID), state)
 
 	// Next event
 	if nextEvent := f.getDetailString(detail, "next_event"); nextEvent != "" {
@@ -141,9 +142,10 @@ func (f *NaturalHelperFormatter) FormatCounterDetail(
 	if name == "" {
 		name = f.getDetailString(detail, "entity_id")
 	}
+	entityID := f.getDetailString(detail, "entity_id")
 	value := f.getDetailString(detail, "state")
 
-	fmt.Fprintf(&result, "Counter: %s\n", name)
+	fmt.Fprintf(&result, "Counter: %s\n", FormatNameWithID(name, entityID))
 	fmt.Fprintf(&result, "Current value: %s\n", value)
 
 	// Counter configuration
@@ -175,9 +177,10 @@ func (f *NaturalHelperFormatter) FormatTimerDetail(
 	if name == "" {
 		name = f.getDetailString(detail, "entity_id")
 	}
+	entityID := f.getDetailString(detail, "entity_id")
 	state := f.getDetailString(detail, "state")
 
-	fmt.Fprintf(&result, "Timer: %s\n", name)
+	fmt.Fprintf(&result, "Timer: %s\n", FormatNameWithID(name, entityID))
 	fmt.Fprintf(&result, "State: %s\n", state)
 
 	// Timer details
@@ -235,10 +238,10 @@ func (f *NaturalHelperFormatter) formatInputBooleanDetail(detail map[string]any)
 	if name == "" {
 		name = f.getDetailString(detail, "entity_id")
 	}
+	entityID := f.getDetailString(detail, "entity_id")
 	state := f.getDetailString(detail, "state")
 
-	fmt.Fprintf(&result, "Toggle: %s (%s)\n", name, state)
-	fmt.Fprintf(&result, "Entity: %s\n", f.getDetailString(detail, "entity_id"))
+	fmt.Fprintf(&result, "Toggle: %s is %s\n", FormatNameWithID(name, entityID), state)
 
 	if icon := f.getDetailString(detail, "icon"); icon != "" {
 		fmt.Fprintf(&result, "Icon: %s\n", icon)
@@ -388,9 +391,10 @@ func (f *NaturalHelperFormatter) formatGroupDetail(detail map[string]any) string
 	if name == "" {
 		name = f.getDetailString(detail, "entity_id")
 	}
+	entityID := f.getDetailString(detail, "entity_id")
 	state := f.getDetailString(detail, "state")
 
-	fmt.Fprintf(&result, "Group: %s (%s)\n", name, state)
+	fmt.Fprintf(&result, "Group: %s is %s\n", FormatNameWithID(name, entityID), state)
 
 	all := f.getDetailBool(detail, "all")
 	if all {
@@ -418,9 +422,10 @@ func (f *NaturalHelperFormatter) formatSensorDetail(detail map[string]any) strin
 	if name == "" {
 		name = f.getDetailString(detail, "entity_id")
 	}
+	entityID := f.getDetailString(detail, "entity_id")
 	state := f.getDetailString(detail, "state")
 
-	fmt.Fprintf(&result, "Sensor: %s\n", name)
+	fmt.Fprintf(&result, "Sensor: %s\n", FormatNameWithID(name, entityID))
 
 	unit := f.getDetailString(detail, "unit_of_measurement")
 	if unit != "" {
@@ -453,9 +458,10 @@ func (f *NaturalHelperFormatter) formatBinarySensorDetail(detail map[string]any)
 	if name == "" {
 		name = f.getDetailString(detail, "entity_id")
 	}
+	entityID := f.getDetailString(detail, "entity_id")
 	state := f.getDetailString(detail, "state")
 
-	fmt.Fprintf(&result, "Binary Sensor: %s\n", name)
+	fmt.Fprintf(&result, "Binary Sensor: %s\n", FormatNameWithID(name, entityID))
 	fmt.Fprintf(&result, "Current state: %s\n", state)
 
 	if deviceClass := f.getDetailString(detail, "device_class"); deviceClass != "" {
@@ -624,18 +630,11 @@ func (f *NaturalHelperFormatter) formatTypeName(helperType string) string {
 
 func (f *NaturalHelperFormatter) writeHelperLine(result *strings.Builder, h homeassistant.Entity, verbose bool) {
 	name := GetFriendlyName(h.EntityID, h.Attributes)
-	// Use just the name part if friendly_name is not set
-	if name == h.EntityID {
-		parts := strings.SplitN(h.EntityID, ".", 2)
-		if len(parts) == 2 {
-			name = parts[1]
-		}
-	}
 
 	helperType := f.extractType(h.EntityID)
 	stateInfo := f.formatStateForType(helperType, h)
 
-	fmt.Fprintf(result, "  • %s (%s): %s\n", name, h.EntityID, stateInfo)
+	fmt.Fprintf(result, "  • %s: %s\n", FormatNameWithID(name, h.EntityID), stateInfo)
 
 	if verbose {
 		f.writeVerboseDetails(result, h)
