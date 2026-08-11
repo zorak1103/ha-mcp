@@ -1090,7 +1090,7 @@ func buildKnownTypeUpdateConfig(ctx context.Context, client homeassistant.Client
 // fetchErr is non-nil when the fetch itself failed - the caller must fail
 // the update rather than proceed with a partial payload; see CLAUDE.md's
 // "Merge-fetch failure hard-fails the update" gotcha for why this is NOT
-// the isYAMLDefinedEntity "checked=false, proceed anyway" convention.
+// the configWriteGuardError "checked=false, proceed anyway" convention.
 func mergeCurrentHelperState(ctx context.Context, client homeassistant.Client, entityID, typeName string, meta helperTypeMetadata, args map[string]any) (merged map[string]any, currentName string, fetchErr error) {
 	merged = make(map[string]any)
 	fields := updatableFieldNames(typeName)
@@ -2373,7 +2373,7 @@ func hasAnyUpdatableSourceEntityField(args map[string]any) bool {
 // updatable into a mismatched source with no preflight, since update never
 // reused checkSourceEntityDomain). A registry lookup failure degrades to an
 // unchecked update rather than blocking a legitimate edit, mirroring
-// isYAMLDefinedEntity's "checked=false, proceed anyway" convention
+// configWriteGuardError's "checked=false, proceed anyway" convention
 // (yaml_defined.go:19-20) - unlike mergeCurrentHelperState's merge-fetch
 // failure, skipping this check only skips a validation, not a data-loss risk.
 //
