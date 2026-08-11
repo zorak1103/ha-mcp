@@ -30,6 +30,13 @@ type mockSceneClient struct {
 	entityDeleted bool
 }
 
+// ConfigFileEntryExists defaults to "present" so existing tests that never set up the
+// config-file write guard continue to exercise the write path unchanged; tests that need to
+// exercise the guard itself use UniversalMockClient (see TestSceneHandlers_Update_*).
+func (m *mockSceneClient) ConfigFileEntryExists(context.Context, string, string) (bool, error) {
+	return true, nil
+}
+
 func (m *mockSceneClient) ListScenes(ctx context.Context) ([]homeassistant.Entity, error) {
 	if m.listScenesFn != nil {
 		return m.listScenesFn(ctx)
@@ -666,6 +673,60 @@ func TestSceneHandlers_ManageScene_Update(t *testing.T) {
 				t.Errorf("Content = %q, want to contain %q", content, tt.wantContains)
 			}
 		})
+	}
+}
+
+func TestSceneHandlers_Update_RefusesWhenConfigFileEntryMissing(t *testing.T) {
+	t.Parallel()
+	updateCalled := false
+	client := &UniversalMockClient{}
+	client.GetStateFn = func(context.Context, string) (*homeassistant.Entity, error) {
+		return &homeassistant.Entity{EntityID: "scene.movie_night", Attributes: map[string]any{"entity_id": []any{"light.living_room"}}}, nil
+	}
+	client.UpdateSceneFn = func(context.Context, string, homeassistant.SceneConfig) error {
+		updateCalled = true
+		return nil
+	}
+	client.ConfigFileEntryExistsFn = func(context.Context, string, string) (bool, error) {
+		return false, nil
+	}
+
+	h := &SceneHandlers{}
+	args := map[string]any{"action": "update", "scene_id": "movie_night", "name": "Movie Night 2"}
+	result, err := h.handleManageScene(context.Background(), client, args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected refusal, got success: %s", result.Content[0].Text)
+	}
+	if !strings.Contains(result.Content[0].Text, "scenes.yaml") {
+		t.Errorf("expected refusal to name scenes.yaml, got: %s", result.Content[0].Text)
+	}
+	if updateCalled {
+		t.Error("UpdateScene must NOT be called when the id is confirmed absent from the file")
+	}
+}
+
+func TestSceneHandlers_Update_ProceedsWhenConfigFileEntryExists(t *testing.T) {
+	t.Parallel()
+	client := &UniversalMockClient{}
+	client.GetStateFn = func(context.Context, string) (*homeassistant.Entity, error) {
+		return &homeassistant.Entity{EntityID: "scene.movie_night", Attributes: map[string]any{"entity_id": []any{"light.living_room"}}}, nil
+	}
+	client.UpdateSceneFn = func(context.Context, string, homeassistant.SceneConfig) error { return nil }
+	client.ConfigFileEntryExistsFn = func(context.Context, string, string) (bool, error) {
+		return true, nil
+	}
+
+	h := &SceneHandlers{}
+	args := map[string]any{"action": "update", "scene_id": "movie_night", "name": "Movie Night 2"}
+	result, err := h.handleManageScene(context.Background(), client, args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got error: %s", result.Content[0].Text)
 	}
 }
 

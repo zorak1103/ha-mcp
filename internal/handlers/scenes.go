@@ -302,6 +302,12 @@ func (h *SceneHandlers) handleUpdate(ctx context.Context, client homeassistant.C
 
 	config := buildSceneConfigFromArgs(current, args)
 
+	// Refuse to write a scene whose id is not present in scenes.yaml: the config API silently
+	// creates a duplicate orphan entity instead of updating it (#122, #164).
+	if guardErr := configWriteGuardError(ctx, client, "scene", "update", sceneID, entityID, configID); guardErr != nil {
+		return guardErr, nil
+	}
+
 	// Use configID (without prefix) for REST API
 	if err := client.UpdateScene(ctx, configID, config); err != nil {
 		msg := fmt.Sprintf("Error updating scene: %v", err)
