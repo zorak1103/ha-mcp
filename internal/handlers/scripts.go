@@ -707,9 +707,9 @@ func (h *ScriptHandlers) handlePatch(ctx context.Context, client homeassistant.C
 
 // applyPatchedScriptWrite writes the patched config to HA and returns the success result. It
 // skips the write entirely when configMap and patchedMap are deep-equal — otherwise every no-op
-// patch would trigger a needless script.reload — and refuses to write YAML-defined scripts,
-// which the config API would otherwise silently duplicate into an orphan entity (#122). Mirrors
-// applyPatchedAutomationWrite in automations.go.
+// patch would trigger a needless script.reload — and refuses to write a script whose id is
+// absent from scripts.yaml, which the config API would otherwise silently duplicate into an
+// orphan entity (#122, #164). Mirrors applyPatchedAutomationWrite in automations.go.
 func applyPatchedScriptWrite(
 	ctx context.Context,
 	client homeassistant.Client,
