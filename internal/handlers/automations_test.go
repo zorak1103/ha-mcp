@@ -50,10 +50,9 @@ type mockAutomationClient struct {
 	// updateCalled tracks whether UpdateAutomation was invoked (used by dry-run tests).
 	updateCalled bool
 
-	// getEntityRegistryFn backs GetEntityRegistry, used by the isYAMLDefinedEntity write guard
-	// (#122). A nil hook (the default) reports no registry entries, which the guard interprets
-	// as YAML-defined - tests reaching the update/patch write path must set this via
-	// storageManagedRegistry to mark the target as storage-managed.
+	// getEntityRegistryFn backs GetEntityRegistry. It is no longer consulted by the write guard
+	// (which now probes ConfigFileEntryExists, see ConfigFileEntryExists below) - kept only for
+	// any test that still wants to control entity-registry responses directly.
 	getEntityRegistryFn func(ctx context.Context) ([]homeassistant.EntityRegistryEntry, error)
 }
 
@@ -62,6 +61,13 @@ func (m *mockAutomationClient) GetEntityRegistry(ctx context.Context) ([]homeass
 		return m.getEntityRegistryFn(ctx)
 	}
 	return nil, nil
+}
+
+// ConfigFileEntryExists defaults to "present" so existing tests that never set up the
+// config-file write guard continue to exercise the write path unchanged; tests that need to
+// exercise the guard itself use UniversalMockClient (see TestManageAutomation_YAMLDefinedGuard).
+func (m *mockAutomationClient) ConfigFileEntryExists(context.Context, string, string) (bool, error) {
+	return true, nil
 }
 
 func (m *mockAutomationClient) ListAutomations(_ context.Context) ([]homeassistant.Automation, error) {
@@ -1762,7 +1768,8 @@ func TestAutomationHandlers_IDNormalization(t *testing.T) {
 				automationMap: map[string]*homeassistant.Automation{
 					"test_auto": testAutomation,
 				},
-				// Storage-managed so the isYAMLDefinedEntity write guard (#122) lets update proceed.
+				// Vestigial: GetEntityRegistry is no longer consulted by the write guard (which now
+				// probes ConfigFileEntryExists, defaulting to "present" when unset).
 				getEntityRegistryFn: storageManagedRegistry("automation.test_auto"),
 			}
 
@@ -1902,7 +1909,8 @@ func TestAutomationHandlers_IDNormalization(t *testing.T) {
 			client := &mockAutomationClient{
 				automation:    testAutomation,
 				automationMap: automationMap,
-				// Storage-managed so the isYAMLDefinedEntity write guard (#122) lets update proceed.
+				// Vestigial: GetEntityRegistry is no longer consulted by the write guard (which now
+				// probes ConfigFileEntryExists, defaulting to "present" when unset).
 				getEntityRegistryFn: storageManagedRegistry(tt.entityID),
 			}
 
@@ -3080,9 +3088,9 @@ func TestManageAutomation_PatchReload(t *testing.T) {
 	})
 }
 
-// TestManageAutomation_YAMLDefinedGuard verifies that update/patch refuse to write YAML-defined
-// automations instead of silently creating a duplicate orphan entity (#122), and that a registry
-// lookup failure degrades gracefully by letting the write proceed.
+// TestManageAutomation_YAMLDefinedGuard verifies that update/patch refuse to write an automation
+// whose id is not present in automations.yaml instead of silently creating a duplicate orphan
+// entity (#122), and that a probe failure degrades gracefully by letting the write proceed.
 func TestManageAutomation_YAMLDefinedGuard(t *testing.T) {
 	t.Parallel()
 
@@ -3108,7 +3116,7 @@ func TestManageAutomation_YAMLDefinedGuard(t *testing.T) {
 
 	h := &AutomationHandlers{}
 
-	t.Run("update refuses a YAML-defined automation (empty unique_id)", func(t *testing.T) {
+	t.Run("update refuses when the id is absent from automations.yaml", func(t *testing.T) {
 		t.Parallel()
 		updateCalled := false
 		client := &UniversalMockClient{}
@@ -3120,8 +3128,8 @@ func TestManageAutomation_YAMLDefinedGuard(t *testing.T) {
 			updateCalled = true
 			return nil
 		}
-		client.GetEntityRegistryFn = func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
-			return []homeassistant.EntityRegistryEntry{{EntityID: "automation.morning_routine", UniqueID: ""}}, nil
+		client.ConfigFileEntryExistsFn = func(context.Context, string, string) (bool, error) {
+			return false, nil
 		}
 
 		result, err := h.handleManageAutomation(context.Background(), client, updateArgs)
@@ -3131,15 +3139,15 @@ func TestManageAutomation_YAMLDefinedGuard(t *testing.T) {
 		if !result.IsError {
 			t.Fatalf("expected refusal, got success: %s", result.Content[0].Text)
 		}
-		if !strings.Contains(result.Content[0].Text, "YAML-defined") {
-			t.Errorf("expected YAML-defined refusal message, got: %s", result.Content[0].Text)
+		if !strings.Contains(result.Content[0].Text, "automations.yaml") {
+			t.Errorf("expected refusal to name automations.yaml, got: %s", result.Content[0].Text)
 		}
 		if updateCalled {
-			t.Error("UpdateAutomation must NOT be called when the target is YAML-defined")
+			t.Error("UpdateAutomation must NOT be called when the id is confirmed absent from the file")
 		}
 	})
 
-	t.Run("patch refuses a YAML-defined automation (no registry entry)", func(t *testing.T) {
+	t.Run("patch refuses when the id is absent from automations.yaml", func(t *testing.T) {
 		t.Parallel()
 		updateCalled := false
 		client := &UniversalMockClient{}
@@ -3151,8 +3159,8 @@ func TestManageAutomation_YAMLDefinedGuard(t *testing.T) {
 			updateCalled = true
 			return nil
 		}
-		client.GetEntityRegistryFn = func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
-			return []homeassistant.EntityRegistryEntry{}, nil // no entry at all for this entity
+		client.ConfigFileEntryExistsFn = func(context.Context, string, string) (bool, error) {
+			return false, nil
 		}
 
 		result, err := h.handleManageAutomation(context.Background(), client, patchArgs)
@@ -3162,15 +3170,15 @@ func TestManageAutomation_YAMLDefinedGuard(t *testing.T) {
 		if !result.IsError {
 			t.Fatalf("expected refusal, got success: %s", result.Content[0].Text)
 		}
-		if !strings.Contains(result.Content[0].Text, "YAML-defined") {
-			t.Errorf("expected YAML-defined refusal message, got: %s", result.Content[0].Text)
+		if !strings.Contains(result.Content[0].Text, "automations.yaml") {
+			t.Errorf("expected refusal to name automations.yaml, got: %s", result.Content[0].Text)
 		}
 		if updateCalled {
-			t.Error("UpdateAutomation must NOT be called when the target is YAML-defined")
+			t.Error("UpdateAutomation must NOT be called when the id is confirmed absent from the file")
 		}
 	})
 
-	t.Run("update proceeds when the registry lookup fails (graceful degradation)", func(t *testing.T) {
+	t.Run("update proceeds when the probe fails (graceful degradation)", func(t *testing.T) {
 		t.Parallel()
 		client := &UniversalMockClient{}
 		client.GetAutomationFn = func(context.Context, string) (*homeassistant.Automation, error) {
@@ -3178,8 +3186,8 @@ func TestManageAutomation_YAMLDefinedGuard(t *testing.T) {
 			return &homeassistant.Automation{EntityID: "automation.morning_routine", Config: &cfg}, nil
 		}
 		client.UpdateAutomationFn = func(context.Context, string, homeassistant.AutomationConfig) error { return nil }
-		client.GetEntityRegistryFn = func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
-			return nil, errors.New("registry unavailable")
+		client.ConfigFileEntryExistsFn = func(context.Context, string, string) (bool, error) {
+			return false, errors.New("probe unavailable")
 		}
 
 		result, err := h.handleManageAutomation(context.Background(), client, updateArgs)
@@ -3187,22 +3195,26 @@ func TestManageAutomation_YAMLDefinedGuard(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if result.IsError {
-			t.Fatalf("expected success (registry check should not block the write on failure), got error: %s", result.Content[0].Text)
+			t.Fatalf("expected success (a failed probe must not block the write), got error: %s", result.Content[0].Text)
 		}
 		if !strings.Contains(result.Content[0].Text, "updated successfully") {
 			t.Errorf("expected success message, got: %s", result.Content[0].Text)
 		}
 	})
 
-	t.Run("update proceeds for a storage-managed automation", func(t *testing.T) {
+	t.Run("update proceeds when the id is present in automations.yaml", func(t *testing.T) {
 		t.Parallel()
+		var probedConfigID string
 		client := &UniversalMockClient{}
 		client.GetAutomationFn = func(context.Context, string) (*homeassistant.Automation, error) {
 			cfg := *baseConfig
 			return &homeassistant.Automation{EntityID: "automation.morning_routine", Config: &cfg}, nil
 		}
 		client.UpdateAutomationFn = func(context.Context, string, homeassistant.AutomationConfig) error { return nil }
-		client.GetEntityRegistryFn = storageManagedRegistry("automation.morning_routine")
+		client.ConfigFileEntryExistsFn = func(_ context.Context, _, configID string) (bool, error) {
+			probedConfigID = configID
+			return true, nil
+		}
 
 		result, err := h.handleManageAutomation(context.Background(), client, updateArgs)
 		if err != nil {
@@ -3210,6 +3222,9 @@ func TestManageAutomation_YAMLDefinedGuard(t *testing.T) {
 		}
 		if result.IsError {
 			t.Fatalf("expected success, got error: %s", result.Content[0].Text)
+		}
+		if probedConfigID != "morning_routine" {
+			t.Errorf("expected the probe to receive the same config id UpdateAutomation is called with, got %q", probedConfigID)
 		}
 	})
 }

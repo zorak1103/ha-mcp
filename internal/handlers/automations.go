@@ -460,18 +460,19 @@ func (h *AutomationHandlers) handleUpdate(ctx context.Context, client homeassist
 		return successResult(fmt.Sprintf("Automation '%s': no changes detected, skipping write (reload and for: timer reset avoided)", automationID)), nil
 	}
 
-	// current.EntityID reflects the entity actually resolved above (findAutomationByID may have
-	// matched a different entity than a bare entityID guess). Refuse to write YAML-defined
-	// automations: the config API silently creates a duplicate orphan entity instead (#122).
-	checkEntityID := resolveWriteCheckEntityID(entityID, current.EntityID)
-	if guardErr := yamlWriteGuardError(ctx, client, "automation", "update", automationID, checkEntityID); guardErr != nil {
-		return guardErr, nil
-	}
-
 	// Resolve actual config ID for REST API (may differ from entity_id suffix)
 	actualConfigID := configID
 	if current.Config.ID != "" && current.Config.ID != configID {
 		actualConfigID = current.Config.ID
+	}
+
+	// current.EntityID reflects the entity actually resolved above (findAutomationByID may have
+	// matched a different entity than a bare entityID guess). Refuse to write an automation
+	// whose id is not present in automations.yaml: the config API silently creates a duplicate
+	// orphan entity instead (#122, #164).
+	checkEntityID := resolveWriteCheckEntityID(entityID, current.EntityID)
+	if guardErr := configWriteGuardError(ctx, client, "automation", "update", automationID, checkEntityID, actualConfigID); guardErr != nil {
+		return guardErr, nil
 	}
 
 	if err := client.UpdateAutomation(ctx, actualConfigID, *current.Config); err != nil {
@@ -619,9 +620,9 @@ func applyPatchedAutomationWrite(
 		return successResult(fmt.Sprintf("Automation '%s': no changes detected, skipping write (reload and for: timer reset avoided)", automationID)), nil
 	}
 
-	// Refuse to write YAML-defined automations: the config API silently creates a duplicate
-	// orphan entity instead of updating them (#122).
-	if guardErr := yamlWriteGuardError(ctx, client, "automation", "patch", automationID, entityID); guardErr != nil {
+	// Refuse to write an automation whose id is not present in automations.yaml: the config
+	// API silently creates a duplicate orphan entity instead of updating it (#122, #164).
+	if guardErr := configWriteGuardError(ctx, client, "automation", "patch", automationID, entityID, actualConfigID); guardErr != nil {
 		return guardErr, nil
 	}
 
