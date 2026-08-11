@@ -56,6 +56,10 @@ type Client interface {
 	UpdateScene(ctx context.Context, sceneID string, scene SceneConfig) error
 	DeleteScene(ctx context.Context, sceneID string) error
 
+	// ConfigFileEntryExists checks whether id exists in the config file HA's config API writes
+	// to for domain, used to guard against silently creating a duplicate orphan entity (#122).
+	ConfigFileEntryExists(ctx context.Context, domain, configID string) (bool, error)
+
 	// Service operations
 	CallService(ctx context.Context, domain, service string, data map[string]any) ([]Entity, error)
 
