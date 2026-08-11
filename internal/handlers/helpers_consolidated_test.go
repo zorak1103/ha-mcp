@@ -4,6 +4,7 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -2943,6 +2944,110 @@ func TestHelperTypeMetadata(t *testing.T) {
 				t.Errorf("helperTypes[%q].platform is empty", helperType)
 			}
 		})
+	}
+}
+
+// TestHelperTypeMetadata_SourceEntityFields asserts that exactly the 7 helper
+// types with a source-entity domain constraint carry sourceEntityDomains and
+// sourceEntityField, and every other helper type is left at the zero value.
+func TestHelperTypeMetadata_SourceEntityFields(t *testing.T) {
+	t.Parallel()
+
+	sourceEntityTypes := map[string]struct {
+		field   string
+		domains []string
+	}{
+		"utility_meter":      {field: "source", domains: []string{"sensor"}},
+		"statistics":         {field: "entity_id", domains: []string{"sensor"}},
+		"trend":              {field: "entity_id", domains: []string{"sensor"}},
+		"filter":             {field: "entity_id", domains: []string{"sensor"}},
+		"generic_thermostat": {field: "heater_entity_id", domains: []string{"switch"}},
+		"switch_as_x":        {field: "entity_id", domains: []string{"switch"}},
+		"generic_hygrostat":  {field: "humidifier_entity_id", domains: []string{"switch"}},
+	}
+
+	for name, meta := range helperTypes {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			want, isSourceEntityType := sourceEntityTypes[name]
+			if isSourceEntityType {
+				if meta.sourceEntityField != want.field {
+					t.Errorf("helperTypes[%q].sourceEntityField = %q, want %q", name, meta.sourceEntityField, want.field)
+				}
+				if len(meta.sourceEntityDomains) == 0 {
+					t.Errorf("helperTypes[%q].sourceEntityDomains should be non-empty", name)
+				} else if meta.sourceEntityDomains[0] != want.domains[0] {
+					t.Errorf("helperTypes[%q].sourceEntityDomains = %v, want %v", name, meta.sourceEntityDomains, want.domains)
+				}
+				return
+			}
+			if meta.sourceEntityField != "" {
+				t.Errorf("helperTypes[%q].sourceEntityField should be empty, got %q", name, meta.sourceEntityField)
+			}
+			if len(meta.sourceEntityDomains) != 0 {
+				t.Errorf("helperTypes[%q].sourceEntityDomains should be empty, got %v", name, meta.sourceEntityDomains)
+			}
+		})
+	}
+}
+
+// TestHelperTypeMetadata_UpdatableFieldNames asserts updatableFieldNames()
+// returns requiredFields concatenated with optionalFields (in that order)
+// for a representative WS helper type, Config Entry type, and a type with
+// empty requiredFields.
+func TestHelperTypeMetadata_UpdatableFieldNames(t *testing.T) {
+	t.Parallel()
+
+	tests := []string{"input_number", "threshold", "input_boolean"}
+
+	for _, name := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			meta, ok := helperTypes[name]
+			if !ok {
+				t.Fatalf("helperTypes missing entry for %q", name)
+			}
+
+			want := make([]string, 0, len(meta.requiredFields)+len(meta.optionalFields))
+			want = append(want, meta.requiredFields...)
+			want = append(want, meta.optionalFields...)
+
+			got := meta.updatableFieldNames()
+
+			if len(got) != len(want) {
+				t.Fatalf("updatableFieldNames() = %v, want %v", got, want)
+			}
+			for i := range want {
+				if got[i] != want[i] {
+					t.Errorf("updatableFieldNames()[%d] = %q, want %q", i, got[i], want[i])
+				}
+			}
+		})
+	}
+}
+
+// TestManageHelperTool_DescriptionListsUpdatableFields asserts the tool
+// description documents per-type accepted update fields, generated from
+// helperTypes, and that the summary line no longer omits "update".
+func TestManageHelperTool_DescriptionListsUpdatableFields(t *testing.T) {
+	t.Parallel()
+
+	h := NewConsolidatedHelperHandlers()
+	desc := h.manageHelperTool().Description
+
+	if !strings.Contains(desc, "Manage Home Assistant helpers - list, create, update, delete, or get details.") {
+		t.Error("description summary line should mention update")
+	}
+
+	wantSnippets := []string{
+		"input_number: min, max, icon, step, initial, mode, unit_of_measurement",
+		"utility_meter: source, icon, cycle, offset, delta_values, net_consumption, periodically_resetting, tariffs",
+		"input_boolean: icon, initial",
+	}
+	for _, snippet := range wantSnippets {
+		if !strings.Contains(desc, snippet) {
+			t.Errorf("description missing expected per-type field list: %q", snippet)
+		}
 	}
 }
 

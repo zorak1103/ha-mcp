@@ -4,6 +4,7 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/zorak1103/ha-mcp/internal/handlers/formatter"
@@ -47,12 +48,42 @@ const (
 
 // helperTypeMetadata defines metadata for each helper type.
 type helperTypeMetadata struct {
-	platform           string   // Home Assistant platform name
-	entityPrefix       string   // Prefix for resulting entity_id (e.g., "sensor" for derivative)
-	supportedActions   []string // Actions supported by this helper type
-	requiredFields     []string // Fields required for create operation
-	optionalFields     []string // Optional fields for create operation
-	validEntityDomains []string // Valid domains for delete/action validation
+	platform            string   // Home Assistant platform name
+	entityPrefix        string   // Prefix for resulting entity_id (e.g., "sensor" for derivative)
+	supportedActions    []string // Actions supported by this helper type
+	requiredFields      []string // Fields required for create operation
+	optionalFields      []string // Optional fields for create operation
+	validEntityDomains  []string // Valid domains for delete/action validation
+	sourceEntityDomains []string // Required domain(s) of the SOURCE entity; empty = unconstrained
+	sourceEntityField   string   // Which args key holds the source entity_id; empty = sourceEntityDomains also empty
+}
+
+// updatableFieldNames returns the field names accepted on update for this
+// helper type: requiredFields (required only at create time) plus
+// optionalFields — buildHelperConfig/buildConfigEntryUpdateConfig already
+// read from the same arg names regardless of action, so no type needs a
+// smaller updatable set than its create-time field set.
+func (m helperTypeMetadata) updatableFieldNames() []string {
+	return append(append([]string{}, m.requiredFields...), m.optionalFields...)
+}
+
+// updatableFieldsDescription renders a compact per-type "what update
+// accepts" reference, generated from helperTypes so it can never drift
+// from the code — same intent as manage_entity/manage_device's generated
+// "Safe fields" lists.
+func updatableFieldsDescription() string {
+	names := make([]string, 0, len(helperTypes))
+	for name := range helperTypes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var b strings.Builder
+	for _, name := range names {
+		fields := helperTypes[name].updatableFieldNames()
+		fmt.Fprintf(&b, "\n  - %s: %s", name, strings.Join(fields, ", "))
+	}
+	return b.String()
 }
 
 // helperTypes contains metadata for all supported helper types.
@@ -178,12 +209,14 @@ var helperTypes = map[string]helperTypeMetadata{
 		validEntityDomains: []string{"sensor"},
 	},
 	"utility_meter": {
-		platform:           platformUtilityMeter,
-		entityPrefix:       "sensor",
-		supportedActions:   []string{"calibrate"},
-		requiredFields:     []string{"source"},
-		optionalFields:     []string{"icon", "cycle", "offset", "delta_values", "net_consumption", "periodically_resetting", "tariffs"},
-		validEntityDomains: []string{"sensor", "select"},
+		platform:            platformUtilityMeter,
+		entityPrefix:        "sensor",
+		supportedActions:    []string{"calibrate"},
+		requiredFields:      []string{"source"},
+		optionalFields:      []string{"icon", "cycle", "offset", "delta_values", "net_consumption", "periodically_resetting", "tariffs"},
+		validEntityDomains:  []string{"sensor", "select"},
+		sourceEntityDomains: []string{"sensor"},
+		sourceEntityField:   "source",
 	},
 	"min_max": {
 		platform:           platformMinMax,
@@ -194,20 +227,24 @@ var helperTypes = map[string]helperTypeMetadata{
 		validEntityDomains: []string{"sensor"},
 	},
 	"statistics": {
-		platform:           platformStatistics,
-		entityPrefix:       "sensor",
-		supportedActions:   []string{},
-		requiredFields:     []string{"entity_id"},
-		optionalFields:     []string{"icon", "state_characteristic", "sampling_size", "max_age", "percentile", "precision"},
-		validEntityDomains: []string{"sensor"},
+		platform:            platformStatistics,
+		entityPrefix:        "sensor",
+		supportedActions:    []string{},
+		requiredFields:      []string{"entity_id"},
+		optionalFields:      []string{"icon", "state_characteristic", "sampling_size", "max_age", "percentile", "precision"},
+		validEntityDomains:  []string{"sensor"},
+		sourceEntityDomains: []string{"sensor"},
+		sourceEntityField:   attrEntityID,
 	},
 	"trend": {
-		platform:           platformTrend,
-		entityPrefix:       "binary_sensor",
-		supportedActions:   []string{},
-		requiredFields:     []string{"entity_id"},
-		optionalFields:     []string{"icon", "min_gradient", "min_samples", "sample_duration", "max_samples", "invert"},
-		validEntityDomains: []string{"binary_sensor"},
+		platform:            platformTrend,
+		entityPrefix:        "binary_sensor",
+		supportedActions:    []string{},
+		requiredFields:      []string{"entity_id"},
+		optionalFields:      []string{"icon", "min_gradient", "min_samples", "sample_duration", "max_samples", "invert"},
+		validEntityDomains:  []string{"binary_sensor"},
+		sourceEntityDomains: []string{"sensor"},
+		sourceEntityField:   attrEntityID,
 	},
 	"random_sensor": {
 		platform:           platformRandom,
@@ -226,12 +263,14 @@ var helperTypes = map[string]helperTypeMetadata{
 		validEntityDomains: []string{"binary_sensor"},
 	},
 	"filter": {
-		platform:           platformFilter,
-		entityPrefix:       "sensor",
-		supportedActions:   []string{},
-		requiredFields:     []string{"entity_id", "filter"},
-		optionalFields:     []string{"icon", "filters"},
-		validEntityDomains: []string{"sensor"},
+		platform:            platformFilter,
+		entityPrefix:        "sensor",
+		supportedActions:    []string{},
+		requiredFields:      []string{"entity_id", "filter"},
+		optionalFields:      []string{"icon", "filters"},
+		validEntityDomains:  []string{"sensor"},
+		sourceEntityDomains: []string{"sensor"},
+		sourceEntityField:   attrEntityID,
 	},
 	"tod": {
 		platform:           platformTod,
@@ -242,28 +281,34 @@ var helperTypes = map[string]helperTypeMetadata{
 		validEntityDomains: []string{"binary_sensor"},
 	},
 	"generic_thermostat": {
-		platform:           platformGenericThermostat,
-		entityPrefix:       "climate",
-		supportedActions:   []string{},
-		requiredFields:     []string{"heater_entity_id", "target_sensor_entity_id"},
-		optionalFields:     []string{"icon", "ac_mode", "min_temp", "max_temp", "target_temp", "cold_tolerance", "hot_tolerance"},
-		validEntityDomains: []string{"climate"},
+		platform:            platformGenericThermostat,
+		entityPrefix:        "climate",
+		supportedActions:    []string{},
+		requiredFields:      []string{"heater_entity_id", "target_sensor_entity_id"},
+		optionalFields:      []string{"icon", "ac_mode", "min_temp", "max_temp", "target_temp", "cold_tolerance", "hot_tolerance"},
+		validEntityDomains:  []string{"climate"},
+		sourceEntityDomains: []string{"switch"},
+		sourceEntityField:   "heater_entity_id",
 	},
 	"switch_as_x": {
-		platform:           platformSwitchAsX,
-		entityPrefix:       "light",
-		supportedActions:   []string{},
-		requiredFields:     []string{"entity_id", "target_domain"},
-		optionalFields:     []string{"icon", "invert"},
-		validEntityDomains: []string{"cover", "fan", "light", "lock", "siren", "valve"},
+		platform:            platformSwitchAsX,
+		entityPrefix:        "light",
+		supportedActions:    []string{},
+		requiredFields:      []string{"entity_id", "target_domain"},
+		optionalFields:      []string{"icon", "invert"},
+		validEntityDomains:  []string{"cover", "fan", "light", "lock", "siren", "valve"},
+		sourceEntityDomains: []string{"switch"},
+		sourceEntityField:   attrEntityID,
 	},
 	"generic_hygrostat": {
-		platform:           platformGenericHygrostat,
-		entityPrefix:       "humidifier",
-		supportedActions:   []string{},
-		requiredFields:     []string{"humidifier_entity_id", "target_sensor_entity_id"},
-		optionalFields:     []string{"icon", "min_humidity", "max_humidity", "target_humidity", "dry_tolerance", "wet_tolerance"},
-		validEntityDomains: []string{"humidifier"},
+		platform:            platformGenericHygrostat,
+		entityPrefix:        "humidifier",
+		supportedActions:    []string{},
+		requiredFields:      []string{"humidifier_entity_id", "target_sensor_entity_id"},
+		optionalFields:      []string{"icon", "min_humidity", "max_humidity", "target_humidity", "dry_tolerance", "wet_tolerance"},
+		validEntityDomains:  []string{"humidifier"},
+		sourceEntityDomains: []string{"switch"},
+		sourceEntityField:   "humidifier_entity_id",
 	},
 }
 
@@ -517,7 +562,7 @@ func (h *ConsolidatedHelperHandlers) manageHelperTool() mcp.Tool {
 
 	return mcp.Tool{
 		Name: "manage_helper",
-		Description: `Manage Home Assistant helpers - list, create, delete, or get details.
+		Description: `Manage Home Assistant helpers - list, create, update, delete, or get details.
 
 Helper Types:
 - Input helpers: input_boolean, input_number, input_text, input_select, input_datetime, input_button
@@ -533,7 +578,7 @@ Helper Types:
 Actions:
 - list: List all helpers (optional: format=natural|json, verbose=true|false)
 - create: Create a new helper (requires type, id, name)
-- update: Update an existing helper (requires entity_id; supports all helper types including Config Entry helpers via Options Flow)
+- update: Update an existing helper (requires entity_id; supports all helper types including Config Entry helpers via Options Flow). Fields accepted per type:` + updatableFieldsDescription() + `
 - delete: Delete an existing helper (requires entity_id)
 - get_details: Get helper details (requires entity_id)`,
 		InputSchema: mcp.JSONSchema{
