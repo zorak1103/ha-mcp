@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"sort"
 	"strings"
@@ -69,48 +70,73 @@ type helperTypeMetadata struct {
 	sourceEntities     []sourceEntityConstraint // Domain constraints on source-entity args fields; empty = unconstrained
 }
 
-// updateExcludedFields lists create-time field names that are NOT actually
-// consumed by the update path, despite appearing in a type's
-// requiredFields/optionalFields. These exist for two different reasons:
+// globalUpdateExcludedFields lists create-time field names that are NOT
+// actually consumed by the update path for ANY helper type that declares
+// them, because the name collides with something the update call itself
+// reserves:
 //   - "entity_id": on update this is the tool's own "which helper are we
 //     updating" identifier (handleUpdate reads args["entity_id"] for that),
 //     not a per-platform config value. buildConfigEntryUpdateConfig
 //     deliberately never forwards it (see CLAUDE.md's gotcha on this - a
 //     prior version forwarded it and silently overwrote e.g. a threshold's
-//     monitored entity with the helper's own id).
-//   - "filter": the filter-type selector consumed only by the create-time
-//     builder (buildFilterConfig, helpers_config_builders_extended.go) to
-//     pick which filter algorithm to seed; addExtendedConfigEntryFields only
-//     ever reads the plural "filters" (the configured filter chain) on
-//     update, never singular "filter".
-//   - "type" (min_max only): the min/max/mean/etc. calculation selector.
-//     addExtendedConfigEntryFields's min_max section forwards only
-//     entity_ids and round_digits on update - "type" simply isn't wired up,
-//     so it cannot be changed via manage_helper update today. Unlike
-//     entity_id/filter this isn't a deliberate exclusion, it's a real gap;
-//     documented here rather than silently advertised as working.
+//     monitored entity with the helper's own id). Every type that declares
+//     "entity_id" (statistics, trend, filter, switch_as_x, threshold) hits
+//     the same collision, so this applies globally rather than per type.
 //
 // TestUpdatableFields_AreActuallyReadByUpdatePath enforces that every
 // remaining name in updatableFieldNames() actually round-trips through the
 // real update builder, so a future field that stops being read on update
 // fails a test rather than silently drifting from the generated docs.
-var updateExcludedFields = map[string]bool{
+var globalUpdateExcludedFields = map[string]bool{
 	attrEntityID: true,
-	"filter":     true,
-	"type":       true,
+}
+
+// perTypeUpdateExcludedFields lists (helper type -> field) exclusions that
+// apply only to that specific type, because a sibling type sharing the same
+// field name doesn't have the same problem:
+//   - filter/"filter": the filter-type selector consumed only by the
+//     create-time builder (buildFilterConfig,
+//     helpers_config_builders_extended.go) to pick which filter algorithm to
+//     seed; addExtendedConfigEntryFields only ever reads the plural
+//     "filters" (the configured filter chain) on update, never singular
+//     "filter".
+//   - min_max/"type": the min/max/mean/etc. calculation selector.
+//     addExtendedConfigEntryFields's min_max section forwards only
+//     entity_ids and round_digits on update - "type" simply isn't wired up,
+//     so it cannot be changed via manage_helper update today. Unlike the
+//     other entries this isn't a deliberate exclusion, it's a real gap;
+//     documented here rather than silently advertised as working.
+//   - input_boolean/input_select/input_text/input_datetime "initial": these
+//     four types' HA entities do not expose "initial" as a state attribute
+//     (only input_number and counter do; verified against Home Assistant
+//     core's extra_state_attributes for each). mergeCurrentHelperState can
+//     never recover an omitted "initial" for these types, so a partial
+//     update would silently reset it to empty - advertising it as updatable
+//     would be false. input_number/counter DO expose it and are therefore
+//     NOT excluded.
+var perTypeUpdateExcludedFields = map[string]map[string]bool{
+	"filter":         {"filter": true},
+	"min_max":        {"type": true},
+	"input_boolean":  {"initial": true},
+	"input_select":   {"initial": true},
+	"input_text":     {"initial": true},
+	"input_datetime": {"initial": true},
 }
 
 // updatableFieldNames returns the field names accepted on update for this
-// helper type: requiredFields (required only at create time) plus
-// optionalFields, minus updateExcludedFields (names that collide with
-// something else on update and are never forwarded to HA - see its doc).
-func (m helperTypeMetadata) updatableFieldNames() []string {
+// helper type (identified by typeName, its key in helperTypes):
+// requiredFields (required only at create time) plus optionalFields, minus
+// globalUpdateExcludedFields and perTypeUpdateExcludedFields[typeName]
+// (names that are never forwarded to HA on update - see their docs above).
+func (m helperTypeMetadata) updatableFieldNames(typeName string) []string {
 	all := append(append([]string{}, m.requiredFields...), m.optionalFields...)
+	excludedForType := perTypeUpdateExcludedFields[typeName]
 	names := make([]string, 0, len(all))
 	for _, name := range all {
-		if !updateExcludedFields[name] {
-			names = append(names, name)
+		if globalUpdateExcludedFields[name] || excludedForType[name] {
+			continue
 		}
+		names = append(names, name)
 	}
 	return names
 }
@@ -130,8 +156,9 @@ func updatableFieldsDescription() string {
 
 	var b strings.Builder
 	for _, name := range names {
-		fields := make([]string, 0, len(helperTypes[name].updatableFieldNames()))
-		for _, field := range helperTypes[name].updatableFieldNames() {
+		updatable := helperTypes[name].updatableFieldNames(name)
+		fields := make([]string, 0, len(updatable))
+		for _, field := range updatable {
 			if field != "icon" {
 				fields = append(fields, field)
 			}
@@ -930,15 +957,6 @@ func (h *ConsolidatedHelperHandlers) handleUpdate(ctx context.Context, client ho
 		return errorResult(err.Error()), nil
 	}
 
-	// Re-validate domain-constrained source fields (utility_meter,
-	// generic_thermostat, generic_hygrostat) before touching them - create's
-	// checkSourceEntityDomain preflight doesn't cover update, which can
-	// repoint the same fields at a mismatched entity and only surface HA's
-	// opaque config-flow error.
-	if err := checkUpdateSourceEntityDomain(ctx, client, entityID, args); err != nil {
-		return errorResult(err.Error()), nil
-	}
-
 	// Extract platform and helper ID from entity_id
 	platform, helperID := ParseHelperEntityID(entityID)
 	if platform == "" || helperID == "" {
@@ -952,6 +970,24 @@ func (h *ConsolidatedHelperHandlers) handleUpdate(ctx context.Context, client ho
 
 	// Get metadata for validation
 	meta, ok := helperTypes[helperType]
+
+	// Re-validate domain-constrained source fields (utility_meter,
+	// generic_thermostat, generic_hygrostat) before touching them - create's
+	// checkSourceEntityDomain preflight doesn't cover update, which can
+	// repoint the same fields at a mismatched entity and only surface HA's
+	// opaque config-flow error. Skipped for genuine WebSocket helper types
+	// (input_*, counter, timer, schedule, group): none of the 7
+	// source-constrained types can ever reach this branch (their entities
+	// live under sensor/binary_sensor/climate/humidifier/select, not under a
+	// helperTypes key matching their own platform name), so paying a full
+	// entity-registry fetch here on every input_boolean/counter/... update
+	// would buy nothing.
+	if !ok || homeassistant.RequiresConfigEntryFlow(meta.platform) {
+		if err := checkUpdateSourceEntityDomain(ctx, client, entityID, args); err != nil {
+			return errorResult(err.Error()), nil
+		}
+	}
+
 	var config map[string]any
 	var err error
 
@@ -990,14 +1026,22 @@ func (h *ConsolidatedHelperHandlers) handleUpdate(ctx context.Context, client ho
 
 // buildKnownTypeUpdateConfig builds the update config for a helperType that
 // has an entry in helperTypes. The map key matching the platform does NOT by
-// itself mean this is a WebSocket helper: "group" (and, since their platform
-// name also equals their map key, "threshold" and "derivative") are keys in
-// helperTypes but are genuine Config Entry Flow platforms
-// (homeassistant.RequiresConfigEntryFlow(...) == true). Only genuine
-// WebSocket helper types get the current-state merge (issue #161) - these
-// Config Entry types keep taking the pre-#161 unmerged path, matching their
-// Config Entry Flow update semantics (mergeOptionsFlowConfig, a different
-// layer, already handles that merge for them).
+// itself mean this is a WebSocket helper: "group" is a key in helperTypes
+// but is a genuine Config Entry Flow platform
+// (homeassistant.RequiresConfigEntryFlow("group") == true). "threshold" and
+// "derivative" are also Config Entry Flow platforms and also happen to have
+// map key == platform name, but they never reach this function at all -
+// their entities live under binary_sensor.*/sensor.*, so
+// ParseHelperEntityID's platform for them is "binary_sensor"/"sensor" (not
+// "threshold"/"derivative"), and handleUpdate's helperTypes[helperType]
+// lookup misses, routing them through buildConfigEntryUpdateConfig instead.
+// "group" is the only type where a helperTypes key match still requires
+// this Config-Entry-Flow branch, because plain "group" entities keep their
+// own domain as both their entity prefix and their map key. Only genuine
+// WebSocket helper types get the current-state merge (issue #161) - Config
+// Entry types keep taking the pre-#161 unmerged path, matching their Config
+// Entry Flow update semantics (mergeOptionsFlowConfig, a different layer,
+// already handles that merge for them).
 func buildKnownTypeUpdateConfig(ctx context.Context, client homeassistant.Client, entityID, helperType string, meta helperTypeMetadata, args map[string]any) (map[string]any, error) {
 	var updateName string
 	effectiveArgs := args
@@ -1010,7 +1054,7 @@ func buildKnownTypeUpdateConfig(ctx context.Context, client homeassistant.Client
 		// Known WebSocket helper type - merge current state so an update that
 		// omits an optional/required field keeps its current value instead of
 		// HA's <platform>/update resetting it to empty (#161).
-		merged, currentName, ok := mergeCurrentHelperState(ctx, client, entityID, meta, args)
+		merged, currentName, ok := mergeCurrentHelperState(ctx, client, entityID, helperType, meta, args)
 		if !ok {
 			return nil, fmt.Errorf(
 				"cannot update %s: failed to read its current configuration, and %s's update API replaces all fields (omitted fields would be reset to their defaults). Retry, or verify the entity exists",
@@ -1044,9 +1088,9 @@ func buildKnownTypeUpdateConfig(ctx context.Context, client homeassistant.Client
 // config-relevant attributes with the caller's args, so an update omitting
 // an optional/required field keeps the current value instead of HA
 // resetting it to empty (issue #161). Filters strictly to
-// meta.updatableFieldNames() - state attributes include runtime-only keys
-// that must not be echoed back into an update payload verbatim under their
-// own name.
+// meta.updatableFieldNames(typeName) - state attributes include runtime-only
+// keys that must not be echoed back into an update payload verbatim under
+// their own name.
 //
 // The returned ok is false when the current-state fetch itself failed. WS
 // "<platform>/update" commands replace the entire config, so a partial
@@ -1057,26 +1101,35 @@ func buildKnownTypeUpdateConfig(ctx context.Context, client homeassistant.Client
 // isYAMLDefinedEntity "checked=false, proceed anyway" convention
 // (yaml_defined.go:19-20), because skipping that check only skips a
 // nice-to-have validation, while skipping this one silently destroys data.
-func mergeCurrentHelperState(ctx context.Context, client homeassistant.Client, entityID string, meta helperTypeMetadata, args map[string]any) (merged map[string]any, currentName string, ok bool) {
+func mergeCurrentHelperState(ctx context.Context, client homeassistant.Client, entityID, typeName string, meta helperTypeMetadata, args map[string]any) (merged map[string]any, currentName string, ok bool) {
 	merged = make(map[string]any)
+	fields := meta.updatableFieldNames(typeName)
 
 	if meta.platform == platformSchedule {
 		current, err := client.GetScheduleConfig(ctx, entityID)
 		if err != nil {
 			return nil, "", false
 		}
-		for _, field := range meta.updatableFieldNames() {
-			if v, exists := current[field]; exists {
+		for _, field := range fields {
+			if v, exists := current[field]; exists && v != nil {
 				merged[field] = v
 			}
+		}
+		// GetScheduleConfig's map is schedule/list's raw entry, which includes
+		// "name" alongside the day fields - unlike GetState's Attributes,
+		// where friendly_name is a separate key handled below. Without this,
+		// an update omitting "name" would delete it from the payload and
+		// HA's schedule/update (which requires "name") would reject the call.
+		if name, exists := current["name"].(string); exists && name != "" {
+			currentName = name
 		}
 	} else {
 		state, err := client.GetState(ctx, entityID)
 		if err != nil {
 			return nil, "", false
 		}
-		for _, field := range meta.updatableFieldNames() {
-			if v, exists := state.Attributes[field]; exists {
+		for _, field := range fields {
+			if v, exists := state.Attributes[field]; exists && v != nil {
 				merged[field] = v
 			}
 		}
@@ -2161,6 +2214,7 @@ func validateRequiredFields(helperType string, meta helperTypeMetadata, args map
 // generic_hygrostat each constrain both their actuator field and
 // target_sensor_entity_id); every constraint is checked, not just the first.
 func checkSourceEntityDomain(helperType string, constraints []sourceEntityConstraint, args map[string]any) error {
+	var errs []error
 	for _, constraint := range constraints {
 		sourceEntityID, _ := args[constraint.field].(string)
 		if sourceEntityID == "" {
@@ -2174,18 +2228,17 @@ func checkSourceEntityDomain(helperType string, constraints []sourceEntityConstr
 			"%s field %q requires a %s.* entity, got %q (domain %q).",
 			helperType, constraint.field, strings.Join(constraint.domains, "/"), sourceEntityID, domain,
 		)
-		// Only append the wrapper recipe when sourceEntityID is a well-formed
-		// entity_id. wrapperRecipeFor interpolates it unescaped into a Jinja
-		// template string inside a ready-to-run manage_helper call; a
-		// malformed value (e.g. containing "') }}{{ ") could otherwise turn
-		// an error message into a template-injection payload that an agent
-		// might copy-paste and execute.
-		if ValidateEntityID(sourceEntityID) == nil {
-			msg += " " + wrapperRecipeFor(constraint.domains[0], sourceEntityID)
+		// wrapperRecipeFor returns "" for a malformed sourceEntityID rather
+		// than interpolating it into the recipe - see its doc comment.
+		if recipe := wrapperRecipeFor(constraint.domains[0], sourceEntityID); recipe != "" {
+			msg += " " + recipe
 		}
-		return errors.New(msg)
+		errs = append(errs, errors.New(msg))
 	}
-	return nil
+	// generic_thermostat/generic_hygrostat constrain two fields each - join
+	// so a caller who gets both wrong sees both problems in one round-trip
+	// instead of fixing one, retrying, and hitting the other.
+	return errors.Join(errs...)
 }
 
 // sourceConstrainedTypes indexes helperTypes entries that have at least one
@@ -2237,6 +2290,12 @@ func updatableSourceEntities(constraints []sourceEntityConstraint) []sourceEntit
 func checkUpdateSourceEntityDomain(ctx context.Context, client homeassistant.Client, entityID string, args map[string]any) error {
 	entries, err := client.GetEntityRegistry(ctx)
 	if err != nil {
+		// Degrades to an unchecked update rather than blocking a legitimate
+		// edit (see doc comment above), but a permanently-broken registry
+		// fetch is otherwise indistinguishable from a passing check - log it
+		// so the gap is at least visible.
+		slog.WarnContext(ctx, "source-domain update validation skipped: entity registry fetch failed",
+			"entity_id", entityID, "error", err)
 		return nil //nolint:nilerr // registry lookup failure degrades to an unchecked update, see doc comment above
 	}
 	for _, entry := range entries {
@@ -2249,17 +2308,27 @@ func checkUpdateSourceEntityDomain(ctx context.Context, client homeassistant.Cli
 		}
 		return checkSourceEntityDomain(entry.Platform, updatableSourceEntities(meta.sourceEntities), args)
 	}
+	slog.WarnContext(ctx, "source-domain update validation skipped: entity not found in registry", "entity_id", entityID)
 	return nil
 }
 
 // wrapperRecipeFor returns an actionable next step for a source-domain
-// mismatch. For a sensor requirement it's a ready-to-run manage_helper
-// template_sensor wrapper recipe (manage_helper can create that type
-// today). For a switch requirement it's an honest pointer at the Home
-// Assistant UI, since manage_helper cannot create a template switch
+// mismatch, or "" if sourceEntityID is not a well-formed entity_id. The
+// well-formedness check is enforced here, at the sink, rather than at each
+// call site: wrapperRecipeFor interpolates sourceEntityID unescaped into a
+// Jinja template string inside a ready-to-run manage_helper call, and a
+// malformed value (e.g. containing "') }}{{ ") could otherwise turn an
+// error message into a template-injection payload that an agent might
+// copy-paste and execute. For a sensor requirement it's a ready-to-run
+// manage_helper template_sensor wrapper recipe (manage_helper can create
+// that type today). For a switch requirement it's an honest pointer at the
+// Home Assistant UI, since manage_helper cannot create a template switch
 // wrapper yet - fabricating a manage_helper call for a helper type that
 // doesn't exist would just trade one failure for another.
 func wrapperRecipeFor(requiredDomain, sourceEntityID string) string {
+	if ValidateEntityID(sourceEntityID) != nil {
+		return ""
+	}
 	if requiredDomain == platformSensorEntity {
 		return fmt.Sprintf(
 			`Wrap it first: manage_helper(action="create", type="template_sensor", id="<wrapper_id>", name="<Wrapper Name>", state="{{ states('%s') | float(0) }}", unit_of_measurement="<unit>", state_class="measurement")`,

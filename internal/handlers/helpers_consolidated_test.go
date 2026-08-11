@@ -1622,6 +1622,13 @@ func TestManageHelper_Update_PartialInputSelect(t *testing.T) {
 // TestManageHelper_Update_PartialSchedule verifies the merge for the
 // schedule helper type, which fetches current config via GetScheduleConfig
 // rather than GetState.
+// TestManageHelper_Update_PartialSchedule verifies that updating a schedule
+// while omitting both "name" and every day but the one being changed
+// preserves the existing day blocks AND the current name - regression test
+// for the W1 gap where the schedule branch of mergeCurrentHelperState never
+// populated currentName, so an update omitting "name" deleted it from the
+// payload and HA's schedule/update (which requires "name") rejected the
+// call outright.
 func TestManageHelper_Update_PartialSchedule(t *testing.T) {
 	t.Parallel()
 
@@ -1630,6 +1637,7 @@ func TestManageHelper_Update_PartialSchedule(t *testing.T) {
 	client := &UniversalMockClient{}
 	client.GetScheduleConfigFn = func(_ context.Context, _ string) (map[string]any, error) {
 		return map[string]any{
+			"name": "Work Hours",
 			"monday": []any{
 				map[string]any{"from": "08:00:00", "to": "09:00:00"},
 			},
@@ -1649,13 +1657,16 @@ func TestManageHelper_Update_PartialSchedule(t *testing.T) {
 	result, err := h.handleManageHelper(ctx, client, map[string]any{
 		"action":    "update",
 		"entity_id": entityID,
-		"name":      "New",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if result.IsError {
 		t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+	}
+
+	if capturedConfig.Config["name"] != "Work Hours" {
+		t.Errorf("Config[\"name\"] = %v, want the current name to survive an update that omits it", capturedConfig.Config["name"])
 	}
 
 	monday, ok := capturedConfig.Config["monday"].([]any)
@@ -3632,7 +3643,7 @@ func TestUpdatableFields_AreActuallyReadByUpdatePath(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			fields := meta.updatableFieldNames()
+			fields := meta.updatableFieldNames(name)
 			args := make(map[string]any, len(fields))
 			for _, field := range fields {
 				args[field] = updatableFieldSentinel(name, field)
@@ -3659,7 +3670,118 @@ func TestUpdatableFields_AreActuallyReadByUpdatePath(t *testing.T) {
 					key = alias
 				}
 				if _, present := config[key]; !present {
-					t.Errorf("field %q (config key %q) is listed as updatable for %q but was not read by the update builder - add it to updateExcludedFields or fix the builder", field, key, name)
+					t.Errorf("field %q (config key %q) is listed as updatable for %q but was not read by the update builder - add it to perTypeUpdateExcludedFields or fix the builder", field, key, name)
+				}
+			}
+		})
+	}
+}
+
+// realHelperStateAttributes returns the exact set of attribute keys real
+// Home Assistant exposes for a WebSocket helper type's entity state (via
+// GetState) or, for schedule, its stored config (via GetScheduleConfig) -
+// verified against Home Assistant core's extra_state_attributes/
+// capability_attributes for each platform (input_number, input_text,
+// input_select: NumberEntity/TextEntity/SelectEntity capability_attributes;
+// input_datetime: capability_attributes for has_date/has_time but NOT
+// "initial", which no input_* type re-exposes except input_number/counter).
+// "icon" is added by the caller for every type (a standard Entity attribute,
+// not platform-specific), and schedule's day-of-week blocks are added by the
+// caller too (schedule/list returns the stored config verbatim, not a
+// derived entity state, so every configured field round-trips - that's the
+// reason mergeCurrentHelperState special-cases schedule to call
+// GetScheduleConfig instead of GetState). Deliberately excludes "initial"
+// everywhere except input_number/counter, mirroring
+// perTypeUpdateExcludedFields - this is what makes
+// TestMergeCurrentHelperState_OnlyAdvertisesRecoverableFields a genuine
+// regression guard rather than a tautology: if it listed whatever
+// updatableFieldNames() currently returns, it could never catch a mismatch
+// between the two.
+func realHelperStateAttributes(typeName string) map[string]any {
+	switch typeName {
+	case "input_boolean", "input_button":
+		return map[string]any{"editable": true}
+	case "input_number":
+		return map[string]any{
+			"editable": true, "initial": 5.0, "min": 0.0, "max": 100.0,
+			"step": 1.0, "mode": "slider", "unit_of_measurement": "%",
+		}
+	case "input_text":
+		return map[string]any{
+			"editable": true, "min": 0.0, "max": 100.0, "mode": "text", "pattern": "^[a-z]+$",
+		}
+	case "input_select":
+		return map[string]any{"editable": true, "options": []any{"a", "b"}}
+	case "input_datetime":
+		return map[string]any{"editable": true, "has_date": true, "has_time": true}
+	case "counter":
+		return map[string]any{
+			"editable": true, "initial": 0.0, "step": 1.0, "minimum": 0.0, "maximum": 100.0,
+		}
+	case "timer":
+		return map[string]any{"duration": "0:05:00", "restore": true}
+	case "schedule":
+		block := []any{map[string]any{"from": "08:00:00", "to": "09:00:00"}}
+		return map[string]any{
+			"monday": block, "tuesday": block, "wednesday": block, "thursday": block,
+			"friday": block, "saturday": block, "sunday": block,
+		}
+	default:
+		return map[string]any{}
+	}
+}
+
+// TestMergeCurrentHelperState_OnlyAdvertisesRecoverableFields is the mirror
+// of TestUpdatableFields_AreActuallyReadByUpdatePath: that test proves every
+// updatableFieldNames() entry is READ by the update builder given the field;
+// this test proves every entry can actually be RECOVERED by
+// mergeCurrentHelperState from what real Home Assistant exposes, given a
+// caller who omits every optional field. Without this, updatableFieldNames()
+// can advertise a field the merge can never fill in (as it did for
+// input_boolean/input_select/input_text/input_datetime's "initial" before
+// perTypeUpdateExcludedFields added them - GetState's real Attributes never
+// contain "initial" for those four types, so a caller-omitted "initial"
+// silently vanished from the update payload instead of round-tripping,
+// despite the tool description and the create/update-symmetry assumption
+// both promising it would).
+func TestMergeCurrentHelperState_OnlyAdvertisesRecoverableFields(t *testing.T) {
+	t.Parallel()
+
+	for name, meta := range helperTypes {
+		if homeassistant.RequiresConfigEntryFlow(meta.platform) {
+			continue // not reached via mergeCurrentHelperState - see buildKnownTypeUpdateConfig
+		}
+
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			entityID := meta.entityPrefix + ".test_entity"
+			client := &UniversalMockClient{}
+			attrs := realHelperStateAttributes(name)
+			attrs["icon"] = "mdi:test"
+			if meta.platform == platformSchedule {
+				client.GetScheduleConfigFn = func(context.Context, string) (map[string]any, error) {
+					config := make(map[string]any, len(attrs)+1)
+					for k, v := range attrs {
+						config[k] = v
+					}
+					config["name"] = "Current Name"
+					return config, nil
+				}
+			} else {
+				client.GetStateFn = func(context.Context, string) (*homeassistant.Entity, error) {
+					return &homeassistant.Entity{EntityID: entityID, Attributes: attrs}, nil
+				}
+			}
+
+			merged, _, ok := mergeCurrentHelperState(context.Background(), client, entityID, name, meta, map[string]any{})
+			if !ok {
+				t.Fatalf("mergeCurrentHelperState returned ok=false")
+			}
+
+			for _, field := range meta.updatableFieldNames(name) {
+				if _, present := merged[field]; !present {
+					t.Errorf("field %q is advertised as updatable for %q but real Home Assistant state/config does not expose it, so an omitted value can never be recovered - add it to perTypeUpdateExcludedFields", field, name)
 				}
 			}
 		})
@@ -3715,7 +3837,7 @@ func TestManageHelperTool_DescriptionListsUpdatableFields(t *testing.T) {
 			if field == "icon" {
 				t.Errorf("%q: icon should be hoisted out of per-type lines, not repeated", name)
 			}
-			if updateExcludedFields[field] {
+			if globalUpdateExcludedFields[field] || perTypeUpdateExcludedFields[name][field] {
 				t.Errorf("%q: excluded field %q leaked into the generated description", name, field)
 			}
 		}
