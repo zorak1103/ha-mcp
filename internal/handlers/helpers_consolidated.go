@@ -888,22 +888,17 @@ func (h *ConsolidatedHelperHandlers) handleUpdate(ctx context.Context, client ho
 	helperType := platform
 
 	// Get metadata for validation
-	_, ok := helperTypes[helperType]
+	meta, ok := helperTypes[helperType]
 	var config map[string]any
 	var err error
 
 	if ok {
-		// Known WebSocket helper type - use metadata-driven config builder
-		updateName, _ := args["name"].(string)
-		config, err = buildHelperConfig(helperType, updateName, args)
+		// The map key matching platform ("ok") only tells us this platform has
+		// metadata - it does NOT mean it's a WebSocket helper. See
+		// buildKnownTypeUpdateConfig for why "group" must not take the merge path.
+		config, err = buildKnownTypeUpdateConfig(ctx, client, entityID, helperType, meta, args)
 		if err != nil {
 			return errorResult(err.Error()), nil
-		}
-
-		// Remove name from config if it wasn't explicitly provided
-		// (buildHelperConfig adds empty name by default)
-		if _, hasName := args["name"]; !hasName {
-			delete(config, "name")
 		}
 	} else {
 		// Unknown helper type (sensor/binary_sensor without metadata)
@@ -928,6 +923,95 @@ func (h *ConsolidatedHelperHandlers) handleUpdate(ctx context.Context, client ho
 	}
 
 	return successResult(fmt.Sprintf("Helper '%s' updated successfully", entityID)), nil
+}
+
+// buildKnownTypeUpdateConfig builds the update config for a helperType that
+// has an entry in helperTypes. The map key matching the platform does NOT by
+// itself mean this is a WebSocket helper: "group" is a key in helperTypes
+// (platform == "group") but is a genuine Config Entry Flow platform
+// (homeassistant.RequiresConfigEntryFlow("group") == true). Only genuine
+// WebSocket helper types get the current-state merge (issue #161) - group
+// keeps taking the pre-#161 unmerged path, matching its Config Entry Flow
+// update semantics (mergeOptionsFlowConfig, a different layer, already
+// handles that merge for it).
+func buildKnownTypeUpdateConfig(ctx context.Context, client homeassistant.Client, entityID, helperType string, meta helperTypeMetadata, args map[string]any) (map[string]any, error) {
+	var updateName string
+	effectiveArgs := args
+
+	if homeassistant.RequiresConfigEntryFlow(meta.platform) {
+		// Config Entry platform reached via the metadata branch (group) -
+		// behave exactly as before the #161 fix: unmerged args only.
+		updateName, _ = args["name"].(string)
+	} else {
+		// Known WebSocket helper type - merge current state so an update that
+		// omits an optional/required field keeps its current value instead of
+		// HA's <platform>/update resetting it to empty (#161).
+		effectiveArgs = mergeCurrentHelperState(ctx, client, entityID, meta, args)
+		if name, hasName := args["name"].(string); hasName && name != "" {
+			updateName = name
+		} else if fn, hasFriendlyName := effectiveArgs["friendly_name"].(string); hasFriendlyName {
+			updateName = fn
+		}
+	}
+
+	config, err := buildHelperConfig(helperType, updateName, effectiveArgs)
+	if err != nil {
+		return nil, err
+	}
+
+	// Remove name from config unless the caller supplied one or the merge
+	// found a current friendly_name to preserve (buildHelperConfig adds an
+	// empty name by default).
+	if updateName == "" {
+		delete(config, "name")
+	}
+
+	return config, nil
+}
+
+// mergeCurrentHelperState fetches entity_id's current state and merges its
+// config-relevant attributes with the caller's args, so an update omitting
+// an optional/required field keeps the current value instead of HA
+// resetting it to empty (issue #161). Filters strictly to
+// meta.updatableFieldNames() - state attributes include runtime-only keys
+// (editable, friendly_name is handled separately below) that must not be
+// echoed back into an update payload verbatim under their own name.
+// Best-effort: a failed state fetch degrades to args-only (today's
+// behavior), it does not fail the update - mirrors the existing
+// isYAMLDefinedEntity "checked=false, proceed anyway" convention
+// (yaml_defined.go:19-20).
+func mergeCurrentHelperState(ctx context.Context, client homeassistant.Client, entityID string, meta helperTypeMetadata, args map[string]any) map[string]any {
+	merged := make(map[string]any)
+
+	if meta.platform == platformSchedule {
+		if current, err := client.GetScheduleConfig(ctx, entityID); err == nil {
+			for _, field := range meta.updatableFieldNames() {
+				if v, ok := current[field]; ok {
+					merged[field] = v
+				}
+			}
+		}
+	} else if state, err := client.GetState(ctx, entityID); err == nil {
+		for _, field := range meta.updatableFieldNames() {
+			if v, ok := state.Attributes[field]; ok {
+				merged[field] = v
+			}
+		}
+		// Also preserve the display name: HA's <platform>/update requires
+		// "name" in every payload, but "name" isn't itself in
+		// updatableFieldNames() (it's not a create/update field, it's
+		// passed as buildHelperConfig's separate name argument). Surface
+		// it here so the caller can fall back to it when args has no name.
+		if fn, ok := state.Attributes["friendly_name"].(string); ok && fn != "" {
+			merged["friendly_name"] = fn
+		}
+	}
+
+	for k, v := range args {
+		merged[k] = v // caller-supplied values always win
+	}
+
+	return merged
 }
 
 func (h *ConsolidatedHelperHandlers) handleDelete(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {

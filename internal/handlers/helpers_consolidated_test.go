@@ -3,6 +3,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -1343,6 +1344,289 @@ func TestManageHelper_Update_GenericHygrostatStillDefaultsDeviceClass(t *testing
 
 	if dc, ok := capturedConfig.Config["device_class"].(string); !ok || dc != "humidifier" {
 		t.Errorf("generic_hygrostat update should still default device_class to \"humidifier\"; got config: %v", capturedConfig.Config)
+	}
+}
+
+// =============================================================================
+// manage_helper - Update Partial-Merge Tests (issue #161)
+//
+// wsClientImpl.UpdateHelper sends the caller's config.Config as a full
+// replacement to HA's <platform>/update WS command, so updating a WebSocket
+// helper's "name" alone would otherwise silently reset every other field
+// (e.g. an input_number's min/max) to empty. These tests verify
+// mergeCurrentHelperState fills in the caller's omitted fields from the
+// entity's current state/config before the update payload is built.
+// =============================================================================
+
+// TestManageHelper_Update_PartialInputNumber verifies that updating an
+// input_number with only "name" preserves its current min/max/step by
+// merging them in from GetState before building the update config.
+func TestManageHelper_Update_PartialInputNumber(t *testing.T) {
+	t.Parallel()
+
+	entityID := "input_number.test_number"
+	var capturedConfig homeassistant.HelperConfig
+	client := &UniversalMockClient{}
+	client.GetStateFn = func(_ context.Context, _ string) (*homeassistant.Entity, error) {
+		return &homeassistant.Entity{
+			EntityID:   entityID,
+			Attributes: map[string]any{"min": 10.0, "max": 100.0, "step": 1.0},
+		}, nil
+	}
+	client.UpdateHelperFn = func(_ context.Context, _ string, cfg homeassistant.HelperConfig) error {
+		capturedConfig = cfg
+		return nil
+	}
+
+	ctx := mcp.WithWaitConfig(context.Background(), mcp.WaitConfig{
+		Timeout:      50 * time.Millisecond,
+		PollInterval: 5 * time.Millisecond,
+	})
+
+	h := NewConsolidatedHelperHandlers()
+	result, err := h.handleManageHelper(ctx, client, map[string]any{
+		"action":    "update",
+		"entity_id": entityID,
+		"name":      "New Name",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+	}
+
+	if got, ok := capturedConfig.Config["min"].(float64); !ok || got != 10.0 {
+		t.Errorf("Config[\"min\"] = %v, want 10.0 (should be preserved from current state)", capturedConfig.Config["min"])
+	}
+	if got, ok := capturedConfig.Config["max"].(float64); !ok || got != 100.0 {
+		t.Errorf("Config[\"max\"] = %v, want 100.0 (should be preserved from current state)", capturedConfig.Config["max"])
+	}
+}
+
+// TestManageHelper_Update_PartialInputSelect verifies the same merge
+// behavior for a slice-valued field (options).
+func TestManageHelper_Update_PartialInputSelect(t *testing.T) {
+	t.Parallel()
+
+	entityID := "input_select.mode"
+	var capturedConfig homeassistant.HelperConfig
+	client := &UniversalMockClient{}
+	client.GetStateFn = func(_ context.Context, _ string) (*homeassistant.Entity, error) {
+		return &homeassistant.Entity{
+			EntityID:   entityID,
+			Attributes: map[string]any{"options": []any{"a", "b", "c"}},
+		}, nil
+	}
+	client.UpdateHelperFn = func(_ context.Context, _ string, cfg homeassistant.HelperConfig) error {
+		capturedConfig = cfg
+		return nil
+	}
+
+	ctx := mcp.WithWaitConfig(context.Background(), mcp.WaitConfig{
+		Timeout:      50 * time.Millisecond,
+		PollInterval: 5 * time.Millisecond,
+	})
+
+	h := NewConsolidatedHelperHandlers()
+	result, err := h.handleManageHelper(ctx, client, map[string]any{
+		"action":    "update",
+		"entity_id": entityID,
+		"name":      "New Name",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+	}
+
+	options, ok := capturedConfig.Config["options"].([]string)
+	if !ok {
+		t.Fatalf("Config[\"options\"] missing or wrong type; got: %v", capturedConfig.Config["options"])
+	}
+	want := []string{"a", "b", "c"}
+	if len(options) != len(want) {
+		t.Fatalf("Config[\"options\"] = %v, want %v", options, want)
+	}
+	for i, v := range want {
+		if options[i] != v {
+			t.Errorf("Config[\"options\"][%d] = %q, want %q", i, options[i], v)
+		}
+	}
+}
+
+// TestManageHelper_Update_PartialSchedule verifies the merge for the
+// schedule helper type, which fetches current config via GetScheduleConfig
+// rather than GetState.
+func TestManageHelper_Update_PartialSchedule(t *testing.T) {
+	t.Parallel()
+
+	entityID := "schedule.work_hours"
+	var capturedConfig homeassistant.HelperConfig
+	client := &UniversalMockClient{}
+	client.GetScheduleConfigFn = func(_ context.Context, _ string) (map[string]any, error) {
+		return map[string]any{
+			"monday": []any{
+				map[string]any{"from": "08:00:00", "to": "09:00:00"},
+			},
+		}, nil
+	}
+	client.UpdateHelperFn = func(_ context.Context, _ string, cfg homeassistant.HelperConfig) error {
+		capturedConfig = cfg
+		return nil
+	}
+
+	ctx := mcp.WithWaitConfig(context.Background(), mcp.WaitConfig{
+		Timeout:      50 * time.Millisecond,
+		PollInterval: 5 * time.Millisecond,
+	})
+
+	h := NewConsolidatedHelperHandlers()
+	result, err := h.handleManageHelper(ctx, client, map[string]any{
+		"action":    "update",
+		"entity_id": entityID,
+		"name":      "New",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+	}
+
+	monday, ok := capturedConfig.Config["monday"].([]any)
+	if !ok || len(monday) != 1 {
+		t.Fatalf("Config[\"monday\"] = %v, want the day-block from GetScheduleConfig to survive", capturedConfig.Config["monday"])
+	}
+	block, ok := monday[0].(map[string]any)
+	if !ok || block["from"] != "08:00:00" || block["to"] != "09:00:00" {
+		t.Errorf("Config[\"monday\"][0] = %v, want {from: 08:00:00, to: 09:00:00}", monday[0])
+	}
+}
+
+// TestManageHelper_Update_PreservesName verifies that when the caller omits
+// "name", the merge falls back to the entity's current friendly_name instead
+// of stripping the name field from the update payload.
+func TestManageHelper_Update_PreservesName(t *testing.T) {
+	t.Parallel()
+
+	entityID := "input_number.test_number"
+	var capturedConfig homeassistant.HelperConfig
+	client := &UniversalMockClient{}
+	client.GetStateFn = func(_ context.Context, _ string) (*homeassistant.Entity, error) {
+		return &homeassistant.Entity{
+			EntityID:   entityID,
+			Attributes: map[string]any{"friendly_name": "Old Display Name"},
+		}, nil
+	}
+	client.UpdateHelperFn = func(_ context.Context, _ string, cfg homeassistant.HelperConfig) error {
+		capturedConfig = cfg
+		return nil
+	}
+
+	ctx := mcp.WithWaitConfig(context.Background(), mcp.WaitConfig{
+		Timeout:      50 * time.Millisecond,
+		PollInterval: 5 * time.Millisecond,
+	})
+
+	h := NewConsolidatedHelperHandlers()
+	result, err := h.handleManageHelper(ctx, client, map[string]any{
+		"action":    "update",
+		"entity_id": entityID,
+		"min":       10.0,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+	}
+
+	if got, ok := capturedConfig.Config["name"].(string); !ok || got != "Old Display Name" {
+		t.Errorf("Config[\"name\"] = %v, want \"Old Display Name\" (should fall back to current friendly_name)", capturedConfig.Config["name"])
+	}
+}
+
+// TestManageHelper_Update_StateFetchFails_DegradesGracefully verifies that a
+// failed current-state fetch degrades to args-only behavior (today's
+// behavior) rather than failing the update.
+func TestManageHelper_Update_StateFetchFails_DegradesGracefully(t *testing.T) {
+	t.Parallel()
+
+	entityID := "input_number.test_number"
+	client := &UniversalMockClient{}
+	client.GetStateFn = func(_ context.Context, _ string) (*homeassistant.Entity, error) {
+		return nil, errors.New("boom")
+	}
+	client.UpdateHelperFn = func(_ context.Context, _ string, _ homeassistant.HelperConfig) error {
+		return nil
+	}
+
+	ctx := mcp.WithWaitConfig(context.Background(), mcp.WaitConfig{
+		Timeout:      50 * time.Millisecond,
+		PollInterval: 5 * time.Millisecond,
+	})
+
+	h := NewConsolidatedHelperHandlers()
+	result, err := h.handleManageHelper(ctx, client, map[string]any{
+		"action":    "update",
+		"entity_id": entityID,
+		"min":       10.0,
+		"max":       100.0,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected update to succeed despite failed state fetch, got error: %s", result.Content[0].Text)
+	}
+}
+
+// TestManageHelper_Update_GroupNotMerged is a regression guard for the
+// branch-label bug: "group" is a key in helperTypes (so the naive `if ok`
+// check would treat it as a WebSocket helper), but group is actually a
+// Config Entry Flow platform (homeassistant.RequiresConfigEntryFlow("group")
+// == true) and must NOT go through mergeCurrentHelperState. If it did, a
+// GetState-sourced "entities" value would leak into the update config even
+// though the caller never supplied "entities".
+func TestManageHelper_Update_GroupNotMerged(t *testing.T) {
+	t.Parallel()
+
+	entityID := "group.lights"
+	var capturedConfig homeassistant.HelperConfig
+	client := &UniversalMockClient{}
+	client.GetStateFn = func(_ context.Context, _ string) (*homeassistant.Entity, error) {
+		return &homeassistant.Entity{
+			EntityID:   entityID,
+			Attributes: map[string]any{"entities": []any{"light.leaked_from_merge"}},
+		}, nil
+	}
+	client.UpdateHelperFn = func(_ context.Context, _ string, cfg homeassistant.HelperConfig) error {
+		capturedConfig = cfg
+		return nil
+	}
+
+	ctx := mcp.WithWaitConfig(context.Background(), mcp.WaitConfig{
+		Timeout:      50 * time.Millisecond,
+		PollInterval: 5 * time.Millisecond,
+	})
+
+	h := NewConsolidatedHelperHandlers()
+	result, err := h.handleManageHelper(ctx, client, map[string]any{
+		"action":    "update",
+		"entity_id": entityID,
+		"name":      "New Group Name",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+	}
+
+	if entities, present := capturedConfig.Config["entities"]; present {
+		t.Errorf("group update must not go through mergeCurrentHelperState (it's a Config Entry platform) - entities leaked into config: %v", entities)
 	}
 }
 
