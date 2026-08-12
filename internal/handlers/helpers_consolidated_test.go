@@ -4002,6 +4002,7 @@ var updateConfigKeyAliases = map[string]string{
 	"heater_entity_id":        "heater",
 	"target_sensor_entity_id": "target_sensor",
 	"humidifier_entity_id":    "humidifier",
+	"min_max_type":            "type",
 }
 
 // TestUpdatableFields_AreActuallyReadByUpdatePath asserts every field name

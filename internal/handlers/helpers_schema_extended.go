@@ -56,6 +56,11 @@ func buildExtendedHelperProperties() map[string]mcp.JSONSchema {
 			Type:        "number",
 			Description: "Number of decimal places to round to (min_max)",
 		},
+		"min_max_type": {
+			Type:        "string",
+			Description: "Calculation to perform (min_max, required): min, max, mean, median, last, range, sum",
+			Enum:        []string{"min", "max", "mean", "median", "last", "range", "sum"},
+		},
 
 		// statistics specific fields
 		"state_characteristic": {

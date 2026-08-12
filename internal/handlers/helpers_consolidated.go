@@ -73,14 +73,13 @@ type helperTypeMetadata struct {
 
 // perTypeUpdateExcludedFields lists (helper type -> field) exclusions that
 // apply only to that specific type, because a sibling type sharing the same
-// field name doesn't have the same problem: filter's "filter" and min_max's
-// "type" are both create-only selectors the update builder never reads on
-// update (see CLAUDE.md's "manage_helper update field docs" gotcha) - not
-// storage-config gaps, since GetHelperConfig's "<platform>/list" does return
-// them; the update builder just never forwards them.
+// field name doesn't have the same problem: filter's "filter" field is a
+// create-only selector the update builder never reads on update (see
+// CLAUDE.md's "manage_helper update field docs" gotcha) - not a
+// storage-config gap, since GetHelperConfig's "<platform>/list" does return
+// it; the update builder just never forwards it.
 var perTypeUpdateExcludedFields = map[string]map[string]bool{
-	"filter":  {"filter": true},
-	"min_max": {"type": true},
+	"filter": {"filter": true},
 }
 
 // isUpdateIdentifierField reports whether field is the tool's own "which
@@ -296,8 +295,8 @@ var helperTypes = map[string]helperTypeMetadata{
 		platform:           platformMinMax,
 		entityPrefix:       "sensor",
 		supportedActions:   []string{},
-		requiredFields:     []string{"entity_ids"},
-		optionalFields:     []string{"icon", "round_digits", "type"},
+		requiredFields:     []string{"entity_ids", "min_max_type"},
+		optionalFields:     []string{"icon", "round_digits"},
 		validEntityDomains: []string{"sensor"},
 	},
 	"statistics": {

@@ -33,7 +33,7 @@ Non-ASCII characters in `name` are stripped during slugification. Use ASCII name
 | Energy / power integration (kWh)               | `integral`               | Source must be `sensor.*`                      |
 | Group of entities into one state               | `group`                  | `entities` array                               |
 | Track daily/weekly energy usage                | `utility_meter`          | Source must be `sensor.*`; `cycle` required    |
-| Min/max/mean of multiple sensors               | `min_max`                | `entity_ids` array                             |
+| Min/max/mean of multiple sensors               | `min_max`                | `entity_ids` array, `min_max_type` required    |
 | Statistical aggregation over time              | `statistics`             | Source must be `sensor.*`; 3-step flow         |
 | Rising/falling trend detection                 | `trend`                  | Source must be `sensor.*`                      |
 | Random number sensor                           | `random_sensor`          | `minimum`, `maximum`                           |

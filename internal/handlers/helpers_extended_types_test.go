@@ -4,10 +4,12 @@ package handlers
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
+	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
 
 // TestManageHelper_SchemaIncludesExtendedTypes verifies all 27 helper types are included in the schema.
@@ -90,16 +92,18 @@ func TestManageHelper_UtilityMeter(t *testing.T) {
 }
 
 // TestManageHelper_MinMax tests min_max helper creation.
+// TestManageHelper_MinMax tests min_max helper creation.
 func TestManageHelper_MinMax(t *testing.T) {
 	tests := []handlerTestCase{
 		{
 			name: "create min_max success",
 			args: map[string]any{
-				"action":     "create",
-				"type":       "min_max",
-				"id":         "test_minmax",
-				"name":       "Test Min Max",
-				"entity_ids": []any{"sensor.temp1", "sensor.temp2"},
+				"action":       "create",
+				"type":         "min_max",
+				"id":           "test_minmax",
+				"name":         "Test Min Max",
+				"entity_ids":   []any{"sensor.temp1", "sensor.temp2"},
+				"min_max_type": "mean",
 			},
 			setupMock: func(m *UniversalMockClient) {
 				m.CreateHelperFn = func(context.Context, homeassistant.HelperConfig) error {
@@ -111,18 +115,74 @@ func TestManageHelper_MinMax(t *testing.T) {
 		{
 			name: "create min_max missing entity_ids",
 			args: map[string]any{
-				"action": "create",
-				"type":   "min_max",
-				"id":     "test_minmax",
-				"name":   "Test Min Max",
+				"action":       "create",
+				"type":         "min_max",
+				"id":           "test_minmax",
+				"name":         "Test Min Max",
+				"min_max_type": "mean",
 			},
 			wantError:    true,
 			wantContains: []string{"entity_ids", "required"},
+		},
+		{
+			name: "create min_max missing min_max_type",
+			args: map[string]any{
+				"action":     "create",
+				"type":       "min_max",
+				"id":         "test_minmax",
+				"name":       "Test Min Max",
+				"entity_ids": []any{"sensor.temp1", "sensor.temp2"},
+			},
+			wantError:    true,
+			wantContains: []string{"min_max_type", "required"},
 		},
 	}
 
 	handler := NewConsolidatedHelperHandlers()
 	runHandlerTestCases(t, tests, handler.handleManageHelper)
+}
+
+// TestManageHelper_MinMax_CreateMapsMinMaxTypeToConfigType is a regression
+// test for a bug where handleCreate read args["type"] to select the helper
+// type ("min_max"), and buildMinMaxConfig then read the same args["type"]
+// key to populate the calculation-type field HA expects - so the config
+// sent to Home Assistant always carried type: "min_max" instead of the
+// caller's intended calculation (min/max/mean/...). The tool argument is
+// now the distinct name "min_max_type", mapped to HA's "type" config key.
+func TestManageHelper_MinMax_CreateMapsMinMaxTypeToConfigType(t *testing.T) {
+	t.Parallel()
+
+	var capturedConfig homeassistant.HelperConfig
+	client := &UniversalMockClient{}
+	client.CreateHelperFn = func(_ context.Context, cfg homeassistant.HelperConfig) error {
+		capturedConfig = cfg
+		return nil
+	}
+
+	ctx := mcp.WithWaitConfig(context.Background(), mcp.WaitConfig{
+		Timeout:      50 * time.Millisecond,
+		PollInterval: 5 * time.Millisecond,
+	})
+
+	h := NewConsolidatedHelperHandlers()
+	result, err := h.handleManageHelper(ctx, client, map[string]any{
+		"action":       "create",
+		"type":         "min_max",
+		"id":           "test_minmax",
+		"name":         "Test Min Max",
+		"entity_ids":   []any{"sensor.temp1", "sensor.temp2"},
+		"min_max_type": "mean",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+	}
+
+	if got := capturedConfig.Config["type"]; got != "mean" {
+		t.Errorf(`capturedConfig.Config["type"] = %v, want "mean" (the helper-type selector "min_max" must not leak into the calculation-type field)`, got)
+	}
 }
 
 // TestManageHelper_Statistics tests statistics helper creation.

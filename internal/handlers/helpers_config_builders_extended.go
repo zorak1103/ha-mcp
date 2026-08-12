@@ -24,15 +24,23 @@ func buildUtilityMeterConfig(config, args map[string]any) error {
 }
 
 // buildMinMaxConfig builds configuration for min_max helper.
+// buildMinMaxConfig builds configuration for min_max helper.
 func buildMinMaxConfig(config, args map[string]any) error {
 	// Required: entity_ids
 	if entityIDs, ok := args["entity_ids"].([]any); ok {
 		config["entity_ids"] = convertToStringSlice(entityIDs)
 	}
 
+	// Required: min_max_type maps to HA's "type" config field. Kept distinct
+	// from the tool's own top-level helper-type selector ("type": "min_max"),
+	// which shares the same args map - reading args["type"] here would always
+	// see the selector value instead of the caller's intended calculation.
+	if minMaxType, ok := args["min_max_type"].(string); ok {
+		config["type"] = minMaxType
+	}
+
 	// Optional fields
 	addOptionalInt(config, args, "round_digits")
-	addOptionalString(config, args, "type")
 
 	return nil
 }
@@ -204,6 +212,9 @@ func addExtendedConfigEntryFields(config, args map[string]any, entityDomain stri
 	// min_max fields
 	if entityIDs, ok := args["entity_ids"].([]any); ok {
 		config["entity_ids"] = convertToStringSlice(entityIDs)
+	}
+	if minMaxType, ok := args["min_max_type"].(string); ok {
+		config["type"] = minMaxType
 	}
 	addOptionalInt(config, args, "round_digits")
 
