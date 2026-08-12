@@ -890,6 +890,99 @@ func TestCheckUpdateSourceEntityDomain_FetchesRegistryWithConstrainedField(t *te
 	}
 }
 
+// TestBuildConfigEntryUpdateConfig_MinMaxTypeGatedByPlatform is the
+// regression test for W1: addExtendedConfigEntryFields must not forward
+// min_max_type into config["type"] unless the caller has been verified to
+// target an actual min_max helper. It's a one-size-fits-all builder shared
+// by every config-entry platform (template, threshold, sensor-domain group,
+// statistics, ...), so an unconditional write here would let min_max_type
+// leak into e.g. a sensor group's update and silently change its
+// aggregation type - HA's group CONF_TYPE enum is a superset of min_max's,
+// so the write would validate and succeed with no error anywhere.
+func TestBuildConfigEntryUpdateConfig_MinMaxTypeGatedByPlatform(t *testing.T) {
+	t.Parallel()
+
+	args := map[string]any{"min_max_type": "max"}
+
+	notMinMax := buildConfigEntryUpdateConfig("sensor", "group", args)
+	if _, present := notMinMax["type"]; present {
+		t.Errorf(`buildConfigEntryUpdateConfig("sensor", "group", ...) wrote config["type"] = %v, want absent - min_max_type must not leak into a non-min_max platform's update`, notMinMax["type"])
+	}
+
+	isMinMax := buildConfigEntryUpdateConfig("sensor", platformMinMax, args)
+	if got := isMinMax["type"]; got != "max" {
+		t.Errorf(`buildConfigEntryUpdateConfig("sensor", %q, ...) config["type"] = %v, want "max"`, platformMinMax, got)
+	}
+}
+
+// TestManageHelper_Update_MinMaxTypeRejectedForNonMinMaxHelper covers the
+// handler-level half of W1: min_max_type on an update targeting a
+// non-min_max config-entry helper (here, a sensor-domain group) must be
+// rejected with an actionable error, not silently applied.
+func TestManageHelper_Update_MinMaxTypeRejectedForNonMinMaxHelper(t *testing.T) {
+	t.Parallel()
+
+	client := &UniversalMockClient{
+		GetEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+			return []homeassistant.EntityRegistryEntry{
+				{EntityID: "sensor.my_group", Platform: "group", ConfigEntryID: "config123"},
+			}, nil
+		},
+		UpdateHelperFn: func(context.Context, string, homeassistant.HelperConfig) error {
+			t.Fatal("UpdateHelper should not be called when min_max_type targets a non-min_max helper")
+			return nil
+		},
+	}
+
+	h := NewConsolidatedHelperHandlers()
+	result, err := h.handleManageHelper(context.Background(), client, map[string]any{
+		"action":       "update",
+		"entity_id":    "sensor.my_group",
+		"min_max_type": "max",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected an error result for min_max_type on a non-min_max helper")
+	}
+	if msg := result.Content[0].Text; !strings.Contains(msg, "min_max_type") || !strings.Contains(msg, "group") {
+		t.Errorf("error message = %q, want it to name both min_max_type and the actual helper type (group)", msg)
+	}
+}
+
+// TestManageHelper_Update_MinMaxTypeHardFailsOnRegistryFetchError guards
+// against the degraded-skip convention used elsewhere (e.g.
+// checkUpdateSourceEntityDomain): unlike a validation, silently dropping
+// min_max_type on a registry fetch failure would report the update as
+// successful while discarding the field the caller asked to change.
+func TestManageHelper_Update_MinMaxTypeHardFailsOnRegistryFetchError(t *testing.T) {
+	t.Parallel()
+
+	client := &UniversalMockClient{
+		GetEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+			return nil, fmt.Errorf("registry unavailable")
+		},
+		UpdateHelperFn: func(context.Context, string, homeassistant.HelperConfig) error {
+			t.Fatal("UpdateHelper should not be called when the registry fetch needed to verify min_max_type fails")
+			return nil
+		},
+	}
+
+	h := NewConsolidatedHelperHandlers()
+	result, err := h.handleManageHelper(context.Background(), client, map[string]any{
+		"action":       "update",
+		"entity_id":    "sensor.my_min_max",
+		"min_max_type": "max",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected an error result when the registry fetch fails")
+	}
+}
+
 // TestUpdatableSourceEntities_ExcludesEntityIDField guards the collision
 // checkUpdateSourceEntityDomain must avoid: a sourceEntityConstraint whose
 // field is "entity_id" is, on update, the tool's own "which helper is being
@@ -4030,8 +4123,11 @@ func TestUpdatableFields_AreActuallyReadByUpdatePath(t *testing.T) {
 				// Mirrors handleUpdate: buildConfigEntryUpdateConfig is called
 				// with the entity DOMAIN (meta.entityPrefix), not the
 				// helperTypes map key - that distinction matters for the
-				// platform=="humidifier" device_class default gate.
-				config = buildConfigEntryUpdateConfig(meta.entityPrefix, args)
+				// platform=="humidifier" device_class default gate. meta.platform
+				// is passed as the resolved min_max_type platform too - it's the
+				// real integration platform for every entry here, same as what
+				// resolveConfigEntryPlatformForMinMaxType would return.
+				config = buildConfigEntryUpdateConfig(meta.entityPrefix, meta.platform, args)
 			} else {
 				var err error
 				config, err = buildHelperConfig(name, "Test Name", args)
@@ -4050,6 +4146,43 @@ func TestUpdatableFields_AreActuallyReadByUpdatePath(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// reservedManageHelperArgNames are manage_helper's own top-level dispatch
+// arguments. #177 was a real, shipped bug caused by min_max's per-instance
+// "type" config field sharing the literal args key handleCreate already
+// consumes to pick which helper type to build - buildMinMaxConfig always
+// read back the already-consumed "min_max" selector instead of the
+// caller's intended calculation. TestHelperTypes_NoReservedArgNameCollisions
+// guards the class, not just that one instance: no helperTypes entry may
+// declare a create-time field with one of these names. "entity_id" and
+// "name" are deliberately excluded - both are legitimate create-time config
+// fields for several types (e.g. threshold's monitored source, every
+// Config Entry type's display name); "entity_id"'s distinct update-side
+// collision (colliding with "which helper is being updated") is already
+// guarded by isUpdateIdentifierField.
+var reservedManageHelperArgNames = map[string]bool{
+	"action": true,
+	"type":   true,
+	"id":     true,
+}
+
+// TestHelperTypes_NoReservedArgNameCollisions is a regression test for the
+// #177 bug class: it fails if any helperTypes entry's requiredFields or
+// optionalFields reuses a name manage_helper's own dispatcher already
+// consumes from the same args map before a type-specific builder ever sees
+// it. See reservedManageHelperArgNames' doc comment for why min_max's fix
+// was renaming to min_max_type rather than special-casing the read.
+func TestHelperTypes_NoReservedArgNameCollisions(t *testing.T) {
+	t.Parallel()
+
+	for name, meta := range helperTypes {
+		for _, field := range append(append([]string{}, meta.requiredFields...), meta.optionalFields...) {
+			if reservedManageHelperArgNames[field] {
+				t.Errorf("helperTypes[%q] declares field %q, which collides with manage_helper's own top-level dispatch argument of the same name - rename it (see #177's min_max_type precedent)", name, field)
+			}
+		}
 	}
 }
 

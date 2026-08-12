@@ -46,9 +46,11 @@ Non-ASCII characters in `name` are stripped during slugification. Use ASCII name
 
 ## Source entity domain requirements
 
-Config Entry helpers that need a sensor (`threshold`, `derivative`, `integral`, `statistics`, `trend`, `filter`, `utility_meter`, `min_max`) require a `sensor.*` entity — not `input_number.*`.
+Config Entry helpers that need a sensor (`threshold`, `derivative`, `integral`, `statistics`, `trend`, `filter`, `utility_meter`) require a `sensor.*` entity — not `input_number.*`.
 
 Workaround: wrap `input_number.my_value` in a `template_sensor` that reads its state, then use the template sensor as the source.
+
+`min_max`'s `entity_ids` is not source-domain-restricted the same way: Home Assistant's `EntitySelector` for it accepts `sensor.*`, `number.*`, and `input_number.*` directly — no wrapper needed.
 
 Config Entry helpers that need a switch (`generic_thermostat`, `generic_hygrostat`, `switch_as_x`) require a `switch.*` entity — not `input_boolean.*`.
 

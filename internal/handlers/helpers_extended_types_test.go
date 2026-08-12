@@ -92,7 +92,6 @@ func TestManageHelper_UtilityMeter(t *testing.T) {
 }
 
 // TestManageHelper_MinMax tests min_max helper creation.
-// TestManageHelper_MinMax tests min_max helper creation.
 func TestManageHelper_MinMax(t *testing.T) {
 	tests := []handlerTestCase{
 		{

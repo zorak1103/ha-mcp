@@ -24,7 +24,6 @@ func buildUtilityMeterConfig(config, args map[string]any) error {
 }
 
 // buildMinMaxConfig builds configuration for min_max helper.
-// buildMinMaxConfig builds configuration for min_max helper.
 func buildMinMaxConfig(config, args map[string]any) error {
 	// Required: entity_ids
 	if entityIDs, ok := args["entity_ids"].([]any); ok {
@@ -35,7 +34,7 @@ func buildMinMaxConfig(config, args map[string]any) error {
 	// from the tool's own top-level helper-type selector ("type": "min_max"),
 	// which shares the same args map - reading args["type"] here would always
 	// see the selector value instead of the caller's intended calculation.
-	if minMaxType, ok := args["min_max_type"].(string); ok {
+	if minMaxType, ok := args["min_max_type"].(string); ok && minMaxType != "" {
 		config["type"] = minMaxType
 	}
 
@@ -126,12 +125,8 @@ func buildTodConfig(config, args map[string]any) error {
 func buildGenericThermostatConfig(config, args map[string]any) error {
 	// Map user-friendly field names to API field names
 	// API expects: heater, target_sensor, ac_mode (not heater_entity_id, target_sensor_entity_id)
-	if heaterID, ok := args["heater_entity_id"].(string); ok {
-		config["heater"] = heaterID
-	}
-	if sensorID, ok := args["target_sensor_entity_id"].(string); ok {
-		config["target_sensor"] = sensorID
-	}
+	addRenamedOptionalString(config, args, "heater_entity_id", "heater")
+	addRenamedOptionalString(config, args, "target_sensor_entity_id", "target_sensor")
 
 	// ac_mode is required by API
 	if acMode, ok := args["ac_mode"].(bool); ok {
@@ -173,12 +168,8 @@ func buildGenericHygrostatConfig(config, args map[string]any) error {
 
 	// Map user-friendly field names to API field names
 	// API expects: humidifier, target_sensor, device_class (not humidifier_entity_id, target_sensor_entity_id)
-	if humidifierID, ok := args["humidifier_entity_id"].(string); ok {
-		config["humidifier"] = humidifierID
-	}
-	if sensorID, ok := args["target_sensor_entity_id"].(string); ok {
-		config["target_sensor"] = sensorID
-	}
+	addRenamedOptionalString(config, args, "humidifier_entity_id", "humidifier")
+	addRenamedOptionalString(config, args, "target_sensor_entity_id", "target_sensor")
 
 	// device_class is required by API
 	config["device_class"] = deviceClassHumidifierValue
@@ -197,7 +188,7 @@ func buildGenericHygrostatConfig(config, args map[string]any) error {
 // This function is called by buildConfigEntryUpdateConfig to handle new helper types.
 //
 //nolint:funlen // Large number of fields for extended helper types
-func addExtendedConfigEntryFields(config, args map[string]any, entityDomain string) {
+func addExtendedConfigEntryFields(config, args map[string]any, entityDomain, minMaxPlatform string) {
 	// utility_meter fields
 	addOptionalString(config, args, "source")
 	addOptionalString(config, args, "cycle")
@@ -213,9 +204,7 @@ func addExtendedConfigEntryFields(config, args map[string]any, entityDomain stri
 	if entityIDs, ok := args["entity_ids"].([]any); ok {
 		config["entity_ids"] = convertToStringSlice(entityIDs)
 	}
-	if minMaxType, ok := args["min_max_type"].(string); ok {
-		config["type"] = minMaxType
-	}
+	addMinMaxTypeField(config, args, minMaxPlatform)
 	addOptionalInt(config, args, "round_digits")
 
 	// statistics fields
@@ -248,12 +237,8 @@ func addExtendedConfigEntryFields(config, args map[string]any, entityDomain stri
 	addOptionalString(config, args, "before_offset")
 
 	// generic_thermostat fields (map to API field names)
-	if heaterID, ok := args["heater_entity_id"].(string); ok {
-		config["heater"] = heaterID
-	}
-	if targetSensor, ok := args["target_sensor_entity_id"].(string); ok {
-		config["target_sensor"] = targetSensor
-	}
+	addRenamedOptionalString(config, args, "heater_entity_id", "heater")
+	addRenamedOptionalString(config, args, "target_sensor_entity_id", "target_sensor")
 	if acMode, ok := args["ac_mode"].(bool); ok {
 		config["ac_mode"] = acMode
 	}
@@ -267,12 +252,8 @@ func addExtendedConfigEntryFields(config, args map[string]any, entityDomain stri
 	addOptionalString(config, args, "target_domain")
 
 	// generic_hygrostat fields (map to API field names)
-	if humidifierID, ok := args["humidifier_entity_id"].(string); ok {
-		config["humidifier"] = humidifierID
-	}
-	if targetSensor, ok := args["target_sensor_entity_id"].(string); ok {
-		config["target_sensor"] = targetSensor
-	}
+	addRenamedOptionalString(config, args, "humidifier_entity_id", "humidifier")
+	addRenamedOptionalString(config, args, "target_sensor_entity_id", "target_sensor")
 	// device_class is required for hygrostat - only default it when the
 	// helper being updated is actually a generic_hygrostat (its entity domain
 	// is "humidifier"), not every config-entry helper type that shares this
@@ -288,4 +269,22 @@ func addExtendedConfigEntryFields(config, args map[string]any, entityDomain stri
 	addOptionalFloat(config, args, "target_humidity")
 	addOptionalFloat(config, args, "dry_tolerance")
 	addOptionalFloat(config, args, "wet_tolerance")
+}
+
+// addMinMaxTypeField writes config["type"] from args["min_max_type"] only
+// when minMaxPlatform == platformMinMax - i.e. handleUpdate has already
+// verified, via resolveConfigEntryPlatformForMinMaxType, that the entity
+// being updated is actually a min_max helper. addExtendedConfigEntryFields
+// is a one-size-fits-all update builder shared by every config-entry helper
+// type (template, threshold, sensor-domain group, statistics, ...); an
+// unconditional write here previously let min_max_type leak into "type" for
+// any of them, silently changing e.g. a sensor group's aggregation type
+// since HA's group CONF_TYPE enum is a superset of min_max's.
+func addMinMaxTypeField(config, args map[string]any, minMaxPlatform string) {
+	if minMaxPlatform != platformMinMax {
+		return
+	}
+	if minMaxType, ok := args["min_max_type"].(string); ok && minMaxType != "" {
+		config["type"] = minMaxType
+	}
 }

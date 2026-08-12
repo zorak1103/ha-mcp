@@ -999,7 +999,25 @@ func (h *ConsolidatedHelperHandlers) handleUpdate(ctx context.Context, client ho
 	} else {
 		// Unknown helper type (sensor/binary_sensor without metadata)
 		// These are Config Entry Flow helpers - build loose config
-		config = buildConfigEntryUpdateConfig(entityDomain, args)
+		//
+		// minMaxPlatform is resolved only when the caller actually supplied
+		// min_max_type, to avoid a registry fetch on every other config-entry
+		// update - and a mismatch here is a hard error, not a degraded skip:
+		// see resolveConfigEntryPlatformForMinMaxType's doc comment for why.
+		minMaxPlatform := ""
+		if _, hasMinMaxType := args["min_max_type"]; hasMinMaxType {
+			resolvedPlatform, platformErr := resolveConfigEntryPlatformForMinMaxType(ctx, client, entityID)
+			if platformErr != nil {
+				return errorResult(platformErr.Error()), nil
+			}
+			if resolvedPlatform != platformMinMax {
+				return errorResult(fmt.Sprintf(
+					"min_max_type is only valid for min_max helpers; %s is a %s helper", entityID, resolvedPlatform,
+				)), nil
+			}
+			minMaxPlatform = resolvedPlatform
+		}
+		config = buildConfigEntryUpdateConfig(entityDomain, minMaxPlatform, args)
 	}
 
 	// Create UpdateHelper request
@@ -1935,7 +1953,7 @@ func (h *ConsolidatedHelperHandlers) handleGroupEntities(ctx context.Context, cl
 // "buildConfigEntryUpdateConfig leaked entity_id" gotcha).
 //
 //nolint:gocyclo // Routing to type-specific builders requires switch over all helper types
-func buildConfigEntryUpdateConfig(entityDomain string, args map[string]any) map[string]any {
+func buildConfigEntryUpdateConfig(entityDomain, minMaxPlatform string, args map[string]any) map[string]any {
 	config := make(map[string]any)
 
 	// Common fields
@@ -1979,7 +1997,7 @@ func buildConfigEntryUpdateConfig(entityDomain string, args map[string]any) map[
 	}
 
 	// Add fields for extended helper types
-	addExtendedConfigEntryFields(config, args, entityDomain)
+	addExtendedConfigEntryFields(config, args, entityDomain, minMaxPlatform)
 
 	return config
 }
@@ -2415,6 +2433,37 @@ func checkUpdateSourceEntityDomain(ctx context.Context, client homeassistant.Cli
 	return nil
 }
 
+// resolveConfigEntryPlatformForMinMaxType resolves the real integration
+// platform for entityID via the entity registry. It exists to gate
+// min_max_type out of addExtendedConfigEntryFields for every config-entry
+// helper type other than min_max: that builder is a one-size-fits-all
+// update payload shared by template, threshold, group (sensor-domain),
+// statistics, ... - none of which have a helperTypes key matching their
+// entity domain, so they all reach buildConfigEntryUpdateConfig the same
+// way min_max does. Without this check, a caller could pass min_max_type on
+// e.g. a sensor-domain group update and silently rewrite its aggregation
+// type, since HA's group CONF_TYPE enum is a superset of min_max's.
+//
+// Unlike checkUpdateSourceEntityDomain, a lookup failure here does NOT
+// degrade to an unchecked update: that function only skips a validation on
+// failure, but silently dropping min_max_type here would report the update
+// as successful while discarding the one field the caller asked to change -
+// the same class of risk mergeCurrentHelperState guards against for
+// WebSocket helpers (see CLAUDE.md's "Merge-fetch failure hard-fails the
+// update" gotcha).
+func resolveConfigEntryPlatformForMinMaxType(ctx context.Context, client homeassistant.Client, entityID string) (string, error) {
+	entries, err := client.GetEntityRegistry(ctx)
+	if err != nil {
+		return "", fmt.Errorf("cannot verify min_max_type applies to %s: entity registry fetch failed: %w", entityID, err)
+	}
+	for _, entry := range entries {
+		if entry.EntityID == entityID {
+			return entry.Platform, nil
+		}
+	}
+	return "", fmt.Errorf("cannot verify min_max_type applies to %s: entity not found in entity registry", entityID)
+}
+
 // wrapperRecipeFor returns an actionable next step for a source-domain
 // mismatch, or "" if sourceEntityID is not a well-formed entity_id. The
 // well-formedness check is enforced here, at the sink, rather than at each
@@ -2556,6 +2605,16 @@ func formatHelperType(helperType string) string {
 func addOptionalString(config, args map[string]any, key string) {
 	if val, ok := args[key].(string); ok && val != "" {
 		config[key] = val
+	}
+}
+
+// addRenamedOptionalString copies args[argKey] to config[configKey] when
+// present and non-empty. Used for API field renames (heater_entity_id ->
+// heater, humidifier_entity_id -> humidifier, ...) where addOptionalString's
+// same-key convention doesn't fit.
+func addRenamedOptionalString(config, args map[string]any, argKey, configKey string) {
+	if val, ok := args[argKey].(string); ok && val != "" {
+		config[configKey] = val
 	}
 }
 
