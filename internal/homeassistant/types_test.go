@@ -776,6 +776,9 @@ func TestSceneConfig_JSONRoundtrip(t *testing.T) {
 				State: "on",
 			},
 		},
+		Metadata: map[string]any{
+			"light.living_room": map[string]any{"entity_only": true},
+		},
 	}
 
 	data, err := json.Marshal(config)
@@ -1184,6 +1187,24 @@ func TestSceneState_UnmarshalJSON_FlatFormat(t *testing.T) {
 			input:     `{"brightness": 128}`,
 			wantState: "",
 			wantAttrs: map[string]any{"brightness": float64(128)},
+		},
+		{
+			name:      "shorthand string value",
+			input:     `"on"`,
+			wantState: "on",
+			wantAttrs: nil,
+		},
+		{
+			name:      "shorthand bool true",
+			input:     `true`,
+			wantState: "on",
+			wantAttrs: nil,
+		},
+		{
+			name:      "shorthand bool false",
+			input:     `false`,
+			wantState: "off",
+			wantAttrs: nil,
 		},
 	}
 

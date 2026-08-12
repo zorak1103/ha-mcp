@@ -240,10 +240,14 @@ type ScriptConfig struct {
 }
 
 // SceneConfig represents the configuration of a scene.
+// SceneConfig represents the configuration of a scene.
 type SceneConfig struct {
 	Name     string                `json:"name"`
 	Icon     string                `json:"icon,omitempty"`
 	Entities map[string]SceneState `json:"entities"`
+	// Metadata is passed through verbatim (e.g. HA's scene editor writes
+	// {"<entity_id>": {"entity_only": true}}) - never synthesized or pruned by this client.
+	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
 // SceneState represents the desired state of an entity in a scene.
@@ -257,7 +261,28 @@ type SceneState struct {
 // UnmarshalJSON implements json.Unmarshaler for SceneState.
 // The HA REST API returns scene entity states in flat format where all
 // attributes are at the top level alongside the state key.
+// UnmarshalJSON implements json.Unmarshaler for SceneState.
+// The HA REST API returns scene entity states in flat format where all
+// attributes are at the top level alongside the state key. HA also accepts
+// shorthand entity values in scenes.yaml: a bare string ("on") or bool (true/false)
+// instead of an object.
 func (s *SceneState) UnmarshalJSON(data []byte) error {
+	var str string
+	if err := json.Unmarshal(data, &str); err == nil {
+		s.State = str
+		return nil
+	}
+
+	var b bool
+	if err := json.Unmarshal(data, &b); err == nil {
+		if b {
+			s.State = "on"
+		} else {
+			s.State = "off"
+		}
+		return nil
+	}
+
 	var flat map[string]any
 	if err := json.Unmarshal(data, &flat); err != nil {
 		return err

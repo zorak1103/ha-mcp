@@ -1774,6 +1774,30 @@ func TestRESTClient_UpdateScene(t *testing.T) {
 	}
 }
 
+func TestBuildSceneData_Metadata(t *testing.T) {
+	t.Parallel()
+
+	t.Run("forwards metadata when set", func(t *testing.T) {
+		t.Parallel()
+		config := SceneConfig{
+			Name:     "Movie Night",
+			Metadata: map[string]any{"light.living_room": map[string]any{"entity_only": true}},
+		}
+		data := buildSceneData("movie_night", config)
+		if diff := cmp.Diff(config.Metadata, data["metadata"]); diff != "" {
+			t.Errorf("metadata mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("omits metadata when nil", func(t *testing.T) {
+		t.Parallel()
+		data := buildSceneData("movie_night", SceneConfig{Name: "Movie Night"})
+		if _, ok := data["metadata"]; ok {
+			t.Errorf("metadata key present, want omitted: %v", data["metadata"])
+		}
+	})
+}
+
 func TestRESTClient_GetScene(t *testing.T) {
 	t.Parallel()
 

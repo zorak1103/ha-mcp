@@ -295,20 +295,28 @@ func (h *SceneHandlers) handleUpdate(ctx context.Context, client homeassistant.C
 	// Normalize ID to handle prefix variations
 	entityID, configID := normalizeSceneID(sceneID)
 
-	current, err := client.GetState(ctx, entityID)
+	current, err := client.GetScene(ctx, configID)
 	if err != nil {
-		return errorResult(fmt.Sprintf("Error getting current scene: %v", err)), nil
+		if !isNotFoundError(err) {
+			return errorResult(fmt.Sprintf("Error getting current scene: %v", err)), nil
+		}
+		// GetScene 404s both when the id is genuinely unknown and when the entity is
+		// YAML-defined under a different config-file key (#122/#164) - discriminate via GetState.
+		if _, stateErr := client.GetState(ctx, entityID); stateErr == nil {
+			return errorResult(configFileMissingWriteError(ctx, client, "scene", "update", sceneID, entityID, configID)), nil
+		}
+		return errorResult(fmt.Sprintf("scene not found: %s", sceneID)), nil
 	}
 
-	config := buildSceneConfigFromArgs(current, args)
-
-	// Refuse to write a scene whose id is not present in scenes.yaml: the config API silently
-	// creates a duplicate orphan entity instead of updating it (#122, #164).
-	if guardErr := configWriteGuardError(ctx, client, "scene", "update", sceneID, entityID, configID); guardErr != nil {
-		return guardErr, nil
+	if current.Config == nil {
+		return errorResult(fmt.Sprintf("scene '%s' has no configuration to update", sceneID)), nil
 	}
 
-	// Use configID (without prefix) for REST API
+	// The fetched config is the write base - only fields present in args are overwritten,
+	// everything else (entities, icon, metadata) survives untouched (#173).
+	config := *current.Config
+	applySceneConfigUpdates(&config, args)
+
 	if err := client.UpdateScene(ctx, configID, config); err != nil {
 		msg := fmt.Sprintf("Error updating scene: %v", err)
 		return errorResult(enrichConfigError(msg, err, sceneErrorHints)), nil
@@ -496,28 +504,25 @@ func parseSceneEntities(entitiesRaw map[string]any) (map[string]homeassistant.Sc
 	return entities, ""
 }
 
-// buildSceneConfigFromArgs builds scene config from current state and args.
-func buildSceneConfigFromArgs(current *homeassistant.Entity, args map[string]any) homeassistant.SceneConfig {
-	config := homeassistant.SceneConfig{Entities: make(map[string]homeassistant.SceneState)}
-
-	if name, ok := current.Attributes["friendly_name"].(string); ok {
-		config.Name = name
-	}
+// applySceneConfigUpdates merges caller-supplied args onto an existing SceneConfig fetched via
+// GetScene. Only fields present in args are overwritten - name, icon, and metadata are otherwise
+// left untouched. entities, when present, replaces the whole map wholesale (mirrors how
+// applyScriptConfigUpdates replaces sequence); surgical single-entity edits are action=patch's job.
+func applySceneConfigUpdates(config *homeassistant.SceneConfig, args map[string]any) {
 	if name, ok := args["name"].(string); ok {
 		config.Name = name
 	}
 	if icon, ok := args["icon"].(string); ok {
 		config.Icon = icon
 	}
-
 	if entitiesRaw, ok := args["entities"].(map[string]any); ok {
+		entities := make(map[string]homeassistant.SceneState, len(entitiesRaw))
 		for eid, stateRaw := range entitiesRaw {
 			sceneState, _ := parseSceneState(stateRaw)
-			config.Entities[eid] = sceneState
+			entities[eid] = sceneState
 		}
+		config.Entities = entities
 	}
-
-	return config
 }
 
 func (h *SceneHandlers) handlePatch(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {

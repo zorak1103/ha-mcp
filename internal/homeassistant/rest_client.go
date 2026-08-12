@@ -480,6 +480,9 @@ func buildSceneData(sceneID string, config SceneConfig) map[string]any {
 	if config.Icon != "" {
 		sceneData["icon"] = config.Icon
 	}
+	if config.Metadata != nil {
+		sceneData["metadata"] = config.Metadata
+	}
 	if config.Entities != nil {
 		entities := make(map[string]any)
 		for entityID, state := range config.Entities {
