@@ -1774,6 +1774,117 @@ func TestRESTClient_UpdateScene(t *testing.T) {
 	}
 }
 
+// TestRESTClient_EscapesIdentifiersInURLPath is a security regression test (adversarial review
+// W6): a caller-supplied identifier containing "/" or ".." previously reached the HA API request
+// line unescaped, so a scene_id of "../automation/config/1" would let manage_scene:update write
+// an automation config, defeating ToolFilterEngine's per-tool/action blacklist. Every identifier
+// interpolated into a REST URL path segment must be url.PathEscape'd so an embedded "/" becomes
+// "%2F" - an opaque character within one path segment, not a segment separator - rather than
+// letting the caller redirect the request to a different endpoint.
+func TestRESTClient_EscapesIdentifiersInURLPath(t *testing.T) {
+	t.Parallel()
+
+	const maliciousID = "../automation/config/1"
+	const spacedID = "movie night"
+
+	tests := []struct {
+		name         string
+		call         func(t *testing.T, c *RESTClient, id string)
+		wantPrefix   string
+		wantEscaped  string // expected EscapedPath() for maliciousID
+		wantSpaceSeg string // expected EscapedPath() for spacedID
+	}{
+		{
+			name: "UpdateScene",
+			call: func(t *testing.T, c *RESTClient, id string) {
+				t.Helper()
+				_ = c.UpdateScene(context.Background(), id, SceneConfig{Name: "x", Entities: map[string]SceneState{}})
+			},
+			wantEscaped:  "/api/config/scene/config/..%2Fautomation%2Fconfig%2F1",
+			wantSpaceSeg: "/api/config/scene/config/movie%20night",
+		},
+		{
+			name: "DeleteAutomation",
+			call: func(t *testing.T, c *RESTClient, id string) {
+				t.Helper()
+				_ = c.DeleteAutomation(context.Background(), id)
+			},
+			wantEscaped:  "/api/config/automation/config/..%2Fautomation%2Fconfig%2F1",
+			wantSpaceSeg: "/api/config/automation/config/movie%20night",
+		},
+		{
+			name: "DeleteScript",
+			call: func(t *testing.T, c *RESTClient, id string) {
+				t.Helper()
+				_ = c.DeleteScript(context.Background(), id)
+			},
+			wantEscaped:  "/api/config/script/config/..%2Fautomation%2Fconfig%2F1",
+			wantSpaceSeg: "/api/config/script/config/movie%20night",
+		},
+		{
+			name: "ConfigFileEntryExists",
+			call: func(t *testing.T, c *RESTClient, id string) {
+				t.Helper()
+				_, _ = c.ConfigFileEntryExists(context.Background(), "scene", id)
+			},
+			wantEscaped:  "/api/config/scene/config/..%2Fautomation%2Fconfig%2F1",
+			wantSpaceSeg: "/api/config/scene/config/movie%20night",
+		},
+		{
+			name: "GetCameraSnapshot",
+			call: func(t *testing.T, c *RESTClient, id string) {
+				t.Helper()
+				_, _, _ = c.GetCameraSnapshot(context.Background(), id)
+			},
+			wantEscaped:  "/api/camera_proxy/..%2Fautomation%2Fconfig%2F1",
+			wantSpaceSeg: "/api/camera_proxy/movie%20night",
+		},
+		{
+			name: "GetCalendarEvents",
+			call: func(t *testing.T, c *RESTClient, id string) {
+				t.Helper()
+				_, _ = c.GetCalendarEvents(context.Background(), id, "2024-01-01", "2024-01-02")
+			},
+			wantEscaped:  "/api/calendars/..%2Fautomation%2Fconfig%2F1",
+			wantSpaceSeg: "/api/calendars/movie%20night",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			for _, idCase := range []struct {
+				name string
+				id   string
+				want string
+			}{
+				{"path traversal", maliciousID, tt.wantEscaped},
+				{"space", spacedID, tt.wantSpaceSeg},
+			} {
+				t.Run(idCase.name, func(t *testing.T) {
+					t.Parallel()
+
+					var gotPath string
+					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						gotPath = r.URL.EscapedPath()
+						w.WriteHeader(http.StatusOK)
+						_, _ = w.Write([]byte("{}"))
+					}))
+					defer server.Close()
+
+					client := NewRESTClient(server.URL, "test-token")
+					tt.call(t, client, idCase.id)
+
+					if gotPath != idCase.want {
+						t.Errorf("request path = %q, want %q", gotPath, idCase.want)
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestBuildSceneData_Metadata(t *testing.T) {
 	t.Parallel()
 

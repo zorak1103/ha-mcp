@@ -1602,3 +1602,303 @@ func TestManageScene_SemanticPatch(t *testing.T) {
 
 	runHandlerTestCases(t, tests, h.handleManageScene)
 }
+
+// =============================================================================
+// C1/W4: resolveSceneForWrite fallback safety (adversarial review remediation)
+// =============================================================================
+
+func sceneListEntity(entityID, friendlyName string) homeassistant.Entity {
+	return homeassistant.Entity{
+		EntityID:   entityID,
+		Attributes: map[string]any{"friendly_name": friendlyName},
+	}
+}
+
+// TestSceneHandlers_WritePath_TransientErrorNeverRetargets covers the critical finding: a
+// transient (non-404) GetScene error must be surfaced as-is, never treated as "not found" and
+// routed into the friendly-name fallback search - otherwise a momentary timeout could silently
+// retarget update/patch at an unrelated scene matched by fuzzy name search.
+func TestSceneHandlers_WritePath_TransientErrorNeverRetargets(t *testing.T) {
+	t.Parallel()
+
+	for _, action := range []string{"update", "patch"} {
+		t.Run(action, func(t *testing.T) {
+			t.Parallel()
+
+			listCalled := false
+			client := &UniversalMockClient{
+				GetSceneFn: func(context.Context, string) (*homeassistant.Scene, error) {
+					return nil, errors.New("connection timeout")
+				},
+				ListScenesFn: func(context.Context) ([]homeassistant.Entity, error) {
+					listCalled = true
+					return []homeassistant.Entity{sceneListEntity("scene.other_scene", "Some Other Scene")}, nil
+				},
+				UpdateSceneFn: func(context.Context, string, homeassistant.SceneConfig) error {
+					t.Fatal("UpdateScene must not be called on a transient resolve error")
+					return nil
+				},
+			}
+
+			args := map[string]any{"action": action, "scene_id": "movie_night", "name": "Movie Night 2"}
+			if action == "patch" {
+				args["operations"] = []any{map[string]any{"op": "replace", "path": "/name", "value": "Movie Night 2"}}
+			}
+
+			h := &SceneHandlers{}
+			result, err := h.handleManageScene(context.Background(), client, args)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !result.IsError {
+				t.Fatalf("expected error result, got success: %s", result.Content[0].Text)
+			}
+			if !strings.Contains(result.Content[0].Text, "connection timeout") {
+				t.Errorf("expected transient error to surface verbatim, got: %s", result.Content[0].Text)
+			}
+			if listCalled {
+				t.Error("ListScenes (fallback search) must not be called on a transient GetScene error")
+			}
+		})
+	}
+}
+
+// TestSceneHandlers_WritePath_AmbiguousNameRefuses covers W4's fallback safety: when the fuzzy
+// friendly-name search matches more than one scene, the write must refuse rather than guess.
+func TestSceneHandlers_WritePath_AmbiguousNameRefuses(t *testing.T) {
+	t.Parallel()
+
+	for _, action := range []string{"update", "patch"} {
+		t.Run(action, func(t *testing.T) {
+			t.Parallel()
+
+			client := &UniversalMockClient{
+				GetSceneFn: func(context.Context, string) (*homeassistant.Scene, error) {
+					return nil, errors.New("scene not found: movie")
+				},
+				ListScenesFn: func(context.Context) ([]homeassistant.Entity, error) {
+					return []homeassistant.Entity{
+						sceneListEntity("scene.movie_night", "Movie Night"),
+						sceneListEntity("scene.movie_time", "Movie Time"),
+					}, nil
+				},
+				UpdateSceneFn: func(context.Context, string, homeassistant.SceneConfig) error {
+					t.Fatal("UpdateScene must not be called when the identifier is ambiguous")
+					return nil
+				},
+			}
+
+			args := map[string]any{"action": action, "scene_id": "movie", "name": "Renamed"}
+			if action == "patch" {
+				args["operations"] = []any{map[string]any{"op": "replace", "path": "/name", "value": "Renamed"}}
+			}
+
+			h := &SceneHandlers{}
+			result, err := h.handleManageScene(context.Background(), client, args)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !result.IsError {
+				t.Fatalf("expected refusal, got success: %s", result.Content[0].Text)
+			}
+			text := result.Content[0].Text
+			if !strings.Contains(text, "ambiguous") {
+				t.Errorf("expected ambiguity refusal, got: %s", text)
+			}
+			if !strings.Contains(text, "scene.movie_night") || !strings.Contains(text, "scene.movie_time") {
+				t.Errorf("expected both candidates named in the refusal, got: %s", text)
+			}
+		})
+	}
+}
+
+// TestSceneHandlers_WritePath_UniqueNameResolves covers W4's positive path: a unique
+// friendly-name substring match resolves and the write targets the resolved entity/config id,
+// with the success message naming the resolved entity_id.
+func TestSceneHandlers_WritePath_UniqueNameResolves(t *testing.T) {
+	t.Parallel()
+
+	for _, action := range []string{"update", "patch"} {
+		t.Run(action, func(t *testing.T) {
+			t.Parallel()
+
+			var lastUpdateID string
+			client := &UniversalMockClient{
+				GetSceneFn: func(_ context.Context, configID string) (*homeassistant.Scene, error) {
+					if configID != "movie_night" {
+						return nil, errors.New("scene not found: " + configID)
+					}
+					return &homeassistant.Scene{
+						EntityID: "scene.movie_night",
+						Config: &homeassistant.SceneConfig{
+							Name:     "Movie Night",
+							Entities: map[string]homeassistant.SceneState{"light.living_room": {State: "on"}},
+						},
+					}, nil
+				},
+				ListScenesFn: func(context.Context) ([]homeassistant.Entity, error) {
+					return []homeassistant.Entity{sceneListEntity("scene.movie_night", "Movie Night")}, nil
+				},
+				UpdateSceneFn: func(_ context.Context, sceneID string, _ homeassistant.SceneConfig) error {
+					lastUpdateID = sceneID
+					return nil
+				},
+			}
+
+			args := map[string]any{"action": action, "scene_id": "Movie Night", "name": "Movie Night 2"}
+			if action == "patch" {
+				args["operations"] = []any{map[string]any{"op": "replace", "path": "/name", "value": "Movie Night 2"}}
+			}
+
+			h := &SceneHandlers{}
+			result, err := h.handleManageScene(context.Background(), client, args)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result.IsError {
+				t.Fatalf("expected success, got error: %s", result.Content[0].Text)
+			}
+			if lastUpdateID != "movie_night" {
+				t.Errorf("UpdateScene called with config id %q, want resolved %q", lastUpdateID, "movie_night")
+			}
+			if !strings.Contains(result.Content[0].Text, "scene.movie_night") {
+				t.Errorf("expected success message to name the resolved entity_id, got: %s", result.Content[0].Text)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// W1: no-op update skips the write
+// =============================================================================
+
+func TestSceneHandlers_Update_NoOpSkipsWrite(t *testing.T) {
+	t.Parallel()
+
+	updateCalled := false
+	client := &UniversalMockClient{
+		GetSceneFn: func(context.Context, string) (*homeassistant.Scene, error) {
+			return &homeassistant.Scene{
+				EntityID: "scene.movie_night",
+				Config: &homeassistant.SceneConfig{
+					Name:     "Movie Night",
+					Icon:     "mdi:movie",
+					Entities: map[string]homeassistant.SceneState{"light.living_room": {State: "on"}},
+				},
+			}, nil
+		},
+		UpdateSceneFn: func(context.Context, string, homeassistant.SceneConfig) error {
+			updateCalled = true
+			return nil
+		},
+	}
+
+	h := &SceneHandlers{}
+	args := map[string]any{"action": "update", "scene_id": "movie_night", "name": "Movie Night", "icon": "mdi:movie"}
+	result, err := h.handleManageScene(context.Background(), client, args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got error: %s", result.Content[0].Text)
+	}
+	if !strings.Contains(result.Content[0].Text, "no changes detected") {
+		t.Errorf("expected no-op message, got: %s", result.Content[0].Text)
+	}
+	if updateCalled {
+		t.Error("UpdateScene must not be called for a no-op update")
+	}
+}
+
+// =============================================================================
+// W2: invalid entity state format on update is rejected like create
+// =============================================================================
+
+func TestSceneHandlers_Update_RejectsInvalidEntityStateFormat(t *testing.T) {
+	t.Parallel()
+
+	updateCalled := false
+	client := &UniversalMockClient{
+		GetSceneFn: func(context.Context, string) (*homeassistant.Scene, error) {
+			return &homeassistant.Scene{
+				EntityID: "scene.movie_night",
+				Config: &homeassistant.SceneConfig{
+					Name:     "Movie Night",
+					Entities: map[string]homeassistant.SceneState{"light.living_room": {State: "on"}},
+				},
+			}, nil
+		},
+		UpdateSceneFn: func(context.Context, string, homeassistant.SceneConfig) error {
+			updateCalled = true
+			return nil
+		},
+	}
+
+	h := &SceneHandlers{}
+	args := map[string]any{
+		"action":   "update",
+		"scene_id": "movie_night",
+		"entities": map[string]any{"light.living_room": float64(42)},
+	}
+	result, err := h.handleManageScene(context.Background(), client, args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected refusal, got success: %s", result.Content[0].Text)
+	}
+	if !strings.Contains(result.Content[0].Text, "Invalid state format for entity light.living_room") {
+		t.Errorf("expected invalid-format message, got: %s", result.Content[0].Text)
+	}
+	if updateCalled {
+		t.Error("UpdateScene must not be called when an entity state is malformed")
+	}
+}
+
+// =============================================================================
+// W3: empty/nil Entities refuses the write instead of sending an invalid base
+// =============================================================================
+
+func TestSceneHandlers_WritePath_RefusesEmptyEntities(t *testing.T) {
+	t.Parallel()
+
+	for _, action := range []string{"update", "patch"} {
+		t.Run(action, func(t *testing.T) {
+			t.Parallel()
+
+			updateCalled := false
+			client := &UniversalMockClient{
+				GetSceneFn: func(context.Context, string) (*homeassistant.Scene, error) {
+					return &homeassistant.Scene{
+						EntityID: "scene.movie_night",
+						Config:   &homeassistant.SceneConfig{Name: "Movie Night", Entities: map[string]homeassistant.SceneState{}},
+					}, nil
+				},
+				UpdateSceneFn: func(context.Context, string, homeassistant.SceneConfig) error {
+					updateCalled = true
+					return nil
+				},
+			}
+
+			args := map[string]any{"action": action, "scene_id": "movie_night", "name": "Renamed"}
+			if action == "patch" {
+				args["operations"] = []any{map[string]any{"op": "replace", "path": "/name", "value": "Renamed"}}
+			}
+
+			h := &SceneHandlers{}
+			result, err := h.handleManageScene(context.Background(), client, args)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !result.IsError {
+				t.Fatalf("expected refusal, got success: %s", result.Content[0].Text)
+			}
+			if !strings.Contains(result.Content[0].Text, "no configuration") || !strings.Contains(result.Content[0].Text, "missing entities") {
+				t.Errorf("expected empty-entities refusal, got: %s", result.Content[0].Text)
+			}
+			if updateCalled {
+				t.Error("UpdateScene must not be called when the write base has no entities")
+			}
+		})
+	}
+}

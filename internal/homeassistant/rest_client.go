@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"strings"
 	"time"
 
@@ -194,7 +195,7 @@ func (c *RESTClient) CreateAutomation(ctx context.Context, config AutomationConf
 		return fmt.Errorf("automation ID is required")
 	}
 
-	url := fmt.Sprintf("%s/api/config/automation/config/%s", c.baseURL, config.ID)
+	url := fmt.Sprintf("%s/api/config/automation/config/%s", c.baseURL, neturl.PathEscape(config.ID))
 
 	bodyBytes, err := json.Marshal(config)
 	if err != nil {
@@ -238,7 +239,7 @@ func (c *RESTClient) UpdateAutomation(ctx context.Context, automationID string, 
 	if config.ID == "" {
 		config.ID = automationID
 	}
-	url := fmt.Sprintf("%s/api/config/automation/config/%s", c.baseURL, automationID)
+	url := fmt.Sprintf("%s/api/config/automation/config/%s", c.baseURL, neturl.PathEscape(automationID))
 
 	bodyBytes, err := json.Marshal(config)
 	if err != nil {
@@ -279,7 +280,7 @@ func (c *RESTClient) UpdateAutomation(ctx context.Context, automationID string, 
 // Endpoint: DELETE /api/config/automation/config/{automation_id}
 func (c *RESTClient) DeleteAutomation(ctx context.Context, automationID string) error {
 	// Build the URL for automation deletion
-	url := fmt.Sprintf("%s/api/config/automation/config/%s", c.baseURL, automationID)
+	url := fmt.Sprintf("%s/api/config/automation/config/%s", c.baseURL, neturl.PathEscape(automationID))
 
 	// Create the DELETE request
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, http.NoBody)
@@ -342,7 +343,7 @@ func (c *RESTClient) DeleteAutomation(ctx context.Context, automationID string) 
 // The WebSocket API does not support script creation reliably.
 // Endpoint: POST /api/config/script/config/{script_id}
 func (c *RESTClient) CreateScript(ctx context.Context, scriptID string, config ScriptConfig) error {
-	url := fmt.Sprintf("%s/api/config/script/config/%s", c.baseURL, scriptID)
+	url := fmt.Sprintf("%s/api/config/script/config/%s", c.baseURL, neturl.PathEscape(scriptID))
 
 	bodyBytes, err := json.Marshal(config)
 	if err != nil {
@@ -382,7 +383,7 @@ func (c *RESTClient) CreateScript(ctx context.Context, scriptID string, config S
 // The WebSocket API does not support script updates reliably.
 // Endpoint: POST /api/config/script/config/{script_id}
 func (c *RESTClient) UpdateScript(ctx context.Context, scriptID string, config ScriptConfig) error {
-	url := fmt.Sprintf("%s/api/config/script/config/%s", c.baseURL, scriptID)
+	url := fmt.Sprintf("%s/api/config/script/config/%s", c.baseURL, neturl.PathEscape(scriptID))
 
 	bodyBytes, err := json.Marshal(config)
 	if err != nil {
@@ -421,7 +422,7 @@ func (c *RESTClient) UpdateScript(ctx context.Context, scriptID string, config S
 // DeleteScript deletes a script using the REST API.
 // Endpoint: DELETE /api/config/script/config/{script_id}
 func (c *RESTClient) DeleteScript(ctx context.Context, scriptID string) error {
-	url := fmt.Sprintf("%s/api/config/script/config/%s", c.baseURL, scriptID)
+	url := fmt.Sprintf("%s/api/config/script/config/%s", c.baseURL, neturl.PathEscape(scriptID))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, http.NoBody)
 	if err != nil {
@@ -503,7 +504,7 @@ func buildSceneData(sceneID string, config SceneConfig) map[string]any {
 // GetScene retrieves the full configuration of a scene by ID.
 // Endpoint: GET /api/config/scene/config/{scene_id}
 func (c *RESTClient) GetScene(ctx context.Context, sceneID string) (*Scene, error) {
-	url := fmt.Sprintf("%s/api/config/scene/config/%s", c.baseURL, sceneID)
+	url := fmt.Sprintf("%s/api/config/scene/config/%s", c.baseURL, neturl.PathEscape(sceneID))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
@@ -552,7 +553,7 @@ func (c *RESTClient) GetScene(ctx context.Context, sceneID string) (*Scene, erro
 // would append a new entry instead of editing one in place, silently creating a duplicate
 // orphan entity (<entity>_2) instead of updating the original (#122, #164).
 func (c *RESTClient) ConfigFileEntryExists(ctx context.Context, domain, configID string) (bool, error) {
-	url := fmt.Sprintf("%s/api/config/%s/config/%s", c.baseURL, domain, configID)
+	url := fmt.Sprintf("%s/api/config/%s/config/%s", c.baseURL, domain, neturl.PathEscape(configID))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
@@ -590,7 +591,7 @@ func (c *RESTClient) ConfigFileEntryExists(ctx context.Context, domain, configID
 // The WebSocket API does not support scene creation reliably.
 // Endpoint: POST /api/config/scene/config/{scene_id}
 func (c *RESTClient) CreateScene(ctx context.Context, sceneID string, config SceneConfig) error {
-	url := fmt.Sprintf("%s/api/config/scene/config/%s", c.baseURL, sceneID)
+	url := fmt.Sprintf("%s/api/config/scene/config/%s", c.baseURL, neturl.PathEscape(sceneID))
 	sceneData := buildSceneData(sceneID, config)
 
 	bodyBytes, err := json.Marshal(sceneData)
@@ -631,7 +632,7 @@ func (c *RESTClient) CreateScene(ctx context.Context, sceneID string, config Sce
 // The WebSocket API does not support scene updates reliably.
 // Endpoint: POST /api/config/scene/config/{scene_id}
 func (c *RESTClient) UpdateScene(ctx context.Context, sceneID string, config SceneConfig) error {
-	url := fmt.Sprintf("%s/api/config/scene/config/%s", c.baseURL, sceneID)
+	url := fmt.Sprintf("%s/api/config/scene/config/%s", c.baseURL, neturl.PathEscape(sceneID))
 	sceneData := buildSceneData(sceneID, config)
 
 	bodyBytes, err := json.Marshal(sceneData)
@@ -671,7 +672,7 @@ func (c *RESTClient) UpdateScene(ctx context.Context, sceneID string, config Sce
 // DeleteScene deletes a scene using the REST API.
 // Endpoint: DELETE /api/config/scene/config/{scene_id}
 func (c *RESTClient) DeleteScene(ctx context.Context, sceneID string) error {
-	url := fmt.Sprintf("%s/api/config/scene/config/%s", c.baseURL, sceneID)
+	url := fmt.Sprintf("%s/api/config/scene/config/%s", c.baseURL, neturl.PathEscape(sceneID))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, http.NoBody)
 	if err != nil {
@@ -858,7 +859,7 @@ func (c *RESTClient) RenderTemplate(ctx context.Context, template string) (strin
 // Query params: entity=<entity_id>, end_time=<timestamp>
 func (c *RESTClient) GetLogbook(ctx context.Context, startTime, endTime, entityID string) ([]LogbookEntry, error) {
 	// Build URL with start_time in path
-	url := fmt.Sprintf("%s/api/logbook/%s", c.baseURL, startTime)
+	url := fmt.Sprintf("%s/api/logbook/%s", c.baseURL, neturl.PathEscape(startTime))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
@@ -1010,7 +1011,7 @@ func (c *RESTClient) InitConfigEntryFlow(ctx context.Context, handler string) (*
 // Endpoint: POST /api/config/config_entries/flow/{flow_id}
 // Returns the flow result which may be another form step or create_entry on success.
 func (c *RESTClient) SubmitConfigEntryFlowStep(ctx context.Context, flowID string, data map[string]any) (*ConfigEntryFlowResult, error) {
-	url := fmt.Sprintf("%s/api/config/config_entries/flow/%s", c.baseURL, flowID)
+	url := fmt.Sprintf("%s/api/config/config_entries/flow/%s", c.baseURL, neturl.PathEscape(flowID))
 
 	bodyBytes, err := json.Marshal(data)
 	if err != nil {
@@ -1062,7 +1063,7 @@ func (c *RESTClient) SubmitConfigEntryFlowStep(ctx context.Context, flowID strin
 // (older HA versions, a 204 response) degrades to false rather than erroring,
 // since the delete itself already succeeded.
 func (c *RESTClient) DeleteConfigEntry(ctx context.Context, entryID string) (bool, error) {
-	url := fmt.Sprintf("%s/api/config/config_entries/entry/%s", c.baseURL, entryID)
+	url := fmt.Sprintf("%s/api/config/config_entries/entry/%s", c.baseURL, neturl.PathEscape(entryID))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, http.NoBody)
 	if err != nil {
@@ -1176,7 +1177,7 @@ func (c *RESTClient) InitConfigEntryOptionsFlow(ctx context.Context, entryID str
 // Endpoint: POST /api/config/config_entries/options/flow/{flow_id}
 // Returns the options flow result which may be another form step or create_entry on success.
 func (c *RESTClient) SubmitConfigEntryOptionsFlowStep(ctx context.Context, flowID string, data map[string]any) (*OptionsFlowResult, error) {
-	url := fmt.Sprintf("%s/api/config/config_entries/options/flow/%s", c.baseURL, flowID)
+	url := fmt.Sprintf("%s/api/config/config_entries/options/flow/%s", c.baseURL, neturl.PathEscape(flowID))
 
 	bodyBytes, err := json.Marshal(data)
 	if err != nil {
@@ -1223,7 +1224,7 @@ func (c *RESTClient) SubmitConfigEntryOptionsFlowStep(ctx context.Context, flowI
 // AbortConfigEntryOptionsFlow aborts an active options flow.
 // Endpoint: DELETE /api/config/config_entries/options/flow/{flow_id}
 func (c *RESTClient) AbortConfigEntryOptionsFlow(ctx context.Context, flowID string) error {
-	url := fmt.Sprintf("%s/api/config/config_entries/options/flow/%s", c.baseURL, flowID)
+	url := fmt.Sprintf("%s/api/config/config_entries/options/flow/%s", c.baseURL, neturl.PathEscape(flowID))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, http.NoBody)
 	if err != nil {
@@ -1303,7 +1304,7 @@ func (c *RESTClient) GetCalendars(ctx context.Context) ([]CalendarEntry, error) 
 // GetCalendarEvents retrieves events for a specific calendar within a date range.
 // Endpoint: GET /api/calendars/{entity_id}?start={start}&end={end}
 func (c *RESTClient) GetCalendarEvents(ctx context.Context, entityID, start, end string) ([]CalendarEvent, error) {
-	url := fmt.Sprintf("%s/api/calendars/%s?start=%s&end=%s", c.baseURL, entityID, start, end)
+	url := fmt.Sprintf("%s/api/calendars/%s?start=%s&end=%s", c.baseURL, neturl.PathEscape(entityID), start, end)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
@@ -1351,7 +1352,7 @@ func (c *RESTClient) GetCalendarEvents(ctx context.Context, entityID, start, end
 // Endpoint: GET /api/camera_proxy/{entity_id}
 // Returns the image bytes, content type, and any error.
 func (c *RESTClient) GetCameraSnapshot(ctx context.Context, entityID string) ([]byte, string, error) {
-	url := fmt.Sprintf("%s/api/camera_proxy/%s", c.baseURL, entityID)
+	url := fmt.Sprintf("%s/api/camera_proxy/%s", c.baseURL, neturl.PathEscape(entityID))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {

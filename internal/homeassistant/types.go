@@ -240,7 +240,6 @@ type ScriptConfig struct {
 }
 
 // SceneConfig represents the configuration of a scene.
-// SceneConfig represents the configuration of a scene.
 type SceneConfig struct {
 	Name     string                `json:"name"`
 	Icon     string                `json:"icon,omitempty"`
@@ -258,9 +257,6 @@ type SceneState struct {
 	Attributes map[string]any `json:"attributes,omitempty"`
 }
 
-// UnmarshalJSON implements json.Unmarshaler for SceneState.
-// The HA REST API returns scene entity states in flat format where all
-// attributes are at the top level alongside the state key.
 // UnmarshalJSON implements json.Unmarshaler for SceneState.
 // The HA REST API returns scene entity states in flat format where all
 // attributes are at the top level alongside the state key. HA also accepts

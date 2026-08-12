@@ -3,7 +3,9 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"reflect"
 	"strings"
 
@@ -615,8 +617,28 @@ func deleteScriptWithRegistryFallback(ctx context.Context, client homeassistant.
 // isNotFoundError reports whether err indicates the target resource does not exist. Covers
 // both HA's 404 form ("script not found: X") and the observed 400 body
 // ("unexpected status 400: {\"message\":\"Resource not found\"}") — see #123.
+// isNotFoundError reports whether err represents a "not found" condition. Prefers the real HTTP
+// status code when available (REST-origin errors carry *homeassistant.APIError) so a reverse-proxy
+// 502 whose body happens to mention "not found" doesn't get misrouted into a not-found fallback
+// path; falls back to the substring match for WebSocket-origin errors, which carry no status code.
+// isNotFoundError reports whether err represents a "not found" condition. A clean HTTP 404
+// (*homeassistant.APIError with StatusCode 404) is always treated as not-found. Otherwise falls
+// back to a case-insensitive substring match on the error text - this is deliberately not
+// narrowed to "status 404 only": Home Assistant's own config API returns a 400 (not 404) with
+// body {"message":"Resource not found"} for YAML-defined/orphan scripts (see DeleteScript's
+// registry fallback below), so a 400 whose message says "not found" must still classify as
+// not-found or that fallback never fires. The trade-off is a false positive is still possible for
+// a reverse-proxy error page whose body happens to mention "not found" - accepted, since narrowing
+// this would silently break the documented #123 fallback instead.
 func isNotFoundError(err error) bool {
-	return err != nil && strings.Contains(strings.ToLower(err.Error()), "not found")
+	if err == nil {
+		return false
+	}
+	var apiErr *homeassistant.APIError
+	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "not found")
 }
 
 // deleteScriptViaRegistry removes a script by its entity-registry entry. This is the fallback

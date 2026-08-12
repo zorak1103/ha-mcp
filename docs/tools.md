@@ -167,9 +167,11 @@ Universal tool for runtime helper operations:
 | -------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | `manage_scene` | Consolidated scene management (actions: list, get, create, update, delete, activate, patch (RFC 6902 JSON Patch + semantic patch); format: natural/json for list/get). `update` is a partial update — it reads the stored config first and only overwrites fields you pass; `entities`, if passed, replaces the whole entity map (use `patch` for a single-entity edit) |
 
-**Flexible ID Lookup**: The `scene_id` parameter accepts multiple formats:
+**Flexible ID Lookup**: The `scene_id` parameter accepts multiple formats for all actions:
 - Entity ID: `scene.movie_time`
-- Friendly name: `movie time` (case-insensitive partial match)
+- Friendly name: `movie time` (case-insensitive partial match). `update`/`patch` refuse with an "ambiguous" error listing candidates if the identifier matches more than one scene — use the exact entity_id in that case.
+
+`update` skips the write (and the reload it would trigger) when the merged config is identical to the stored one.
 
 ### Media Tools
 

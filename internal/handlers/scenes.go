@@ -3,7 +3,9 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/zorak1103/ha-mcp/internal/handlers/formatter"
@@ -245,6 +247,160 @@ func (h *SceneHandlers) findSceneByID(ctx context.Context, client homeassistant.
 	return nil, fmt.Errorf("scene not found: %s (tried as entity_id and friendly_name)", searchID)
 }
 
+// errAmbiguousSceneMatch signals that a scene identifier resolved to more than one candidate
+// during a write-path fallback search - a write must never guess between multiple scenes.
+var errAmbiguousSceneMatch = errors.New("ambiguous scene identifier")
+
+// errSceneNotFoundForWrite signals that neither an exact id/entity_id lookup nor a fuzzy
+// friendly-name search resolved to any scene.
+var errSceneNotFoundForWrite = errors.New("scene not found")
+
+// sceneConfigMissingError signals that GetScene 404'd for entityID/configID while the entity
+// itself still exists (GetState succeeded) - i.e. it is YAML-defined under a different
+// config-file key than its entity_id's object_id would suggest (#122/#164).
+type sceneConfigMissingError struct {
+	entityID, configID string
+}
+
+func (e *sceneConfigMissingError) Error() string {
+	return fmt.Sprintf("scene config entry missing for %s (%s)", e.entityID, e.configID)
+}
+
+// joinSceneCandidates renders ambiguous-match candidate entity_ids for an error message.
+func joinSceneCandidates(entities []*homeassistant.Entity) string {
+	ids := make([]string, 0, len(entities))
+	for _, e := range entities {
+		ids = append(ids, e.EntityID)
+	}
+	return strings.Join(ids, ", ")
+}
+
+// findSceneForWrite resolves a scene for a write operation (update/patch) by friendly-name
+// search, refusing an ambiguous match rather than silently picking the first candidate HA
+// happens to list - mirrors scripts.go's findScriptForWrite (#160). Search order matches
+// findSceneByID's: exact entity_id first (inherently unambiguous), then case-insensitive
+// friendly_name substring match - but here a substring match is only accepted automatically
+// when it is the sole substring match, or when exactly one of several substring matches is also
+// an EXACT (not just substring) case-insensitive match. Uses the friendly_name already present on
+// ListScenes' Entity.Attributes - no per-item GetState fetch needed, unlike the script equivalent.
+func (h *SceneHandlers) findSceneForWrite(ctx context.Context, client homeassistant.Client, searchID string) (*homeassistant.Entity, error) {
+	scenes, err := client.ListScenes(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list scenes: %w", err)
+	}
+
+	if strings.HasPrefix(searchID, "scene.") {
+		for i := range scenes {
+			if scenes[i].EntityID == searchID {
+				return &scenes[i], nil
+			}
+		}
+	}
+
+	searchLower := strings.ToLower(searchID)
+	var substringMatches, exactMatches []*homeassistant.Entity
+	for i := range scenes {
+		friendly, _ := scenes[i].Attributes["friendly_name"].(string)
+		if !strings.Contains(strings.ToLower(friendly), searchLower) {
+			continue
+		}
+		substringMatches = append(substringMatches, &scenes[i])
+		if strings.EqualFold(friendly, searchID) {
+			exactMatches = append(exactMatches, &scenes[i])
+		}
+	}
+
+	switch {
+	case len(exactMatches) == 1:
+		return exactMatches[0], nil
+	case len(substringMatches) == 1:
+		return substringMatches[0], nil
+	case len(substringMatches) > 1:
+		return nil, fmt.Errorf("%w: %q matches %d scenes: %s - use the exact entity_id",
+			errAmbiguousSceneMatch, searchID, len(substringMatches), joinSceneCandidates(substringMatches))
+	default:
+		return nil, fmt.Errorf("scene not found: %s (tried as entity_id and friendly_name)", searchID)
+	}
+}
+
+// resolveSceneForWrite resolves sceneID to (entityID, configID, current config) for a write
+// operation, falling back to findSceneForWrite (friendly-name search) only when a direct GetScene
+// lookup using the guessed config id returns a not-found error. Any other error (transient
+// WS/REST failure, timeout, auth) is returned as-is without triggering the fallback search - a
+// momentary hiccup on an otherwise-correct scene_id must never silently retarget a write via fuzzy
+// matching. This was the gap that let the pre-remediation manage_scene patch retarget to an
+// unrelated scene on any GetScene error, not just a genuine 404.
+// Returns the entity_id/config_id re-derived from the entity actually resolved - not the raw
+// guess from normalizeSceneID - since the fallback search may match a different underlying
+// entity than what the caller's input implied.
+func (h *SceneHandlers) resolveSceneForWrite(
+	ctx context.Context,
+	client homeassistant.Client,
+	sceneID string,
+) (entityID, configID string, current *homeassistant.Scene, err error) {
+	guessedEntityID, guessedConfigID := normalizeSceneID(sceneID)
+
+	scene, getErr := client.GetScene(ctx, guessedConfigID)
+	if getErr == nil {
+		return guessedEntityID, guessedConfigID, scene, nil
+	}
+	if !isNotFoundError(getErr) {
+		return "", "", nil, getErr
+	}
+
+	resolvedEntity, findErr := h.findSceneForWrite(ctx, client, sceneID)
+	if findErr != nil {
+		if errors.Is(findErr, errAmbiguousSceneMatch) {
+			return "", "", nil, findErr
+		}
+		// No fuzzy match either - fall back to the exact-id discrimination #122/#164 relies on:
+		// if the entity still exists under the guessed entity_id, it's YAML-defined under a
+		// different config-file key; otherwise it's a genuine not-found.
+		if _, stateErr := client.GetState(ctx, guessedEntityID); stateErr == nil {
+			return "", "", nil, &sceneConfigMissingError{entityID: guessedEntityID, configID: guessedConfigID}
+		}
+		return "", "", nil, fmt.Errorf("%w: %s", errSceneNotFoundForWrite, sceneID)
+	}
+
+	entityID, configID = normalizeSceneID(resolvedEntity.EntityID)
+	scene, getErr = client.GetScene(ctx, configID)
+	if getErr == nil {
+		return entityID, configID, scene, nil
+	}
+	if !isNotFoundError(getErr) {
+		return "", "", nil, getErr
+	}
+	return "", "", nil, &sceneConfigMissingError{entityID: entityID, configID: configID}
+}
+
+// describeSceneTarget renders the target scene for a success/error message, naming the resolved
+// entity_id alongside the caller's input whenever resolveSceneForWrite's fallback search
+// retargeted the write to a different entity than the input implied (mirrors scripts.go's
+// describeScriptTarget, #160).
+func describeSceneTarget(sceneID, entityID string) string {
+	guessedEntityID, _ := normalizeSceneID(sceneID)
+	if guessedEntityID == entityID {
+		return fmt.Sprintf("'%s'", sceneID)
+	}
+	return fmt.Sprintf("'%s' (%s)", sceneID, entityID)
+}
+
+// sceneWriteResolveErrorResult renders a resolveSceneForWrite error into the tool result the
+// caller (update/patch) should return, sharing one message set between both actions.
+func sceneWriteResolveErrorResult(ctx context.Context, client homeassistant.Client, action, sceneID string, err error) *mcp.ToolsCallResult {
+	var missing *sceneConfigMissingError
+	switch {
+	case errors.As(err, &missing):
+		return errorResult(configFileMissingWriteError(ctx, client, "scene", action, sceneID, missing.entityID, missing.configID))
+	case errors.Is(err, errSceneNotFoundForWrite):
+		return errorResult(fmt.Sprintf("scene not found: %s", sceneID))
+	case errors.Is(err, errAmbiguousSceneMatch):
+		return errorResult(err.Error())
+	default:
+		return errorResult(fmt.Sprintf("Error getting current scene: %v", err))
+	}
+}
+
 func (h *SceneHandlers) handleCreate(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
 	sceneID, ok := args["scene_id"].(string)
 	if !ok || sceneID == "" {
@@ -292,37 +448,38 @@ func (h *SceneHandlers) handleUpdate(ctx context.Context, client homeassistant.C
 		return errorResult("scene_id is required for update action"), nil
 	}
 
-	// Normalize ID to handle prefix variations
-	entityID, configID := normalizeSceneID(sceneID)
-
-	current, err := client.GetScene(ctx, configID)
+	entityID, configID, current, err := h.resolveSceneForWrite(ctx, client, sceneID)
 	if err != nil {
-		if !isNotFoundError(err) {
-			return errorResult(fmt.Sprintf("Error getting current scene: %v", err)), nil
-		}
-		// GetScene 404s both when the id is genuinely unknown and when the entity is
-		// YAML-defined under a different config-file key (#122/#164) - discriminate via GetState.
-		if _, stateErr := client.GetState(ctx, entityID); stateErr == nil {
-			return errorResult(configFileMissingWriteError(ctx, client, "scene", "update", sceneID, entityID, configID)), nil
-		}
-		return errorResult(fmt.Sprintf("scene not found: %s", sceneID)), nil
+		return sceneWriteResolveErrorResult(ctx, client, "update", sceneID, err), nil
 	}
+	target := describeSceneTarget(sceneID, entityID)
 
-	if current.Config == nil {
-		return errorResult(fmt.Sprintf("scene '%s' has no configuration to update", sceneID)), nil
+	if current.Config == nil || len(current.Config.Entities) == 0 {
+		return errorResult(fmt.Sprintf("scene %s has no configuration to update (missing entities)", target)), nil
 	}
 
 	// The fetched config is the write base - only fields present in args are overwritten,
-	// everything else (entities, icon, metadata) survives untouched (#173).
+	// everything else (icon, metadata) survives untouched (#173).
 	config := *current.Config
-	applySceneConfigUpdates(&config, args)
+	beforeMap, _ := configToMap(config)
+	invalidEntity := applySceneConfigUpdates(&config, args)
+	if invalidEntity != "" {
+		return errorResult(fmt.Sprintf("Invalid state format for entity %s", invalidEntity)), nil
+	}
+
+	// Skip a no-op write: avoids a needless scenes.yaml rewrite (which reformats hand-authored
+	// shorthand entity values via SceneState.MarshalJSON) and the reload HA's config API triggers.
+	afterMap, _ := configToMap(config)
+	if reflect.DeepEqual(beforeMap, afterMap) {
+		return successResult(fmt.Sprintf("Scene %s: no changes detected, skipping write (reload avoided)", target)), nil
+	}
 
 	if err := client.UpdateScene(ctx, configID, config); err != nil {
 		msg := fmt.Sprintf("Error updating scene: %v", err)
 		return errorResult(enrichConfigError(msg, err, sceneErrorHints)), nil
 	}
 
-	return successResult(fmt.Sprintf("Scene '%s' updated successfully", sceneID)), nil
+	return successResult(fmt.Sprintf("Scene %s updated successfully", target)), nil
 }
 
 func (h *SceneHandlers) handleDelete(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
@@ -508,7 +665,15 @@ func parseSceneEntities(entitiesRaw map[string]any) (map[string]homeassistant.Sc
 // GetScene. Only fields present in args are overwritten - name, icon, and metadata are otherwise
 // left untouched. entities, when present, replaces the whole map wholesale (mirrors how
 // applyScriptConfigUpdates replaces sequence); surgical single-entity edits are action=patch's job.
-func applySceneConfigUpdates(config *homeassistant.SceneConfig, args map[string]any) {
+// applySceneConfigUpdates merges caller-supplied args onto an existing SceneConfig fetched via
+// GetScene. Only fields present in args are overwritten - name, icon, and metadata are otherwise
+// left untouched. entities, when present, replaces the whole map wholesale (mirrors how
+// applyScriptConfigUpdates replaces sequence); surgical single-entity edits are action=patch's job.
+// Reuses parseSceneEntities - the same validator handleCreate uses - instead of re-implementing
+// its loop, so a malformed entity state (e.g. a bare number) is rejected here exactly as it would
+// be on create, rather than silently stored as an empty SceneState. Returns the offending
+// entity_id, or "" if entities is absent or every value parsed cleanly.
+func applySceneConfigUpdates(config *homeassistant.SceneConfig, args map[string]any) (invalidEntity string) {
 	if name, ok := args["name"].(string); ok {
 		config.Name = name
 	}
@@ -516,13 +681,13 @@ func applySceneConfigUpdates(config *homeassistant.SceneConfig, args map[string]
 		config.Icon = icon
 	}
 	if entitiesRaw, ok := args["entities"].(map[string]any); ok {
-		entities := make(map[string]homeassistant.SceneState, len(entitiesRaw))
-		for eid, stateRaw := range entitiesRaw {
-			sceneState, _ := parseSceneState(stateRaw)
-			entities[eid] = sceneState
+		entities, invalid := parseSceneEntities(entitiesRaw)
+		if invalid != "" {
+			return invalid
 		}
 		config.Entities = entities
 	}
+	return ""
 }
 
 func (h *SceneHandlers) handlePatch(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
@@ -536,24 +701,14 @@ func (h *SceneHandlers) handlePatch(ctx context.Context, client homeassistant.Cl
 		return errResult, nil
 	}
 
-	_, configID := normalizeSceneID(sceneID)
-
-	current, err := client.GetScene(ctx, configID)
+	entityID, configID, current, err := h.resolveSceneForWrite(ctx, client, sceneID)
 	if err != nil {
-		var entity *homeassistant.Entity
-		entity, err = h.findSceneByID(ctx, client, sceneID)
-		if err != nil {
-			return errorResult(fmt.Sprintf("error getting scene: %v", err)), nil
-		}
-		_, configID = normalizeSceneID(entity.EntityID)
-		current, err = client.GetScene(ctx, configID)
-		if err != nil {
-			return errorResult(fmt.Sprintf("error getting scene: %v", err)), nil
-		}
+		return sceneWriteResolveErrorResult(ctx, client, "patch", sceneID, err), nil
 	}
+	target := describeSceneTarget(sceneID, entityID)
 
-	if current.Config == nil {
-		return errorResult(fmt.Sprintf("scene '%s' has no configuration to patch", sceneID)), nil
+	if current.Config == nil || len(current.Config.Entities) == 0 {
+		return errorResult(fmt.Sprintf("scene %s has no configuration to patch (missing entities)", target)), nil
 	}
 
 	configMap, err := configToMap(current.Config)
@@ -580,5 +735,5 @@ func (h *SceneHandlers) handlePatch(ctx context.Context, client homeassistant.Cl
 		return errorResult(enrichConfigError(msg, err, sceneErrorHints)), nil
 	}
 
-	return successResult(fmt.Sprintf("Scene '%s' patched successfully (%d operations applied)", sceneID, len(ops))), nil
+	return successResult(fmt.Sprintf("Scene %s patched successfully (%d operations applied)", target, len(ops))), nil
 }

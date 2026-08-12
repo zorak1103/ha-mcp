@@ -57,6 +57,13 @@ func (s *SceneToolDispatchTestSuite) TestSceneUpdateViaTool() {
 			target1EntityID: {State: "on"},
 			target2EntityID: {State: "off"},
 		},
+		// Metadata exercises the #173 companion fix: buildSceneData's new "metadata" key
+		// (rest_client.go) previously had only mock coverage - this is the sole live-HA
+		// assertion that HA's config API round-trips it, mirroring the shape HA's own scene
+		// editor writes ({"<entity_id>": {"entity_only": true}}).
+		Metadata: map[string]any{
+			target1EntityID: map[string]any{"entity_only": true},
+		},
 	}
 	err = s.Client().CreateScene(s.Context(), sceneID, sceneConfig)
 	s.Require().NoError(err, "Failed to create scene")
@@ -86,4 +93,9 @@ func (s *SceneToolDispatchTestSuite) TestSceneUpdateViaTool() {
 	t2, ok := updated.Config.Entities[target2EntityID]
 	s.Require().True(ok, "target2 entity must survive the update")
 	s.Equal("off", t2.State)
+
+	s.Require().NotNil(updated.Config.Metadata, "metadata must survive an update that only touches name")
+	entry, ok := updated.Config.Metadata[target1EntityID].(map[string]any)
+	s.Require().True(ok, "metadata entry for target1 must round-trip as an object, got: %#v", updated.Config.Metadata[target1EntityID])
+	s.Equal(true, entry["entity_only"])
 }

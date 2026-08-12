@@ -23,6 +23,10 @@ func configFileName(domain string) string {
 func configFileMissingWriteError(ctx context.Context, client homeassistant.Client, domain, action, displayID, entityID, configID string) string {
 	fileName := configFileName(domain)
 
+	// ConfigDir is included deliberately: the MCP client already holds a token with full
+	// config-read access (GetConfig itself requires no more privilege than any other call this
+	// tool makes), so surfacing it is not privilege-escalating - and it's the actionable half of
+	// this message (the caller needs to know where to go edit the source file).
 	dirHint := ""
 	if cfg, err := client.GetConfig(ctx); err == nil && cfg != nil && cfg.ConfigDir != "" {
 		dirHint = fmt.Sprintf(" (config directory: %s)", cfg.ConfigDir)

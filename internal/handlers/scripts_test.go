@@ -2549,3 +2549,33 @@ func TestManageScript_Update_MaxPreservation(t *testing.T) {
 		t.Errorf("Max = %d, want 8 (must be preserved when not in args)", client.lastUpdateConfig.Max)
 	}
 }
+
+// TestIsNotFoundError covers N3's status-code fast path plus the substring fallback it
+// deliberately keeps: HA's config API returns 400 (not 404) with body {"message":"Resource not
+// found"} for YAML-defined/orphan scripts (#123's DeleteScript registry fallback relies on this
+// classifying as not-found), so a non-404 APIError must still fall through to the message check.
+func TestIsNotFoundError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil error", nil, false},
+		{"APIError 404", &homeassistant.APIError{StatusCode: 404, Message: "scene not found: x"}, true},
+		{"APIError 400 with not-found message (#123)", &homeassistant.APIError{StatusCode: 400, Message: "Resource not found"}, true},
+		{"APIError 502 without not-found text", &homeassistant.APIError{StatusCode: 502, Message: "Bad Gateway"}, false},
+		{"plain not-found error", errors.New("scene not found: x"), true},
+		{"plain unrelated error", errors.New("connection timeout"), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := isNotFoundError(tt.err); got != tt.want {
+				t.Errorf("isNotFoundError(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
