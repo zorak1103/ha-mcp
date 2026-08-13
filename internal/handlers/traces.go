@@ -110,9 +110,10 @@ func (h *TraceHandlers) HandleManageTrace(ctx context.Context, client homeassist
 	}
 }
 
-// resolveTraceListParams derives domain and item_id from entity_id (when provided),
+// resolveTraceListParams derives domain and the entity_id from entity_id (when provided),
 // validates the prefix, and checks for conflicts with an explicit domain parameter.
-func resolveTraceListParams(entityID, domain string) (resolvedDomain, itemID, errMsg string) {
+// The returned entityID must still be mapped to HA's trace item_id via resolveTraceItemID.
+func resolveTraceListParams(entityID, domain string) (resolvedDomain, resolvedEntityID, errMsg string) {
 	if entityID == "" {
 		return domain, "", ""
 	}
@@ -130,13 +131,45 @@ func resolveTraceListParams(entityID, domain string) (resolvedDomain, itemID, er
 	return derived, entityID, ""
 }
 
+// resolveTraceItemID maps an entity_id to the item_id Home Assistant's trace API expects.
+// HA stores traces under the key "<domain>.<item_id>", where item_id is the object's
+// unique_id, NOT its entity_id:
+//   - Scripts: unique_id is the config key. It matches the entity's object_id unless the
+//     entity was renamed after creation, so it is resolved via the entity registry and
+//     degrades to the object_id on lookup failure. Passing the full entity_id produces
+//     the nonexistent key "script.script.<id>".
+//   - Automations: unique_id is the automation's config id, which differs from the
+//     entity object_id for UI-created automations, so it is resolved via GetAutomation.
+//     On lookup failure it degrades to the object_id.
+func resolveTraceItemID(ctx context.Context, client homeassistant.Client, domain, entityID string) string {
+	objectID := entityID
+	if dotIdx := strings.Index(entityID, "."); dotIdx >= 0 {
+		objectID = entityID[dotIdx+1:]
+	}
+	switch domain {
+	case traceDomainAutomation:
+		if auto, err := client.GetAutomation(ctx, entityID); err == nil && auto.Config != nil && auto.Config.ID != "" {
+			return auto.Config.ID
+		}
+	case traceDomainScript:
+		if entries, err := client.GetEntityRegistry(ctx); err == nil {
+			for _, entry := range entries {
+				if entry.EntityID == entityID && entry.UniqueID != "" {
+					return entry.UniqueID
+				}
+			}
+		}
+	}
+	return objectID
+}
+
 // handleListTraces lists all traces for a domain.
 func (h *TraceHandlers) handleListTraces(ctx context.Context, client homeassistant.Client, args map[string]any, format string) (*mcp.ToolsCallResult, error) {
 	domain, _ := args["domain"].(string)
 	entityID, _ := args["entity_id"].(string)
 	wait, _ := args["wait"].(bool)
 
-	domain, itemID, errMsg := resolveTraceListParams(entityID, domain)
+	domain, traceEntityID, errMsg := resolveTraceListParams(entityID, domain)
 	if errMsg != "" {
 		return errorResult(errMsg), nil
 	}
@@ -147,8 +180,8 @@ func (h *TraceHandlers) handleListTraces(ctx context.Context, client homeassista
 	// Build command data
 	data := make(map[string]any)
 	data["domain"] = domain
-	if itemID != "" {
-		data["item_id"] = itemID
+	if traceEntityID != "" {
+		data["item_id"] = resolveTraceItemID(ctx, client, domain, traceEntityID)
 	}
 
 	// Call trace/list WebSocket command
@@ -229,7 +262,7 @@ func (h *TraceHandlers) handleGetTrace(ctx context.Context, client homeassistant
 	// Build command data
 	data := map[string]any{
 		"domain":  domain,
-		"item_id": entityID,
+		"item_id": resolveTraceItemID(ctx, client, domain, entityID),
 		"run_id":  runID,
 	}
 

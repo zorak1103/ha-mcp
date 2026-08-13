@@ -165,7 +165,7 @@ func fetchDebugAutomationConfig(ctx context.Context, client homeassistant.Client
 func (h *TraceHandlers) fetchLatestTrace(ctx context.Context, client homeassistant.Client, entityID string) *AutomationDebugTrace {
 	data := map[string]any{
 		"domain":  traceDomainAutomation,
-		"item_id": entityID,
+		"item_id": resolveTraceItemID(ctx, client, traceDomainAutomation, entityID),
 	}
 	response, err := client.SendHACSCommand(ctx, "trace/list", data)
 	if err != nil {

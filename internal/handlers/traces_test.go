@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
 
@@ -222,12 +223,18 @@ func TestManageTrace_Get(t *testing.T) {
 	t.Parallel()
 
 	client := &UniversalMockClient{
+		GetAutomationFn: func(_ context.Context, automationID string) (*homeassistant.Automation, error) {
+			return &homeassistant.Automation{
+				EntityID: "automation.test",
+				Config:   &homeassistant.AutomationConfig{ID: "1700000000001"},
+			}, nil
+		},
 		SendHACSCommandFn: func(_ context.Context, cmd string, data map[string]any) (any, error) {
 			if cmd != "trace/get" {
 				t.Errorf("cmd = %q, want %q", cmd, "trace/get")
 			}
-			if data["item_id"] != "automation.test" {
-				t.Errorf("data[item_id] = %v, want %q", data["item_id"], "automation.test")
+			if data["item_id"] != "1700000000001" {
+				t.Errorf("data[item_id] = %v, want %q", data["item_id"], "1700000000001")
 			}
 			if _, exists := data["entity_id"]; exists {
 				t.Errorf("data should not contain entity_id (found: %v)", data["entity_id"])
@@ -282,13 +289,13 @@ func TestManageTrace_List_EntityIDFilter(t *testing.T) {
 			name:       "entity_id automation prefix derives domain and item_id",
 			args:       map[string]any{"action": "list", "entity_id": "automation.ev_charging"},
 			wantDomain: "automation",
-			wantItemID: "automation.ev_charging",
+			wantItemID: "ev_charging",
 		},
 		{
 			name:       "entity_id script prefix derives domain and item_id",
 			args:       map[string]any{"action": "list", "entity_id": "script.morning_routine"},
 			wantDomain: "script",
-			wantItemID: "script.morning_routine",
+			wantItemID: "morning_routine",
 		},
 		{
 			name:        "entity_id conflicts with explicit domain",
@@ -343,6 +350,78 @@ func TestManageTrace_List_EntityIDFilter(t *testing.T) {
 			}
 			if capturedData["item_id"] != tt.wantItemID {
 				t.Errorf("data[item_id] = %v, want %q", capturedData["item_id"], tt.wantItemID)
+			}
+		})
+	}
+}
+
+// TestResolveTraceItemID verifies entity_id → trace item_id mapping:
+// scripts resolve via the entity registry unique_id (renamed entities keep their
+// original unique_id, which is what HA keys traces by), automations via the config ID.
+func TestResolveTraceItemID(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		domain   string
+		entityID string
+		registry []homeassistant.EntityRegistryEntry
+		auto     *homeassistant.Automation
+		wantItem string
+	}{
+		{
+			name:     "script uses registry unique_id when entity was renamed",
+			domain:   "script",
+			entityID: "script.bedtime",
+			registry: []homeassistant.EntityRegistryEntry{
+				{EntityID: "script.bedtime", UniqueID: "labeled_feature_sleep_timeout"},
+			},
+			wantItem: "labeled_feature_sleep_timeout",
+		},
+		{
+			name:     "script falls back to object_id when registry lookup misses",
+			domain:   "script",
+			entityID: "script.morning_routine",
+			wantItem: "morning_routine",
+		},
+		{
+			name:     "automation uses config ID",
+			domain:   "automation",
+			entityID: "automation.ev_charging",
+			auto: &homeassistant.Automation{
+				EntityID: "automation.ev_charging",
+				Config:   &homeassistant.AutomationConfig{ID: "1700000000001"},
+			},
+			wantItem: "1700000000001",
+		},
+		{
+			name:     "automation falls back to object_id when config has no ID",
+			domain:   "automation",
+			entityID: "automation.ev_charging",
+			auto:     &homeassistant.Automation{EntityID: "automation.ev_charging"},
+			wantItem: "ev_charging",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			client := &UniversalMockClient{
+				GetEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+					return tt.registry, nil
+				},
+				GetAutomationFn: func(context.Context, string) (*homeassistant.Automation, error) {
+					if tt.auto != nil {
+						return tt.auto, nil
+					}
+					return &homeassistant.Automation{}, nil
+				},
+			}
+
+			got := resolveTraceItemID(context.Background(), client, tt.domain, tt.entityID)
+			if got != tt.wantItem {
+				t.Errorf("resolveTraceItemID() = %q, want %q", got, tt.wantItem)
 			}
 		})
 	}
