@@ -347,8 +347,22 @@ func (h *TraceHandlers) formatTraceNatural(response any) string {
 
 		if actions, ok := trace["actions"].([]any); ok {
 			parts = append(parts, fmt.Sprintf("\nActions: %d executed", len(actions)))
+		} else if steps := countPrefixedKeys(trace, "sequence/"); steps > 0 {
+			// Script traces store executed steps under "sequence/<n>" keys.
+			parts = append(parts, fmt.Sprintf("\nSequence steps: %d executed", steps))
 		}
 	}
 
 	return strings.Join(parts, "\n")
+}
+
+// countPrefixedKeys returns the number of map keys starting with prefix.
+func countPrefixedKeys(m map[string]any, prefix string) int {
+	n := 0
+	for k := range m {
+		if strings.HasPrefix(k, prefix) {
+			n++
+		}
+	}
+	return n
 }
