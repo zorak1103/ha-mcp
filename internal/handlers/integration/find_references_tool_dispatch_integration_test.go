@@ -10,9 +10,9 @@ import (
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 )
 
-// FindReferencesToolDispatchTestSuite covers the find_references (#141) and
-// manage_dashboard action=find (#143) tools through the real registry +
-// handler layer. Both are read-only, but the fixtures they search (a script
+// FindReferencesToolDispatchTestSuite covers the find_references and
+// manage_dashboard action=find tools through the real registry + handler
+// layer. Both are read-only, but the fixtures they search (a script
 // and a dashboard referencing a shared target entity) are created/torn down
 // via direct client calls, following the existing *_tool_dispatch pattern.
 type FindReferencesToolDispatchTestSuite struct {
@@ -23,11 +23,11 @@ func TestFindReferencesToolDispatch(t *testing.T) {
 	suite.Run(t, new(FindReferencesToolDispatchTestSuite))
 }
 
-// TestFindReferencesAcrossScriptAndDashboard is a regression test for issue
-// #141: a single find_references call should surface a target entity
-// referenced from both a script (structured JSON) and a dashboard card
-// (nested inside views/cards), which previously required listing/getting
-// every config type individually.
+// TestFindReferencesAcrossScriptAndDashboard is a regression test guarding
+// that a single find_references call surfaces a target entity referenced
+// from both a script (structured JSON) and a dashboard card (nested inside
+// views/cards), which previously required listing/getting every config
+// type individually.
 func (s *FindReferencesToolDispatchTestSuite) TestFindReferencesAcrossScriptAndDashboard() {
 	targetName := GenerateTestID("fr_target")
 	targetEntityID := BuildEntityID("input_boolean", targetName)
@@ -111,7 +111,7 @@ func (s *FindReferencesToolDispatchTestSuite) TestFindReferencesAcrossScriptAndD
 }
 
 // DashboardFindToolDispatchTestSuite covers manage_dashboard action=find
-// (issue #143) through the real registry + handler layer.
+// through the real registry + handler layer.
 type DashboardFindToolDispatchTestSuite struct {
 	DashboardTestSuite
 }

@@ -331,7 +331,7 @@ func TestParseOperations_RoundTrip(t *testing.T) {
 
 // TestParseOperations_AlternativeInputTypes verifies that parseOperations accepts
 // operations encoded as json.RawMessage or []map[string]any in addition to []any.
-// Regression test for issue #75: MCP clients that pre-encode arguments may deliver
+// Regression test: MCP clients that pre-encode arguments may deliver
 // the operations array as json.RawMessage, causing a hard type-assertion failure.
 func TestParseOperations_AlternativeInputTypes(t *testing.T) {
 	t.Parallel()
@@ -397,7 +397,7 @@ func TestParseOperations_AlternativeInputTypes(t *testing.T) {
 
 // TestParseOperations_DeepValueObject verifies that a deeply-nested value (e.g. a
 // full choose block) passes through the parser and round-trips to the engine unchanged.
-// Regression test for issue #75: deep value objects were the reported payload.
+// Regression test: deep value objects were the reported payload that triggered the failure.
 func TestParseOperations_DeepValueObject(t *testing.T) {
 	t.Parallel()
 
@@ -450,7 +450,7 @@ func TestParseOperations_DeepValueObject(t *testing.T) {
 	}
 }
 
-// dryRunPatchResult tests (issue #142: dry_run must return a compact diff,
+// dryRunPatchResult tests (dry_run must return a compact diff,
 // not the entire patched config)
 
 func TestDryRunPatchResult_CompactDiff(t *testing.T) {
@@ -572,7 +572,7 @@ func TestDryRunPatchResult_LargeConfigStaysCompact(t *testing.T) {
 	t.Parallel()
 
 	// Simulate a large dashboard: many views, each with padding content
-	// unrelated to the patch (issue #142 reproduction).
+	// unrelated to the patch, to verify the diff output stays compact.
 	views := make([]any, 200)
 	for i := range views {
 		views[i] = map[string]any{

@@ -244,8 +244,8 @@ func (s *ScriptIntegrationTestSuite) TestScriptUpdate() {
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteScript(s.Context(), scriptID)
 		_ = s.Client().DeleteHelper(s.Context(), targetEntityID)
-		// Safety net for #122: if this test ever regresses and an orphan duplicate is created,
-		// clean it up too so it doesn't linger in the test HA instance.
+		// Safety net for the orphan-duplicate bug: if this test ever regresses and an orphan
+		// duplicate is created, clean it up too so it doesn't linger in the test HA instance.
 		_ = s.Client().DeleteScript(s.Context(), scriptID+"_2")
 	})
 
@@ -313,7 +313,7 @@ func (s *ScriptIntegrationTestSuite) TestScriptUpdate() {
 	friendlyName, _ = entity.Attributes["friendly_name"].(string)
 	s.Equal("Updated Script", friendlyName, "Script name should be updated")
 
-	// Regression check for #122: updating a storage-managed script must never spawn a
+	// Regression check: updating a storage-managed script must never spawn a
 	// duplicate orphan entity (script.<id>_2) - that only happens when the REST config write
 	// silently lands on a different underlying config than the one it targeted.
 	orphanEntityID := scriptEntityID + "_2"

@@ -645,8 +645,8 @@ func TestFormatRepeatAction(t *testing.T) {
 
 // TestFormatAction_LegacyEntityIDTarget verifies that the legacy entity_id field at
 // the top level of an action map is used as target when no target block is present.
-// Regression test for issue #60: script.turn_on with top-level entity_id was rendered
-// without any target, making it impossible to verify correctness in natural format.
+// Regression test: script.turn_on with top-level entity_id was rendered without any
+// target, making it impossible to verify correctness in natural format.
 func TestFormatAction_LegacyEntityIDTarget(t *testing.T) {
 	t.Parallel()
 
@@ -707,7 +707,8 @@ func TestFormatAction_LegacyEntityIDTarget(t *testing.T) {
 
 // TestFormatRepeatAction_ShowsSequenceContent verifies that repeat action output
 // includes the actual actions in the sequence, not just a count.
-// Regression test for issue #72.
+// Regression test: repeat action output previously showed only a bare count like
+// "3 action(s) in sequence" instead of rendering the nested actions themselves.
 func TestFormatRepeatAction_ShowsSequenceContent(t *testing.T) {
 	t.Parallel()
 
@@ -735,7 +736,8 @@ func TestFormatRepeatAction_ShowsSequenceContent(t *testing.T) {
 
 // TestFormatChooseAction_ShowsOptionContent verifies that choose action output
 // includes the conditions and sequence of each option.
-// Regression test for issue #72.
+// Regression test: choose action output previously omitted each option's conditions
+// and sequence instead of rendering their contents.
 func TestFormatChooseAction_ShowsOptionContent(t *testing.T) {
 	t.Parallel()
 
@@ -764,7 +766,8 @@ func TestFormatChooseAction_ShowsOptionContent(t *testing.T) {
 
 // TestFormatIfAction_ShowsBranches verifies that if/then/else output includes
 // both the condition and the branch actions.
-// Regression test for issue #72.
+// Regression test: if/then/else output previously omitted the branch actions instead
+// of rendering both the condition and the branch contents.
 func TestFormatIfAction_ShowsBranches(t *testing.T) {
 	t.Parallel()
 

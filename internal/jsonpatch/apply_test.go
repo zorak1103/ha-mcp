@@ -247,7 +247,7 @@ func TestApply_Replace(t *testing.T) {
 		}
 	})
 
-	// Regression tests for issue #66: replace on /array/N must not reorder siblings.
+	// Regression tests: replace on /array/N must not reorder siblings.
 
 	t.Run("replace preserves sibling order - whole element", func(t *testing.T) {
 		t.Parallel()
@@ -564,8 +564,8 @@ func TestApply_ErrorMessages(t *testing.T) {
 	}
 }
 
-// TestApply_NestedErrorMessages covers issue #124: a missing key deep inside a
-// nested action structure (if/then/else, choose/sequence/default) should report
+// TestApply_NestedErrorMessages verifies that a missing key deep inside a
+// nested action structure (if/then/else, choose/sequence/default) reports
 // the prefix actually navigated (not the full submitted path) plus a structural
 // hint when the missing key is one of these HA action-block keywords.
 func TestApply_NestedErrorMessages(t *testing.T) {
@@ -668,9 +668,9 @@ func TestApply_NestedErrorMessages(t *testing.T) {
 	}
 }
 
-// TestApply_NavigationLocation covers W1 from the adversarial review of #131/#124:
-// array-index and type-mismatch navigation failures should report the prefix
-// actually navigated, consistent with how key-not-found errors already report
+// TestApply_NavigationLocation verifies a navigation-location fix identified during
+// adversarial review: array-index and type-mismatch navigation failures should report
+// the prefix actually navigated, consistent with how key-not-found errors already report
 // location (see TestApply_NestedErrorMessages).
 func TestApply_NavigationLocation(t *testing.T) {
 	t.Parallel()

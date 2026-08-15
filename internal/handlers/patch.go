@@ -215,7 +215,7 @@ func configToMap(config any) (map[string]any, error) {
 
 // dryRunValueTruncateLen bounds each before/after value shown in a dry-run diff so
 // that replacing or removing a large subtree (e.g. a dashboard card) cannot
-// reproduce the token blow-up dry-run is meant to avoid (issue #142).
+// reproduce the token blow-up dry-run is meant to avoid.
 const dryRunValueTruncateLen = 200
 
 // dryRunPatchResult returns a compact preview of a patch: only the affected paths

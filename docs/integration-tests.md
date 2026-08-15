@@ -124,25 +124,25 @@ go test -tags=integration -v ./internal/handlers/integration/... 2>&1 | tee test
 
 ### Handler-Dispatch (Tool-Level) Tests
 
-Every test above calls `homeassistant.Client` methods directly, verifying the client library talks to real HA correctly - but bypassing the MCP tool's argument-parsing/handler layer entirely. Issue #135 (`manage_helper` update failing with `unknown_command` for config-entry helpers) lived in that bypassed layer and had no test coverage as a result.
+Every test above calls `homeassistant.Client` methods directly, verifying the client library talks to real HA correctly - but bypassing the MCP tool's argument-parsing/handler layer entirely. A prior bug where `manage_helper` update failed with `unknown_command` for config-entry helpers lived in that bypassed layer and had no test coverage as a result.
 
 `*_tool_dispatch_integration_test.go` files close this gap: they use `s.CallTool(name, args)` (added to `IntegrationTestSuite` in `suite_test.go`) to dispatch through the real registry + handler layer - the same path a real MCP client exercises - while reusing the existing suites' proven fixture-creation and cleanup code for setup/teardown.
 
 | Test Suite | Tool | Action(s) tested via CallTool |
 |------------|------|-------------------------------|
 | `TestToolDispatchHarness` | `get_state` | Read-only smoke test proving the harness reaches the real client |
-| `TestTemplateHelperToolDispatch` | `manage_helper` | update (template_sensor) - direct #135 regression test |
+| `TestTemplateHelperToolDispatch` | `manage_helper` | update (template_sensor) - direct regression test for the config-entry helper update `unknown_command` bug |
 | `TestThresholdToolDispatch` | `manage_helper` | update (threshold) |
 | `TestInputNumberToolDispatch` | `manage_helper` | update (input_number, WS helper) |
 | `TestGroupToolDispatch` | `manage_helper` | delete (group) |
 | `TestAutomationToolDispatch` | `manage_automation` | update, patch |
 | `TestScriptToolDispatch` | `manage_script` | update |
-| `TestFindReferencesToolDispatch` | `find_references` | search across script + dashboard references (#141) |
-| `TestDashboardFindToolDispatch` | `manage_dashboard` | find (deeply nested card, #143) |
+| `TestFindReferencesToolDispatch` | `find_references` | search across script + dashboard references |
+| `TestDashboardFindToolDispatch` | `manage_dashboard` | find (deeply nested card) |
 | `TestPersonToolDispatch` | `manage_person` | list - regression test for the person WS command-prefix and response-shape fixes |
 | `TestZoneToolDispatch` | `manage_zone` | list - regression test for the zone WS command-prefix fix |
 
-Writing these tests uncovered and fixed three further, previously-unknown bugs in the config-entry helper update path (all unreachable until the #135 fix let update calls reach Home Assistant's Options Flow submission for the first time) - see `CLAUDE.md`'s API & Type Gotchas section for `buildConfigEntryUpdateConfig`'s `entity_id` leak, `addExtendedConfigEntryFields`'s `device_class` leak, and `extractOptionsFromSchema`'s nil `suggested_value` propagation.
+Writing these tests uncovered and fixed three further, previously-unknown bugs in the config-entry helper update path (all unreachable until the config-entry helper update routing fix let update calls reach Home Assistant's Options Flow submission for the first time) - see `CLAUDE.md`'s API & Type Gotchas section for `buildConfigEntryUpdateConfig`'s `entity_id` leak, `addExtendedConfigEntryFields`'s `device_class` leak, and `extractOptionsFromSchema`'s nil `suggested_value` propagation.
 
 `TestFindReferencesToolDispatch` uncovered a further pre-existing bug found only by testing against real Home Assistant: `analyze_entity`'s script-reference lookup (and the equivalent new `find_references` scanner) read `sequence` from a script entity's *state attributes* (via `ListScripts`), but real Home Assistant does not expose `sequence` as a state attribute - only `current`, `friendly_name`, `last_triggered`, `mode`. Every script reference lookup was silently returning zero results. Unit tests never caught this because their mocks set `sequence` directly on `Attributes`. Fixed by fetching the full config via `GetScript` per script, mirroring how `findAutomationReferences` already used `GetAutomation` (`internal/handlers/analysis.go`'s `findScriptReferences`, `internal/handlers/find_references.go`'s `scanScriptsForReferences`).
 

@@ -172,8 +172,8 @@ func TestFindMatchingPaths_SkipsNonMapNodes(t *testing.T) {
 func TestFindMatchingPaths_NestedDashboardCards(t *testing.T) {
 	t.Parallel()
 
-	// Mirrors issue #144: a chip nested 4 levels below "views" via
-	// sections -> cards -> cards -> chips.
+	// Verifies that a chip nested 4 levels below "views" via
+	// sections -> cards -> cards -> chips is still found.
 	views := []any{
 		map[string]any{"title": "Home"},
 		map[string]any{
@@ -711,8 +711,8 @@ func TestResolveSemanticOps_CrossOpRemoveDescendingOrder(t *testing.T) {
 func TestResolveSemanticOps_NestedMatch(t *testing.T) {
 	t.Parallel()
 
-	// Reproduces issue #144: target lives several levels below the named
-	// section, nested through sections/cards/cards/chips.
+	// Verifies a match target that lives several levels below the named
+	// section, nested through sections/cards/cards/chips, is still resolved.
 	doc := map[string]any{
 		"views": []any{
 			map[string]any{

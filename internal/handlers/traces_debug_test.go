@@ -347,7 +347,7 @@ func TestHandleDebugTrace_CustomHours(t *testing.T) {
 	}
 }
 
-// TestHandleDebugTrace_ArrayEntityTriggers is a regression test for issue #99:
+// TestHandleDebugTrace_ArrayEntityTriggers is a regression test verifying that
 // automations with array entity_id and the modern `trigger:` key must populate the
 // Trigger Entity States section instead of reporting "No entity-based triggers found".
 func TestHandleDebugTrace_ArrayEntityTriggers(t *testing.T) {
@@ -474,7 +474,7 @@ func TestExtractTriggerEntityIDs(t *testing.T) {
 			triggers: nil,
 			wantIDs:  nil,
 		},
-		// Regression cases for issue #99 ─────────────────────────────────────────
+		// Regression cases for array entity_id with the modern `trigger:` key ─────
 		{
 			name: "array entity_id with modern trigger key",
 			triggers: []any{
@@ -541,7 +541,7 @@ func TestExtractTriggerEntityIDs(t *testing.T) {
 
 // TestHandleDebugTrace_StateFromGetState verifies that the automation runtime state
 // is read via GetState (not from GetAutomation, which only returns config).
-// Regression test for issue #74: debug report shows empty State field.
+// Regression test for a bug where the debug report shows an empty State field.
 func TestHandleDebugTrace_StateFromGetState(t *testing.T) {
 	t.Parallel()
 
@@ -660,7 +660,7 @@ func TestExtractTriggerTypes(t *testing.T) {
 			},
 			want: nil,
 		},
-		// Regression case for issue #99: modern `trigger:` key (HA 2024.10+)
+		// Regression case for the modern `trigger:` key (HA 2024.10+)
 		{
 			name: "modern trigger key (no platform key)",
 			triggers: []any{

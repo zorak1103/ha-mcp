@@ -199,7 +199,7 @@ func TestNaturalHelperFormatter_FormatList_HelperStates(t *testing.T) {
 	}
 
 	// Check entity_ids appear alongside names, so entities with colliding
-	// friendly names remain distinguishable (issue #147)
+	// friendly names remain distinguishable
 	expectedIDs := []string{"counter.visitors", "input_boolean.vacation_mode", "timer.pomodoro"}
 	for _, id := range expectedIDs {
 		if !strings.Contains(result, id) {
@@ -210,7 +210,7 @@ func TestNaturalHelperFormatter_FormatList_HelperStates(t *testing.T) {
 
 // TestNaturalHelperFormatter_FormatList_NoFriendlyName verifies that a helper with no
 // friendly_name renders its full entity_id once, rather than duplicating it as both a
-// truncated object_id and the full id in parentheses (issue #147 follow-up).
+// truncated object_id and the full id in parentheses.
 func TestNaturalHelperFormatter_FormatList_NoFriendlyName(t *testing.T) {
 	t.Parallel()
 
@@ -386,11 +386,11 @@ func TestNaturalHelperFormatter_FormatScheduleDetail_Empty(t *testing.T) {
 }
 
 // TestNaturalHelperFormatter_DetailRenderers_IncludeEntityID pins the canonical
-// "Name (entity_id)" shape (issue #147 follow-up) across every get_details renderer in
-// this file. Before this fix, Schedule/Toggle(input_boolean)/Group used "(state)" for
-// the parenthesized field instead of the id, and Counter/Timer/Sensor/Binary Sensor
-// omitted the entity_id entirely — disagreeing with manage_helper's `list` action,
-// which already carries the id, within the same tool.
+// "Name (entity_id)" shape across every get_details renderer in this file. Before this
+// fix, Schedule/Toggle(input_boolean)/Group used "(state)" for the parenthesized field
+// instead of the id, and Counter/Timer/Sensor/Binary Sensor omitted the entity_id
+// entirely — disagreeing with manage_helper's `list` action, which already carries the
+// id, within the same tool.
 func TestNaturalHelperFormatter_DetailRenderers_IncludeEntityID(t *testing.T) {
 	t.Parallel()
 

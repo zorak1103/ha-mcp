@@ -1327,7 +1327,7 @@ func TestManageHelper_Update(t *testing.T) {
 					// The client must receive the FULL entity_id, not the bare object_id -
 					// HybridClient.UpdateHelper matches config-entry helpers against the
 					// registry's full entity_id, so a stripped id silently falls through
-					// to the WS unknown_command path (issue #135).
+					// to the WS unknown_command path.
 					if helperID != "input_number.test_number" {
 						return fmt.Errorf("unexpected helperID: %s", helperID)
 					}
@@ -1539,7 +1539,7 @@ func TestManageHelper_Update(t *testing.T) {
 			wantContains: []string{"error", "updating"},
 		},
 		{
-			// Regression test for issue #135: manage_helper update failed with
+			// Regression test: manage_helper update failed with
 			// "unknown_command" for config-entry template helpers because the handler
 			// passed the bare object_id ("my_template") to client.UpdateHelper, but
 			// HybridClient.UpdateHelper routes config-entry helpers by matching the
@@ -1771,7 +1771,7 @@ func TestManageHelper_Update_GenericHygrostatStillDefaultsDeviceClass(t *testing
 }
 
 // =============================================================================
-// manage_helper - Update Partial-Merge Tests (issue #161)
+// manage_helper - Update Partial-Merge Tests
 //
 // wsClientImpl.UpdateHelper sends the caller's config.Config as a full
 // replacement to HA's <platform>/update WS command, so updating a WebSocket
@@ -1933,7 +1933,7 @@ func TestManageHelper_Update_PartialSchedule(t *testing.T) {
 }
 
 // TestManageHelper_Update_ExplicitNullDoesNotOverwriteMergedValue guards
-// against a caller-supplied JSON null defeating the #161 merge: this API has
+// against a caller-supplied JSON null defeating the partial-update merge: this API has
 // no "clear this field" spelling, so a stray {"tuesday": null} must not
 // overwrite the day block mergeCurrentHelperState already recovered from the
 // entity's current stored config. Before this fix, mergeCurrentHelperState's
@@ -2028,8 +2028,8 @@ func TestManageHelper_Update_PreservesName(t *testing.T) {
 // current-state fetch fails the update instead of silently proceeding with a
 // partial config. WS "<platform>/update" commands replace the entire config,
 // so writing a partial payload on a degraded read would reset every omitted
-// field to its schema default (issue #161's failure mode, reintroduced on
-// the error path). UpdateHelper must never be called in this case.
+// field to its schema default (the same failure mode the partial-update merge
+// exists to prevent, reintroduced on the error path). UpdateHelper must never be called in this case.
 func TestManageHelper_Update_StateFetchFails_ReturnsError(t *testing.T) {
 	t.Parallel()
 
@@ -4150,7 +4150,7 @@ func TestUpdatableFields_AreActuallyReadByUpdatePath(t *testing.T) {
 }
 
 // reservedManageHelperArgNames are manage_helper's own top-level dispatch
-// arguments. #177 was a real, shipped bug caused by min_max's per-instance
+// arguments. min_max shipped with a real bug caused by its per-instance
 // "type" config field sharing the literal args key handleCreate already
 // consumes to pick which helper type to build - buildMinMaxConfig always
 // read back the already-consumed "min_max" selector instead of the
@@ -4169,7 +4169,7 @@ var reservedManageHelperArgNames = map[string]bool{
 }
 
 // TestHelperTypes_NoReservedArgNameCollisions is a regression test for the
-// #177 bug class: it fails if any helperTypes entry's requiredFields or
+// reserved-arg-name-collision bug class: it fails if any helperTypes entry's requiredFields or
 // optionalFields reuses a name manage_helper's own dispatcher already
 // consumes from the same args map before a type-specific builder ever sees
 // it. See reservedManageHelperArgNames' doc comment for why min_max's fix
@@ -4180,7 +4180,7 @@ func TestHelperTypes_NoReservedArgNameCollisions(t *testing.T) {
 	for name, meta := range helperTypes {
 		for _, field := range append(append([]string{}, meta.requiredFields...), meta.optionalFields...) {
 			if reservedManageHelperArgNames[field] {
-				t.Errorf("helperTypes[%q] declares field %q, which collides with manage_helper's own top-level dispatch argument of the same name - rename it (see #177's min_max_type precedent)", name, field)
+				t.Errorf("helperTypes[%q] declares field %q, which collides with manage_helper's own top-level dispatch argument of the same name - rename it (see min_max_type, renamed from a colliding \"type\" field, for the precedent)", name, field)
 			}
 		}
 	}
@@ -4611,7 +4611,7 @@ func TestHelperCreate_SuccessMessageUsesSlugifiedName(t *testing.T) {
 // TestHelperCreate_FullConfigOnRename verifies that when a WebSocket helper's id
 // differs from the slugified name (triggering the create-then-update path), the
 // internal update call forwards ALL type-specific required fields — not just the
-// display name. Regression test for issues #70 (input_number) and #71 (input_datetime).
+// display name. Regression test covering input_number and input_datetime.
 func TestHelperCreate_FullConfigOnRename(t *testing.T) {
 	t.Parallel()
 

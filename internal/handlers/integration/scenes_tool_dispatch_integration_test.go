@@ -18,7 +18,7 @@ func TestSceneToolDispatch(t *testing.T) {
 	suite.Run(t, new(SceneToolDispatchTestSuite))
 }
 
-// TestSceneUpdateViaTool covers #173: manage_scene update used to rebuild the config from
+// TestSceneUpdateViaTool covers a bug where manage_scene update used to rebuild the config from
 // GetState (entity attributes only) instead of reading the stored config first, so a partial
 // update (name only) silently wiped every other field - entities, icon - because Home
 // Assistant's config API replaces the whole scenes.yaml entry rather than merging
@@ -57,7 +57,7 @@ func (s *SceneToolDispatchTestSuite) TestSceneUpdateViaTool() {
 			target1EntityID: {State: "on"},
 			target2EntityID: {State: "off"},
 		},
-		// Metadata exercises the #173 companion fix: buildSceneData's new "metadata" key
+		// Metadata exercises the companion fix for that bug: buildSceneData's new "metadata" key
 		// (rest_client.go) previously had only mock coverage - this is the sole live-HA
 		// assertion that HA's config API round-trips it, mirroring the shape HA's own scene
 		// editor writes ({"<entity_id>": {"entity_only": true}}).

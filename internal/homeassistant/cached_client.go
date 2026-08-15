@@ -826,7 +826,8 @@ func (c *CachedClient) DeleteScene(ctx context.Context, sceneID string) error {
 }
 
 // ConfigFileEntryExists is intentionally never cached: a stale "exists" answer would defeat
-// the exact hazard this probe exists to catch (#122, #164).
+// the exact hazard this probe exists to catch — silently appending a duplicate orphan entity
+// instead of editing the original when a write targets an id missing from the config file.
 func (c *CachedClient) ConfigFileEntryExists(ctx context.Context, domain, configID string) (bool, error) {
 	return c.client.ConfigFileEntryExists(ctx, domain, configID)
 }

@@ -18,7 +18,7 @@ func TestTemplateHelperToolDispatch(t *testing.T) {
 	suite.Run(t, new(TemplateHelperToolDispatchTestSuite))
 }
 
-// TestTemplateSensorUpdateViaTool reproduces issue #135: manage_helper update
+// TestTemplateSensorUpdateViaTool reproduces a bug where manage_helper update
 // failed with "unknown_command" for config-entry template helpers because the
 // handler passed the bare object_id to client.UpdateHelper instead of the
 // full entity_id that HybridClient's registry-based routing requires. This

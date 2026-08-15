@@ -432,7 +432,7 @@ func (s *DashboardIntegrationTestSuite) TestDashboardCreatedWithSectionLayout() 
 	_ = s.Client().DeleteDashboard(s.Context(), dashboardID)
 }
 
-// TestDashboardPatchPreservesViewOrder is a regression test for issue #66:
+// TestDashboardPatchPreservesViewOrder is a regression test guarding that
 // replace /views/N must not reorder sibling views when HA persists the config.
 func (s *DashboardIntegrationTestSuite) TestDashboardPatchPreservesViewOrder() {
 	urlPath := generateDashboardURLPath("dash-patch-order")
@@ -465,7 +465,7 @@ func (s *DashboardIntegrationTestSuite) TestDashboardPatchPreservesViewOrder() {
 
 	time.Sleep(500 * time.Millisecond)
 
-	// Save a 4-view baseline (matches the real-world reproducer from issue #66)
+	// Save a 4-view baseline (matches the real-world reproducer for the view-reorder bug)
 	baseline := map[string]any{
 		"views": []any{
 			map[string]any{"title": "Übersicht", "path": "overview"},

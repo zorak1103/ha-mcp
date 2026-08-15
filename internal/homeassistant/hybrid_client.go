@@ -164,7 +164,7 @@ type RESTOperations interface {
 	DeleteScene(ctx context.Context, sceneID string) error
 
 	// ConfigFileEntryExists checks whether id exists in the config file HA's config API writes
-	// to for domain, used to guard against silently creating a duplicate orphan entity (#122).
+	// to for domain, used to guard against silently creating a duplicate orphan entity.
 	ConfigFileEntryExists(ctx context.Context, domain, configID string) (bool, error)
 
 	// Config Entry Flow operations (for helpers requiring HTTP-based flow)

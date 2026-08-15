@@ -108,7 +108,8 @@ func (s *AutomationToolDispatchTestSuite) TestAutomationUpdateAndPatchViaTool() 
 }
 
 // TestAutomationUpdate_ConfigFileEntryExists_StorageManaged verifies the config-file existence
-// guard (#122, #164) does not falsely refuse a storage-managed automation created through the
+// guard (added to prevent writes silently orphaning entries not already present in the managed
+// config file) does not falsely refuse a storage-managed automation created through the
 // tool — the regression this change must not introduce.
 func (s *AutomationToolDispatchTestSuite) TestAutomationUpdate_ConfigFileEntryExists_StorageManaged() {
 	triggerName := GenerateTestID("auto_probe_trigger")

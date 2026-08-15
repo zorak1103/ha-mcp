@@ -257,7 +257,7 @@ var errSceneNotFoundForWrite = errors.New("scene not found")
 
 // sceneConfigMissingError signals that GetScene 404'd for entityID/configID while the entity
 // itself still exists (GetState succeeded) - i.e. it is YAML-defined under a different
-// config-file key than its entity_id's object_id would suggest (#122/#164).
+// config-file key than its entity_id's object_id would suggest.
 type sceneConfigMissingError struct {
 	entityID, configID string
 }
@@ -277,7 +277,7 @@ func joinSceneCandidates(entities []*homeassistant.Entity) string {
 
 // findSceneForWrite resolves a scene for a write operation (update/patch) by friendly-name
 // search, refusing an ambiguous match rather than silently picking the first candidate HA
-// happens to list - mirrors scripts.go's findScriptForWrite (#160). Search order matches
+// happens to list - mirrors scripts.go's findScriptForWrite. Search order matches
 // findSceneByID's: exact entity_id first (inherently unambiguous), then case-insensitive
 // friendly_name substring match - but here a substring match is only accepted automatically
 // when it is the sole substring match, or when exactly one of several substring matches is also
@@ -353,9 +353,9 @@ func (h *SceneHandlers) resolveSceneForWrite(
 		if errors.Is(findErr, errAmbiguousSceneMatch) {
 			return "", "", nil, findErr
 		}
-		// No fuzzy match either - fall back to the exact-id discrimination #122/#164 relies on:
-		// if the entity still exists under the guessed entity_id, it's YAML-defined under a
-		// different config-file key; otherwise it's a genuine not-found.
+		// No fuzzy match either - fall back to exact-id discrimination: if the entity still
+		// exists under the guessed entity_id, it's YAML-defined under a different config-file
+		// key; otherwise it's a genuine not-found.
 		if _, stateErr := client.GetState(ctx, guessedEntityID); stateErr == nil {
 			return "", "", nil, &sceneConfigMissingError{entityID: guessedEntityID, configID: guessedConfigID}
 		}
@@ -376,7 +376,7 @@ func (h *SceneHandlers) resolveSceneForWrite(
 // describeSceneTarget renders the target scene for a success/error message, naming the resolved
 // entity_id alongside the caller's input whenever resolveSceneForWrite's fallback search
 // retargeted the write to a different entity than the input implied (mirrors scripts.go's
-// describeScriptTarget, #160).
+// describeScriptTarget).
 func describeSceneTarget(sceneID, entityID string) string {
 	guessedEntityID, _ := normalizeSceneID(sceneID)
 	if guessedEntityID == entityID {
@@ -459,7 +459,7 @@ func (h *SceneHandlers) handleUpdate(ctx context.Context, client homeassistant.C
 	}
 
 	// The fetched config is the write base - only fields present in args are overwritten,
-	// everything else (icon, metadata) survives untouched (#173).
+	// everything else (icon, metadata) survives untouched.
 	config := *current.Config
 	beforeMap, _ := configToMap(config)
 	invalidEntity := applySceneConfigUpdates(&config, args)

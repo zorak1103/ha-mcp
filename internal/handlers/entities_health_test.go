@@ -446,8 +446,7 @@ func TestQueryEntities_Health_Analyze(t *testing.T) {
 // details" line shape to match query_entities' natural formatter (internal/handlers/
 // formatter/natural.go), so an LLM reading both tools' output can rely on the same
 // positional rule to recover the addressable id. Before this fix, the health report
-// rendered the inverse "entity_id (Name) [platform] - details" order (issue #147
-// follow-up).
+// rendered the inverse "entity_id (Name) [platform] - details" order.
 func TestFormatHealthReportNatural_NameOrder(t *testing.T) {
 	t.Parallel()
 

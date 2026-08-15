@@ -357,7 +357,7 @@ func TestManageTrace_Get_RejectsMalformedOrUnsupportedEntityID(t *testing.T) {
 
 // TestManageTrace_List_EntityIDFilter verifies that passing entity_id to the list
 // action automatically derives the domain and sets item_id for server-side filtering.
-// Regression test for issue #73: entity_id was silently ignored, causing the WS call
+// Regression test for a bug where entity_id was silently ignored, causing the WS call
 // to omit domain and return "id @ data['domain']. Got None".
 func TestManageTrace_List_EntityIDFilter(t *testing.T) {
 	t.Parallel()

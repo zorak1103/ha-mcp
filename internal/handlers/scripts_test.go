@@ -52,7 +52,7 @@ func (m *mockScriptClient) GetScript(ctx context.Context, scriptID string) (*hom
 	// Realistic default: wsClientImpl.GetScript always populates EntityID and a non-nil
 	// Config with a non-empty Sequence - a script with none of those is not a shape the
 	// real client can produce. An empty &homeassistant.Script{} default previously let
-	// tests silently exercise a state that cannot occur against live HA (#160 review, N4).
+	// tests silently exercise a state that cannot occur against live HA.
 	return &homeassistant.Script{
 		EntityID:     "script.test_script",
 		FriendlyName: "Test Script",
@@ -724,7 +724,7 @@ func TestScriptHandlers_ManageScript_Delete(t *testing.T) {
 			wantContains:    "Error deleting script",
 		},
 		{
-			// #123: HA's storage-config API 400s with a "Resource not found" body for
+			// HA's storage-config API 400s with a "Resource not found" body for
 			// YAML-defined/orphan-duplicate scripts. Delete should fall back to the
 			// entity registry, same path as manage_entity delete.
 			name: "not found (400 form) falls back to registry",
@@ -1159,7 +1159,7 @@ func TestManageScript_SemanticPatch(t *testing.T) {
 }
 
 // TestManageScript_PatchReload verifies that a successful patch write triggers
-// script.reload so the change is immediately visible to a subsequent get (#126).
+// script.reload so the change is immediately visible to a subsequent get.
 func TestManageScript_PatchReload(t *testing.T) {
 	t.Parallel()
 
@@ -1275,7 +1275,7 @@ func TestManageScript_PatchReload(t *testing.T) {
 }
 
 // TestManageScript_UpdateReload verifies that a successful update write triggers
-// script.reload so the change is immediately visible to a subsequent get (#126).
+// script.reload so the change is immediately visible to a subsequent get.
 func TestManageScript_UpdateReload(t *testing.T) {
 	t.Parallel()
 
@@ -2175,7 +2175,7 @@ func TestScriptHandlers_Update_AmbiguousMatchRefused(t *testing.T) {
 
 	// Neither alias equals the search term "Light" exactly, so both are substring-only
 	// matches - the ambiguous case findScriptForWrite must refuse rather than silently
-	// picking whichever ListScripts happened to return first (#160 review, C1).
+	// picking whichever ListScripts happened to return first.
 	kitchenLight := &homeassistant.Script{
 		EntityID: "script.kitchen_light",
 		Config:   &homeassistant.ScriptConfig{Alias: "Kitchen Light", Sequence: []any{map[string]any{"service": "light.turn_on"}}},
@@ -2234,7 +2234,7 @@ func TestScriptHandlers_Update_NonNotFoundError_NoFallback(t *testing.T) {
 		getScriptFn: func(context.Context, string) (*homeassistant.Script, error) {
 			// A transient failure (WS disconnect, timeout, 500) - NOT "not found" - must
 			// propagate as-is and must never trigger the alias-search fallback, which would
-			// otherwise silently retarget the write via fuzzy matching (#160 review, C2).
+			// otherwise silently retarget the write via fuzzy matching.
 			return nil, errors.New("connection timeout")
 		},
 		listScriptsFn: func(context.Context) ([]homeassistant.Entity, error) {
@@ -2325,8 +2325,8 @@ func TestScriptHandlers_Update_FallbackResolvesToYAMLDefinedScript_Refuses(t *te
 }
 
 // TestManageScript_YAMLDefinedGuard verifies that update/patch refuse to write a script whose
-// id is not present in scripts.yaml instead of silently creating a duplicate orphan entity
-// (#122), and that a probe failure degrades gracefully by letting the write proceed.
+// id is not present in scripts.yaml instead of silently creating a duplicate orphan entity,
+// and that a probe failure degrades gracefully by letting the write proceed.
 func TestManageScript_YAMLDefinedGuard(t *testing.T) {
 	t.Parallel()
 
@@ -2552,7 +2552,7 @@ func TestManageScript_Update_MaxPreservation(t *testing.T) {
 
 // TestIsNotFoundError covers N3's status-code fast path plus the substring fallback it
 // deliberately keeps: HA's config API returns 400 (not 404) with body {"message":"Resource not
-// found"} for YAML-defined/orphan scripts (#123's DeleteScript registry fallback relies on this
+// found"} for YAML-defined/orphan scripts (DeleteScript's registry fallback relies on this
 // classifying as not-found), so a non-404 APIError must still fall through to the message check.
 func TestIsNotFoundError(t *testing.T) {
 	t.Parallel()
@@ -2564,7 +2564,7 @@ func TestIsNotFoundError(t *testing.T) {
 	}{
 		{"nil error", nil, false},
 		{"APIError 404", &homeassistant.APIError{StatusCode: 404, Message: "scene not found: x"}, true},
-		{"APIError 400 with not-found message (#123)", &homeassistant.APIError{StatusCode: 400, Message: "Resource not found"}, true},
+		{"APIError 400 with not-found message", &homeassistant.APIError{StatusCode: 400, Message: "Resource not found"}, true},
 		{"APIError 502 without not-found text", &homeassistant.APIError{StatusCode: 502, Message: "Bad Gateway"}, false},
 		{"plain not-found error", errors.New("scene not found: x"), true},
 		{"plain unrelated error", errors.New("connection timeout"), false},

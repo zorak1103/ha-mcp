@@ -24,7 +24,8 @@ const schemaTypeObject = "object"
 
 // FindReferencesHandlers provides the find_references MCP tool: a server-side
 // cross-config search across automations, scripts, scenes, dashboards, and
-// template-helper templates - issue #141.
+// template-helper templates, replacing manual per-object listing and
+// client-side scanning with a single search.
 type FindReferencesHandlers struct{}
 
 // NewFindReferencesHandlers creates a new FindReferencesHandlers instance.
@@ -42,7 +43,7 @@ func (h *FindReferencesHandlers) findReferencesTool() mcp.Tool {
 		Name: "find_references",
 		Description: `Search for a string or entity_id across automations, scripts, scenes, dashboards, and ` +
 			`template-helper templates in one call - the server-side equivalent of grepping every config type ` +
-			`at once instead of listing/getting each object individually and scanning client-side (issue #141).
+			`at once instead of listing/getting each object individually and scanning client-side.
 
 Returns matches grouped by type with the object id, JSON path (where applicable), context, and a snippet. ` +
 			`The response includes scanned_sources (which types were successfully searched) and failed_sources ` +
