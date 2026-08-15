@@ -447,6 +447,7 @@ type mockWSOperations struct {
 	createSceneFunc             func(ctx context.Context, sceneID string, config SceneConfig) error
 	updateSceneFunc             func(ctx context.Context, sceneID string, config SceneConfig) error
 	getEntityRegistryFunc       func(ctx context.Context) ([]EntityRegistryEntry, error)
+	getEntityRegistryEntryFunc  func(ctx context.Context, entityID string) (*EntityRegistryEntry, error)
 	getDeviceRegistryFunc       func(ctx context.Context) ([]DeviceRegistryEntry, error)
 	getAreaRegistryFunc         func(ctx context.Context) ([]AreaRegistryEntry, error)
 	createAreaFunc              func(ctx context.Context, config AreaConfig) (*AreaRegistryEntry, error)
@@ -658,6 +659,13 @@ func (m *mockWSOperations) UpdateScene(ctx context.Context, sceneID string, conf
 func (m *mockWSOperations) GetEntityRegistry(ctx context.Context) ([]EntityRegistryEntry, error) {
 	if m.getEntityRegistryFunc != nil {
 		return m.getEntityRegistryFunc(ctx)
+	}
+	return nil, nil
+}
+
+func (m *mockWSOperations) GetEntityRegistryEntry(ctx context.Context, entityID string) (*EntityRegistryEntry, error) {
+	if m.getEntityRegistryEntryFunc != nil {
+		return m.getEntityRegistryEntryFunc(ctx, entityID)
 	}
 	return nil, nil
 }
@@ -1837,6 +1845,9 @@ func TestHybridClient_WSOperations_Registries(t *testing.T) {
 		getEntityRegistryFunc: func(_ context.Context) ([]EntityRegistryEntry, error) {
 			return []EntityRegistryEntry{{EntityID: "light.test"}}, nil
 		},
+		getEntityRegistryEntryFunc: func(_ context.Context, entityID string) (*EntityRegistryEntry, error) {
+			return &EntityRegistryEntry{EntityID: entityID, UniqueID: "1700000000001"}, nil
+		},
 		getDeviceRegistryFunc: func(_ context.Context) ([]DeviceRegistryEntry, error) {
 			return []DeviceRegistryEntry{{ID: "device1"}}, nil
 		},
@@ -1854,6 +1865,16 @@ func TestHybridClient_WSOperations_Registries(t *testing.T) {
 		}
 		if len(entries) != 1 {
 			t.Errorf("got %d entries, want 1", len(entries))
+		}
+	})
+
+	t.Run("GetEntityRegistryEntry", func(t *testing.T) {
+		entry, err := client.GetEntityRegistryEntry(context.Background(), "automation.morning_routine")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if entry == nil || entry.UniqueID != "1700000000001" {
+			t.Errorf("got %+v, want UniqueID = 1700000000001", entry)
 		}
 	})
 

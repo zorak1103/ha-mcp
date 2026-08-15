@@ -3,6 +3,7 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -69,6 +70,7 @@ type UniversalMockClient struct {
 
 	// Registry operations
 	GetEntityRegistryFn         func(ctx context.Context) ([]homeassistant.EntityRegistryEntry, error)
+	GetEntityRegistryEntryFn    func(ctx context.Context, entityID string) (*homeassistant.EntityRegistryEntry, error)
 	GetDeviceRegistryFn         func(ctx context.Context) ([]homeassistant.DeviceRegistryEntry, error)
 	GetAreaRegistryFn           func(ctx context.Context) ([]homeassistant.AreaRegistryEntry, error)
 	CreateAreaFn                func(ctx context.Context, config homeassistant.AreaConfig) (*homeassistant.AreaRegistryEntry, error)
@@ -397,6 +399,13 @@ func (m *UniversalMockClient) GetEntityRegistry(ctx context.Context) ([]homeassi
 		return m.GetEntityRegistryFn(ctx)
 	}
 	return []homeassistant.EntityRegistryEntry{}, nil
+}
+
+func (m *UniversalMockClient) GetEntityRegistryEntry(ctx context.Context, entityID string) (*homeassistant.EntityRegistryEntry, error) {
+	if m.GetEntityRegistryEntryFn != nil {
+		return m.GetEntityRegistryEntryFn(ctx, entityID)
+	}
+	return nil, fmt.Errorf("entity %q not found", entityID)
 }
 
 func (m *UniversalMockClient) GetDeviceRegistry(ctx context.Context) ([]homeassistant.DeviceRegistryEntry, error) {

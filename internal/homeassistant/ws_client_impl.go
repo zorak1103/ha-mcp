@@ -594,6 +594,24 @@ func (c *wsClientImpl) GetEntityRegistry(ctx context.Context) ([]EntityRegistryE
 	return entries, nil
 }
 
+// GetEntityRegistryEntry retrieves a single entity registry entry by entity_id, avoiding a full
+// registry fetch. Backed by "config/entity_registry/get" (HA components/config/entity_registry.py
+// websocket_get_entity), which returns the entry's extended_dict - a superset of the fields
+// "config/entity_registry/list" returns per entry, including unique_id.
+func (c *wsClientImpl) GetEntityRegistryEntry(ctx context.Context, entityID string) (*EntityRegistryEntry, error) {
+	result, err := c.ws.SendCommand(ctx, "config/entity_registry/get", map[string]any{"entity_id": entityID})
+	if err != nil {
+		return nil, fmt.Errorf("get entity registry entry failed: %w", err)
+	}
+
+	var entry EntityRegistryEntry
+	if err := json.Unmarshal(result.Result, &entry); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal entity registry entry: %w", err)
+	}
+
+	return &entry, nil
+}
+
 // GetDeviceRegistry retrieves the device registry.
 func (c *wsClientImpl) GetDeviceRegistry(ctx context.Context) ([]DeviceRegistryEntry, error) {
 	result, err := c.ws.SendCommand(ctx, "config/device_registry/list", nil)

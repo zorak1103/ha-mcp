@@ -159,6 +159,10 @@ func (m *mockHAClient) GetEntityRegistry(_ context.Context) ([]homeassistant.Ent
 	return nil, nil
 }
 
+func (m *mockHAClient) GetEntityRegistryEntry(_ context.Context, _ string) (*homeassistant.EntityRegistryEntry, error) {
+	return nil, nil
+}
+
 func (m *mockHAClient) GetDeviceRegistry(_ context.Context) ([]homeassistant.DeviceRegistryEntry, error) {
 	return nil, nil
 }

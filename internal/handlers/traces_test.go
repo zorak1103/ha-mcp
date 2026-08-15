@@ -155,10 +155,12 @@ func TestManageTrace_List(t *testing.T) {
 			},
 			mockResponse: []map[string]any{
 				{
-					"run_id":    "abc123",
-					"state":     "stopped",
-					"timestamp": "2024-01-15T10:30:00Z",
-					"duration":  1.5,
+					"run_id": "abc123",
+					"state":  "stopped",
+					"timestamp": map[string]any{
+						"start":  "2024-01-15T10:30:00Z",
+						"finish": "2024-01-15T10:30:02Z",
+					},
 				},
 			},
 			wantFormat:  "natural",
@@ -173,9 +175,11 @@ func TestManageTrace_List(t *testing.T) {
 			},
 			mockResponse: []map[string]any{
 				{
-					"run_id":    "xyz789",
-					"state":     "running",
-					"timestamp": "2024-01-15T11:00:00Z",
+					"run_id": "xyz789",
+					"state":  "running",
+					"timestamp": map[string]any{
+						"start": "2024-01-15T11:00:00Z",
+					},
 				},
 			},
 			wantFormat:  "json",
@@ -224,10 +228,8 @@ func TestManageTrace_Get(t *testing.T) {
 	t.Parallel()
 
 	client := &UniversalMockClient{
-		GetEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
-			return []homeassistant.EntityRegistryEntry{
-				{EntityID: "automation.test", UniqueID: "1700000000001"},
-			}, nil
+		GetEntityRegistryEntryFn: func(_ context.Context, entityID string) (*homeassistant.EntityRegistryEntry, error) {
+			return &homeassistant.EntityRegistryEntry{EntityID: entityID, UniqueID: "1700000000001"}, nil
 		},
 		SendHACSCommandFn: func(_ context.Context, cmd string, data map[string]any) (any, error) {
 			if cmd != "trace/get" {
@@ -302,6 +304,57 @@ func TestManageTrace_Get_DomainEntityIDMismatch(t *testing.T) {
 	}
 }
 
+// TestManageTrace_Get_RejectsMalformedOrUnsupportedEntityID covers entity_id shapes the get
+// action's inline prefix check used to accept unchecked: a bare id (no dot), an id starting with
+// ".", and a prefix that matches the supplied domain but isn't automation/script (the get action
+// never validated domain against the automation/script enum itself, so a caller-supplied
+// domain="sensor" alongside entity_id="sensor.foo" previously sailed through undetected since the
+// prefixes trivially agreed).
+func TestManageTrace_Get_RejectsMalformedOrUnsupportedEntityID(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		domain   string
+		entityID string
+	}{
+		{name: "bare id with no domain prefix", domain: "automation", entityID: "morning_routine"},
+		{name: "id starting with a dot", domain: "automation", entityID: ".morning_routine"},
+		{name: "prefix matches domain but neither is automation/script", domain: "sensor", entityID: "sensor.foo"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			client := &UniversalMockClient{
+				SendHACSCommandFn: func(context.Context, string, map[string]any) (any, error) {
+					t.Fatal("trace/get should not be called for a malformed or unsupported entity_id")
+					return nil, nil
+				},
+			}
+
+			handler := NewTraceHandlers()
+			result, err := handler.HandleManageTrace(context.Background(), client, map[string]any{
+				"action":    "get",
+				"domain":    tt.domain,
+				"entity_id": tt.entityID,
+				"run_id":    "abc123",
+			})
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !result.IsError {
+				t.Fatalf("expected error result, got: %s", result.Content[0].Text)
+			}
+			if !strings.Contains(result.Content[0].Text, "entity_id") {
+				t.Errorf("error text does not mention entity_id: %s", result.Content[0].Text)
+			}
+		})
+	}
+}
+
 // TestManageTrace_List_EntityIDFilter verifies that passing entity_id to the list
 // action automatically derives the domain and sets item_id for server-side filtering.
 // Regression test for issue #73: entity_id was silently ignored, causing the WS call
@@ -310,24 +363,38 @@ func TestManageTrace_List_EntityIDFilter(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name        string
-		args        map[string]any
-		wantDomain  string
-		wantItemID  string
-		wantError   bool
-		wantContain string
+		name          string
+		args          map[string]any
+		registryEntry *homeassistant.EntityRegistryEntry
+		wantDomain    string
+		wantItemID    string
+		wantError     bool
+		wantContain   string
 	}{
 		{
-			name:       "entity_id automation prefix derives domain and item_id",
+			// unique_id deliberately differs from the object_id ("ev_charging") so this test
+			// fails if resolveTraceItemID is ever replaced by a naive entity_id split - the
+			// pre-fix regression this test exists to catch (see #182 and TestResolveTraceItemID).
+			name:          "entity_id automation prefix derives domain and resolves item_id via registry",
+			args:          map[string]any{"action": "list", "entity_id": "automation.ev_charging"},
+			registryEntry: &homeassistant.EntityRegistryEntry{EntityID: "automation.ev_charging", UniqueID: "1700000000001"},
+			wantDomain:    "automation",
+			wantItemID:    "1700000000001",
+		},
+		{
+			name:          "entity_id script prefix derives domain and resolves item_id via registry",
+			args:          map[string]any{"action": "list", "entity_id": "script.morning_routine"},
+			registryEntry: &homeassistant.EntityRegistryEntry{EntityID: "script.morning_routine", UniqueID: "labeled_feature_sleep_timeout"},
+			wantDomain:    "script",
+			wantItemID:    "labeled_feature_sleep_timeout",
+		},
+		{
+			// No registry entry - a registry miss falls back to the object_id. Asserted
+			// explicitly as the degraded path, not accidentally exercised by every case.
+			name:       "entity_id falls back to object_id when registry lookup misses",
 			args:       map[string]any{"action": "list", "entity_id": "automation.ev_charging"},
 			wantDomain: "automation",
 			wantItemID: "ev_charging",
-		},
-		{
-			name:       "entity_id script prefix derives domain and item_id",
-			args:       map[string]any{"action": "list", "entity_id": "script.morning_routine"},
-			wantDomain: "script",
-			wantItemID: "morning_routine",
 		},
 		{
 			name:        "entity_id conflicts with explicit domain",
@@ -349,6 +416,12 @@ func TestManageTrace_List_EntityIDFilter(t *testing.T) {
 
 			var capturedData map[string]any
 			client := &UniversalMockClient{
+				GetEntityRegistryEntryFn: func(_ context.Context, entityID string) (*homeassistant.EntityRegistryEntry, error) {
+					if tt.registryEntry == nil {
+						return nil, fmt.Errorf("entity %q not found", entityID)
+					}
+					return tt.registryEntry, nil
+				},
 				SendHACSCommandFn: func(_ context.Context, cmd string, data map[string]any) (any, error) {
 					if cmd != "trace/list" {
 						return nil, fmt.Errorf("wrong command: %s", cmd)
@@ -394,56 +467,69 @@ func TestResolveTraceItemID(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name        string
-		domain      string
-		entityID    string
-		registry    []homeassistant.EntityRegistryEntry
-		registryErr error
-		wantItem    string
+		name          string
+		domain        string
+		entityID      string
+		registryEntry *homeassistant.EntityRegistryEntry
+		registryErr   error
+		wantItem      string
+		wantResolved  bool
 	}{
 		{
-			name:     "script uses registry unique_id when entity was renamed",
-			domain:   "script",
-			entityID: "script.bedtime",
-			registry: []homeassistant.EntityRegistryEntry{
-				{EntityID: "script.bedtime", UniqueID: "labeled_feature_sleep_timeout"},
-			},
-			wantItem: "labeled_feature_sleep_timeout",
+			name:          "script uses registry unique_id when entity was renamed",
+			domain:        "script",
+			entityID:      "script.bedtime",
+			registryEntry: &homeassistant.EntityRegistryEntry{EntityID: "script.bedtime", UniqueID: "labeled_feature_sleep_timeout"},
+			wantItem:      "labeled_feature_sleep_timeout",
+			wantResolved:  true,
 		},
 		{
-			name:     "script falls back to object_id when registry lookup misses",
-			domain:   "script",
-			entityID: "script.morning_routine",
-			wantItem: "morning_routine",
+			name:         "script falls back to object_id when registry lookup misses",
+			domain:       "script",
+			entityID:     "script.morning_routine",
+			registryErr:  errors.New("entity not found"),
+			wantItem:     "morning_routine",
+			wantResolved: false,
 		},
 		{
-			name:     "automation uses registry unique_id (config ID)",
-			domain:   "automation",
-			entityID: "automation.ev_charging",
-			registry: []homeassistant.EntityRegistryEntry{
-				{EntityID: "automation.ev_charging", UniqueID: "1700000000001"},
-			},
-			wantItem: "1700000000001",
+			name:          "automation uses registry unique_id (config ID)",
+			domain:        "automation",
+			entityID:      "automation.ev_charging",
+			registryEntry: &homeassistant.EntityRegistryEntry{EntityID: "automation.ev_charging", UniqueID: "1700000000001"},
+			wantItem:      "1700000000001",
+			wantResolved:  true,
 		},
 		{
-			name:     "automation falls back to object_id when registry lookup misses",
-			domain:   "automation",
-			entityID: "automation.ev_charging",
-			wantItem: "ev_charging",
+			name:         "automation falls back to object_id when registry lookup misses",
+			domain:       "automation",
+			entityID:     "automation.ev_charging",
+			registryErr:  errors.New("entity not found"),
+			wantItem:     "ev_charging",
+			wantResolved: false,
 		},
 		{
-			name:        "script falls back to object_id when registry fetch errors",
-			domain:      "script",
-			entityID:    "script.morning_routine",
-			registryErr: errors.New("websocket disconnected"),
-			wantItem:    "morning_routine",
+			name:         "script falls back to object_id when registry fetch errors",
+			domain:       "script",
+			entityID:     "script.morning_routine",
+			registryErr:  errors.New("websocket disconnected"),
+			wantItem:     "morning_routine",
+			wantResolved: false,
 		},
 		{
-			name:        "automation falls back to object_id when registry fetch errors",
-			domain:      "automation",
-			entityID:    "automation.ev_charging",
-			registryErr: errors.New("websocket disconnected"),
-			wantItem:    "ev_charging",
+			name:         "automation falls back to object_id when registry fetch errors",
+			domain:       "automation",
+			entityID:     "automation.ev_charging",
+			registryErr:  errors.New("websocket disconnected"),
+			wantItem:     "ev_charging",
+			wantResolved: false,
+		},
+		{
+			name:          "falls back to object_id when the entry has no unique_id",
+			domain:        "automation",
+			entityID:      "automation.ev_charging",
+			registryEntry: &homeassistant.EntityRegistryEntry{EntityID: "automation.ev_charging"},
+			wantItem:      "ev_charging",
+			wantResolved:  false,
 		},
 	}
 
@@ -452,14 +538,17 @@ func TestResolveTraceItemID(t *testing.T) {
 			t.Parallel()
 
 			client := &UniversalMockClient{
-				GetEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
-					return tt.registry, tt.registryErr
+				GetEntityRegistryEntryFn: func(_ context.Context, _ string) (*homeassistant.EntityRegistryEntry, error) {
+					return tt.registryEntry, tt.registryErr
 				},
 			}
 
-			got := resolveTraceItemID(context.Background(), client, tt.domain, tt.entityID)
+			got, resolved := resolveTraceItemID(context.Background(), client, tt.domain, tt.entityID)
 			if got != tt.wantItem {
-				t.Errorf("resolveTraceItemID() = %q, want %q", got, tt.wantItem)
+				t.Errorf("resolveTraceItemID() item = %q, want %q", got, tt.wantItem)
+			}
+			if resolved != tt.wantResolved {
+				t.Errorf("resolveTraceItemID() resolved = %v, want %v", resolved, tt.wantResolved)
 			}
 		})
 	}
@@ -578,6 +667,91 @@ func TestManageTrace_List_EmptyMessage(t *testing.T) {
 	}
 }
 
+// TestManageTrace_List_UnresolvedItemIDWarning verifies that an empty result following a failed
+// item_id resolution surfaces a distinct warning (not the generic "may not be available yet"
+// message that tells the caller to retry something that can never succeed), and that wait=true
+// does not poll a key already known to be wrong.
+func TestManageTrace_List_UnresolvedItemIDWarning(t *testing.T) {
+	t.Parallel()
+
+	callCount := 0
+	client := &UniversalMockClient{
+		// No GetEntityRegistryEntryFn - default mock behavior returns "not found", so the lookup always misses.
+		SendHACSCommandFn: func(_ context.Context, cmd string, _ map[string]any) (any, error) {
+			if cmd != "trace/list" {
+				return nil, fmt.Errorf("wrong command: %s", cmd)
+			}
+			callCount++
+			return []any{}, nil
+		},
+	}
+
+	ctx := mcp.WithWaitConfig(context.Background(), mcp.WaitConfig{
+		Timeout:      200 * time.Millisecond,
+		PollInterval: 10 * time.Millisecond,
+	})
+
+	handler := NewTraceHandlers()
+	result, err := handler.HandleManageTrace(ctx, client, map[string]any{
+		"action":    "list",
+		"entity_id": "automation.ev_charging",
+		"wait":      true,
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+	}
+
+	text := result.Content[0].Text
+	if !strings.Contains(text, "could not be resolved") {
+		t.Errorf("expected the resolution-failure warning, got: %s", text)
+	}
+	if strings.Contains(text, "pass wait=true to poll automatically") {
+		t.Errorf("expected the unresolved-item_id warning, not the generic wait=true suggestion: %s", text)
+	}
+	if callCount != 1 {
+		t.Errorf("trace/list called %d times, want 1 (wait polling must be skipped when item_id resolution failed)", callCount)
+	}
+}
+
+// TestManageTrace_Get_UnresolvedItemIDWarning verifies the get action surfaces the same
+// resolution-failure warning as list when trace/get returns nothing for an unresolved item_id
+// (CLAUDE.md #182: trace/get, like trace/list, returns an empty result rather than an error).
+func TestManageTrace_Get_UnresolvedItemIDWarning(t *testing.T) {
+	t.Parallel()
+
+	client := &UniversalMockClient{
+		// No GetEntityRegistryEntryFn - lookup misses.
+		SendHACSCommandFn: func(_ context.Context, cmd string, _ map[string]any) (any, error) {
+			if cmd != "trace/get" {
+				return nil, fmt.Errorf("wrong command: %s", cmd)
+			}
+			return nil, nil
+		},
+	}
+
+	handler := NewTraceHandlers()
+	result, err := handler.HandleManageTrace(context.Background(), client, map[string]any{
+		"action":    "get",
+		"domain":    "automation",
+		"entity_id": "automation.ev_charging",
+		"run_id":    "abc123",
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+	}
+	if !strings.Contains(result.Content[0].Text, "could not be resolved") {
+		t.Errorf("expected the resolution-failure warning, got: %s", result.Content[0].Text)
+	}
+}
+
 // TestManageTrace_List_WaitPolls verifies that wait=true polls trace/list until
 // traces appear, returning the non-empty result.
 func TestManageTrace_List_WaitPolls(t *testing.T) {
@@ -681,6 +855,35 @@ func TestFormatTraceNatural_Automation(t *testing.T) {
 	}
 }
 
+// TestFormatTraceNatural_ErrorAndScriptExecution verifies that "state", "script_execution",
+// "not_triggered", and "error" - fields on HA's top-level short dict (as_extended_dict includes
+// as_short_dict verbatim, components/trace/models.py) - are surfaced. Before this test these
+// fields were silently dropped even though the get action's raw response always carries them.
+func TestFormatTraceNatural_ErrorAndScriptExecution(t *testing.T) {
+	t.Parallel()
+
+	handler := NewTraceHandlers()
+	response := map[string]any{
+		"state":            "stopped",
+		"script_execution": "failed_conditions",
+		"not_triggered":    true,
+		"error":            "Message malformed: extra keys not allowed @ data['foo']",
+		"trace":            map[string]any{},
+	}
+
+	got := handler.formatTraceNatural(response)
+	for _, want := range []string{
+		"State: stopped",
+		"Result: failed_conditions",
+		"Not triggered: condition evaluated but did not fire",
+		"Error: Message malformed: extra keys not allowed @ data['foo']",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output missing %q\nfull output:\n%s", want, got)
+		}
+	}
+}
+
 // TestFormatTracesNatural_DictTimestamp verifies the list view reads HA's real
 // {"start":..,"finish":..} timestamp shape instead of always finding an empty string.
 func TestFormatTracesNatural_DictTimestamp(t *testing.T) {
@@ -698,7 +901,7 @@ func TestFormatTracesNatural_DictTimestamp(t *testing.T) {
 		},
 	}
 
-	got := handler.formatTracesNatural(traces)
+	got := handler.formatTracesNatural(traces, "")
 	for _, want := range []string{"Timestamp: 2026-02-19T06:00:00Z", "Duration: 3.00s"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("output missing %q\nfull output:\n%s", want, got)

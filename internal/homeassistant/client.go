@@ -65,6 +65,7 @@ type Client interface {
 
 	// Registry operations
 	GetEntityRegistry(ctx context.Context) ([]EntityRegistryEntry, error)
+	GetEntityRegistryEntry(ctx context.Context, entityID string) (*EntityRegistryEntry, error)
 	GetDeviceRegistry(ctx context.Context) ([]DeviceRegistryEntry, error)
 	GetAreaRegistry(ctx context.Context) ([]AreaRegistryEntry, error)
 
