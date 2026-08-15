@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 	"github.com/zorak1103/ha-mcp/internal/mcp"
@@ -110,24 +112,88 @@ func (h *TraceHandlers) HandleManageTrace(ctx context.Context, client homeassist
 	}
 }
 
-// resolveTraceListParams derives domain and item_id from entity_id (when provided),
+// resolveTraceListParams derives domain and the entity_id from entity_id (when provided),
 // validates the prefix, and checks for conflicts with an explicit domain parameter.
-func resolveTraceListParams(entityID, domain string) (resolvedDomain, itemID, errMsg string) {
+// The returned entityID must still be mapped to HA's trace item_id via resolveTraceItemID.
+func resolveTraceListParams(entityID, domain string) (resolvedDomain, resolvedEntityID, errMsg string) {
 	if entityID == "" {
 		return domain, "", ""
 	}
+	derived, errMsg := validateTraceEntityID(entityID, domain)
+	if errMsg != "" {
+		return "", "", errMsg
+	}
+	return derived, entityID, ""
+}
+
+// validateTraceEntityID checks an entity_id intended for a trace lookup: it must be
+// "automation.<id>" or "script.<id>", and - when domain is already known (get always supplies
+// it; list only when explicitly passed) - the prefixes must agree. Shared by handleGetTrace and
+// resolveTraceListParams so the two actions can't drift on what counts as a valid entity_id
+// (get's own inline check used to accept a bare id or one starting with "." unchecked).
+func validateTraceEntityID(entityID, domain string) (derivedDomain, errMsg string) {
 	dotIdx := strings.Index(entityID, ".")
 	if dotIdx <= 0 {
-		return "", "", fmt.Sprintf("entity_id %q is invalid for list action: must be 'automation.<id>' or 'script.<id>'", entityID)
+		return "", fmt.Sprintf("entity_id %q is invalid: must be 'automation.<id>' or 'script.<id>'", entityID)
 	}
 	derived := entityID[:dotIdx]
 	if derived != traceDomainAutomation && derived != traceDomainScript {
-		return "", "", fmt.Sprintf("entity_id prefix %q is not supported for trace list; use 'automation' or 'script'", derived)
+		return "", fmt.Sprintf("entity_id prefix %q is not supported for trace lookups; use 'automation' or 'script'", derived)
 	}
 	if domain != "" && domain != derived {
-		return "", "", fmt.Sprintf("entity_id prefix %q conflicts with explicit domain %q", derived, domain)
+		return "", fmt.Sprintf("entity_id prefix %q conflicts with explicit domain %q", derived, domain)
 	}
-	return derived, entityID, ""
+	return derived, ""
+}
+
+// resolveTraceItemID maps an entity_id to the item_id Home Assistant's trace API expects.
+// HA stores traces under the key "<domain>.<item_id>" (components/trace/models.py
+// ActionTrace.__init__: self.key = f"{domain}.{item_id}"), where item_id is the object's
+// unique_id, NOT its entity_id. Both automation and script entities set their unique_id to
+// exactly that value at creation time (automation/__init__.py, script/__init__.py), so a single
+// entity-registry lookup resolves either domain:
+//   - Scripts: unique_id matches the entity's object_id unless the entity was renamed after
+//     creation. Passing the full entity_id instead produces the nonexistent key "script.script.<id>".
+//   - Automations: unique_id is the automation's config id, which differs from the entity
+//     object_id for UI-created automations.
+//
+// Uses GetEntityRegistryEntry (a targeted "config/entity_registry/get" WS call) rather than
+// GetEntityRegistry, which would fetch and unmarshal every registered entity - one of the
+// heaviest WS reads available - just to find one entry, on every entity-scoped trace lookup.
+//
+// A failed lookup or a missing unique_id degrades to the object_id and logs a warning: HA
+// returns an empty trace list rather than an error for a wrong key, so a silently wrong item_id
+// is otherwise indistinguishable from "no traces recorded yet". The returned resolved=false lets
+// callers distinguish the two cases in the tool response too, not just the server log - see
+// unresolvedItemIDWarning.
+func resolveTraceItemID(ctx context.Context, client homeassistant.Client, domain, entityID string) (itemID string, resolved bool) {
+	objectID := entityID
+	if dotIdx := strings.Index(entityID, "."); dotIdx >= 0 {
+		objectID = entityID[dotIdx+1:]
+	}
+
+	entry, err := client.GetEntityRegistryEntry(ctx, entityID)
+	if err != nil {
+		slog.WarnContext(ctx, "trace item_id resolution degraded to object_id: entity registry lookup failed",
+			"entity_id", entityID, "domain", domain, "error", err)
+		return objectID, false
+	}
+	if entry.UniqueID == "" {
+		slog.WarnContext(ctx, "trace item_id resolution degraded to object_id: entity has no unique_id in registry",
+			"entity_id", entityID, "domain", domain)
+		return objectID, false
+	}
+	return entry.UniqueID, true
+}
+
+// unresolvedItemIDWarning explains an empty trace result that followed a failed item_id
+// resolution, so the caller doesn't mistake a known-wrong lookup key for "no traces yet" and
+// retry (or poll via wait=true) something that can never succeed.
+func unresolvedItemIDWarning(entityID string) string {
+	return fmt.Sprintf("No traces found for %s, but this may be because the entity_id could not be "+
+		"resolved to Home Assistant's trace item_id (registry lookup failed or the entity is not "+
+		"registered) rather than an absence of traces - retrying or passing wait=true will not help. "+
+		"Check the entity_id is correct and the entity exists.", entityID)
 }
 
 // handleListTraces lists all traces for a domain.
@@ -136,7 +202,7 @@ func (h *TraceHandlers) handleListTraces(ctx context.Context, client homeassista
 	entityID, _ := args["entity_id"].(string)
 	wait, _ := args["wait"].(bool)
 
-	domain, itemID, errMsg := resolveTraceListParams(entityID, domain)
+	domain, traceEntityID, errMsg := resolveTraceListParams(entityID, domain)
 	if errMsg != "" {
 		return errorResult(errMsg), nil
 	}
@@ -147,7 +213,10 @@ func (h *TraceHandlers) handleListTraces(ctx context.Context, client homeassista
 	// Build command data
 	data := make(map[string]any)
 	data["domain"] = domain
-	if itemID != "" {
+	resolved := true
+	if traceEntityID != "" {
+		var itemID string
+		itemID, resolved = resolveTraceItemID(ctx, client, domain, traceEntityID)
 		data["item_id"] = itemID
 	}
 
@@ -160,31 +229,49 @@ func (h *TraceHandlers) handleListTraces(ctx context.Context, client homeassista
 	// Parse response - convert to []any for consistent handling
 	traces := parseTraceListResponse(response)
 
-	// Opt-in polling: if wait=true and no traces returned yet, poll until traces appear
-	if wait && len(traces) == 0 {
+	// Opt-in polling: if wait=true and no traces returned yet, poll until traces appear.
+	// Skipped when item_id resolution failed - polling a key already known to be wrong just
+	// burns the full wait timeout with no chance of ever finding a trace.
+	if wait && len(traces) == 0 && resolved {
 		if polled, found := waitForTraces(ctx, client, data); found {
 			traces = polled
 		}
 	}
 
-	// Format output
+	warning := ""
+	if !resolved && len(traces) == 0 {
+		warning = unresolvedItemIDWarning(traceEntityID)
+	}
+
 	if format == formatJSON {
-		jsonData, err := json.MarshalIndent(response, "", "  ")
+		return formatTraceListJSON(response, traces, wait, warning)
+	}
+
+	// Natural format
+	return successResult(h.formatTracesNatural(traces, warning)), nil
+}
+
+// formatTraceListJSON renders the list action's JSON output: the resolution-failure warning
+// (wrapped alongside an empty traces array) takes precedence, then a wait-polled non-empty
+// result, falling back to the raw trace/list response.
+func formatTraceListJSON(response any, traces []any, wait bool, warning string) (*mcp.ToolsCallResult, error) {
+	if warning != "" {
+		jsonData, err := json.MarshalIndent(map[string]any{"traces": traces, "warning": warning}, "", "  ")
 		if err != nil {
 			return errorResult(fmt.Sprintf("failed to marshal traces: %v", err)), nil
-		}
-		// If wait found traces, marshal them instead of the original empty response
-		if wait && len(traces) > 0 {
-			jsonData, err = json.MarshalIndent(traces, "", "  ")
-			if err != nil {
-				return errorResult(fmt.Sprintf("failed to marshal traces: %v", err)), nil
-			}
 		}
 		return successResult(string(jsonData)), nil
 	}
 
-	// Natural format
-	return successResult(h.formatTracesNatural(traces)), nil
+	toMarshal := response
+	if wait && len(traces) > 0 {
+		toMarshal = traces
+	}
+	jsonData, err := json.MarshalIndent(toMarshal, "", "  ")
+	if err != nil {
+		return errorResult(fmt.Sprintf("failed to marshal traces: %v", err)), nil
+	}
+	return successResult(string(jsonData)), nil
 }
 
 // parseTraceListResponse converts a trace/list WebSocket response to []any.
@@ -226,10 +313,18 @@ func (h *TraceHandlers) handleGetTrace(ctx context.Context, client homeassistant
 		return errorResult("run_id is required for get action"), nil
 	}
 
+	// Reject a malformed entity_id or a domain/entity_id prefix mismatch rather than silently
+	// resolving item_id against the wrong domain, which would return an unrelated entity's traces.
+	if _, errMsg := validateTraceEntityID(entityID, domain); errMsg != "" {
+		return errorResult(errMsg), nil
+	}
+
+	itemID, resolved := resolveTraceItemID(ctx, client, domain, entityID)
+
 	// Build command data
 	data := map[string]any{
 		"domain":  domain,
-		"item_id": entityID,
+		"item_id": itemID,
 		"run_id":  runID,
 	}
 
@@ -239,8 +334,22 @@ func (h *TraceHandlers) handleGetTrace(ctx context.Context, client homeassistant
 		return errorResult(fmt.Sprintf("failed to get trace: %v", err)), nil
 	}
 
+	// A wrong item_id returns an empty/nil result rather than an error (same trap as list) - flag
+	// it instead of rendering "Invalid trace data." with no indication the lookup itself is suspect.
+	warning := ""
+	if !resolved && response == nil {
+		warning = unresolvedItemIDWarning(entityID)
+	}
+
 	// Format output
 	if format == formatJSON {
+		if warning != "" {
+			jsonData, marshalErr := json.MarshalIndent(map[string]any{"trace": response, "warning": warning}, "", "  ")
+			if marshalErr != nil {
+				return errorResult(fmt.Sprintf("failed to marshal trace: %v", marshalErr)), nil
+			}
+			return successResult(string(jsonData)), nil
+		}
 		jsonData, err := json.MarshalIndent(response, "", "  ")
 		if err != nil {
 			return errorResult(fmt.Sprintf("failed to marshal trace: %v", err)), nil
@@ -249,12 +358,19 @@ func (h *TraceHandlers) handleGetTrace(ctx context.Context, client homeassistant
 	}
 
 	// Natural format
-	return successResult(h.formatTraceNatural(response)), nil
+	natural := h.formatTraceNatural(response)
+	if warning != "" {
+		natural += "\n\n" + warning
+	}
+	return successResult(natural), nil
 }
 
 // formatTracesNatural formats a list of traces in natural language.
-func (h *TraceHandlers) formatTracesNatural(traces []any) string {
+func (h *TraceHandlers) formatTracesNatural(traces []any, warning string) string {
 	if len(traces) == 0 {
+		if warning != "" {
+			return warning
+		}
 		return "No traces found. Home Assistant records traces asynchronously — if you just triggered an automation, traces may not be available yet. Try again in a moment, or pass wait=true to poll automatically."
 	}
 
@@ -269,19 +385,15 @@ func (h *TraceHandlers) formatTracesNatural(traces []any) string {
 
 		runID := getMapString(traceMap, "run_id", "")
 		state := getMapString(traceMap, "state", "")
-		timestamp := getMapString(traceMap, "timestamp", "")
-
-		var duration float64
-		if v, ok := traceMap["duration"].(float64); ok {
-			duration = v
-		}
+		start, finish := traceTimestamps(traceMap)
+		duration := traceDuration(start, finish)
 
 		parts = append(parts, fmt.Sprintf("\n%d. Run ID: %s", i+1, runID))
 		if state != "" {
 			parts = append(parts, fmt.Sprintf("   State: %s", state))
 		}
-		if timestamp != "" {
-			parts = append(parts, fmt.Sprintf("   Timestamp: %s", timestamp))
+		if start != "" {
+			parts = append(parts, fmt.Sprintf("   Timestamp: %s", start))
 		}
 		if duration > 0 {
 			parts = append(parts, fmt.Sprintf("   Duration: %.2fs", duration))
@@ -301,21 +413,91 @@ func (h *TraceHandlers) formatTraceNatural(response any) string {
 	var parts []string
 	parts = append(parts, "Trace Execution Path:")
 
-	// Extract trace details
+	// state/script_execution/error/not_triggered live on the top-level short dict fields that
+	// AutomationTrace.as_extended_dict() includes verbatim alongside "trace" (components/trace/models.py).
+	if state := getMapString(traceMap, "state", ""); state != "" {
+		parts = append(parts, fmt.Sprintf("\nState: %s", state))
+	}
+
+	// The trigger description lives on the top-level short dict (AutomationTrace.as_short_dict
+	// sets result["trigger"]), not nested under "trace".
+	if trigger := getMapString(traceMap, "trigger", ""); trigger != "" {
+		parts = append(parts, fmt.Sprintf("\nTrigger: %s", trigger))
+	}
+
+	if execResult := getMapString(traceMap, "script_execution", ""); execResult != "" {
+		parts = append(parts, fmt.Sprintf("\nResult: %s", execResult))
+	}
+
+	// Extract step counts. HA flattens a trace into path keys - automations use
+	// "trigger/N", "condition/N", "action/N"; scripts use "sequence/N". There is no "actions" or
+	// "conditions" list key in real trace data.
 	if trace, ok := traceMap["trace"].(map[string]any); ok {
-		trigger := getMapString(trace, "trigger", "")
-		if trigger != "" {
-			parts = append(parts, fmt.Sprintf("\nTrigger: %s", trigger))
+		if conditions := countTopLevelTracePaths(trace, "condition"); conditions > 0 {
+			parts = append(parts, fmt.Sprintf("\nConditions: %d evaluated", conditions))
 		}
-
-		if conditions, ok := trace["conditions"].([]any); ok {
-			parts = append(parts, fmt.Sprintf("\nConditions: %d evaluated", len(conditions)))
+		if actions := countTopLevelTracePaths(trace, "action"); actions > 0 {
+			parts = append(parts, fmt.Sprintf("\nActions: %d executed", actions))
 		}
-
-		if actions, ok := trace["actions"].([]any); ok {
-			parts = append(parts, fmt.Sprintf("\nActions: %d executed", len(actions)))
+		if steps := countTopLevelTracePaths(trace, "sequence"); steps > 0 {
+			parts = append(parts, fmt.Sprintf("\nSequence steps: %d executed", steps))
 		}
 	}
 
+	if nt, ok := traceMap["not_triggered"].(bool); ok && nt {
+		parts = append(parts, "\nNot triggered: condition evaluated but did not fire")
+	}
+	if errText := getMapString(traceMap, "error", ""); errText != "" {
+		parts = append(parts, fmt.Sprintf("\nError: %s", errText))
+	}
+
 	return strings.Join(parts, "\n")
+}
+
+// countTopLevelTracePaths counts the distinct top-level step indices under a trace path prefix
+// (e.g. "action/0", "action/1"). Home Assistant flattens a trace into path keys where nested
+// steps extend the same top-level index ("action/0/choose/0/sequence/0" is still step 0), so a
+// plain has-prefix count over-counts any step containing a nested action block.
+func countTopLevelTracePaths(m map[string]any, prefix string) int {
+	full := prefix + "/"
+	seen := make(map[string]bool)
+	for k := range m {
+		rest, ok := strings.CutPrefix(k, full)
+		if !ok {
+			continue
+		}
+		idx, _, _ := strings.Cut(rest, "/")
+		if idx != "" {
+			seen[idx] = true
+		}
+	}
+	return len(seen)
+}
+
+// traceTimestamps extracts the start/finish timestamps from a trace's "timestamp" field.
+// Home Assistant's trace API always returns this as {"start": <iso>, "finish": <iso>}
+// (components/trace/models.py ActionTrace.as_short_dict) - there is no flat-string variant.
+func traceTimestamps(m map[string]any) (start, finish string) {
+	v, ok := m["timestamp"].(map[string]any)
+	if !ok {
+		return "", ""
+	}
+	return getMapString(v, "start", ""), getMapString(v, "finish", "")
+}
+
+// traceDuration returns a trace's execution duration in seconds, derived from the finish/start
+// timestamps - Home Assistant's trace short dict has no "duration" key of its own.
+func traceDuration(start, finish string) float64 {
+	if start == "" || finish == "" {
+		return 0
+	}
+	startT, err := time.Parse(time.RFC3339, start)
+	if err != nil {
+		return 0
+	}
+	finishT, err := time.Parse(time.RFC3339, finish)
+	if err != nil {
+		return 0
+	}
+	return finishT.Sub(startT).Seconds()
 }

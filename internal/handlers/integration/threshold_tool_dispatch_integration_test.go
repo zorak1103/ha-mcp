@@ -18,9 +18,12 @@ func TestThresholdToolDispatch(t *testing.T) {
 	suite.Run(t, new(ThresholdToolDispatchTestSuite))
 }
 
-// TestThresholdUpdateViaTool generalizes the #135 fix's verification beyond
-// template helpers to another config-entry helper platform (threshold lives
-// on the binary_sensor domain), driven through the real manage_helper tool.
+// TestThresholdUpdateViaTool generalizes the verification of the fix for
+// manage_helper update passing a bare object_id instead of the full entity_id
+// to config-entry helper routing (which caused "unknown_command" failures)
+// beyond template helpers to another config-entry helper platform (threshold
+// lives on the binary_sensor domain), driven through the real manage_helper
+// tool.
 func (s *ThresholdToolDispatchTestSuite) TestThresholdUpdateViaTool() {
 	inputName := GenerateTestID("thresh_td_input")
 	inputEntityID := BuildEntityID("input_number", inputName)

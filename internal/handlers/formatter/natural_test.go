@@ -228,8 +228,8 @@ func TestNaturalFormatter_FormatEntity_NoFriendlyName(t *testing.T) {
 }
 
 // TestNaturalFormatter_FormatEntity_SanitizesName verifies that a hostile
-// friendly_name (issue #147 follow-up: friendly_name is user-controlled HA state)
-// cannot forge a fake "(entity_id)" suffix or inject extra lines into the output.
+// friendly_name (friendly_name is user-controlled HA state) cannot forge a fake
+// "(entity_id)" suffix or inject extra lines into the output.
 func TestNaturalFormatter_FormatEntity_SanitizesName(t *testing.T) {
 	t.Parallel()
 	f := NewNaturalFormatter()
@@ -325,8 +325,8 @@ func TestNaturalFormatter_FormatEntities_GroupByDomain(t *testing.T) {
 	if !strings.Contains(result, "(1 on, 1 off)") {
 		t.Errorf("FormatEntities() should contain on/off count, got %q", result)
 	}
-	// group_by=domain must honor verbose like every other group_by mode (issue #147
-	// follow-up, N4) — before this fix it silently always rendered non-verbose lines.
+	// group_by=domain must honor verbose like every other group_by mode — before this
+	// fix it silently always rendered non-verbose lines.
 	if !strings.Contains(result, "Changed") {
 		t.Errorf("FormatEntities(GroupByDomain=true, Verbose=true) should include the \"Changed X ago\" suffix, got %q", result)
 	}
@@ -735,9 +735,9 @@ func TestNaturalFormatter_FormatEntities_CompactListNotVerbose(t *testing.T) {
 
 // TestNaturalFormatter_FormatEntities_VerboseIncludesTimestamp verifies that the
 // ungrouped Verbose branch actually carries more detail than CompactList — the
-// "Changed X ago" suffix — rather than rendering byte-identical lines (issue #147
-// follow-up, W1). Before this fix, opts.Verbose and opts.CompactList both called
-// formatEntityNL(e, false), so verbose=true changed nothing about per-line content.
+// "Changed X ago" suffix — rather than rendering byte-identical lines. Before this
+// fix, opts.Verbose and opts.CompactList both called formatEntityNL(e, false), so
+// verbose=true changed nothing about per-line content.
 func TestNaturalFormatter_FormatEntities_VerboseIncludesTimestamp(t *testing.T) {
 	t.Parallel()
 

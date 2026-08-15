@@ -1031,7 +1031,7 @@ func (h *ConsolidatedHelperHandlers) handleUpdate(ctx context.Context, client ho
 	// Flow REST API by matching the registry's full entity_id. A bare id never
 	// matches, so the call silently falls through to the WS "<platform>/update"
 	// command, which config-entry domains (sensor, binary_sensor, ...) don't have
-	// and produces "unknown_command" (issue #135).
+	// and produces "unknown_command".
 	if err := client.UpdateHelper(ctx, entityID, updateConfig); err != nil {
 		return errorResult(fmt.Sprintf("error updating helper: %v", err)), nil
 	}
@@ -1040,8 +1040,8 @@ func (h *ConsolidatedHelperHandlers) handleUpdate(ctx context.Context, client ho
 }
 
 // buildKnownTypeUpdateConfig builds the update config for a helperType that
-// has an entry in helperTypes. See CLAUDE.md's "Partial update merge (#161)"
-// gotcha for why the merge gate below is !RequiresConfigEntryFlow(meta.platform)
+// has an entry in helperTypes. See CLAUDE.md's "Partial update merge" gotcha
+// for why the merge gate below is !RequiresConfigEntryFlow(meta.platform)
 // rather than helperTypes key presence (group is a helperTypes key but a
 // Config Entry Flow platform, so it skips the merge).
 //
@@ -1068,7 +1068,7 @@ func buildKnownTypeUpdateConfig(ctx context.Context, client homeassistant.Client
 	} else {
 		// Known WebSocket helper type - merge current state so an update that
 		// omits an optional/required field keeps its current value instead of
-		// HA's <platform>/update resetting it to empty (#161).
+		// HA's <platform>/update resetting it to empty.
 		merged, currentName, fetchErr := mergeCurrentHelperState(ctx, client, entityID, helperType, meta, args)
 		if fetchErr != nil {
 			return nil, fmt.Errorf(
@@ -1102,7 +1102,7 @@ func buildKnownTypeUpdateConfig(ctx context.Context, client homeassistant.Client
 // mergeCurrentHelperState fetches entity_id's current stored config and
 // merges its fields with the caller's args, so an update omitting an
 // optional/required field keeps the current value instead of HA resetting
-// it to empty (issue #161). Filters strictly to updatableFieldNames(typeName).
+// it to empty. Filters strictly to updatableFieldNames(typeName).
 //
 // fetchErr is non-nil when the fetch itself failed - the caller must fail
 // the update rather than proceed with a partial payload; see CLAUDE.md's
@@ -2386,9 +2386,9 @@ func hasAnyUpdatableSourceEntityField(args map[string]any) bool {
 }
 
 // checkUpdateSourceEntityDomain re-validates domain-constrained source
-// fields on update (create-time validation alone left #135-style helpers
-// updatable into a mismatched source with no preflight, since update never
-// reused checkSourceEntityDomain). A registry lookup failure degrades to an
+// fields on update (create-time validation alone left helpers with domain-
+// constrained source fields updatable into a mismatched source with no
+// preflight, since update never reused checkSourceEntityDomain). A registry lookup failure degrades to an
 // unchecked update rather than blocking a legitimate edit, mirroring
 // configWriteGuardError's "checked=false, proceed anyway" convention
 // (yaml_defined.go:19-20) - unlike mergeCurrentHelperState's merge-fetch

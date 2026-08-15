@@ -118,11 +118,13 @@ func TestHandleDebugTrace_NaturalFormat(t *testing.T) {
 		SendHACSCommandFn: func(_ context.Context, _ string, _ map[string]any) (any, error) {
 			return []any{
 				map[string]any{
-					"run_id":    "1708329000.123",
-					"state":     "stopped",
-					"timestamp": now.Add(-1 * time.Hour).Format(time.RFC3339),
-					"duration":  1.25,
-					"trigger":   map[string]any{"platform": "time", "description": "time (06:30:00)"},
+					"run_id": "1708329000.123",
+					"state":  "stopped",
+					"timestamp": map[string]any{
+						"start":  now.Add(-1 * time.Hour).Format(time.RFC3339),
+						"finish": now.Add(-1*time.Hour + 75*time.Second).Format(time.RFC3339),
+					},
+					"trigger": map[string]any{"platform": "time", "description": "time (06:30:00)"},
 				},
 			}, nil
 		},
@@ -345,7 +347,7 @@ func TestHandleDebugTrace_CustomHours(t *testing.T) {
 	}
 }
 
-// TestHandleDebugTrace_ArrayEntityTriggers is a regression test for issue #99:
+// TestHandleDebugTrace_ArrayEntityTriggers is a regression test verifying that
 // automations with array entity_id and the modern `trigger:` key must populate the
 // Trigger Entity States section instead of reporting "No entity-based triggers found".
 func TestHandleDebugTrace_ArrayEntityTriggers(t *testing.T) {
@@ -472,7 +474,7 @@ func TestExtractTriggerEntityIDs(t *testing.T) {
 			triggers: nil,
 			wantIDs:  nil,
 		},
-		// Regression cases for issue #99 ─────────────────────────────────────────
+		// Regression cases for array entity_id with the modern `trigger:` key ─────
 		{
 			name: "array entity_id with modern trigger key",
 			triggers: []any{
@@ -539,7 +541,7 @@ func TestExtractTriggerEntityIDs(t *testing.T) {
 
 // TestHandleDebugTrace_StateFromGetState verifies that the automation runtime state
 // is read via GetState (not from GetAutomation, which only returns config).
-// Regression test for issue #74: debug report shows empty State field.
+// Regression test for a bug where the debug report shows an empty State field.
 func TestHandleDebugTrace_StateFromGetState(t *testing.T) {
 	t.Parallel()
 
@@ -658,7 +660,7 @@ func TestExtractTriggerTypes(t *testing.T) {
 			},
 			want: nil,
 		},
-		// Regression case for issue #99: modern `trigger:` key (HA 2024.10+)
+		// Regression case for the modern `trigger:` key (HA 2024.10+)
 		{
 			name: "modern trigger key (no platform key)",
 			triggers: []any{
@@ -685,5 +687,215 @@ func TestExtractTriggerTypes(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestFetchLatestTrace_PicksNewestByStartTimestamp verifies that the trace with the latest
+// timestamp.start wins, not the first element returned by trace/list (HA yields insertion
+// order, oldest first - see components/trace/models.py ActionTrace.as_short_dict).
+func TestFetchLatestTrace_PicksNewestByStartTimestamp(t *testing.T) {
+	t.Parallel()
+
+	handler := NewTraceHandlers()
+	client := &UniversalMockClient{
+		SendHACSCommandFn: func(_ context.Context, _ string, _ map[string]any) (any, error) {
+			return []any{
+				map[string]any{
+					"run_id": "oldest",
+					"state":  "stopped",
+					"timestamp": map[string]any{
+						"start":  "2026-02-19T06:00:00Z",
+						"finish": "2026-02-19T06:00:01Z",
+					},
+				},
+				map[string]any{
+					"run_id": "newest",
+					"state":  "stopped",
+					"timestamp": map[string]any{
+						"start":  "2026-02-19T08:00:00Z",
+						"finish": "2026-02-19T08:00:03Z",
+					},
+				},
+				map[string]any{
+					"run_id": "middle",
+					"state":  "stopped",
+					"timestamp": map[string]any{
+						"start":  "2026-02-19T07:00:00Z",
+						"finish": "2026-02-19T07:00:01Z",
+					},
+				},
+			}, nil
+		},
+	}
+
+	got, _ := handler.fetchLatestTrace(context.Background(), client, "automation.morning_routine")
+	if got == nil {
+		t.Fatal("expected a trace, got nil")
+	}
+	if got.RunID != "newest" {
+		t.Errorf("RunID = %q, want %q (picked wrong trace as latest)", got.RunID, "newest")
+	}
+	if got.Timestamp != "2026-02-19T08:00:00Z" {
+		t.Errorf("Timestamp = %q, want the newest trace's start timestamp", got.Timestamp)
+	}
+	if got.Duration != 3 {
+		t.Errorf("Duration = %v, want 3 (derived from finish - start)", got.Duration)
+	}
+}
+
+// TestFetchLatestTrace_LegacyStringTimestamp verifies backward compatibility with a flat
+// ISO-string timestamp (as opposed to HA's real {"start":..,"finish":..} shape), which older
+// test fixtures and any future HA response shape drift might still produce.
+// TestFetchLatestTrace_MissingTimestamp verifies that a trace with no (or malformed) timestamp
+// field degrades to an empty Timestamp and zero Duration rather than panicking - Home Assistant's
+// trace short dict always includes {"start":..,"finish":..}, but nothing here should crash if a
+// future response shape omits it.
+func TestFetchLatestTrace_MissingTimestamp(t *testing.T) {
+	t.Parallel()
+
+	handler := NewTraceHandlers()
+	client := &UniversalMockClient{
+		SendHACSCommandFn: func(_ context.Context, _ string, _ map[string]any) (any, error) {
+			return []any{
+				map[string]any{
+					"run_id": "only",
+					"state":  "stopped",
+				},
+			}, nil
+		},
+	}
+
+	got, _ := handler.fetchLatestTrace(context.Background(), client, "automation.morning_routine")
+	if got == nil {
+		t.Fatal("expected a trace, got nil")
+	}
+	if got.Timestamp != "" {
+		t.Errorf("Timestamp = %q, want empty", got.Timestamp)
+	}
+	if got.Duration != 0 {
+		t.Errorf("Duration = %v, want 0", got.Duration)
+	}
+}
+
+// TestFetchLatestTrace_UsesResolvedItemID verifies fetchLatestTrace sends the registry-resolved
+// item_id in its trace/list command, not the raw entity_id - the same regression class as
+// TestManageTrace_List_EntityIDFilter, but for the debug action's own trace/list call.
+func TestFetchLatestTrace_UsesResolvedItemID(t *testing.T) {
+	t.Parallel()
+
+	var capturedItemID any
+	handler := NewTraceHandlers()
+	client := &UniversalMockClient{
+		GetEntityRegistryEntryFn: func(_ context.Context, entityID string) (*homeassistant.EntityRegistryEntry, error) {
+			return &homeassistant.EntityRegistryEntry{EntityID: entityID, UniqueID: "1700000000001"}, nil
+		},
+		SendHACSCommandFn: func(_ context.Context, _ string, data map[string]any) (any, error) {
+			capturedItemID = data["item_id"]
+			return []any{}, nil
+		},
+	}
+
+	got, resolved := handler.fetchLatestTrace(context.Background(), client, "automation.morning_routine")
+	if got != nil {
+		t.Errorf("expected nil trace for an empty trace/list response, got: %+v", got)
+	}
+	if !resolved {
+		t.Error("resolved = false, want true (registry lookup succeeded)")
+	}
+	if capturedItemID != "1700000000001" {
+		t.Errorf("data[item_id] = %v, want the resolved unique_id %q", capturedItemID, "1700000000001")
+	}
+}
+
+// TestHandleDebugTrace_UnresolvedItemIDWarning verifies the debug report's "Latest Trace"
+// section surfaces the resolution-failure warning (not the plain "No traces found.") when
+// trace/list comes back empty following a failed item_id lookup - same signal as list/get.
+func TestHandleDebugTrace_UnresolvedItemIDWarning(t *testing.T) {
+	t.Parallel()
+
+	handler := NewTraceHandlers()
+	client := &UniversalMockClient{
+		// No GetEntityRegistryEntryFn - lookup misses, resolution degrades to the object_id.
+		GetAutomationFn: func(_ context.Context, _ string) (*homeassistant.Automation, error) {
+			return mockAutomationForDebug(), nil
+		},
+		SendHACSCommandFn: func(_ context.Context, _ string, _ map[string]any) (any, error) {
+			return []any{}, nil
+		},
+		GetLogbookFn: func(_ context.Context, _, _, _ string) ([]homeassistant.LogbookEntry, error) {
+			return []homeassistant.LogbookEntry{}, nil
+		},
+	}
+
+	result, err := handler.HandleManageTrace(context.Background(), client, map[string]any{
+		"action":        "debug",
+		"automation_id": "automation.morning_routine",
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+	}
+	if !strings.Contains(result.Content[0].Text, "could not be resolved") {
+		t.Errorf("expected the resolution-failure warning in the Latest Trace section, got: %s", result.Content[0].Text)
+	}
+}
+
+// TestBuildDebugTrace_ScriptExecutionAndError verifies that "script_execution" and "error" -
+// present on HA's real trace short dict (components/trace/models.py ActionTrace.as_short_dict) -
+// are extracted into AutomationDebugTrace and rendered in the "Latest Trace" section. Before this
+// test only run_id/state/timestamp/trigger/not_triggered were read; a failed automation run
+// (script_execution="failed_conditions" or an "error" string) was silently indistinguishable from
+// a successful one in the debug report.
+func TestBuildDebugTrace_ScriptExecutionAndError(t *testing.T) {
+	t.Parallel()
+
+	trace := buildDebugTrace(map[string]any{
+		"run_id":           "abc123",
+		"state":            "stopped",
+		"script_execution": "failed_conditions",
+		"error":            "condition not met",
+		"timestamp": map[string]any{
+			"start":  "2026-02-19T06:00:00Z",
+			"finish": "2026-02-19T06:00:01Z",
+		},
+	})
+
+	if trace.ScriptExecution != "failed_conditions" {
+		t.Errorf("ScriptExecution = %q, want %q", trace.ScriptExecution, "failed_conditions")
+	}
+	if trace.Error != "condition not met" {
+		t.Errorf("Error = %q, want %q", trace.Error, "condition not met")
+	}
+
+	got := formatDebugTraceSection(trace, "")
+	for _, want := range []string{"Result: failed_conditions", "Error: condition not met"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output missing %q\nfull output:\n%s", want, got)
+		}
+	}
+}
+
+// TestFormatDebugTraceSection_NotTriggered verifies the not_triggered annotation on the Run ID
+// line, which was never previously asserted on by any test.
+func TestFormatDebugTraceSection_NotTriggered(t *testing.T) {
+	t.Parallel()
+
+	trace := buildDebugTrace(map[string]any{
+		"run_id":        "abc123",
+		"state":         "stopped",
+		"not_triggered": true,
+	})
+
+	if !trace.NotTriggered {
+		t.Fatal("expected NotTriggered = true")
+	}
+
+	got := formatDebugTraceSection(trace, "")
+	want := "Run ID: abc123 (not triggered - condition evaluated but did not fire)"
+	if !strings.Contains(got, want) {
+		t.Errorf("output missing %q\nfull output:\n%s", want, got)
 	}
 }

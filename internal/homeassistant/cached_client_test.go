@@ -49,6 +49,10 @@ func (m *mockClient) GetEntityRegistry(ctx context.Context) ([]EntityRegistryEnt
 	return []EntityRegistryEntry{{EntityID: "light.test"}}, nil
 }
 
+func (m *mockClient) GetEntityRegistryEntry(_ context.Context, entityID string) (*EntityRegistryEntry, error) {
+	return &EntityRegistryEntry{EntityID: entityID}, nil
+}
+
 func (m *mockClient) GetDeviceRegistry(ctx context.Context) ([]DeviceRegistryEntry, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -419,6 +423,24 @@ func TestCachedClient_CacheExpired(t *testing.T) {
 	}
 	if mock.servicesCallCount != 2 {
 		t.Errorf("Expected 2 API calls (cache expired), got %d", mock.servicesCallCount)
+	}
+}
+
+func TestCachedClient_GetEntityRegistryEntry_PassesThroughUncached(t *testing.T) {
+	t.Parallel()
+
+	mock := &mockClient{}
+	cfg := config.CacheConfig{Enabled: true, EntityRegTTLMin: 10}
+	logger := logging.New(logging.LevelError)
+	client := NewCachedClient(mock, cfg, logger)
+
+	ctx := context.Background()
+	entry, err := client.GetEntityRegistryEntry(ctx, "automation.morning_routine")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if entry == nil || entry.EntityID != "automation.morning_routine" {
+		t.Errorf("got %+v, want EntityID = automation.morning_routine", entry)
 	}
 }
 

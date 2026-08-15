@@ -200,9 +200,9 @@ func TestGet(t *testing.T) {
 	}
 }
 
-// TestGet_NavigationLocation covers W1 from the adversarial review of #131/#124:
-// array-index and type-mismatch navigation failures should report the prefix
-// actually navigated, not just the full submitted path — matching what
+// TestGet_NavigationLocation verifies a navigation-location fix identified during
+// adversarial review: array-index and type-mismatch navigation failures should report
+// the prefix actually navigated, not just the full submitted path — matching what
 // key-not-found errors already do (see TestGet's "nested miss" case above).
 func TestGet_NavigationLocation(t *testing.T) {
 	t.Parallel()
@@ -321,10 +321,10 @@ func TestParseIndex(t *testing.T) {
 	}
 }
 
-// TestGet_ActionBlockHints covers issue #124: users assume then/else/sequence/default
-// nest one level deeper than they actually do (e.g. inside "if" rather than as its
-// sibling). A missing-key error for one of these keywords should include a structural
-// hint; a miss on an unrelated key should not.
+// TestGet_ActionBlockHints verifies the fix for a common mistake: users assume
+// then/else/sequence/default nest one level deeper than they actually do (e.g.
+// inside "if" rather than as its sibling). A missing-key error for one of these
+// keywords should include a structural hint; a miss on an unrelated key should not.
 func TestGet_ActionBlockHints(t *testing.T) {
 	t.Parallel()
 

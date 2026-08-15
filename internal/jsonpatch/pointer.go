@@ -139,7 +139,7 @@ func navigatedPrefix(fullPath string, rest []string) string {
 }
 
 // actionBlockKeyHint returns structural guidance for Home Assistant action-block
-// keywords that are commonly mistaken for children of a sibling key (issue #124).
+// keywords that are commonly mistaken for children of a sibling key.
 // Returns "" for keys with no known structural gotcha. This is a heuristic keyed
 // only on the missing segment name — it assumes an HA automation/script document
 // and may fire on an unrelated schema that happens to reuse one of these key names.
@@ -199,7 +199,8 @@ func unloadedConfigHint(seg, fullPath string, rest, available []string) string {
 // successfully navigated before the failing segment, or a "document root" descriptor
 // when the failure occurred on the first segment. Shared by all navigation-failure
 // errors (key-not-found, array-index, type-mismatch) so the engine reports one
-// consistent location format regardless of failure kind (issue #124 / W1).
+// consistent location format regardless of failure kind (a navigation-location
+// fix identified during adversarial review).
 func describeLocation(fullPath string, rest []string) string {
 	if loc := navigatedPrefix(fullPath, rest); loc != "" {
 		return fmt.Sprintf("%q", loc)

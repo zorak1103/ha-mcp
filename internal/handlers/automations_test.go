@@ -2455,7 +2455,7 @@ func TestEnrichAutomationError(t *testing.T) {
 			wantContain: "domain.service",
 		},
 		{
-			// Real-world message from issue #55: TemplateSyntaxError must match the specific
+			// Real-world HA error message: TemplateSyntaxError must match the specific
 			// rule (before the generic "invalid template" rule), even though the body contains
 			// both substrings.
 			name: "template syntax error triggers specific split-expression hint",
@@ -2934,7 +2934,7 @@ func TestManageAutomation_UpdateForTimerWarning(t *testing.T) {
 }
 
 // TestManageAutomation_PatchReload verifies that a successful patch write triggers
-// automation.reload so the change is immediately visible to a subsequent get (#126).
+// automation.reload so the change is immediately visible to a subsequent get.
 func TestManageAutomation_PatchReload(t *testing.T) {
 	t.Parallel()
 
@@ -2985,7 +2985,7 @@ func TestManageAutomation_PatchReload(t *testing.T) {
 			t.Errorf("expected automation.reload to be called, got domain=%q service=%q", reloadDomain, reloadService)
 		}
 		// The reload must be scoped to the edited automation's config id so other automations'
-		// in-flight "for:" trigger timers are not reset as collateral damage (#163).
+		// in-flight "for:" trigger timers are not reset as collateral damage.
 		if reloadData["id"] != "morning_routine" {
 			t.Errorf("expected targeted reload with id=morning_routine, got data=%v", reloadData)
 		}
@@ -3090,7 +3090,7 @@ func TestManageAutomation_PatchReload(t *testing.T) {
 
 // TestManageAutomation_YAMLDefinedGuard verifies that update/patch refuse to write an automation
 // whose id is not present in automations.yaml instead of silently creating a duplicate orphan
-// entity (#122), and that a probe failure degrades gracefully by letting the write proceed.
+// entity, and that a probe failure degrades gracefully by letting the write proceed.
 func TestManageAutomation_YAMLDefinedGuard(t *testing.T) {
 	t.Parallel()
 
@@ -3277,7 +3277,7 @@ func TestManageAutomation_YAMLDefinedGuard(t *testing.T) {
 }
 
 // TestManageAutomation_UpdateReload verifies that a successful update write triggers
-// automation.reload so the change is immediately visible to a subsequent get (#126).
+// automation.reload so the change is immediately visible to a subsequent get.
 func TestManageAutomation_UpdateReload(t *testing.T) {
 	t.Parallel()
 
@@ -3318,7 +3318,7 @@ func TestManageAutomation_UpdateReload(t *testing.T) {
 			t.Errorf("expected automation.reload to be called, got domain=%q service=%q", reloadDomain, reloadService)
 		}
 		// Scoped to the edited automation's config id so other automations' in-flight
-		// "for:" trigger timers are preserved (#163).
+		// "for:" trigger timers are preserved.
 		if reloadData["id"] != "test_automation" {
 			t.Errorf("expected targeted reload with id=test_automation, got data=%v", reloadData)
 		}
@@ -3408,7 +3408,7 @@ func TestManageAutomation_UpdateReload(t *testing.T) {
 
 // TestManageAutomation_CreateReload verifies that a successful create triggers a reload scoped
 // to the newly-created automation's config id, rather than a full-domain reload that would reset
-// every other automation's in-flight "for:" trigger timers (#163).
+// every other automation's in-flight "for:" trigger timers.
 func TestManageAutomation_CreateReload(t *testing.T) {
 	t.Parallel()
 

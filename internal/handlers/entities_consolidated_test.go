@@ -1108,8 +1108,7 @@ func TestQueryEntities_Current_Grouping(t *testing.T) {
 
 	// Dedicated fixture for the timestamp-suffix assertions below, independent of
 	// testStates — mutating testStates for an unrelated subtest must not silently
-	// change what these two verbose/non-verbose cases are actually asserting (issue
-	// #147 follow-up, N5).
+	// change what these two verbose/non-verbose cases are actually asserting.
 	timestampFixtureStates := []homeassistant.Entity{
 		{EntityID: "light.living_room", State: "on", Attributes: map[string]any{"friendly_name": "Living Room"}, LastChanged: time.Now().Add(-2 * time.Hour)},
 	}
@@ -1203,7 +1202,7 @@ func TestQueryEntities_Current_Grouping(t *testing.T) {
 // the ungrouped CompactList path already does. Before this fix, these grouped natural
 // paths had no cap at all and no default limit applies (limit=0 means "no limit"), so
 // a single large area could return every entity's full domain-aware detail line in one
-// uncapped response (issue #147 follow-up, C2).
+// uncapped response.
 func TestQueryEntities_Current_GroupingCapped(t *testing.T) {
 	t.Parallel()
 

@@ -89,8 +89,9 @@ func (s *IntegrationTestSuite) SetupSuite() {
 	require.NoError(s.T(), err, "Failed to create Home Assistant client")
 	s.client = client
 
-	// Build the real tool registry once per suite - this is the layer that
-	// failed silently in issue #135 (handler argument parsing), which no
+	// Build the real tool registry once per suite - this is the layer where a
+	// handler argument-parsing bug (manage_helper update passing the wrong
+	// identifier to config-entry routing) once failed silently, which no
 	// prior integration test exercised.
 	s.registry = mcp.NewRegistry()
 	handlers.RegisterAllTools(s.registry)
@@ -201,9 +202,10 @@ func (s *IntegrationTestSuite) Client() homeassistant.Client {
 
 // CallTool dispatches a tool call through the real registry + handler layer
 // (tool name -> registry lookup -> handler -> real HybridClient), using the
-// suite's live Home Assistant client. This is the layer that issue #135's
-// bug lived in but no prior integration test exercised - every existing
-// test in this package calls Client() methods directly instead.
+// suite's live Home Assistant client. This is the layer where the
+// manage_helper update argument-passing bug lived but no prior integration
+// test exercised - every existing test in this package calls Client()
+// methods directly instead.
 func (s *IntegrationTestSuite) CallTool(name string, args map[string]any) *mcp.ToolsCallResult {
 	handler, ok := s.registry.GetHandler(name)
 	s.Require().True(ok, "tool %q is not registered", name)

@@ -34,10 +34,10 @@ const (
 // automation has triggers with a "for:" duration. Update/patch trigger an explicit
 // automation.reload scoped to the edited automation's config id after a successful config write
 // (see reloadDomainTargeted in waiter.go) so the change is immediately visible to a subsequent
-// get (#126) — but that reload tears down the edited automation's own trigger runtime state
+// get — but that reload tears down the edited automation's own trigger runtime state
 // (including any in-flight "for:" timer); HA rebuilds triggers on reload even for a single
 // entity, and a state-trigger's "for:" countdown only starts on a state transition, so it cannot
-// be resumed. Scoping the reload to just this automation's config id (#163) means OTHER
+// be resumed. Scoping the reload to just this automation's config id means OTHER
 // automations' in-flight "for:" timers are no longer reset as collateral damage — only the one
 // actually being edited is affected. If its monitored entity is already in the target state, no
 // new transition occurs and the timer never re-fires — leaving actuators stuck until the next
@@ -50,7 +50,7 @@ const automationForTimerReloadWarning = " (warning: saving reloads the automatio
 // automationReloadFailedWarning is appended to update/patch success messages when the
 // post-write automation.reload service call itself fails. The config write to REST already
 // succeeded, so the change is not lost — but until a reload succeeds (manual or automatic
-// retry), get() may keep returning the pre-change config (#126).
+// retry), get() may keep returning the pre-change config.
 const automationReloadFailedWarning = " (warning: reload after save failed; changes may not be " +
 	"visible or active until a manual automation.reload)"
 
@@ -469,7 +469,7 @@ func (h *AutomationHandlers) handleUpdate(ctx context.Context, client homeassist
 	// current.EntityID reflects the entity actually resolved above (findAutomationByID may have
 	// matched a different entity than a bare entityID guess). Refuse to write an automation
 	// whose id is not present in automations.yaml: the config API silently creates a duplicate
-	// orphan entity instead (#122, #164).
+	// orphan entity instead of updating the existing one.
 	checkEntityID := resolveWriteCheckEntityID(entityID, current.EntityID)
 	if guardErr := configWriteGuardError(ctx, client, "automation", "update", automationID, checkEntityID, actualConfigID); guardErr != nil {
 		return guardErr, nil
@@ -621,7 +621,7 @@ func applyPatchedAutomationWrite(
 	}
 
 	// Refuse to write an automation whose id is not present in automations.yaml: the config
-	// API silently creates a duplicate orphan entity instead of updating it (#122, #164).
+	// API silently creates a duplicate orphan entity instead of updating it.
 	if guardErr := configWriteGuardError(ctx, client, "automation", "patch", automationID, entityID, actualConfigID); guardErr != nil {
 		return guardErr, nil
 	}

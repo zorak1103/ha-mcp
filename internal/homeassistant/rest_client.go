@@ -551,7 +551,7 @@ func (c *RESTClient) GetScene(ctx context.Context, sceneID string) (*Scene, erro
 // config API manages for domain ("automation" -> automations.yaml, "script" -> scripts.yaml,
 // "scene" -> scenes.yaml). A false result means a POST to /api/config/{domain}/config/{id}
 // would append a new entry instead of editing one in place, silently creating a duplicate
-// orphan entity (<entity>_2) instead of updating the original (#122, #164).
+// orphan entity (<entity>_2) instead of updating the original.
 func (c *RESTClient) ConfigFileEntryExists(ctx context.Context, domain, configID string) (bool, error) {
 	url := fmt.Sprintf("%s/api/config/%s/config/%s", c.baseURL, domain, neturl.PathEscape(configID))
 

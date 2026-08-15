@@ -18,11 +18,12 @@ func TestGroupToolDispatch(t *testing.T) {
 	suite.Run(t, new(GroupToolDispatchTestSuite))
 }
 
-// TestGroupDeleteViaTool exercises the new wsClientImpl.DeleteHelper guard
-// (isWSHelperPlatform) added alongside the #135 fix: "group" is a config-entry
-// platform recognized by extractPlatform, so without the guard a delete
-// falling through to the WS layer would build the nonexistent "group/delete"
-// command instead of failing clearly or routing correctly.
+// TestGroupDeleteViaTool exercises the wsClientImpl.DeleteHelper guard
+// (isWSHelperPlatform) added alongside the fix routing config-entry helper
+// updates/deletes correctly: "group" is a config-entry platform recognized by
+// extractPlatform, so without the guard a delete falling through to the WS
+// layer would build the nonexistent "group/delete" command instead of
+// failing clearly or routing correctly.
 func (s *GroupToolDispatchTestSuite) TestGroupDeleteViaTool() {
 	num1Name := GenerateTestID("grp_td1")
 	num2Name := GenerateTestID("grp_td2")

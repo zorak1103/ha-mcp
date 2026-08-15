@@ -252,6 +252,9 @@ func (m *mockNonCloserClient) GetCameraSnapshot(context.Context, string) ([]byte
 func (m *mockNonCloserClient) GetEntityRegistry(_ context.Context) ([]EntityRegistryEntry, error) {
 	return []EntityRegistryEntry{}, nil
 }
+func (m *mockNonCloserClient) GetEntityRegistryEntry(_ context.Context, _ string) (*EntityRegistryEntry, error) {
+	return nil, nil
+}
 func (m *mockNonCloserClient) GetDeviceRegistry(_ context.Context) ([]DeviceRegistryEntry, error) {
 	return []DeviceRegistryEntry{}, nil
 }

@@ -192,6 +192,9 @@ func (m *mockClientForPool) ConfigFileEntryExists(_ context.Context, _, _ string
 func (m *mockClientForPool) GetEntityRegistry(_ context.Context) ([]EntityRegistryEntry, error) {
 	return nil, nil
 }
+func (m *mockClientForPool) GetEntityRegistryEntry(_ context.Context, _ string) (*EntityRegistryEntry, error) {
+	return nil, nil
+}
 func (m *mockClientForPool) GetDeviceRegistry(_ context.Context) ([]DeviceRegistryEntry, error) {
 	return nil, nil
 }

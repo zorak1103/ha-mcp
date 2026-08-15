@@ -68,7 +68,7 @@ func TestNaturalScriptFormatter_FormatList(t *testing.T) {
 	}
 
 	// Verify bare entity IDs are shown so entities sharing a display name
-	// (e.g. an orphan "_2" duplicate) remain distinguishable (issue #122)
+	// (e.g. an orphan "_2" duplicate) remain distinguishable
 	for _, wantID := range []string{"[morning_routine]", "[bedtime]", "[quick_clean]"} {
 		if !strings.Contains(result, wantID) {
 			t.Errorf("expected %q in output, got: %s", wantID, result)
@@ -80,10 +80,10 @@ func TestNaturalScriptFormatter_FormatList_DistinguishesDuplicateAlias(t *testin
 	ctx := context.Background()
 	f := NewNaturalScriptFormatter()
 
-	// Regression test for issue #122: an orphan "_2" duplicate entity
-	// (created by the now-fixed write-path bug) shares its FriendlyName
-	// with the original script. The list output must still let a reader
-	// tell them apart via entity ID.
+	// Regression test: an orphan "_2" duplicate entity (created by the
+	// now-fixed write-path bug) shares its FriendlyName with the original
+	// script. The list output must still let a reader tell them apart via
+	// entity ID.
 	scripts := []homeassistant.Script{
 		{
 			EntityID:      "script.boiler_off",

@@ -434,7 +434,8 @@ func (h *AnalysisHandlers) findSceneReferences(ctx context.Context, client homea
 // findDashboardReferences scans every dashboard (including the default one) for
 // entity references, both as a direct card/chip "entity" field and embedded in
 // a card's Jinja template text (e.g. an icon_color template calling
-// states('entity_id')) - issue #140.
+// states('entity_id')). Dashboards were previously not scanned at all, so an
+// entity referenced only this way was invisible to analyze_entity.
 func (h *AnalysisHandlers) findDashboardReferences(ctx context.Context, client homeassistant.Client, entityID string, refs *EntityReferences) error {
 	urlPaths, err := allDashboardURLPaths(ctx, client)
 	if err != nil {
@@ -461,7 +462,9 @@ func (h *AnalysisHandlers) findDashboardReferences(ctx context.Context, client h
 }
 
 // findHelperTemplateReferences scans template-helper state/availability Jinja
-// templates for entity references - issue #140.
+// templates for entity references. These were previously unscanned, so an
+// entity referenced only inside a helper template's Jinja was invisible to
+// analyze_entity.
 func (h *AnalysisHandlers) findHelperTemplateReferences(ctx context.Context, client homeassistant.Client, entityID string, refs *EntityReferences) error {
 	match := func(s string) bool { return strings.Contains(s, entityID) }
 	hits, err := scanHelperTemplates(ctx, client, match)

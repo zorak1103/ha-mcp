@@ -739,7 +739,7 @@ func TestHandleManageDashboard_Patch(t *testing.T) {
 }
 
 // TestHandleManageDashboard_Patch_ViewOrderPreserved is a dedicated regression
-// test for issue #66: replace /views/N must not reorder sibling views.
+// test verifying that replace /views/N must not reorder sibling views.
 func TestHandleManageDashboard_Patch_ViewOrderPreserved(t *testing.T) {
 	t.Parallel()
 
@@ -1433,7 +1433,7 @@ func TestDashboardHandlers_CreateDashboardInitializesSectionLayout(t *testing.T)
 	}
 }
 
-// TestHandleManageDashboard_Find covers issue #143: locating content in a
+// TestHandleManageDashboard_Find covers locating content in a
 // dashboard too large to fetch wholesale, including content nested several
 // card levels deep.
 func TestHandleManageDashboard_Find(t *testing.T) {

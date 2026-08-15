@@ -12,10 +12,10 @@ import (
 
 // DashboardPatchToolDispatchTestSuite exercises manage_dashboard's patch
 // action through the real tool-dispatch layer (registry -> handler ->
-// HybridClient) against a live Home Assistant instance, covering the
-// #142/#144 fixes: semantic match+section addressing that recurses into
-// cards nested arbitrarily deep below a section, and a dry-run diff whose
-// size stays bounded regardless of how large the matched/removed subtree is.
+// HybridClient) against a live Home Assistant instance, covering fixes for
+// semantic match+section addressing that recurses into cards nested
+// arbitrarily deep below a section, and a dry-run diff whose size stays
+// bounded regardless of how large the matched/removed subtree is.
 type DashboardPatchToolDispatchTestSuite struct {
 	DashboardTestSuite
 }
@@ -57,8 +57,8 @@ func (s *DashboardPatchToolDispatchTestSuite) createTestDashboardWithConfig(name
 	return urlPath
 }
 
-// TestNestedCardPatchViaTool is an end-to-end regression test for issue #144:
-// manage_dashboard's patch action must resolve match+section addressing into
+// TestNestedCardPatchViaTool is an end-to-end regression test guarding that
+// manage_dashboard's patch action resolves match+section addressing into
 // a card nested several levels below "views" (sections -> cards -> cards ->
 // chips), not just the section's direct elements.
 func (s *DashboardPatchToolDispatchTestSuite) TestNestedCardPatchViaTool() {
@@ -126,21 +126,21 @@ func (s *DashboardPatchToolDispatchTestSuite) TestNestedCardPatchViaTool() {
 	chip, ok := chips[0].(map[string]any)
 	s.Require().True(ok, "chips[0] should be a map")
 
-	s.Equal(trackerIDNew, chip["entity"], "nested chip entity should be updated by the patch (issue #144)")
+	s.Equal(trackerIDNew, chip["entity"], "nested chip entity should be updated by the patch even when nested several levels below the matched section")
 	s.Equal("Example", chip["content"], "sibling field must be untouched")
 }
 
-// TestNestedCardPatchDryRunViaTool is an end-to-end regression test for issue
-// #142: a dry-run patch must render a compact per-operation diff instead of
+// TestNestedCardPatchDryRunViaTool is an end-to-end regression test guarding
+// that a dry-run patch renders a compact per-operation diff instead of
 // the entire patched config, so that removing a large nested subtree cannot
 // blow up the response into thousands of tokens. It doubles as a regression
-// test for #144 since the removed card is located via match+section
-// addressing nested below "views", and it confirms dry-run never persists a
+// test for match+section addressing nested below "views" since the removed
+// card is located that way, and it confirms dry-run never persists a
 // change to the live dashboard.
 func (s *DashboardPatchToolDispatchTestSuite) TestNestedCardPatchDryRunViaTool() {
 	// A card with 200 dummy chip entries is large enough that dumping it
-	// untruncated into the response would run to tens of KB - the token
-	// blow-up reported in #142.
+	// untruncated into the response would run to tens of KB - the kind of
+	// token blow-up a non-truncating dry-run diff would produce.
 	bigChips := make([]any, 200)
 	for i := range bigChips {
 		bigChips[i] = map[string]any{"type": "weather", "show_temperature": true, "show_conditions": true}
@@ -181,7 +181,7 @@ func (s *DashboardPatchToolDispatchTestSuite) TestNestedCardPatchDryRunViaTool()
 	s.Contains(text, "NOT saved", "dry-run response should state nothing was saved")
 	s.Contains(text, "(removed)", "removed op should render the (removed) marker")
 	s.Less(len(text), 2000,
-		"dry-run diff must stay compact even for a large matched subtree (issue #142); got %d chars", len(text))
+		"dry-run diff must stay compact even for a large matched subtree; got %d chars", len(text))
 
 	// Confirm dry-run truly did not persist: the big card must still be there.
 	after, err := s.Client().GetLovelaceConfig(s.Context(), urlPath)

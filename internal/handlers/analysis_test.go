@@ -2546,8 +2546,8 @@ func TestHandleAnalyzeEntity_ScriptPathsInOutput(t *testing.T) {
 	}
 }
 
-// TestHandleAnalyzeEntity_FindsDashboardOnlyReference is a regression test for
-// issue #140: analyze_entity used to report "No references found" for an entity
+// TestHandleAnalyzeEntity_FindsDashboardOnlyReference is a regression test:
+// analyze_entity used to report "No references found" for an entity
 // referenced only in a dashboard card/chip, since dashboards weren't scanned.
 func TestHandleAnalyzeEntity_FindsDashboardOnlyReference(t *testing.T) {
 	t.Parallel()
@@ -2595,8 +2595,8 @@ func TestHandleAnalyzeEntity_FindsDashboardOnlyReference(t *testing.T) {
 	}
 }
 
-// TestHandleAnalyzeEntity_FindsHelperTemplateOnlyReference is a regression test
-// for issue #140: analyze_entity used to miss entities referenced only inside a
+// TestHandleAnalyzeEntity_FindsHelperTemplateOnlyReference is a regression test:
+// analyze_entity used to miss entities referenced only inside a
 // template-helper's Jinja state/availability template.
 func TestHandleAnalyzeEntity_FindsHelperTemplateOnlyReference(t *testing.T) {
 	t.Parallel()
@@ -2643,7 +2643,7 @@ func TestHandleAnalyzeEntity_FindsHelperTemplateOnlyReference(t *testing.T) {
 
 // TestHandleAnalyzeEntity_NoReferencesListsScannedSources verifies that when no
 // references exist, the output states which sources were scanned so the
-// "no references" result can be trusted (issue #140).
+// "no references" result can be trusted.
 func TestHandleAnalyzeEntity_NoReferencesListsScannedSources(t *testing.T) {
 	t.Parallel()
 
@@ -2758,7 +2758,7 @@ func TestHandleAnalyzeEntity_MultipleFailedSourcesAllReported(t *testing.T) {
 // state" line shape to match query_entities' natural formatter (internal/handlers/
 // formatter/natural.go), so an LLM reading both tools' output can rely on the same
 // positional rule to recover the addressable id. Before this fix, analyze_entity
-// rendered the inverse "entity_id (Name) is state" order (issue #147 follow-up).
+// rendered the inverse "entity_id (Name) is state" order.
 func TestAnalysisHandlers_FormatAnalysisNatural_NameOrder(t *testing.T) {
 	t.Parallel()
 

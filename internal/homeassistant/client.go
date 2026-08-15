@@ -57,7 +57,7 @@ type Client interface {
 	DeleteScene(ctx context.Context, sceneID string) error
 
 	// ConfigFileEntryExists checks whether id exists in the config file HA's config API writes
-	// to for domain, used to guard against silently creating a duplicate orphan entity (#122).
+	// to for domain, used to guard against silently creating a duplicate orphan entity.
 	ConfigFileEntryExists(ctx context.Context, domain, configID string) (bool, error)
 
 	// Service operations
@@ -65,6 +65,7 @@ type Client interface {
 
 	// Registry operations
 	GetEntityRegistry(ctx context.Context) ([]EntityRegistryEntry, error)
+	GetEntityRegistryEntry(ctx context.Context, entityID string) (*EntityRegistryEntry, error)
 	GetDeviceRegistry(ctx context.Context) ([]DeviceRegistryEntry, error)
 	GetAreaRegistry(ctx context.Context) ([]AreaRegistryEntry, error)
 

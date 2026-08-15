@@ -19,7 +19,8 @@ func TestInputNumberToolDispatch(t *testing.T) {
 }
 
 // TestInputNumberUpdateViaTool is a regression check for the backward-compatible
-// id-strip added to wsClientImpl.UpdateHelper as part of the #135 fix: WS
+// id-strip added to wsClientImpl.UpdateHelper as part of the fix for manage_helper
+// update passing the wrong identifier to config-entry routing: WS
 // helpers (input_number, counter, timer, ...) must keep working when the
 // handler now passes a full entity_id instead of a bare object_id.
 func (s *InputNumberToolDispatchTestSuite) TestInputNumberUpdateViaTool() {

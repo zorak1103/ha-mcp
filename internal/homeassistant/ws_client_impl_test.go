@@ -380,6 +380,56 @@ func TestWSClientImpl_GetEntityRegistry(t *testing.T) {
 	}
 }
 
+// TestWSClientImpl_GetEntityRegistryEntry verifies the single-entity variant sends
+// "config/entity_registry/get" with the entity_id param and unmarshals a single entry.
+func TestWSClientImpl_GetEntityRegistryEntry(t *testing.T) {
+	t.Parallel()
+
+	wantEntry := EntityRegistryEntry{EntityID: "automation.morning_routine", UniqueID: "1700000000001"}
+
+	impl := newWSClientImplWithSender(&mockWSClientSender{
+		sendCommandFunc: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
+			if cmdType != "config/entity_registry/get" {
+				t.Errorf("unexpected command: %s", cmdType)
+			}
+			if params["entity_id"] != "automation.morning_routine" {
+				t.Errorf("params[entity_id] = %v, want %q", params["entity_id"], "automation.morning_routine")
+			}
+			return makeWSResultMsg(wantEntry), nil
+		},
+	})
+
+	ctx := context.Background()
+	entry, err := impl.GetEntityRegistryEntry(ctx, "automation.morning_routine")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if diff := cmp.Diff(&wantEntry, entry); diff != "" {
+		t.Errorf("entry mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// TestWSClientImpl_GetEntityRegistryEntry_Error verifies a transport error is wrapped and
+// propagated, not swallowed into a nil entry.
+func TestWSClientImpl_GetEntityRegistryEntry_Error(t *testing.T) {
+	t.Parallel()
+
+	impl := newWSClientImplWithSender(&mockWSClientSender{
+		sendCommandFunc: func(context.Context, string, map[string]any) (*WSResultMessage, error) {
+			return nil, errors.New("entity not found")
+		},
+	})
+
+	entry, err := impl.GetEntityRegistryEntry(context.Background(), "automation.nonexistent")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if entry != nil {
+		t.Errorf("expected nil entry on error, got: %+v", entry)
+	}
+}
+
 func TestWSClientImpl_GetDeviceRegistry(t *testing.T) {
 	t.Parallel()
 

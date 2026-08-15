@@ -90,6 +90,7 @@ type WSOperations interface {
 	GetScript(ctx context.Context, scriptID string) (*Script, error)
 	ListScenes(ctx context.Context) ([]Entity, error)
 	GetEntityRegistry(ctx context.Context) ([]EntityRegistryEntry, error)
+	GetEntityRegistryEntry(ctx context.Context, entityID string) (*EntityRegistryEntry, error)
 	GetDeviceRegistry(ctx context.Context) ([]DeviceRegistryEntry, error)
 	GetAreaRegistry(ctx context.Context) ([]AreaRegistryEntry, error)
 	CreateArea(ctx context.Context, config AreaConfig) (*AreaRegistryEntry, error)
@@ -163,7 +164,7 @@ type RESTOperations interface {
 	DeleteScene(ctx context.Context, sceneID string) error
 
 	// ConfigFileEntryExists checks whether id exists in the config file HA's config API writes
-	// to for domain, used to guard against silently creating a duplicate orphan entity (#122).
+	// to for domain, used to guard against silently creating a duplicate orphan entity.
 	ConfigFileEntryExists(ctx context.Context, domain, configID string) (bool, error)
 
 	// Config Entry Flow operations (for helpers requiring HTTP-based flow)
@@ -961,6 +962,11 @@ func (c *HybridClient) ConfigFileEntryExists(ctx context.Context, domain, config
 // GetEntityRegistry retrieves the entity registry.
 func (c *HybridClient) GetEntityRegistry(ctx context.Context) ([]EntityRegistryEntry, error) {
 	return c.ws.GetEntityRegistry(ctx)
+}
+
+// GetEntityRegistryEntry retrieves a single entity registry entry by entity_id.
+func (c *HybridClient) GetEntityRegistryEntry(ctx context.Context, entityID string) (*EntityRegistryEntry, error) {
+	return c.ws.GetEntityRegistryEntry(ctx, entityID)
 }
 
 // GetDeviceRegistry retrieves the device registry.

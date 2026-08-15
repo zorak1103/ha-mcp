@@ -10,7 +10,7 @@ import (
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 )
 
-// HelperPartialUpdateToolDispatchTestSuite verifies the #161 partial-update
+// HelperPartialUpdateToolDispatchTestSuite verifies the partial-update
 // merge (mergeCurrentHelperState, helpers_consolidated.go) against a real
 // Home Assistant instance. The merge's correctness rests entirely on
 // realHelperStorageConfig, a hand-transcribed model of which fields HA's

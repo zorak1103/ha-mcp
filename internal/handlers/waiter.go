@@ -150,7 +150,7 @@ func reloadAndWaitForEntity(ctx context.Context, client homeassistant.Client, do
 // change (update/patch) becomes immediately live and readable. Home Assistant processes
 // the reload service call synchronously, so a nil error means the new config is already
 // visible to a subsequent get. Used by update/patch handlers, which — unlike create/delete —
-// write config via REST without any other reload step (see issue #126).
+// write config via REST without any other reload step.
 // Returns true when the reload service call succeeded.
 func reloadDomain(ctx context.Context, client homeassistant.Client, domain string) bool {
 	_, err := client.CallService(ctx, domain, "reload", nil)
@@ -163,7 +163,7 @@ func reloadDomain(ctx context.Context, client homeassistant.Client, domain strin
 // service data to reload just that entity. HA versions without "id" support degrade one of two
 // ways: they either ignore the unknown key (a full reload runs and the call still succeeds — no
 // targeted benefit, but the write stays visible) or they reject it (the call errors and we fall
-// back to an explicit full reload below). Either way the config write remains visible (#126); a
+// back to an explicit full reload below). Either way the config write remains visible; a
 // targeted failure is never surfaced as an error because the write itself already succeeded.
 // Returns true when either call succeeds.
 func reloadDomainTargeted(ctx context.Context, client homeassistant.Client, domain, configID string) bool {

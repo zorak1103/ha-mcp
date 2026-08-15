@@ -75,7 +75,7 @@ func GetFriendlyName(entityID string, attributes map[string]any) string {
 
 // FormatNameWithID formats an entity's display name alongside its entity_id in the
 // canonical "Name (entity_id)" shape used throughout natural-language output, so a
-// caller can always recover the addressable id positionally (issue #147). If name and
+// caller can always recover the addressable id positionally. If name and
 // entityID are identical (no distinct friendly name), the id is not duplicated in
 // parentheses.
 //

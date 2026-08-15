@@ -28,7 +28,7 @@ const (
 // scriptReloadFailedWarning is appended to update/patch success messages when the post-write
 // script.reload service call itself fails. The config write to REST already succeeded, so the
 // change is not lost — but until a reload succeeds (manual or automatic retry), get() may keep
-// returning the pre-change config (#126).
+// returning the pre-change config.
 const scriptReloadFailedWarning = " (warning: reload after save failed; changes may not be " +
 	"visible or active until a manual script.reload)"
 
@@ -357,8 +357,8 @@ func (h *ScriptHandlers) resolveScriptForWrite(
 
 // findScriptForWrite resolves a script for a write operation (update/patch) by alias/
 // friendly-name search, refusing an ambiguous match rather than silently picking the first
-// candidate HA happens to list (issue #160 follow-up: a write must never guess between two
-// scripts). Search order mirrors findScriptByID's: exact entity_id first (inherently
+// candidate HA happens to list, since a write must never guess between two scripts. Search
+// order mirrors findScriptByID's: exact entity_id first (inherently
 // unambiguous), then case-insensitive alias/friendly_name substring match - but here a
 // substring match is only accepted automatically when it is the sole substring match, or when
 // exactly one of several substring matches is also an EXACT (not just substring) case-
@@ -550,7 +550,7 @@ func (h *ScriptHandlers) handleUpdate(ctx context.Context, client homeassistant.
 	}
 
 	// Refuse to write a script whose id is not present in scripts.yaml: the config API
-	// silently creates a duplicate orphan entity instead of updating it (#122, #164).
+	// silently creates a duplicate orphan entity instead of updating it.
 	checkEntityID := resolveWriteCheckEntityID(entityID, current.EntityID)
 	if guardErr := configWriteGuardError(ctx, client, "script", "update", scriptID, checkEntityID, configID); guardErr != nil {
 		return guardErr, nil
@@ -598,7 +598,7 @@ func (h *ScriptHandlers) handleDelete(ctx context.Context, client homeassistant.
 // entity-registry removal when the config API reports the resource as not found. The storage-
 // config API only knows storage-managed scripts; YAML-defined or orphan-duplicate scripts
 // (entity object_id differs from the storage key) 404/400 here even though the entity exists
-// and is readable via get/list (#123). Returns viaRegistry=true if the fallback path was used,
+// and is readable via get/list. Returns viaRegistry=true if the fallback path was used,
 // or a non-empty errMsg describing the failure.
 func deleteScriptWithRegistryFallback(ctx context.Context, client homeassistant.Client, configID, entityID string) (viaRegistry bool, errMsg string) {
 	err := client.DeleteScript(ctx, configID)
@@ -616,7 +616,8 @@ func deleteScriptWithRegistryFallback(ctx context.Context, client homeassistant.
 
 // isNotFoundError reports whether err indicates the target resource does not exist. Covers
 // both HA's 404 form ("script not found: X") and the observed 400 body
-// ("unexpected status 400: {\"message\":\"Resource not found\"}") — see #123.
+// ("unexpected status 400: {\"message\":\"Resource not found\"}") for YAML-defined/orphan
+// scripts whose storage-config delete 400s instead of 404ing.
 // isNotFoundError reports whether err represents a "not found" condition. Prefers the real HTTP
 // status code when available (REST-origin errors carry *homeassistant.APIError) so a reverse-proxy
 // 502 whose body happens to mention "not found" doesn't get misrouted into a not-found fallback
@@ -629,7 +630,8 @@ func deleteScriptWithRegistryFallback(ctx context.Context, client homeassistant.
 // registry fallback below), so a 400 whose message says "not found" must still classify as
 // not-found or that fallback never fires. The trade-off is a false positive is still possible for
 // a reverse-proxy error page whose body happens to mention "not found" - accepted, since narrowing
-// this would silently break the documented #123 fallback instead.
+// this would silently break the YAML-defined/orphan-script registry-delete fallback described
+// above instead.
 func isNotFoundError(err error) bool {
 	if err == nil {
 		return false
@@ -731,7 +733,7 @@ func (h *ScriptHandlers) handlePatch(ctx context.Context, client homeassistant.C
 // skips the write entirely when configMap and patchedMap are deep-equal — otherwise every no-op
 // patch would trigger a needless script.reload — and refuses to write a script whose id is
 // absent from scripts.yaml, which the config API would otherwise silently duplicate into an
-// orphan entity (#122, #164). Mirrors applyPatchedAutomationWrite in automations.go.
+// orphan entity. Mirrors applyPatchedAutomationWrite in automations.go.
 func applyPatchedScriptWrite(
 	ctx context.Context,
 	client homeassistant.Client,

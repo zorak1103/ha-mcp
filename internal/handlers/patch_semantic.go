@@ -231,9 +231,8 @@ func matchesElement(elem, match map[string]any) bool {
 // selection). Recursion continues into a matching element's children too, so
 // a match at one depth does not prevent finding further nested matches
 // beneath it — this is what allows "match"+"section" addressing to reach
-// dashboard cards/chips nested arbitrarily deep below a top-level section
-// (issue #144), while still finding direct top-level matches exactly as
-// before.
+// dashboard cards/chips nested arbitrarily deep below a top-level section,
+// while still finding direct top-level matches exactly as before.
 func findMatchingPaths(node any, prefix string, match map[string]any) []string {
 	var paths []string
 	switch v := node.(type) {

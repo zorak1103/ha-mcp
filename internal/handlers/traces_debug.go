@@ -13,11 +13,12 @@ import (
 
 // AutomationDebugReport is the top-level consolidated debug report for an automation.
 type AutomationDebugReport struct {
-	Config        *AutomationDebugConfig `json:"config"`
-	Trace         *AutomationDebugTrace  `json:"trace,omitempty"`
-	TriggerStates []TriggerEntityState   `json:"trigger_states,omitempty"`
-	Logbook       []DebugLogbookEntry    `json:"logbook,omitempty"`
-	LogbookHours  float64                `json:"logbook_hours"`
+	Config             *AutomationDebugConfig `json:"config"`
+	Trace              *AutomationDebugTrace  `json:"trace,omitempty"`
+	TriggerStates      []TriggerEntityState   `json:"trigger_states,omitempty"`
+	Logbook            []DebugLogbookEntry    `json:"logbook,omitempty"`
+	LogbookHours       float64                `json:"logbook_hours"`
+	TraceLookupWarning string                 `json:"trace_lookup_warning,omitempty"`
 }
 
 // AutomationDebugConfig is a summary of automation configuration.
@@ -35,11 +36,14 @@ type AutomationDebugConfig struct {
 
 // AutomationDebugTrace is a simplified view of a single trace execution.
 type AutomationDebugTrace struct {
-	RunID     string  `json:"run_id"`
-	State     string  `json:"state"`
-	Timestamp string  `json:"timestamp"`
-	Duration  float64 `json:"duration,omitempty"`
-	Trigger   string  `json:"trigger,omitempty"`
+	RunID           string  `json:"run_id"`
+	State           string  `json:"state"`
+	Timestamp       string  `json:"timestamp"`
+	Duration        float64 `json:"duration,omitempty"`
+	Trigger         string  `json:"trigger,omitempty"`
+	NotTriggered    bool    `json:"not_triggered,omitempty"`
+	ScriptExecution string  `json:"script_execution,omitempty"`
+	Error           string  `json:"error,omitempty"`
 }
 
 // TriggerEntityState holds the current state of a trigger entity.
@@ -106,17 +110,21 @@ func (h *TraceHandlers) buildDebugReport(ctx context.Context, client homeassista
 		return nil, err
 	}
 
-	latestTrace := h.fetchLatestTrace(ctx, client, entityID)
+	latestTrace, traceResolved := h.fetchLatestTrace(ctx, client, entityID)
 	triggerStates := fetchTriggerStates(ctx, client, triggers)
 	logbook := fetchDebugLogbook(ctx, client, entityID, hours)
 
-	return &AutomationDebugReport{
+	report := &AutomationDebugReport{
 		Config:        cfg,
 		Trace:         latestTrace,
 		TriggerStates: triggerStates,
 		Logbook:       logbook,
 		LogbookHours:  hours,
-	}, nil
+	}
+	if latestTrace == nil && !traceResolved {
+		report.TraceLookupWarning = unresolvedItemIDWarning(entityID)
+	}
+	return report, nil
 }
 
 // fetchDebugAutomationConfig retrieves the automation config summary and raw triggers list.
@@ -162,51 +170,58 @@ func fetchDebugAutomationConfig(ctx context.Context, client homeassistant.Client
 }
 
 // fetchLatestTrace retrieves the most recent trace for the automation (best-effort, nil on failure).
-func (h *TraceHandlers) fetchLatestTrace(ctx context.Context, client homeassistant.Client, entityID string) *AutomationDebugTrace {
+func (h *TraceHandlers) fetchLatestTrace(ctx context.Context, client homeassistant.Client, entityID string) (*AutomationDebugTrace, bool) {
+	itemID, resolved := resolveTraceItemID(ctx, client, traceDomainAutomation, entityID)
 	data := map[string]any{
 		"domain":  traceDomainAutomation,
-		"item_id": entityID,
+		"item_id": itemID,
 	}
 	response, err := client.SendHACSCommand(ctx, "trace/list", data)
 	if err != nil {
-		return nil
+		return nil, resolved
 	}
 
-	traces, _ := response.([]any)
+	traces := parseTraceListResponse(response)
 	if len(traces) == 0 {
-		return nil
+		return nil, resolved
 	}
 
-	// Find the trace with the most recent timestamp (ISO timestamps sort lexicographically)
+	// Find the trace with the most recent start timestamp (ISO timestamps sort lexicographically).
+	// HA's trace/list returns traces in insertion order (oldest first), so the first element is
+	// NOT the latest - it must be resolved by comparing timestamps.
 	var latest map[string]any
-	var latestTS string
+	var latestStart string
 	for _, t := range traces {
 		traceMap, ok := t.(map[string]any)
 		if !ok {
 			continue
 		}
-		ts := getMapString(traceMap, "timestamp", "")
-		if latest == nil || ts > latestTS {
+		start, _ := traceTimestamps(traceMap)
+		if latest == nil || start > latestStart {
 			latest = traceMap
-			latestTS = ts
+			latestStart = start
 		}
 	}
 	if latest == nil {
-		return nil
+		return nil, resolved
 	}
 
-	return buildDebugTrace(latest)
+	return buildDebugTrace(latest), resolved
 }
 
 // buildDebugTrace converts a raw trace map to an AutomationDebugTrace.
 func buildDebugTrace(latest map[string]any) *AutomationDebugTrace {
+	start, finish := traceTimestamps(latest)
 	t := &AutomationDebugTrace{
-		RunID:     getMapString(latest, "run_id", ""),
-		State:     getMapString(latest, "state", ""),
-		Timestamp: getMapString(latest, "timestamp", ""),
+		RunID:           getMapString(latest, "run_id", ""),
+		State:           getMapString(latest, "state", ""),
+		Timestamp:       start,
+		Duration:        traceDuration(start, finish),
+		ScriptExecution: getMapString(latest, "script_execution", ""),
+		Error:           getMapString(latest, "error", ""),
 	}
-	if d, ok := latest["duration"].(float64); ok {
-		t.Duration = d
+	if nt, ok := latest["not_triggered"].(bool); ok {
+		t.NotTriggered = nt
 	}
 	switch v := latest["trigger"].(type) {
 	case map[string]any:
@@ -354,7 +369,7 @@ func formatDebugNatural(report *AutomationDebugReport) string {
 	parts := []string{
 		"=== Automation Debug Report ===",
 		formatDebugConfigSection(report.Config),
-		formatDebugTraceSection(report.Trace),
+		formatDebugTraceSection(report.Trace, report.TraceLookupWarning),
 		formatDebugTriggerStatesSection(report.TriggerStates),
 		formatDebugLogbookSection(report.Logbook, report.LogbookHours),
 	}
@@ -390,16 +405,27 @@ func formatDebugConfigSection(cfg *AutomationDebugConfig) string {
 }
 
 // formatDebugTraceSection formats the latest trace section.
-func formatDebugTraceSection(trace *AutomationDebugTrace) string {
+func formatDebugTraceSection(trace *AutomationDebugTrace, warning string) string {
 	lines := []string{"--- Latest Trace ---"}
 	if trace == nil {
-		lines = append(lines, "No traces found.")
+		if warning != "" {
+			lines = append(lines, warning)
+		} else {
+			lines = append(lines, "No traces found.")
+		}
 		return strings.Join(lines, "\n")
 	}
 
-	lines = append(lines, "Run ID: "+trace.RunID)
+	runLine := "Run ID: " + trace.RunID
+	if trace.NotTriggered {
+		runLine += " (not triggered - condition evaluated but did not fire)"
+	}
+	lines = append(lines, runLine)
 
 	stateLine := "State: " + trace.State
+	if trace.ScriptExecution != "" {
+		stateLine += " | Result: " + trace.ScriptExecution
+	}
 	if trace.Duration > 0 {
 		stateLine += fmt.Sprintf(" | Duration: %.2fs", trace.Duration)
 	}
@@ -410,6 +436,9 @@ func formatDebugTraceSection(trace *AutomationDebugTrace) string {
 
 	if trace.Trigger != "" {
 		lines = append(lines, "Trigger: "+trace.Trigger)
+	}
+	if trace.Error != "" {
+		lines = append(lines, "Error: "+trace.Error)
 	}
 	return strings.Join(lines, "\n")
 }

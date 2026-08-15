@@ -274,6 +274,14 @@ func (c *CachedClient) GetEntityRegistry(ctx context.Context) ([]EntityRegistryE
 	return result.([]EntityRegistryEntry), nil
 }
 
+// GetEntityRegistryEntry retrieves a single entity registry entry, bypassing the cache: the
+// underlying WS call is already a targeted single-entity fetch (unlike GetEntityRegistry, which
+// exists precisely to amortize the cost of the full-registry list call), so adding a per-entity
+// cache here would duplicate that machinery for a call that is already cheap.
+func (c *CachedClient) GetEntityRegistryEntry(ctx context.Context, entityID string) (*EntityRegistryEntry, error) {
+	return c.client.GetEntityRegistryEntry(ctx, entityID)
+}
+
 // GetDeviceRegistry returns cached device registry or fetches from API.
 // Uses singleflight to prevent duplicate API calls during concurrent access.
 func (c *CachedClient) GetDeviceRegistry(ctx context.Context) ([]DeviceRegistryEntry, error) {
@@ -818,7 +826,8 @@ func (c *CachedClient) DeleteScene(ctx context.Context, sceneID string) error {
 }
 
 // ConfigFileEntryExists is intentionally never cached: a stale "exists" answer would defeat
-// the exact hazard this probe exists to catch (#122, #164).
+// the exact hazard this probe exists to catch — silently appending a duplicate orphan entity
+// instead of editing the original when a write targets an id missing from the config file.
 func (c *CachedClient) ConfigFileEntryExists(ctx context.Context, domain, configID string) (bool, error) {
 	return c.client.ConfigFileEntryExists(ctx, domain, configID)
 }

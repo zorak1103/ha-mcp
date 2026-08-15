@@ -184,9 +184,9 @@ func TestGetFriendlyName(t *testing.T) {
 }
 
 // TestFormatNameWithID covers the canonical "Name (entity_id)" join used across
-// natural-format renderers (issue #147 and its follow-up consistency fix). name is
-// user-controlled (HA friendly_name/title), so the sanitization cases matter as much
-// as the happy path.
+// natural-format renderers, including a later consistency fix that aligned every
+// renderer on this shape. name is user-controlled (HA friendly_name/title), so the
+// sanitization cases matter as much as the happy path.
 func TestFormatNameWithID(t *testing.T) {
 	tests := []struct {
 		name     string

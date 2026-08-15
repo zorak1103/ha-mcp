@@ -243,7 +243,7 @@ Universal tool for runtime helper operations:
 
 | Tool               | Description                                                                                          |
 | ------------------ | ---------------------------------------------------------------------------------------------------- |
-| `manage_trace`     | View automation and script execution traces (actions: list, get, debug; format: natural/json). `list` supports optional `wait=true` to poll until traces appear — useful immediately after triggering an automation (HA records traces asynchronously). |
+| `manage_trace`     | View automation and script execution traces (actions: list, get, debug; format: natural/json). `list` supports optional `wait=true` to poll until traces appear — useful immediately after triggering an automation (HA records traces asynchronously). If `entity_id` can't be resolved to HA's internal trace key (`list`/`get`), the response carries a distinct warning instead of the generic "not available yet" message, since retrying or `wait=true` won't help in that case. |
 | `manage_blueprint` | Manage blueprints for automations and scripts (actions: list, import; format: natural/json). `import` requires an `https://` URL pointing to a public host — non-https schemes, private/loopback IPs, and link-local addresses (e.g. `169.254.x.x`) are rejected. |
 
 ### Update Tools
