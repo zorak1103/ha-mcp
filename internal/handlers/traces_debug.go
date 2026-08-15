@@ -35,11 +35,12 @@ type AutomationDebugConfig struct {
 
 // AutomationDebugTrace is a simplified view of a single trace execution.
 type AutomationDebugTrace struct {
-	RunID     string  `json:"run_id"`
-	State     string  `json:"state"`
-	Timestamp string  `json:"timestamp"`
-	Duration  float64 `json:"duration,omitempty"`
-	Trigger   string  `json:"trigger,omitempty"`
+	RunID        string  `json:"run_id"`
+	State        string  `json:"state"`
+	Timestamp    string  `json:"timestamp"`
+	Duration     float64 `json:"duration,omitempty"`
+	Trigger      string  `json:"trigger,omitempty"`
+	NotTriggered bool    `json:"not_triggered,omitempty"`
 }
 
 // TriggerEntityState holds the current state of a trigger entity.
@@ -177,18 +178,20 @@ func (h *TraceHandlers) fetchLatestTrace(ctx context.Context, client homeassista
 		return nil
 	}
 
-	// Find the trace with the most recent timestamp (ISO timestamps sort lexicographically)
+	// Find the trace with the most recent start timestamp (ISO timestamps sort lexicographically).
+	// HA's trace/list returns traces in insertion order (oldest first), so the first element is
+	// NOT the latest - it must be resolved by comparing timestamps.
 	var latest map[string]any
-	var latestTS string
+	var latestStart string
 	for _, t := range traces {
 		traceMap, ok := t.(map[string]any)
 		if !ok {
 			continue
 		}
-		ts := getMapString(traceMap, "timestamp", "")
-		if latest == nil || ts > latestTS {
+		start, _ := traceTimestamps(traceMap)
+		if latest == nil || start > latestStart {
 			latest = traceMap
-			latestTS = ts
+			latestStart = start
 		}
 	}
 	if latest == nil {
@@ -200,13 +203,15 @@ func (h *TraceHandlers) fetchLatestTrace(ctx context.Context, client homeassista
 
 // buildDebugTrace converts a raw trace map to an AutomationDebugTrace.
 func buildDebugTrace(latest map[string]any) *AutomationDebugTrace {
+	start, finish := traceTimestamps(latest)
 	t := &AutomationDebugTrace{
 		RunID:     getMapString(latest, "run_id", ""),
 		State:     getMapString(latest, "state", ""),
-		Timestamp: getMapString(latest, "timestamp", ""),
+		Timestamp: start,
+		Duration:  traceDuration(latest, start, finish),
 	}
-	if d, ok := latest["duration"].(float64); ok {
-		t.Duration = d
+	if nt, ok := latest["not_triggered"].(bool); ok {
+		t.NotTriggered = nt
 	}
 	switch v := latest["trigger"].(type) {
 	case map[string]any:
@@ -397,7 +402,11 @@ func formatDebugTraceSection(trace *AutomationDebugTrace) string {
 		return strings.Join(lines, "\n")
 	}
 
-	lines = append(lines, "Run ID: "+trace.RunID)
+	runLine := "Run ID: " + trace.RunID
+	if trace.NotTriggered {
+		runLine += " (not triggered - condition evaluated but did not fire)"
+	}
+	lines = append(lines, runLine)
 
 	stateLine := "State: " + trace.State
 	if trace.Duration > 0 {

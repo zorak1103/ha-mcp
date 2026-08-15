@@ -687,3 +687,88 @@ func TestExtractTriggerTypes(t *testing.T) {
 		})
 	}
 }
+
+// TestFetchLatestTrace_PicksNewestByStartTimestamp verifies that the trace with the latest
+// timestamp.start wins, not the first element returned by trace/list (HA yields insertion
+// order, oldest first - see components/trace/models.py ActionTrace.as_short_dict).
+func TestFetchLatestTrace_PicksNewestByStartTimestamp(t *testing.T) {
+	t.Parallel()
+
+	handler := NewTraceHandlers()
+	client := &UniversalMockClient{
+		SendHACSCommandFn: func(_ context.Context, _ string, _ map[string]any) (any, error) {
+			return []any{
+				map[string]any{
+					"run_id": "oldest",
+					"state":  "stopped",
+					"timestamp": map[string]any{
+						"start":  "2026-02-19T06:00:00Z",
+						"finish": "2026-02-19T06:00:01Z",
+					},
+				},
+				map[string]any{
+					"run_id": "newest",
+					"state":  "stopped",
+					"timestamp": map[string]any{
+						"start":  "2026-02-19T08:00:00Z",
+						"finish": "2026-02-19T08:00:03Z",
+					},
+				},
+				map[string]any{
+					"run_id": "middle",
+					"state":  "stopped",
+					"timestamp": map[string]any{
+						"start":  "2026-02-19T07:00:00Z",
+						"finish": "2026-02-19T07:00:01Z",
+					},
+				},
+			}, nil
+		},
+	}
+
+	got := handler.fetchLatestTrace(context.Background(), client, "automation.morning_routine")
+	if got == nil {
+		t.Fatal("expected a trace, got nil")
+	}
+	if got.RunID != "newest" {
+		t.Errorf("RunID = %q, want %q (picked wrong trace as latest)", got.RunID, "newest")
+	}
+	if got.Timestamp != "2026-02-19T08:00:00Z" {
+		t.Errorf("Timestamp = %q, want the newest trace's start timestamp", got.Timestamp)
+	}
+	if got.Duration != 3 {
+		t.Errorf("Duration = %v, want 3 (derived from finish - start)", got.Duration)
+	}
+}
+
+// TestFetchLatestTrace_LegacyStringTimestamp verifies backward compatibility with a flat
+// ISO-string timestamp (as opposed to HA's real {"start":..,"finish":..} shape), which older
+// test fixtures and any future HA response shape drift might still produce.
+func TestFetchLatestTrace_LegacyStringTimestamp(t *testing.T) {
+	t.Parallel()
+
+	handler := NewTraceHandlers()
+	client := &UniversalMockClient{
+		SendHACSCommandFn: func(_ context.Context, _ string, _ map[string]any) (any, error) {
+			return []any{
+				map[string]any{
+					"run_id":    "only",
+					"state":     "stopped",
+					"timestamp": "2026-02-19T06:00:00Z",
+					"duration":  1.25,
+				},
+			}, nil
+		},
+	}
+
+	got := handler.fetchLatestTrace(context.Background(), client, "automation.morning_routine")
+	if got == nil {
+		t.Fatal("expected a trace, got nil")
+	}
+	if got.Timestamp != "2026-02-19T06:00:00Z" {
+		t.Errorf("Timestamp = %q, want %q", got.Timestamp, "2026-02-19T06:00:00Z")
+	}
+	if got.Duration != 1.25 {
+		t.Errorf("Duration = %v, want explicit 1.25 to take precedence", got.Duration)
+	}
+}

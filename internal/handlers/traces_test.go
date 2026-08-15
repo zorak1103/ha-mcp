@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -223,10 +224,9 @@ func TestManageTrace_Get(t *testing.T) {
 	t.Parallel()
 
 	client := &UniversalMockClient{
-		GetAutomationFn: func(_ context.Context, automationID string) (*homeassistant.Automation, error) {
-			return &homeassistant.Automation{
-				EntityID: "automation.test",
-				Config:   &homeassistant.AutomationConfig{ID: "1700000000001"},
+		GetEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+			return []homeassistant.EntityRegistryEntry{
+				{EntityID: "automation.test", UniqueID: "1700000000001"},
 			}, nil
 		},
 		SendHACSCommandFn: func(_ context.Context, cmd string, data map[string]any) (any, error) {
@@ -267,6 +267,38 @@ func TestManageTrace_Get(t *testing.T) {
 	}
 	if result == nil || len(result.Content) == 0 {
 		t.Fatal("expected result content")
+	}
+}
+
+// TestManageTrace_Get_DomainEntityIDMismatch verifies that a domain/entity_id prefix conflict
+// is rejected rather than silently resolving against the wrong domain (which could return
+// another entity's traces - see resolveTraceListParams's identical check for the list action).
+func TestManageTrace_Get_DomainEntityIDMismatch(t *testing.T) {
+	t.Parallel()
+
+	client := &UniversalMockClient{
+		SendHACSCommandFn: func(context.Context, string, map[string]any) (any, error) {
+			t.Fatal("trace/get should not be called when domain and entity_id conflict")
+			return nil, nil
+		},
+	}
+
+	handler := NewTraceHandlers()
+	result, err := handler.HandleManageTrace(context.Background(), client, map[string]any{
+		"action":    "get",
+		"domain":    "automation",
+		"entity_id": "script.foo",
+		"run_id":    "abc123",
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected error result, got: %s", result.Content[0].Text)
+	}
+	if !strings.Contains(result.Content[0].Text, "domain") {
+		t.Errorf("error text does not mention domain conflict: %s", result.Content[0].Text)
 	}
 }
 
@@ -362,12 +394,12 @@ func TestResolveTraceItemID(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		domain   string
-		entityID string
-		registry []homeassistant.EntityRegistryEntry
-		auto     *homeassistant.Automation
-		wantItem string
+		name        string
+		domain      string
+		entityID    string
+		registry    []homeassistant.EntityRegistryEntry
+		registryErr error
+		wantItem    string
 	}{
 		{
 			name:     "script uses registry unique_id when entity was renamed",
@@ -385,21 +417,33 @@ func TestResolveTraceItemID(t *testing.T) {
 			wantItem: "morning_routine",
 		},
 		{
-			name:     "automation uses config ID",
+			name:     "automation uses registry unique_id (config ID)",
 			domain:   "automation",
 			entityID: "automation.ev_charging",
-			auto: &homeassistant.Automation{
-				EntityID: "automation.ev_charging",
-				Config:   &homeassistant.AutomationConfig{ID: "1700000000001"},
+			registry: []homeassistant.EntityRegistryEntry{
+				{EntityID: "automation.ev_charging", UniqueID: "1700000000001"},
 			},
 			wantItem: "1700000000001",
 		},
 		{
-			name:     "automation falls back to object_id when config has no ID",
+			name:     "automation falls back to object_id when registry lookup misses",
 			domain:   "automation",
 			entityID: "automation.ev_charging",
-			auto:     &homeassistant.Automation{EntityID: "automation.ev_charging"},
 			wantItem: "ev_charging",
+		},
+		{
+			name:        "script falls back to object_id when registry fetch errors",
+			domain:      "script",
+			entityID:    "script.morning_routine",
+			registryErr: errors.New("websocket disconnected"),
+			wantItem:    "morning_routine",
+		},
+		{
+			name:        "automation falls back to object_id when registry fetch errors",
+			domain:      "automation",
+			entityID:    "automation.ev_charging",
+			registryErr: errors.New("websocket disconnected"),
+			wantItem:    "ev_charging",
 		},
 	}
 
@@ -409,13 +453,7 @@ func TestResolveTraceItemID(t *testing.T) {
 
 			client := &UniversalMockClient{
 				GetEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
-					return tt.registry, nil
-				},
-				GetAutomationFn: func(context.Context, string) (*homeassistant.Automation, error) {
-					if tt.auto != nil {
-						return tt.auto, nil
-					}
-					return &homeassistant.Automation{}, nil
+					return tt.registry, tt.registryErr
 				},
 			}
 
@@ -587,5 +625,83 @@ func TestManageTrace_List_WaitPolls(t *testing.T) {
 	}
 	if callCount < 3 {
 		t.Errorf("expected at least 3 poll calls, got %d", callCount)
+	}
+}
+
+// TestFormatTraceNatural_ScriptSequenceSteps verifies that nested trace paths under a single
+// top-level sequence step (e.g. a repeat/choose block) are counted once, not once per nested
+// key - countPrefixedKeys previously counted every distinct dict key, inflating the count for
+// any step containing nested action blocks.
+func TestFormatTraceNatural_ScriptSequenceSteps(t *testing.T) {
+	t.Parallel()
+
+	handler := NewTraceHandlers()
+	response := map[string]any{
+		"trace": map[string]any{
+			"sequence/0":                       []any{map[string]any{}},
+			"sequence/1":                       []any{map[string]any{}},
+			"sequence/1/repeat/sequence/0":     []any{map[string]any{}},
+			"sequence/1/repeat/sequence/1":     []any{map[string]any{}, map[string]any{}},
+			"sequence/2/choose/0/conditions/0": []any{map[string]any{}},
+			"sequence/2/choose/0/sequence/0":   []any{map[string]any{}},
+		},
+	}
+
+	got := handler.formatTraceNatural(response)
+	want := "Sequence steps: 3 executed"
+	if !strings.Contains(got, want) {
+		t.Errorf("output = %q, want it to contain %q (3 top-level steps: 0, 1, 2)", got, want)
+	}
+}
+
+// TestFormatTraceNatural_Automation verifies automation traces (keyed "action/N"/"condition/N",
+// never the "actions"/"conditions" list keys the old code checked) render non-empty output, and
+// that the trigger description is read from the top-level short dict, not nested under "trace".
+func TestFormatTraceNatural_Automation(t *testing.T) {
+	t.Parallel()
+
+	handler := NewTraceHandlers()
+	response := map[string]any{
+		// HA's short_dict stores the trigger description as a plain string, computed from
+		// trigger variables at run time (automation/__init__.py: set_trigger_description) -
+		// never as a nested {"platform":..,"description":..} dict.
+		"trigger": "time (06:30:00)",
+		"trace": map[string]any{
+			"action/0":    []any{map[string]any{}},
+			"action/1":    []any{map[string]any{}},
+			"condition/0": []any{map[string]any{}},
+		},
+	}
+
+	got := handler.formatTraceNatural(response)
+	for _, want := range []string{"Trigger: time (06:30:00)", "Actions: 2 executed", "Conditions: 1 evaluated"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output missing %q\nfull output:\n%s", want, got)
+		}
+	}
+}
+
+// TestFormatTracesNatural_DictTimestamp verifies the list view reads HA's real
+// {"start":..,"finish":..} timestamp shape instead of always finding an empty string.
+func TestFormatTracesNatural_DictTimestamp(t *testing.T) {
+	t.Parallel()
+
+	handler := NewTraceHandlers()
+	traces := []any{
+		map[string]any{
+			"run_id": "abc123",
+			"state":  "stopped",
+			"timestamp": map[string]any{
+				"start":  "2026-02-19T06:00:00Z",
+				"finish": "2026-02-19T06:00:03Z",
+			},
+		},
+	}
+
+	got := handler.formatTracesNatural(traces)
+	for _, want := range []string{"Timestamp: 2026-02-19T06:00:00Z", "Duration: 3.00s"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output missing %q\nfull output:\n%s", want, got)
+		}
 	}
 }

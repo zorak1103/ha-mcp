@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 	"github.com/zorak1103/ha-mcp/internal/mcp"
@@ -132,34 +134,38 @@ func resolveTraceListParams(entityID, domain string) (resolvedDomain, resolvedEn
 }
 
 // resolveTraceItemID maps an entity_id to the item_id Home Assistant's trace API expects.
-// HA stores traces under the key "<domain>.<item_id>", where item_id is the object's
-// unique_id, NOT its entity_id:
-//   - Scripts: unique_id is the config key. It matches the entity's object_id unless the
-//     entity was renamed after creation, so it is resolved via the entity registry and
-//     degrades to the object_id on lookup failure. Passing the full entity_id produces
-//     the nonexistent key "script.script.<id>".
-//   - Automations: unique_id is the automation's config id, which differs from the
-//     entity object_id for UI-created automations, so it is resolved via GetAutomation.
-//     On lookup failure it degrades to the object_id.
+// HA stores traces under the key "<domain>.<item_id>" (components/trace/models.py
+// ActionTrace.__init__: self.key = f"{domain}.{item_id}"), where item_id is the object's
+// unique_id, NOT its entity_id. Both automation and script entities set their unique_id to
+// exactly that value at creation time (automation/__init__.py, script/__init__.py), so a single
+// entity-registry lookup resolves either domain:
+//   - Scripts: unique_id matches the entity's object_id unless the entity was renamed after
+//     creation. Passing the full entity_id instead produces the nonexistent key "script.script.<id>".
+//   - Automations: unique_id is the automation's config id, which differs from the entity
+//     object_id for UI-created automations.
+//
+// A failed registry fetch or a missing entry degrades to the object_id and logs a warning: HA
+// returns an empty trace list rather than an error for a wrong key, so a silently wrong item_id
+// is otherwise indistinguishable from "no traces recorded yet".
 func resolveTraceItemID(ctx context.Context, client homeassistant.Client, domain, entityID string) string {
 	objectID := entityID
 	if dotIdx := strings.Index(entityID, "."); dotIdx >= 0 {
 		objectID = entityID[dotIdx+1:]
 	}
-	switch domain {
-	case traceDomainAutomation:
-		if auto, err := client.GetAutomation(ctx, entityID); err == nil && auto.Config != nil && auto.Config.ID != "" {
-			return auto.Config.ID
-		}
-	case traceDomainScript:
-		if entries, err := client.GetEntityRegistry(ctx); err == nil {
-			for _, entry := range entries {
-				if entry.EntityID == entityID && entry.UniqueID != "" {
-					return entry.UniqueID
-				}
-			}
+
+	entries, err := client.GetEntityRegistry(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "trace item_id resolution degraded to object_id: entity registry fetch failed",
+			"entity_id", entityID, "domain", domain, "error", err)
+		return objectID
+	}
+	for _, entry := range entries {
+		if entry.EntityID == entityID && entry.UniqueID != "" {
+			return entry.UniqueID
 		}
 	}
+	slog.WarnContext(ctx, "trace item_id resolution degraded to object_id: entity not found in registry",
+		"entity_id", entityID, "domain", domain)
 	return objectID
 }
 
@@ -259,6 +265,15 @@ func (h *TraceHandlers) handleGetTrace(ctx context.Context, client homeassistant
 		return errorResult("run_id is required for get action"), nil
 	}
 
+	// Reject a domain/entity_id prefix mismatch rather than silently resolving item_id against
+	// the wrong domain, which would return an unrelated entity's traces (mirrors the same check
+	// resolveTraceListParams already does for the list action).
+	if dotIdx := strings.Index(entityID, "."); dotIdx > 0 {
+		if derived := entityID[:dotIdx]; derived != domain {
+			return errorResult(fmt.Sprintf("entity_id prefix %q conflicts with explicit domain %q", derived, domain)), nil
+		}
+	}
+
 	// Build command data
 	data := map[string]any{
 		"domain":  domain,
@@ -302,19 +317,15 @@ func (h *TraceHandlers) formatTracesNatural(traces []any) string {
 
 		runID := getMapString(traceMap, "run_id", "")
 		state := getMapString(traceMap, "state", "")
-		timestamp := getMapString(traceMap, "timestamp", "")
-
-		var duration float64
-		if v, ok := traceMap["duration"].(float64); ok {
-			duration = v
-		}
+		start, finish := traceTimestamps(traceMap)
+		duration := traceDuration(traceMap, start, finish)
 
 		parts = append(parts, fmt.Sprintf("\n%d. Run ID: %s", i+1, runID))
 		if state != "" {
 			parts = append(parts, fmt.Sprintf("   State: %s", state))
 		}
-		if timestamp != "" {
-			parts = append(parts, fmt.Sprintf("   Timestamp: %s", timestamp))
+		if start != "" {
+			parts = append(parts, fmt.Sprintf("   Timestamp: %s", start))
 		}
 		if duration > 0 {
 			parts = append(parts, fmt.Sprintf("   Duration: %.2fs", duration))
@@ -334,21 +345,23 @@ func (h *TraceHandlers) formatTraceNatural(response any) string {
 	var parts []string
 	parts = append(parts, "Trace Execution Path:")
 
-	// Extract trace details
+	// The trigger description lives on the top-level short dict (AutomationTrace.as_short_dict
+	// sets result["trigger"]), not nested under "trace".
+	if trigger := getMapString(traceMap, "trigger", ""); trigger != "" {
+		parts = append(parts, fmt.Sprintf("\nTrigger: %s", trigger))
+	}
+
+	// Extract step counts. HA flattens a trace into path keys - automations use
+	// "trigger/N", "condition/N", "action/N"; scripts use "sequence/N". There is no "actions" or
+	// "conditions" list key in real trace data.
 	if trace, ok := traceMap["trace"].(map[string]any); ok {
-		trigger := getMapString(trace, "trigger", "")
-		if trigger != "" {
-			parts = append(parts, fmt.Sprintf("\nTrigger: %s", trigger))
+		if conditions := countTopLevelTracePaths(trace, "condition"); conditions > 0 {
+			parts = append(parts, fmt.Sprintf("\nConditions: %d evaluated", conditions))
 		}
-
-		if conditions, ok := trace["conditions"].([]any); ok {
-			parts = append(parts, fmt.Sprintf("\nConditions: %d evaluated", len(conditions)))
+		if actions := countTopLevelTracePaths(trace, "action"); actions > 0 {
+			parts = append(parts, fmt.Sprintf("\nActions: %d executed", actions))
 		}
-
-		if actions, ok := trace["actions"].([]any); ok {
-			parts = append(parts, fmt.Sprintf("\nActions: %d executed", len(actions)))
-		} else if steps := countPrefixedKeys(trace, "sequence/"); steps > 0 {
-			// Script traces store executed steps under "sequence/<n>" keys.
+		if steps := countTopLevelTracePaths(trace, "sequence"); steps > 0 {
 			parts = append(parts, fmt.Sprintf("\nSequence steps: %d executed", steps))
 		}
 	}
@@ -356,13 +369,57 @@ func (h *TraceHandlers) formatTraceNatural(response any) string {
 	return strings.Join(parts, "\n")
 }
 
-// countPrefixedKeys returns the number of map keys starting with prefix.
-func countPrefixedKeys(m map[string]any, prefix string) int {
-	n := 0
+// countTopLevelTracePaths counts the distinct top-level step indices under a trace path prefix
+// (e.g. "action/0", "action/1"). Home Assistant flattens a trace into path keys where nested
+// steps extend the same top-level index ("action/0/choose/0/sequence/0" is still step 0), so a
+// plain has-prefix count over-counts any step containing a nested action block.
+func countTopLevelTracePaths(m map[string]any, prefix string) int {
+	full := prefix + "/"
+	seen := make(map[string]bool)
 	for k := range m {
-		if strings.HasPrefix(k, prefix) {
-			n++
+		rest, ok := strings.CutPrefix(k, full)
+		if !ok {
+			continue
+		}
+		idx, _, _ := strings.Cut(rest, "/")
+		if idx != "" {
+			seen[idx] = true
 		}
 	}
-	return n
+	return len(seen)
+}
+
+// traceTimestamps extracts the start/finish timestamps from a trace's "timestamp" field.
+// Home Assistant's trace API returns this as {"start": <iso>, "finish": <iso>}
+// (components/trace/models.py ActionTrace.as_short_dict); a flat ISO string is also accepted
+// for backward compatibility with older test fixtures and is treated as start-only.
+func traceTimestamps(m map[string]any) (start, finish string) {
+	switch v := m["timestamp"].(type) {
+	case map[string]any:
+		return getMapString(v, "start", ""), getMapString(v, "finish", "")
+	case string:
+		return v, ""
+	}
+	return "", ""
+}
+
+// traceDuration returns a trace's execution duration in seconds. An explicit "duration" field
+// (not present in real HA responses, but used by some fixtures) takes precedence; otherwise the
+// duration is derived from the finish/start timestamps.
+func traceDuration(m map[string]any, start, finish string) float64 {
+	if d, ok := m["duration"].(float64); ok {
+		return d
+	}
+	if start == "" || finish == "" {
+		return 0
+	}
+	startT, err := time.Parse(time.RFC3339, start)
+	if err != nil {
+		return 0
+	}
+	finishT, err := time.Parse(time.RFC3339, finish)
+	if err != nil {
+		return 0
+	}
+	return finishT.Sub(startT).Seconds()
 }
