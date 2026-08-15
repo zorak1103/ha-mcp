@@ -374,7 +374,7 @@ func TestManageTrace_List_EntityIDFilter(t *testing.T) {
 		{
 			// unique_id deliberately differs from the object_id ("ev_charging") so this test
 			// fails if resolveTraceItemID is ever replaced by a naive entity_id split - the
-			// pre-fix regression this test exists to catch (see #182 and TestResolveTraceItemID).
+			// pre-fix regression this test exists to catch (see TestResolveTraceItemID).
 			name:          "entity_id automation prefix derives domain and resolves item_id via registry",
 			args:          map[string]any{"action": "list", "entity_id": "automation.ev_charging"},
 			registryEntry: &homeassistant.EntityRegistryEntry{EntityID: "automation.ev_charging", UniqueID: "1700000000001"},
@@ -719,7 +719,7 @@ func TestManageTrace_List_UnresolvedItemIDWarning(t *testing.T) {
 
 // TestManageTrace_Get_UnresolvedItemIDWarning verifies the get action surfaces the same
 // resolution-failure warning as list when trace/get returns nothing for an unresolved item_id
-// (CLAUDE.md #182: trace/get, like trace/list, returns an empty result rather than an error).
+// (trace/get, like trace/list, returns an empty result for an unknown key rather than an error).
 func TestManageTrace_Get_UnresolvedItemIDWarning(t *testing.T) {
 	t.Parallel()
 

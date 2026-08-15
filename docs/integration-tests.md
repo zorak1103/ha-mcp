@@ -108,7 +108,7 @@ go test -tags=integration -v ./internal/handlers/integration/... 2>&1 | tee test
 |------------|-------------------|
 | `TestTodoIntegration` | list, get_items, add_item, update_item (status), remove_item (full CRUD with status filtering) |
 | `TestCalendarIntegration` | list, get_events, create_event (datetime + all-day), delete_event (with writable calendar detection) |
-| `TestTraceIntegration` | list automation traces, list script traces (execution history), list filtered by entity_id (verifies unique_id-based item_id resolution against a live HA registry, per #182) |
+| `TestTraceIntegration` | list automation traces, list script traces (execution history), list filtered by entity_id (verifies unique_id-based item_id resolution against a live HA registry) |
 | `TestUpdateBlueprintIntegration` | list updates (pending filter), release_notes, list blueprints (automation/script) |
 | `TestCameraIntegration`    | list cameras, stream (HLS URL via manage_camera), get_snapshot (binary image data)                  |
 | `TestSystemLogIntegration` | GetSystemLog (list), ClearSystemLog (clear + verify empty)                                           |

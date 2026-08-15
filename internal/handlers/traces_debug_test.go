@@ -879,7 +879,7 @@ func TestBuildDebugTrace_ScriptExecutionAndError(t *testing.T) {
 }
 
 // TestFormatDebugTraceSection_NotTriggered verifies the not_triggered annotation on the Run ID
-// line - added in #182's fallout fix but never previously asserted on by any test.
+// line, which was never previously asserted on by any test.
 func TestFormatDebugTraceSection_NotTriggered(t *testing.T) {
 	t.Parallel()
 
