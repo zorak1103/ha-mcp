@@ -201,21 +201,9 @@ See [docs/architecture.md](docs/architecture.md) for integration test setup and 
 
 ## Contributing
 
-1. Fork the repository and create a feature branch
-2. Make your changes with tests
-3. Ensure CI passes:
-   ```bash
-   golangci-lint run ./...
-   go test -race ./...
-   ```
-4. Open a Pull Request
-
-### Pull Request Guidelines
-
-- Ensure CI checks pass (lint, test, security scans)
-- Update documentation if needed
-- Add tests for new functionality
-- Keep commits focused and atomic
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow (task commands, TDD
+requirement, integration test setup, linter rules, and the docs checklist for
+new tools). Please also read the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## License
 

@@ -41,6 +41,7 @@ config.yml
 configs/config.yaml
 configs/config.yml
 !configs/config.example.yaml
+!.github/ISSUE_TEMPLATE/config.yml
 
 # Environment files
 .env

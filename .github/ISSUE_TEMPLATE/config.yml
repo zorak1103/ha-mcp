@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions & Help
+    url: https://github.com/zorak1103/ha-mcp/discussions/categories/q-a
+    about: Not sure if it's a bug or how to configure something? Ask here first.
+  - name: Ideas & Proposals
+    url: https://github.com/zorak1103/ha-mcp/discussions/categories/ideas
+    about: Not sure if it's a clearly scoped feature yet? Start a discussion first.
+  - name: Troubleshooting guide
+    url: https://github.com/zorak1103/ha-mcp/blob/main/docs/troubleshooting.md
+    about: WebSocket connection issues, debug mode, and common errors are covered here — check before filing.

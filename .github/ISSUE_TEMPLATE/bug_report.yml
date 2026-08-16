@@ -1,0 +1,99 @@
+name: Bug report
+description: Something isn't working as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please check [docs/troubleshooting.md](../../blob/main/docs/troubleshooting.md) first — WebSocket disconnects and common connection errors are covered there.
+
+        **Before you paste logs or config below, remove your `HA_TOKEN` / long-lived access token.**
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear, concise description of the bug.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Call tool `manage_helper` with action `create`, type `min_max`
+        2. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: ha-mcp version
+      description: Output of `ha-mcp --version`, the release tag, or a commit SHA.
+      placeholder: v2026.8.3
+    validations:
+      required: true
+
+  - type: input
+    id: ha-version
+    attributes:
+      label: Home Assistant version
+      placeholder: 2026.8.1
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: How are you running ha-mcp?
+      options:
+        - Docker (zorak1103/ha-mcp)
+        - Binary from Releases
+        - DEB/RPM package
+        - Built from source
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mcp-client
+    attributes:
+      label: MCP client
+      options:
+        - Claude Desktop
+        - Claude Code
+        - Cline
+        - opencode
+        - Other (describe below)
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Debug log
+      description: Set `HA_MCP_LOG_LEVEL=DEBUG` and paste the relevant excerpt. Redact your token.
+      render: shell
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant config
+      description: Access control / tool filter settings, config.yaml, or CLI flags. Redact `HA_TOKEN`/`HA_URL` if sensitive.
+      render: yaml
+
+  - type: checkboxes
+    id: redacted
+    attributes:
+      label: Confirmation
+      options:
+        - label: I removed my Home Assistant long-lived access token from any logs/config pasted above.
+          required: true

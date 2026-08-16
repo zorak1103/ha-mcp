@@ -1,0 +1,50 @@
+name: Feature request
+description: Propose a clearly scoped feature or change
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If the scope or approach is still open, please open a [Discussion](../../discussions/categories/ideas) instead — issues are for work that's ready to be planned.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: What does this concern?
+      options:
+        - New tool
+        - manage_entity / manage_device / query_entities / query_devices
+        - manage_automation / manage_script / manage_scene (incl. patch)
+        - manage_helper
+        - manage_dashboard / find_references
+        - analyze_entity / analyze_target / get_registry
+        - manage_trace / manage_system_log
+        - Access control / tool filtering
+        - Documentation
+        - Not tool-specific
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / use case
+      description: What problem does this solve? Why is existing functionality insufficient?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Rough idea of the expected behavior, e.g. new tool/action name, arguments, output shape.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: ready
+    attributes:
+      label: Readiness
+      options:
+        - label: This is scoped enough to implement directly (not just an idea to discuss).
+        - label: If this adds a new tool, I understand it needs doc updates across README/docs/CLAUDE.md/skills (see CONTRIBUTING.md).
