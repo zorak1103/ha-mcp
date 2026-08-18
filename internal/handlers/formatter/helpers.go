@@ -2,10 +2,11 @@
 package formatter
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
@@ -588,11 +589,11 @@ func (f *NaturalHelperFormatter) sortTypesByCount(counts map[string]int) []strin
 	for k, v := range counts {
 		sorted = append(sorted, kv{k, v})
 	}
-	sort.Slice(sorted, func(i, j int) bool {
-		if sorted[i].Value != sorted[j].Value {
-			return sorted[i].Value > sorted[j].Value
-		}
-		return sorted[i].Key < sorted[j].Key
+	slices.SortFunc(sorted, func(a, b kv) int {
+		return cmp.Or(
+			cmp.Compare(b.Value, a.Value),
+			cmp.Compare(a.Key, b.Key),
+		)
 	})
 
 	result := make([]string, 0, len(sorted))

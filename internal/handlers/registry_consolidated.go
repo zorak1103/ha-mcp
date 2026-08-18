@@ -2,8 +2,10 @@
 package handlers
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -162,8 +164,8 @@ func (h *ConsolidatedRegistryHandlers) handleEntities(
 	filter.buildDeviceIDsInArea(ctx, client)
 	filtered := filter.filterEntityRegistry(entries)
 
-	sort.Slice(filtered, func(i, j int) bool {
-		return filtered[i].EntityID < filtered[j].EntityID
+	slices.SortFunc(filtered, func(a, b homeassistant.EntityRegistryEntry) int {
+		return cmp.Compare(a.EntityID, b.EntityID)
 	})
 
 	filtersMap := buildEntityRegistryFiltersMap(filter)
@@ -250,8 +252,8 @@ func (h *ConsolidatedRegistryHandlers) handleDevices(
 	filter := parseDeviceRegistryFilter(args)
 	filtered := filterDeviceRegistry(entries, filter)
 
-	sort.Slice(filtered, func(i, j int) bool {
-		return filtered[i].ID < filtered[j].ID
+	slices.SortFunc(filtered, func(a, b homeassistant.DeviceRegistryEntry) int {
+		return cmp.Compare(a.ID, b.ID)
 	})
 
 	filtersMap := buildDeviceRegistryFiltersMap(filter)

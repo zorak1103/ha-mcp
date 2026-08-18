@@ -2,8 +2,10 @@
 package handlers
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -474,6 +476,7 @@ func (h *AreaHandlers) countDevicesInArea(ctx context.Context, client homeassist
 }
 
 // collectAreaEntities returns compact entity states for all entities in the area, sorted by entity_id.
+// collectAreaEntities returns compact entity states for all entities in the area, sorted by entity_id.
 func collectAreaEntities(ctx context.Context, client homeassistant.Client, entityIDsInArea map[string]bool) []compactEntityState {
 	states, err := client.GetStates(ctx)
 	if err != nil {
@@ -493,12 +496,14 @@ func collectAreaEntities(ctx context.Context, client homeassistant.Client, entit
 		}
 		result = append(result, entry)
 	}
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].EntityID < result[j].EntityID
+	slices.SortFunc(result, func(a, b compactEntityState) int {
+		return cmp.Compare(a.EntityID, b.EntityID)
 	})
 	return result
 }
 
+// findAssignedAutomations returns automations directly assigned to the area via
+// entity registry area_id (automation.* entries whose AreaID == areaID).
 // findAssignedAutomations returns automations directly assigned to the area via
 // entity registry area_id (automation.* entries whose AreaID == areaID).
 func findAssignedAutomations(ctx context.Context, client homeassistant.Client, areaID string) []areaAssignedAutomation {
@@ -532,8 +537,8 @@ func findAssignedAutomations(ctx context.Context, client homeassistant.Client, a
 			State:        a.State,
 		})
 	}
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].EntityID < result[j].EntityID
+	slices.SortFunc(result, func(a, b areaAssignedAutomation) int {
+		return cmp.Compare(a.EntityID, b.EntityID)
 	})
 	return result
 }

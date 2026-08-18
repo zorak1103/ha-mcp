@@ -2,11 +2,12 @@
 package handlers
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
 	"reflect"
-	"sort"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -298,8 +299,8 @@ func (h *AutomationHandlers) handleList(ctx context.Context, client homeassistan
 
 // sortAutomationsByEntityID sorts automations by entity_id for stable pagination.
 func sortAutomationsByEntityID(automations []homeassistant.Automation) {
-	sort.Slice(automations, func(i, j int) bool {
-		return automations[i].EntityID < automations[j].EntityID
+	slices.SortFunc(automations, func(a, b homeassistant.Automation) int {
+		return cmp.Compare(a.EntityID, b.EntityID)
 	})
 }
 

@@ -28,53 +28,30 @@ type AnalysisSnapshot struct {
 // CreateAnalysisSnapshot fetches all data needed for entity analysis in parallel.
 // This optimizes analysis by making 4 parallel API calls instead of multiple sequential calls.
 // Returns a snapshot even if some fetches fail - the caller should check individual fields.
-//
-//nolint:funlen // Parallel fetch structure is clear and readable despite statement count.
 func CreateAnalysisSnapshot(ctx context.Context, client homeassistant.Client) *AnalysisSnapshot {
 	snapshot := &AnalysisSnapshot{}
 
 	var wg sync.WaitGroup
-	var mu sync.Mutex
 
 	// Fetch all states
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		states, _ := client.GetStates(ctx)
-		mu.Lock()
-		snapshot.AllStates = states
-		mu.Unlock()
-	}()
+	wg.Go(func() {
+		snapshot.AllStates, _ = client.GetStates(ctx)
+	})
 
 	// Fetch entity registry
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		entities, _ := client.GetEntityRegistry(ctx)
-		mu.Lock()
-		snapshot.EntityRegistry = entities
-		mu.Unlock()
-	}()
+	wg.Go(func() {
+		snapshot.EntityRegistry, _ = client.GetEntityRegistry(ctx)
+	})
 
 	// Fetch device registry
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		devices, _ := client.GetDeviceRegistry(ctx)
-		mu.Lock()
-		snapshot.DeviceRegistry = devices
-		mu.Unlock()
-	}()
+	wg.Go(func() {
+		snapshot.DeviceRegistry, _ = client.GetDeviceRegistry(ctx)
+	})
 
 	// Fetch area registry
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		areas, _ := client.GetAreaRegistry(ctx)
-		mu.Lock()
-		snapshot.AreaRegistry = areas
-		mu.Unlock()
-	}()
+	wg.Go(func() {
+		snapshot.AreaRegistry, _ = client.GetAreaRegistry(ctx)
+	})
 
 	wg.Wait()
 	return snapshot
