@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -184,11 +186,11 @@ func sortPresenceResults(
 	trackersWithoutPerson *[]TrackerInfo,
 	personsWithoutTrackers *[]string,
 ) {
-	sort.Slice(*personInfos, func(i, j int) bool {
-		return (*personInfos)[i].Name < (*personInfos)[j].Name
+	slices.SortFunc(*personInfos, func(a, b PersonInfo) int {
+		return cmp.Compare(a.Name, b.Name)
 	})
-	sort.Slice(*trackersWithoutPerson, func(i, j int) bool {
-		return (*trackersWithoutPerson)[i].Name < (*trackersWithoutPerson)[j].Name
+	slices.SortFunc(*trackersWithoutPerson, func(a, b TrackerInfo) int {
+		return cmp.Compare(a.Name, b.Name)
 	})
 	sort.Strings(*personsWithoutTrackers)
 }

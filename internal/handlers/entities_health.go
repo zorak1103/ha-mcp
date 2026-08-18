@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -367,11 +369,11 @@ func filterIssues(issues []HealthIssue, categories map[string]bool, domain strin
 }
 
 func sortIssues(issues []HealthIssue) {
-	sort.Slice(issues, func(i, j int) bool {
-		if issues[i].Category != issues[j].Category {
-			return issues[i].Category < issues[j].Category
-		}
-		return issues[i].EntityID < issues[j].EntityID
+	slices.SortFunc(issues, func(a, b HealthIssue) int {
+		return cmp.Or(
+			cmp.Compare(a.Category, b.Category),
+			cmp.Compare(a.EntityID, b.EntityID),
+		)
 	})
 }
 

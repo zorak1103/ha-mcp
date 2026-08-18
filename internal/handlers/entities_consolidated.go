@@ -2,9 +2,11 @@
 package handlers
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -178,22 +180,22 @@ func validateSortAndGroup(params stateFilterParams) error {
 func sortEntities(states []homeassistant.Entity, sortBy string) error {
 	switch sortBy {
 	case sortByEntityID:
-		sort.Slice(states, func(i, j int) bool {
-			return states[i].EntityID < states[j].EntityID
+		slices.SortFunc(states, func(a, b homeassistant.Entity) int {
+			return cmp.Compare(a.EntityID, b.EntityID)
 		})
 	case sortByState:
-		sort.Slice(states, func(i, j int) bool {
-			return states[i].State < states[j].State
+		slices.SortFunc(states, func(a, b homeassistant.Entity) int {
+			return cmp.Compare(a.State, b.State)
 		})
 	case sortByLastChanged:
-		sort.Slice(states, func(i, j int) bool {
-			return states[i].LastChanged.Before(states[j].LastChanged)
+		slices.SortFunc(states, func(a, b homeassistant.Entity) int {
+			return a.LastChanged.Compare(b.LastChanged)
 		})
 	case sortByFriendlyName:
-		sort.Slice(states, func(i, j int) bool {
-			nameI := formatter.GetFriendlyName(states[i].EntityID, states[i].Attributes)
-			nameJ := formatter.GetFriendlyName(states[j].EntityID, states[j].Attributes)
-			return strings.ToLower(nameI) < strings.ToLower(nameJ)
+		slices.SortFunc(states, func(a, b homeassistant.Entity) int {
+			nameA := formatter.GetFriendlyName(a.EntityID, a.Attributes)
+			nameB := formatter.GetFriendlyName(b.EntityID, b.Attributes)
+			return cmp.Compare(strings.ToLower(nameA), strings.ToLower(nameB))
 		})
 	default:
 		return fmt.Errorf("unsupported sort_by: %s", sortBy)
@@ -1286,8 +1288,8 @@ func (h *ConsolidatedEntityQueryHandlers) handleDomains(
 	}
 
 	// Sort by domain name
-	sort.Slice(domains, func(i, j int) bool {
-		return domains[i].Domain < domains[j].Domain
+	slices.SortFunc(domains, func(a, b domainInfo) int {
+		return cmp.Compare(a.Domain, b.Domain)
 	})
 
 	output, err := json.MarshalIndent(domains, "", "  ")

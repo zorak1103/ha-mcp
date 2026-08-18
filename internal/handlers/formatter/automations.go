@@ -2,9 +2,11 @@
 package formatter
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -228,11 +230,11 @@ func (f *NaturalAutomationFormatter) formatModeCounts(counts map[string]int) str
 	for k, v := range counts {
 		sorted = append(sorted, kv{k, v})
 	}
-	sort.Slice(sorted, func(i, j int) bool {
-		if sorted[i].Value != sorted[j].Value {
-			return sorted[i].Value > sorted[j].Value
-		}
-		return sorted[i].Key < sorted[j].Key
+	slices.SortFunc(sorted, func(a, b kv) int {
+		return cmp.Or(
+			cmp.Compare(b.Value, a.Value),
+			cmp.Compare(a.Key, b.Key),
+		)
 	})
 
 	var parts []string
@@ -252,10 +254,10 @@ func (f *NaturalAutomationFormatter) getRecentlyTriggered(automations []homeassi
 	}
 
 	// Sort by last_triggered descending
-	sort.Slice(triggered, func(i, j int) bool {
-		ti, _ := time.Parse(time.RFC3339, triggered[i].LastTriggered)
-		tj, _ := time.Parse(time.RFC3339, triggered[j].LastTriggered)
-		return ti.After(tj)
+	slices.SortFunc(triggered, func(a, b homeassistant.Automation) int {
+		ta, _ := time.Parse(time.RFC3339, a.LastTriggered)
+		tb, _ := time.Parse(time.RFC3339, b.LastTriggered)
+		return tb.Compare(ta)
 	})
 
 	if len(triggered) > limit {

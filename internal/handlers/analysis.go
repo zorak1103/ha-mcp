@@ -2,9 +2,11 @@
 package handlers
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -841,8 +843,8 @@ func (h *AnalysisHandlers) dependenciesToSortedSlice(seen map[string]DependencyE
 	for _, dep := range seen {
 		result = append(result, dep)
 	}
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].EntityID < result[j].EntityID
+	slices.SortFunc(result, func(a, b DependencyEntry) int {
+		return cmp.Compare(a.EntityID, b.EntityID)
 	})
 	return result
 }

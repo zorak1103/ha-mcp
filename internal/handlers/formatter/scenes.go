@@ -1,9 +1,11 @@
 package formatter
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -147,11 +149,11 @@ func (f *NaturalSceneFormatter) formatDomainCounts(counts map[string]int) string
 	for k, v := range counts {
 		sorted = append(sorted, kv{k, v})
 	}
-	sort.Slice(sorted, func(i, j int) bool {
-		if sorted[i].Value != sorted[j].Value {
-			return sorted[i].Value > sorted[j].Value
-		}
-		return sorted[i].Key < sorted[j].Key
+	slices.SortFunc(sorted, func(a, b kv) int {
+		return cmp.Or(
+			cmp.Compare(b.Value, a.Value),
+			cmp.Compare(a.Key, b.Key),
+		)
 	})
 
 	var parts []string

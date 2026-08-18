@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -126,8 +126,8 @@ func fetchLogbookEntriesForCorrelation(
 	}
 
 	// Sort by timestamp
-	sort.Slice(allEntries, func(i, j int) bool {
-		return allEntries[i].Timestamp.Before(allEntries[j].Timestamp)
+	slices.SortFunc(allEntries, func(a, b correlationEntry) int {
+		return a.Timestamp.Compare(b.Timestamp)
 	})
 
 	return allEntries

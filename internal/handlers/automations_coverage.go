@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -265,8 +267,8 @@ func buildCoverageAreaStats(
 	}
 
 	// Sort by area name
-	sort.Slice(areaStats, func(i, j int) bool {
-		return areaStats[i].AreaName < areaStats[j].AreaName
+	slices.SortFunc(areaStats, func(a, b AreaCoverageInfo) int {
+		return cmp.Compare(a.AreaName, b.AreaName)
 	})
 
 	return areaStats

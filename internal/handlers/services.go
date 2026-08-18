@@ -2,9 +2,11 @@
 package handlers
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -157,8 +159,8 @@ func (h *ServiceHandlers) handleCompactServices(services []homeassistant.Service
 		})
 	}
 
-	sort.Slice(compact, func(i, j int) bool {
-		return compact[i].Domain < compact[j].Domain
+	slices.SortFunc(compact, func(a, b compactServiceEntry) int {
+		return cmp.Compare(a.Domain, b.Domain)
 	})
 
 	output, err := json.MarshalIndent(compact, "", "  ")
