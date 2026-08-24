@@ -21,7 +21,7 @@ jobs:
 
       - name: Run Renovate
         # Renovate auto-detects GitHub Actions uses: pins — no annotation needed
-        uses: renovatebot/github-action@v46.2.2
+        uses: renovatebot/github-action@v46.2.3
         env:
           RENOVATE_REPOSITORIES: ${{ github.repository }}
         with:
