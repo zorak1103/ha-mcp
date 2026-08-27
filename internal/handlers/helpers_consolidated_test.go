@@ -4392,6 +4392,59 @@ func TestMergeCurrentHelperState_CounterRestoreFalseSurvivesMerge(t *testing.T) 
 	}
 }
 
+// TestMergeCurrentHelperState_EmptyStringArgDoesNotOverridePreservedField
+// guards against the merge loop treating a caller-sent empty string as a
+// real overriding value. argReader's own contract (helpers_arg_reader.go)
+// declares empty string a universal "leave unset" spelling, same as an
+// absent key or an explicit null - so a client following that contract to
+// mean "don't touch unit_of_measurement" must not have it silently cleared
+// just because the merge loop's override check only excluded nil.
+func TestMergeCurrentHelperState_EmptyStringArgDoesNotOverridePreservedField(t *testing.T) {
+	t.Parallel()
+
+	entityID := "input_number.test_entity"
+	client := &UniversalMockClient{
+		GetHelperConfigFn: func(context.Context, string, string) (map[string]any, error) {
+			return map[string]any{"min": 0.0, "max": 100.0, "unit_of_measurement": "%", "icon": "mdi:test"}, nil
+		},
+	}
+
+	merged, _, err := mergeCurrentHelperState(context.Background(), client, entityID, "input_number", helperTypes["input_number"],
+		map[string]any{"min": 0.0, "max": 100.0, "unit_of_measurement": ""})
+	if err != nil {
+		t.Fatalf("mergeCurrentHelperState returned err: %v", err)
+	}
+
+	if got := merged["unit_of_measurement"]; got != "%" {
+		t.Errorf(`merged["unit_of_measurement"] = %q, want "%%" (empty-string arg must not override the preserved value)`, got)
+	}
+}
+
+// TestValidateSingleField_DefaultCasePresentWrongTypedValueIsNotMisreportedAsMissing
+// guards validateSingleField's default branch (used by every required field
+// without a dedicated case, e.g. "filter", "min_max_type", "after_time",
+// "heater_entity_id", ...): a value that IS present but isn't a string used
+// to be silently coerced to "" via a failed type assertion and then
+// reported as "is required" - a lie, since the caller did supply it, and a
+// duplicate of the type error argReader.str already gives on the actual
+// build*Config call. Presence must be checked independently of type; type
+// checking is the builder's job.
+func TestValidateSingleField_DefaultCasePresentWrongTypedValueIsNotMisreportedAsMissing(t *testing.T) {
+	t.Parallel()
+
+	if err := validateSingleField("filter", "filter", map[string]any{"filter": 5.0}); err != nil {
+		t.Errorf(`validateSingleField("filter", present but non-string) = %v, want nil`, err)
+	}
+
+	if err := validateSingleField("filter", "filter", map[string]any{}); err == nil {
+		t.Error(`validateSingleField("filter", absent) = nil, want an error for a genuinely missing required field`)
+	}
+
+	if err := validateSingleField("filter", "filter", map[string]any{"filter": ""}); err == nil {
+		t.Error(`validateSingleField("filter", empty string) = nil, want an error - empty string is still "unset" for a required field`)
+	}
+}
+
 // TestManageHelper_Update_CounterPreservesRestore is the end-to-end
 // regression test for the counter.restore data-loss bug found in review:
 // updating a counter without mentioning "restore" must not reset it to

@@ -1104,8 +1104,19 @@ func durationDictFromMap(val map[string]any) (map[string]int, bool) {
 		}
 		switch n := raw.(type) {
 		case float64:
+			// Mirrors secondsToDurationDict's guard: converting an
+			// out-of-range/NaN/Inf float to int is implementation-defined
+			// in Go (e.g. int(1e300) silently becomes garbage, not a clamp
+			// or a panic) - reject rather than forward a syntactically
+			// valid but nonsensical duration component to Home Assistant.
+			if math.IsNaN(n) || math.IsInf(n, 0) || n < 0 || n > math.MaxInt32 {
+				return nil, false
+			}
 			out[key] = int(n)
 		case int:
+			if n < 0 || n > math.MaxInt32 {
+				return nil, false
+			}
 			out[key] = n
 		default:
 			// A recognised key with a value of the wrong type (e.g. a

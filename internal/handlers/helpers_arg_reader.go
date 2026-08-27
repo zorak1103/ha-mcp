@@ -206,8 +206,14 @@ func (r *argReader) integer(key string) {
 func toInt(v any) (int, bool) {
 	switch val := v.(type) {
 	case int:
+		if val < math.MinInt32 || val > math.MaxInt32 {
+			return 0, false
+		}
 		return val, true
 	case int64:
+		if val < math.MinInt32 || val > math.MaxInt32 {
+			return 0, false
+		}
 		return int(val), true
 	case float64:
 		if math.IsNaN(val) || math.IsInf(val, 0) || val != math.Trunc(val) {
@@ -227,6 +233,13 @@ func toInt(v any) (int, bool) {
 		return int(val), true
 	case string:
 		if n, err := strconv.Atoi(val); err == nil {
+			// strconv.Atoi parses into platform int (64-bit on amd64/arm64),
+			// so a whole-number string like "5000000000" succeeds here
+			// without ever reaching the float64 fallback's bound check
+			// below - needs the same int32 bound the other branches enforce.
+			if n < math.MinInt32 || n > math.MaxInt32 {
+				return 0, false
+			}
 			return n, true
 		}
 		if f, err := strconv.ParseFloat(val, 64); err == nil && !math.IsInf(f, 0) && f == math.Trunc(f) {

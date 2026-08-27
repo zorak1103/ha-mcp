@@ -123,6 +123,22 @@ func TestArgReader_Integer(t *testing.T) {
 			name: "huge numeric string errors instead of silently overflowing to garbage",
 			args: map[string]any{"k": "100000000000000000000"}, wantErr: true,
 		},
+		{
+			name: "numeric string exceeding int32 via Atoi's fast path still errors",
+			args: map[string]any{"k": "5000000000"}, wantErr: true,
+		},
+		{
+			name: "negative numeric string exceeding int32 via Atoi's fast path still errors",
+			args: map[string]any{"k": "-5000000000"}, wantErr: true,
+		},
+		{
+			name: "int value exceeding int32 errors, consistent with the float64/string branches",
+			args: map[string]any{"k": 5000000000}, wantErr: true,
+		},
+		{
+			name: "int64 value exceeding int32 errors, consistent with the float64/string branches",
+			args: map[string]any{"k": int64(5000000000)}, wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {

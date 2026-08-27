@@ -47,6 +47,14 @@ const (
 	serviceSetValue                = "set_value"
 	helperActionUpdate             = "update"
 	entityDomainHumidifier         = "humidifier" // generic_hygrostat's validEntityDomains entry - an entity domain, not an integration platform name
+	// deviceClassHumidifierValue is generic_hygrostat's required device_class
+	// config value - a different field than entityDomainHumidifier above
+	// (that one identifies the entity's domain; this one is a value written
+	// into the helper's own config), which happens to share the same
+	// literal. Kept as one named constant so the two create/update builders
+	// that both need it don't drift into differently-named local copies of
+	// the same string.
+	deviceClassHumidifierValue = "humidifier"
 )
 
 // sourceEntityConstraint restricts one args field of a helper type to a set
@@ -1139,14 +1147,16 @@ func mergeCurrentHelperState(ctx context.Context, client homeassistant.Client, e
 		currentName = name
 	}
 
-	// Caller-supplied values always win, EXCEPT an explicit JSON null: this
-	// API has no "clear this field" spelling, so treating null as "clear"
-	// would let a caller's stray null overwrite a good merged value and then
-	// get silently dropped by the field-typed args[key].(T) reads in each
-	// build*Config function - resetting that field to HA's default instead
-	// of either preserving it or rejecting the call with an explanation.
+	// Caller-supplied values always win, EXCEPT the two "leave unset"
+	// spellings argReader itself treats identically (see isSkippable): an
+	// explicit JSON null, and an empty string. This API has no "clear this
+	// field" spelling, so letting either through here would overwrite a good
+	// merged value with a value that argReader.str/num/etc. then silently
+	// skips writing into the built config - resetting that field to HA's
+	// default instead of either preserving it or rejecting the call with an
+	// explanation.
 	for k, v := range args {
-		if v != nil {
+		if !isSkippable(v) {
 			merged[k] = v
 		}
 	}
@@ -2546,8 +2556,13 @@ func validateSingleField(field, helperType string, args map[string]any) error {
 			return fmt.Errorf("%s must be a number for %s", field, helperType)
 		}
 	default:
-		val, _ := args[field].(string)
-		if val == "" {
+		// Presence-only: whether a present value is well-formed for this
+		// field is the config builder's job (argReader reports a proper
+		// type-mismatch error there). Every default-case field happens to
+		// be string-typed today, but asserting to string here and treating
+		// a failed assertion as "absent" would misreport "wrong type" as
+		// "is required" - a lie, since the caller did supply it.
+		if v, exists := args[field]; !exists || isSkippable(v) {
 			return fmt.Errorf("%s is required for %s", field, helperType)
 		}
 	}

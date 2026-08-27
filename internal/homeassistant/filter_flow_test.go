@@ -1,6 +1,7 @@
 package homeassistant
 
 import (
+	"math"
 	"reflect"
 	"testing"
 )
@@ -76,6 +77,26 @@ func TestToDurationDict(t *testing.T) {
 		{
 			name: "dict with an unrecognized key is rejected, not silently dropped",
 			in:   map[string]any{"bogus": "x"},
+			want: nil, wantOK: false,
+		},
+		{
+			name: "dict with NaN value is rejected instead of silently overflowing to garbage",
+			in:   map[string]any{"hours": math.NaN()},
+			want: nil, wantOK: false,
+		},
+		{
+			name: "dict with Inf value is rejected instead of silently overflowing to garbage",
+			in:   map[string]any{"hours": math.Inf(1)},
+			want: nil, wantOK: false,
+		},
+		{
+			name: "dict with negative value is rejected",
+			in:   map[string]any{"hours": -1.0},
+			want: nil, wantOK: false,
+		},
+		{
+			name: "dict with huge value is rejected instead of silently overflowing to garbage",
+			in:   map[string]any{"hours": 1e300},
 			want: nil, wantOK: false,
 		},
 		{

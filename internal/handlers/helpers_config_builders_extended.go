@@ -145,8 +145,6 @@ func buildSwitchAsXConfig(config, args map[string]any) error {
 
 // buildGenericHygrostatConfig builds configuration for generic_hygrostat helper.
 func buildGenericHygrostatConfig(config, args map[string]any) error {
-	const deviceClassHumidifierValue = "humidifier"
-
 	r := newArgReader(config, args)
 	// Map user-friendly field names to API field names
 	// API expects: humidifier, target_sensor, device_class (not humidifier_entity_id, target_sensor_entity_id)
@@ -219,6 +217,12 @@ func addExtendedConfigEntryFields(config, args map[string]any, entityDomain, min
 	// generic_thermostat fields (map to API field names)
 	r.strAs("heater_entity_id", "heater")
 	r.strAs("target_sensor_entity_id", "target_sensor")
+	// Unlike buildGenericThermostatConfig's create path, ac_mode gets NO
+	// default here when omitted - and that's deliberate, not a gap to
+	// "fix" by mirroring create. mergeOptionsFlowConfig already preserves
+	// the helper's current ac_mode when userConfig omits the key; defaulting
+	// it to false here would override that preserved value on every update
+	// that doesn't explicitly pass ac_mode, defeating the merge entirely.
 	r.boolean("ac_mode")
 	r.num("min_temp")
 	r.num("max_temp")
@@ -237,9 +241,8 @@ func addExtendedConfigEntryFields(config, args map[string]any, entityDomain, min
 	// is "humidifier"), not every config-entry helper type that shares this
 	// one-size-fits-all update builder.
 	if entityDomain == entityDomainHumidifier {
-		const deviceClassHumidifier = "humidifier"
 		if _, exists := config["device_class"]; !exists {
-			config["device_class"] = deviceClassHumidifier
+			config["device_class"] = deviceClassHumidifierValue
 		}
 	}
 	r.num("min_humidity")
