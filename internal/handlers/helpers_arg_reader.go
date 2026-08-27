@@ -79,6 +79,21 @@ func (r *argReader) checkArrayLen(key string, arr []any) bool {
 	return true
 }
 
+// checkMapLen records a failure and returns false when m exceeds
+// maxArrayElements entries. raw() is the only reader that accepts a map
+// (e.g. filter's window_size as a {"hours":.,"minutes":.,"seconds":.}
+// object) verbatim; without this it would be the one field type exempt
+// from the size bound every array-typed field already gets.
+func (r *argReader) checkMapLen(key string, m map[string]any) bool {
+	if len(m) > maxArrayElements {
+		r.errs = append(r.errs, fmt.Errorf(
+			"invalid value for %q: object has %d keys, exceeds maximum of %d", key, len(m), maxArrayElements,
+		))
+		return false
+	}
+	return true
+}
+
 // str reads args[key] into config[key] as a string. A number is coerced to
 // its decimal form (an MCP client may send "3000" or 3000 for the same
 // field); a bool, array, or map is a hard error.
@@ -171,12 +186,26 @@ func toInt(v any) (int, bool) {
 		if math.IsNaN(val) || math.IsInf(val, 0) || val != math.Trunc(val) {
 			return 0, false
 		}
+		if val < math.MinInt32 || val > math.MaxInt32 {
+			// Converting an out-of-range float to int is
+			// implementation-defined in Go (e.g. int(1e20) silently
+			// becomes math.MinInt64, not a clamp or a panic) - reject
+			// rather than forward a garbage value into the config sent to
+			// Home Assistant. Bounded to int32 range, mirroring
+			// secondsToDurationDict's guard, since no real helper field
+			// (round_digits, sampling_size, min/max_samples, ...) needs a
+			// wider range and every platform's int is at least 32 bits.
+			return 0, false
+		}
 		return int(val), true
 	case string:
 		if n, err := strconv.Atoi(val); err == nil {
 			return n, true
 		}
 		if f, err := strconv.ParseFloat(val, 64); err == nil && !math.IsInf(f, 0) && f == math.Trunc(f) {
+			if f < math.MinInt32 || f > math.MaxInt32 {
+				return 0, false
+			}
 			return int(f), true
 		}
 		return 0, false
@@ -292,10 +321,14 @@ func (r *argReader) raw(key string) {
 	if !ok || isSkippable(v) {
 		return
 	}
-	switch v.(type) {
+	switch val := v.(type) {
 	case bool, []any:
 		r.fail(key, "a number, string, or duration object", v)
 		return
+	case map[string]any:
+		if !r.checkMapLen(key, val) {
+			return
+		}
 	}
 	r.config[key] = v
 }

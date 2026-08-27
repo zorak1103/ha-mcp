@@ -3,6 +3,7 @@ package handlers
 import (
 	"math"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -110,6 +111,18 @@ func TestArgReader_Integer(t *testing.T) {
 		{name: "whole number string coerces", args: map[string]any{"k": "8"}, wantVal: 8, wantSet: true},
 		{name: "fractional string errors", args: map[string]any{"k": "8.5"}, wantErr: true},
 		{name: "bool errors", args: map[string]any{"k": false}, wantErr: true},
+		{
+			name: "huge float64 errors instead of silently overflowing to garbage",
+			args: map[string]any{"k": 1e20}, wantErr: true,
+		},
+		{
+			name: "huge negative float64 errors instead of silently overflowing to garbage",
+			args: map[string]any{"k": -1e20}, wantErr: true,
+		},
+		{
+			name: "huge numeric string errors instead of silently overflowing to garbage",
+			args: map[string]any{"k": "100000000000000000000"}, wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -268,6 +281,7 @@ func TestArgReader_Raw(t *testing.T) {
 		},
 		{name: "bool errors", args: map[string]any{"k": true}, wantErr: true},
 		{name: "array errors", args: map[string]any{"k": []any{}}, wantErr: true},
+		{name: "oversized map errors", args: map[string]any{"k": oversizedMap()}, wantErr: true},
 	}
 
 	for _, tt := range tests {
@@ -310,6 +324,16 @@ func TestArgReader_AccumulatesMultipleErrors(t *testing.T) {
 	if !containsAll(err.Error(), []string{`"a"`, `"b"`}) {
 		t.Errorf("joined error %q should mention both failing keys", err.Error())
 	}
+}
+
+// oversizedMap returns a map with one more entry than maxArrayElements
+// permits, for exercising argReader.raw's map size guard.
+func oversizedMap() map[string]any {
+	m := make(map[string]any, maxArrayElements+1)
+	for i := range maxArrayElements + 1 {
+		m[strconv.Itoa(i)] = i
+	}
+	return m
 }
 
 func checkReader(t *testing.T, r *argReader, config map[string]any, key string, wantVal any, wantSet, wantErr bool) {

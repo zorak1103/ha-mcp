@@ -1019,12 +1019,15 @@ func parseDurationString(s string) map[string]int {
 
 // toDurationDict normalises a value into Home Assistant's DurationSelector
 // dict form. Accepted input, in priority order: a map already in that
-// shape (values coerced to int, unrecognised keys dropped); a
-// "H:MM:SS"/"MM:SS"/"SS" string; or a bare number interpreted as seconds -
-// the form most naturally produced by a caller who doesn't know HA expects
-// a dict. Returns ok=false for anything else, so the caller can forward the
-// raw value and let Home Assistant produce its own validation error rather
-// than this fabricating a dict from unrecognised input.
+// shape (unrecognised keys dropped, but an hours/minutes/seconds key
+// present with anything other than a number is ok=false - not silently
+// dropped, since that would produce a syntactically valid but wrong
+// duration HA has no way to detect); a "H:MM:SS"/"MM:SS"/"SS" string; or a
+// bare number interpreted as seconds - the form most naturally produced by
+// a caller who doesn't know HA expects a dict. Returns ok=false for
+// anything else, so the caller can forward the raw value and let Home
+// Assistant produce its own validation error rather than this fabricating
+// a dict from unrecognised input.
 func toDurationDict(v any) (map[string]int, bool) {
 	switch val := v.(type) {
 	case map[string]any:
@@ -1039,6 +1042,15 @@ func toDurationDict(v any) (map[string]int, bool) {
 				out[key] = int(n)
 			case int:
 				out[key] = n
+			default:
+				// A recognised key with a value of the wrong type (e.g. a
+				// numeric string) must fail loudly rather than being
+				// silently omitted - dropping it here would produce a
+				// syntactically valid but wrong duration (e.g.
+				// {"hours":"1","minutes":30} silently becoming a 30-second
+				// duration instead of 1h30m) that HA has no way to detect
+				// as wrong, since the resulting dict is well-formed.
+				return nil, false
 			}
 		}
 		return out, true

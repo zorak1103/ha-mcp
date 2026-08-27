@@ -66,6 +66,16 @@ func TestToDurationDict(t *testing.T) {
 		{name: "bool rejected", in: true, want: nil, wantOK: false},
 		{name: "array rejected", in: []any{1, 2}, want: nil, wantOK: false},
 		{name: "nil rejected", in: nil, want: nil, wantOK: false},
+		{
+			name: "dict with wrong-typed recognized key is rejected, not silently dropped",
+			in:   map[string]any{"hours": "1", "minutes": 30.0, "seconds": 0.0},
+			want: nil, wantOK: false,
+		},
+		{
+			name: "dict with only unrecognized keys yields an empty duration",
+			in:   map[string]any{"bogus": "x"},
+			want: map[string]int{}, wantOK: true,
+		},
 	}
 
 	for _, tt := range tests {
