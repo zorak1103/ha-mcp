@@ -15,7 +15,9 @@ func TestParseDurationString(t *testing.T) {
 	}{
 		{name: "HH:MM:SS", in: "00:01:30", want: map[string]int{"hours": 0, "minutes": 1, "seconds": 30}},
 		{name: "H:MM:SS multi-digit hours", in: "12:00:00", want: map[string]int{"hours": 12, "minutes": 0, "seconds": 0}},
-		{name: "MM:SS", in: "01:30", want: map[string]int{"hours": 0, "minutes": 1, "seconds": 30}},
+		// A 2-part string is H:MM, matching Home Assistant's own
+		// cv.time_period_str - NOT MM:SS. "01:30" is 1h30m, not 90s.
+		{name: "H:MM", in: "01:30", want: map[string]int{"hours": 1, "minutes": 30, "seconds": 0}},
 		{name: "SS only", in: "90", want: map[string]int{"hours": 0, "minutes": 0, "seconds": 90}},
 		{name: "empty string", in: "", want: nil},
 		{name: "too many parts", in: "1:2:3:4", want: nil},
@@ -72,9 +74,19 @@ func TestToDurationDict(t *testing.T) {
 			want: nil, wantOK: false,
 		},
 		{
-			name: "dict with only unrecognized keys yields an empty duration",
+			name: "dict with an unrecognized key is rejected, not silently dropped",
 			in:   map[string]any{"bogus": "x"},
-			want: map[string]int{}, wantOK: true,
+			want: nil, wantOK: false,
+		},
+		{
+			name: "dict with days and milliseconds",
+			in:   map[string]any{"days": 2.0, "hours": 1.0, "milliseconds": 500.0},
+			want: map[string]int{"days": 2, "hours": 1, "milliseconds": 500}, wantOK: true,
+		},
+		{
+			name: "map[string]int with an unrecognized key is rejected",
+			in:   map[string]int{"hours": 1, "bogus": 2},
+			want: nil, wantOK: false,
 		},
 	}
 

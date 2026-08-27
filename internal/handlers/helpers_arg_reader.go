@@ -43,10 +43,37 @@ func (r *argReader) fail(key, want string, got any) {
 	r.errs = append(r.errs, argTypeError(key, want, got))
 }
 
+// failElem is fail for one element of an array-typed field, so a bad
+// element in a large array is reported by its index and its own value -
+// not by dumping the entire surrounding array into the error message.
+func (r *argReader) failElem(key string, index int, want string, got any) {
+	r.errs = append(r.errs, argTypeError(fmt.Sprintf("%s[%d]", key, index), want, got))
+}
+
 // argTypeError is the single message constructor for every reader failure,
-// so wording stays consistent across all ~170 call sites.
+// so wording stays consistent across all ~170 call sites. The value is
+// rendered through truncateArgValue so one oversized or malicious field
+// (a large array, a long pasted string/token) can't blow up the size of the
+// error returned to the MCP client, and callers echoing a slice/map failure
+// don't leak the entire container's contents into the response and logs.
 func argTypeError(key, want string, got any) error {
-	return fmt.Errorf("invalid value for %q: expected %s, got %T (%v)", key, want, got, got)
+	return fmt.Errorf("invalid value for %q: expected %s, got %T (%s)", key, want, got, truncateArgValue(got))
+}
+
+// maxErrorValueLen bounds how much of a rejected value's rendered form is
+// echoed back in an error message.
+const maxErrorValueLen = 80
+
+// truncateArgValue renders v for inclusion in an error message, cut to
+// maxErrorValueLen runes so an oversized container (e.g. a 1000-element
+// array with one bad element) doesn't dominate the response.
+func truncateArgValue(v any) string {
+	s := fmt.Sprintf("%v", v)
+	r := []rune(s)
+	if len(r) <= maxErrorValueLen {
+		return s
+	}
+	return string(r[:maxErrorValueLen]) + "…"
 }
 
 func isSkippable(v any) bool {
@@ -58,12 +85,12 @@ func isSkippable(v any) bool {
 }
 
 // maxArrayElements bounds every array-typed field the argReader accepts.
-// strSlice/anySlice pre-allocate their output slice sized directly from the
-// caller-supplied array's length (make([]string, 0, len(arr))) - without a
-// cap, a single manage_helper call with an absurdly large array (entity_ids,
-// tariffs, options, a schedule day's time blocks, ...) forces a
-// correspondingly large allocation before any per-element validation runs.
-// No real helper field plausibly needs more than a few hundred elements.
+// By the time args reaches this reader, the JSON decoder has already
+// materialised the full []any in memory - this cap does not prevent that
+// allocation. What it bounds is everything downstream of it: the output
+// slice this package allocates from the input's length, and the size of
+// the config payload eventually sent to Home Assistant. No real helper
+// field plausibly needs more than a few hundred elements.
 const maxArrayElements = 1000
 
 // checkArrayLen records a failure and returns false when arr exceeds
@@ -275,7 +302,7 @@ func (r *argReader) strSlice(key string) {
 		return
 	}
 	out := make([]string, 0, len(arr))
-	for _, elem := range arr {
+	for i, elem := range arr {
 		switch e := elem.(type) {
 		case string:
 			out = append(out, e)
@@ -284,7 +311,7 @@ func (r *argReader) strSlice(key string) {
 		case int:
 			out = append(out, strconv.Itoa(e))
 		default:
-			r.fail(key, "an array of strings", v)
+			r.failElem(key, i, "a string", elem)
 			return
 		}
 	}

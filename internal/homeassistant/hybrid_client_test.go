@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -423,76 +425,77 @@ func TestHybridClientCloser_WaitForConnection(t *testing.T) {
 
 // mockWSOperations implements WSOperations for testing.
 type mockWSOperations struct {
-	getStatesFunc               func(ctx context.Context) ([]Entity, error)
-	getStateFunc                func(ctx context.Context, entityID string) (*Entity, error)
-	setStateFunc                func(ctx context.Context, entityID string, state StateUpdate) (*Entity, error)
-	getHistoryFunc              func(ctx context.Context, entityID string, start, end time.Time) ([][]HistoryEntry, error)
-	callServiceFunc             func(ctx context.Context, domain, service string, data map[string]any) ([]Entity, error)
-	callServiceWithResponseFunc func(ctx context.Context, domain, service string, data map[string]any) (map[string]any, error)
-	listAutomationsFunc         func(ctx context.Context) ([]Automation, error)
-	getAutomationFunc           func(ctx context.Context, automationID string) (*Automation, error)
-	createAutomationFunc        func(ctx context.Context, config AutomationConfig) error
-	updateAutomationFunc        func(ctx context.Context, automationID string, config AutomationConfig) error
-	toggleAutomationFunc        func(ctx context.Context, entityID string, enabled bool) error
-	listHelpersFunc             func(ctx context.Context) ([]Entity, error)
-	createHelperFunc            func(ctx context.Context, config HelperConfig) error
-	updateHelperFunc            func(ctx context.Context, helperID string, config HelperConfig) error
-	deleteHelperFunc            func(ctx context.Context, helperID string) error
-	setHelperValueFunc          func(ctx context.Context, entityID string, value any) error
-	listScriptsFunc             func(ctx context.Context) ([]Entity, error)
-	getScriptFunc               func(ctx context.Context, scriptID string) (*Script, error)
-	createScriptFunc            func(ctx context.Context, scriptID string, config ScriptConfig) error
-	updateScriptFunc            func(ctx context.Context, scriptID string, config ScriptConfig) error
-	listScenesFunc              func(ctx context.Context) ([]Entity, error)
-	createSceneFunc             func(ctx context.Context, sceneID string, config SceneConfig) error
-	updateSceneFunc             func(ctx context.Context, sceneID string, config SceneConfig) error
-	getEntityRegistryFunc       func(ctx context.Context) ([]EntityRegistryEntry, error)
-	getEntityRegistryEntryFunc  func(ctx context.Context, entityID string) (*EntityRegistryEntry, error)
-	getDeviceRegistryFunc       func(ctx context.Context) ([]DeviceRegistryEntry, error)
-	getAreaRegistryFunc         func(ctx context.Context) ([]AreaRegistryEntry, error)
-	createAreaFunc              func(ctx context.Context, config AreaConfig) (*AreaRegistryEntry, error)
-	updateAreaFunc              func(ctx context.Context, areaID string, config AreaConfig) (*AreaRegistryEntry, error)
-	deleteAreaFunc              func(ctx context.Context, areaID string) error
-	getLabelRegistryFunc        func(ctx context.Context) ([]LabelRegistryEntry, error)
-	createLabelFunc             func(ctx context.Context, config LabelConfig) (*LabelRegistryEntry, error)
-	updateLabelFunc             func(ctx context.Context, labelID string, config LabelConfig) (*LabelRegistryEntry, error)
-	deleteLabelFunc             func(ctx context.Context, labelID string) error
-	getFloorRegistryFunc        func(ctx context.Context) ([]FloorRegistryEntry, error)
-	createFloorFunc             func(ctx context.Context, config FloorConfig) (*FloorRegistryEntry, error)
-	updateFloorFunc             func(ctx context.Context, floorID string, config FloorConfig) (*FloorRegistryEntry, error)
-	deleteFloorFunc             func(ctx context.Context, floorID string) error
-	getZonesFunc                func(ctx context.Context) ([]ZoneRegistryEntry, error)
-	createZoneFunc              func(ctx context.Context, config ZoneConfig) (*ZoneRegistryEntry, error)
-	updateZoneFunc              func(ctx context.Context, zoneID string, config ZoneConfig) (*ZoneRegistryEntry, error)
-	deleteZoneFunc              func(ctx context.Context, zoneID string) error
-	getPersonsFunc              func(ctx context.Context) ([]PersonRegistryEntry, error)
-	createPersonFunc            func(ctx context.Context, config PersonConfig) (*PersonRegistryEntry, error)
-	updatePersonFunc            func(ctx context.Context, personID string, config PersonConfig) (*PersonRegistryEntry, error)
-	deletePersonFunc            func(ctx context.Context, personID string) error
-	getTagsFunc                 func(ctx context.Context) ([]TagRegistryEntry, error)
-	createTagFunc               func(ctx context.Context, config TagConfig) (*TagRegistryEntry, error)
-	updateTagFunc               func(ctx context.Context, tagID string, config TagConfig) (*TagRegistryEntry, error)
-	deleteTagFunc               func(ctx context.Context, tagID string) error
-	signPathFunc                func(ctx context.Context, path string, expires int) (string, error)
-	getCameraStreamFunc         func(ctx context.Context, entityID string) (*StreamInfo, error)
-	browseMediaFunc             func(ctx context.Context, mediaContentID string) (*MediaBrowseResult, error)
-	getLovelaceConfigFunc       func(ctx context.Context, urlPath string) (map[string]any, error)
-	saveLovelaceConfigFunc      func(ctx context.Context, urlPath string, config map[string]any) error
-	listDashboardsFunc          func(ctx context.Context) ([]DashboardEntry, error)
-	createDashboardFunc         func(ctx context.Context, config DashboardConfig) (*DashboardEntry, error)
-	updateDashboardFunc         func(ctx context.Context, dashboardID string, config DashboardConfig) (*DashboardEntry, error)
-	deleteDashboardFunc         func(ctx context.Context, dashboardID string) error
-	getStatisticsFunc           func(ctx context.Context, statIDs []string, period string) ([]StatisticsResult, error)
-	getTriggersForTargetFunc    func(ctx context.Context, target Target, expandGroup *bool) ([]string, error)
-	getConditionsForTargetFunc  func(ctx context.Context, target Target, expandGroup *bool) ([]string, error)
-	getServicesForTargetFunc    func(ctx context.Context, target Target, expandGroup *bool) ([]string, error)
-	extractFromTargetFunc       func(ctx context.Context, target Target, expandGroup *bool) (*ExtractFromTargetResult, error)
-	getHelperConfigFunc         func(ctx context.Context, platform, entityID string) (map[string]any, error)
-	getConfigEntriesFunc        func(ctx context.Context, domain string) ([]ConfigEntryFull, error)
-	getConfigEntryFunc          func(ctx context.Context, entryID string) (*ConfigEntryFull, error)
-	sendHACSCommandFunc         func(ctx context.Context, command string, data map[string]any) (any, error)
-	getSystemLogFunc            func(ctx context.Context) ([]SystemLogEntry, error)
-	clearSystemLogFunc          func(ctx context.Context) error
+	getStatesFunc                 func(ctx context.Context) ([]Entity, error)
+	getStateFunc                  func(ctx context.Context, entityID string) (*Entity, error)
+	setStateFunc                  func(ctx context.Context, entityID string, state StateUpdate) (*Entity, error)
+	getHistoryFunc                func(ctx context.Context, entityID string, start, end time.Time) ([][]HistoryEntry, error)
+	callServiceFunc               func(ctx context.Context, domain, service string, data map[string]any) ([]Entity, error)
+	callServiceWithResponseFunc   func(ctx context.Context, domain, service string, data map[string]any) (map[string]any, error)
+	listAutomationsFunc           func(ctx context.Context) ([]Automation, error)
+	getAutomationFunc             func(ctx context.Context, automationID string) (*Automation, error)
+	createAutomationFunc          func(ctx context.Context, config AutomationConfig) error
+	updateAutomationFunc          func(ctx context.Context, automationID string, config AutomationConfig) error
+	toggleAutomationFunc          func(ctx context.Context, entityID string, enabled bool) error
+	listHelpersFunc               func(ctx context.Context) ([]Entity, error)
+	createHelperFunc              func(ctx context.Context, config HelperConfig) error
+	updateHelperFunc              func(ctx context.Context, helperID string, config HelperConfig) error
+	deleteHelperFunc              func(ctx context.Context, helperID string) error
+	setHelperValueFunc            func(ctx context.Context, entityID string, value any) error
+	listScriptsFunc               func(ctx context.Context) ([]Entity, error)
+	getScriptFunc                 func(ctx context.Context, scriptID string) (*Script, error)
+	createScriptFunc              func(ctx context.Context, scriptID string, config ScriptConfig) error
+	updateScriptFunc              func(ctx context.Context, scriptID string, config ScriptConfig) error
+	listScenesFunc                func(ctx context.Context) ([]Entity, error)
+	createSceneFunc               func(ctx context.Context, sceneID string, config SceneConfig) error
+	updateSceneFunc               func(ctx context.Context, sceneID string, config SceneConfig) error
+	getEntityRegistryFunc         func(ctx context.Context) ([]EntityRegistryEntry, error)
+	getEntityRegistryEntryFunc    func(ctx context.Context, entityID string) (*EntityRegistryEntry, error)
+	updateEntityRegistryEntryFunc func(ctx context.Context, entityID string, config EntityRegistryUpdateConfig) (*EntityRegistryEntry, error)
+	getDeviceRegistryFunc         func(ctx context.Context) ([]DeviceRegistryEntry, error)
+	getAreaRegistryFunc           func(ctx context.Context) ([]AreaRegistryEntry, error)
+	createAreaFunc                func(ctx context.Context, config AreaConfig) (*AreaRegistryEntry, error)
+	updateAreaFunc                func(ctx context.Context, areaID string, config AreaConfig) (*AreaRegistryEntry, error)
+	deleteAreaFunc                func(ctx context.Context, areaID string) error
+	getLabelRegistryFunc          func(ctx context.Context) ([]LabelRegistryEntry, error)
+	createLabelFunc               func(ctx context.Context, config LabelConfig) (*LabelRegistryEntry, error)
+	updateLabelFunc               func(ctx context.Context, labelID string, config LabelConfig) (*LabelRegistryEntry, error)
+	deleteLabelFunc               func(ctx context.Context, labelID string) error
+	getFloorRegistryFunc          func(ctx context.Context) ([]FloorRegistryEntry, error)
+	createFloorFunc               func(ctx context.Context, config FloorConfig) (*FloorRegistryEntry, error)
+	updateFloorFunc               func(ctx context.Context, floorID string, config FloorConfig) (*FloorRegistryEntry, error)
+	deleteFloorFunc               func(ctx context.Context, floorID string) error
+	getZonesFunc                  func(ctx context.Context) ([]ZoneRegistryEntry, error)
+	createZoneFunc                func(ctx context.Context, config ZoneConfig) (*ZoneRegistryEntry, error)
+	updateZoneFunc                func(ctx context.Context, zoneID string, config ZoneConfig) (*ZoneRegistryEntry, error)
+	deleteZoneFunc                func(ctx context.Context, zoneID string) error
+	getPersonsFunc                func(ctx context.Context) ([]PersonRegistryEntry, error)
+	createPersonFunc              func(ctx context.Context, config PersonConfig) (*PersonRegistryEntry, error)
+	updatePersonFunc              func(ctx context.Context, personID string, config PersonConfig) (*PersonRegistryEntry, error)
+	deletePersonFunc              func(ctx context.Context, personID string) error
+	getTagsFunc                   func(ctx context.Context) ([]TagRegistryEntry, error)
+	createTagFunc                 func(ctx context.Context, config TagConfig) (*TagRegistryEntry, error)
+	updateTagFunc                 func(ctx context.Context, tagID string, config TagConfig) (*TagRegistryEntry, error)
+	deleteTagFunc                 func(ctx context.Context, tagID string) error
+	signPathFunc                  func(ctx context.Context, path string, expires int) (string, error)
+	getCameraStreamFunc           func(ctx context.Context, entityID string) (*StreamInfo, error)
+	browseMediaFunc               func(ctx context.Context, mediaContentID string) (*MediaBrowseResult, error)
+	getLovelaceConfigFunc         func(ctx context.Context, urlPath string) (map[string]any, error)
+	saveLovelaceConfigFunc        func(ctx context.Context, urlPath string, config map[string]any) error
+	listDashboardsFunc            func(ctx context.Context) ([]DashboardEntry, error)
+	createDashboardFunc           func(ctx context.Context, config DashboardConfig) (*DashboardEntry, error)
+	updateDashboardFunc           func(ctx context.Context, dashboardID string, config DashboardConfig) (*DashboardEntry, error)
+	deleteDashboardFunc           func(ctx context.Context, dashboardID string) error
+	getStatisticsFunc             func(ctx context.Context, statIDs []string, period string) ([]StatisticsResult, error)
+	getTriggersForTargetFunc      func(ctx context.Context, target Target, expandGroup *bool) ([]string, error)
+	getConditionsForTargetFunc    func(ctx context.Context, target Target, expandGroup *bool) ([]string, error)
+	getServicesForTargetFunc      func(ctx context.Context, target Target, expandGroup *bool) ([]string, error)
+	extractFromTargetFunc         func(ctx context.Context, target Target, expandGroup *bool) (*ExtractFromTargetResult, error)
+	getHelperConfigFunc           func(ctx context.Context, platform, entityID string) (map[string]any, error)
+	getConfigEntriesFunc          func(ctx context.Context, domain string) ([]ConfigEntryFull, error)
+	getConfigEntryFunc            func(ctx context.Context, entryID string) (*ConfigEntryFull, error)
+	sendHACSCommandFunc           func(ctx context.Context, command string, data map[string]any) (any, error)
+	getSystemLogFunc              func(ctx context.Context) ([]SystemLogEntry, error)
+	clearSystemLogFunc            func(ctx context.Context) error
 }
 
 func (m *mockWSOperations) GetStates(ctx context.Context) ([]Entity, error) {
@@ -849,7 +852,10 @@ func (m *mockWSOperations) RemoveEntityRegistryEntry(_ context.Context, _ string
 	return nil
 }
 
-func (m *mockWSOperations) UpdateEntityRegistryEntry(_ context.Context, _ string, _ EntityRegistryUpdateConfig) (*EntityRegistryEntry, error) {
+func (m *mockWSOperations) UpdateEntityRegistryEntry(ctx context.Context, entityID string, config EntityRegistryUpdateConfig) (*EntityRegistryEntry, error) {
+	if m.updateEntityRegistryEntryFunc != nil {
+		return m.updateEntityRegistryEntryFunc(ctx, entityID, config)
+	}
 	return nil, nil
 }
 
@@ -2489,6 +2495,161 @@ func TestExtractOptionsFromSchema_SkipsNilSuggestedValue(t *testing.T) {
 	}
 	if options["hysteresis"] != 0.0 {
 		t.Errorf("hysteresis (a real zero value, not nil) must still be included, got %v", options["hysteresis"])
+	}
+}
+
+// TestUpdateHelperViaOptionsFlow_NameAppliedViaRegistry is a regression test
+// for a bug where "name" was forwarded into the Options Flow submission like
+// any other config field. Most config-entry helper types (min_max, filter,
+// ...) declare no "name" field in their Options Flow schema at all, so the
+// display name must be applied via the Entity Registry - the same place
+// "icon" is already applied - not submitted as part of the flow.
+func TestUpdateHelperViaOptionsFlow_NameAppliedViaRegistry(t *testing.T) {
+	t.Parallel()
+
+	var registryUpdateConfig EntityRegistryUpdateConfig
+	registryUpdateCalled := false
+
+	mockWS := &mockWSOperations{
+		getStateFunc: func(context.Context, string) (*Entity, error) {
+			return &Entity{EntityID: "sensor.my_min_max"}, nil
+		},
+		updateEntityRegistryEntryFunc: func(_ context.Context, entityID string, config EntityRegistryUpdateConfig) (*EntityRegistryEntry, error) {
+			registryUpdateCalled = true
+			registryUpdateConfig = config
+			if entityID != "sensor.my_min_max" {
+				t.Errorf("got entityID %q, want sensor.my_min_max", entityID)
+			}
+			return nil, nil
+		},
+	}
+
+	var submittedData map[string]any
+	mockREST := &mockRESTOperations{
+		initConfigEntryOptionsFlowFunc: func(context.Context, string) (*OptionsFlowResult, error) {
+			return &OptionsFlowResult{
+				FlowID: "flow123",
+				Type:   "form",
+				DataSchema: []OptionsFlowField{
+					{Name: "round_digits", Description: map[string]any{"suggested_value": 2.0}},
+				},
+			}, nil
+		},
+		submitConfigEntryOptionsFlowStepFunc: func(_ context.Context, _ string, data map[string]any) (*OptionsFlowResult, error) {
+			submittedData = data
+			return &OptionsFlowResult{Type: "create_entry"}, nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	err := client.updateHelperViaOptionsFlow(context.Background(), "sensor.my_min_max", "config123", HelperConfig{
+		Config: map[string]any{"name": "New Name", "round_digits": 3.0},
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !registryUpdateCalled {
+		t.Fatal("UpdateEntityRegistryEntry was not called for the name change")
+	}
+	if registryUpdateConfig.Name == nil || *registryUpdateConfig.Name != "New Name" {
+		t.Errorf("registry update Name = %v, want \"New Name\"", registryUpdateConfig.Name)
+	}
+	if _, present := submittedData["name"]; present {
+		t.Errorf("submitted options flow data should not include \"name\", got: %v", submittedData)
+	}
+}
+
+// TestUpdateHelperViaOptionsFlow_UnsupportedFieldFailsLoudly is a regression
+// test for a bug where a field this helper's Options Flow schema doesn't
+// declare was silently dropped and the update still reported success -
+// discarding a change the caller explicitly asked for without any
+// indication in the response.
+func TestUpdateHelperViaOptionsFlow_UnsupportedFieldFailsLoudly(t *testing.T) {
+	t.Parallel()
+
+	aborted := false
+	mockWS := &mockWSOperations{}
+	mockREST := &mockRESTOperations{
+		initConfigEntryOptionsFlowFunc: func(context.Context, string) (*OptionsFlowResult, error) {
+			return &OptionsFlowResult{
+				FlowID: "flow123",
+				Type:   "form",
+				DataSchema: []OptionsFlowField{
+					{Name: "round_digits", Description: map[string]any{"suggested_value": 2.0}},
+				},
+			}, nil
+		},
+		submitConfigEntryOptionsFlowStepFunc: func(context.Context, string, map[string]any) (*OptionsFlowResult, error) {
+			t.Fatal("submit should not be reached when a field is unsupported")
+			return nil, nil
+		},
+		abortConfigEntryOptionsFlowFunc: func(context.Context, string) error {
+			aborted = true
+			return nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	err := client.updateHelperViaOptionsFlow(context.Background(), "sensor.my_min_max", "config123", HelperConfig{
+		Config: map[string]any{"min_max_type": "max"},
+	})
+
+	if err == nil {
+		t.Fatal("expected an error for an unsupported field, got nil")
+	}
+	if !strings.Contains(err.Error(), "min_max_type") {
+		t.Errorf("error should name the unsupported field, got: %v", err)
+	}
+	if !aborted {
+		t.Error("options flow should be aborted when a field is unsupported")
+	}
+}
+
+// TestUpdateHelperViaOptionsFlow_ConvertsUnsetDurationFieldOnFirstSet is a
+// regression test: a duration field with no current value (e.g.
+// template_binary_sensor's delay_on/delay_off, unset by default) never
+// appears in currentValues, since extractOptionsFromSchema omits fields
+// whose suggested_value is nil. The dict-shape heuristic alone can't detect
+// such a field is duration-shaped, so setting it for the first time via
+// update must still convert it via isDurationField's name list.
+func TestUpdateHelperViaOptionsFlow_ConvertsUnsetDurationFieldOnFirstSet(t *testing.T) {
+	t.Parallel()
+
+	mockWS := &mockWSOperations{}
+	var submittedData map[string]any
+	mockREST := &mockRESTOperations{
+		initConfigEntryOptionsFlowFunc: func(context.Context, string) (*OptionsFlowResult, error) {
+			return &OptionsFlowResult{
+				FlowID: "flow123",
+				Type:   "form",
+				DataSchema: []OptionsFlowField{
+					{Name: "state", Description: map[string]any{"suggested_value": "{{ true }}"}},
+					{Name: "delay_on", Description: map[string]any{"suggested_value": nil}},
+				},
+			}, nil
+		},
+		submitConfigEntryOptionsFlowStepFunc: func(_ context.Context, _ string, data map[string]any) (*OptionsFlowResult, error) {
+			submittedData = data
+			return &OptionsFlowResult{Type: "create_entry"}, nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	err := client.updateHelperViaOptionsFlow(context.Background(), "binary_sensor.my_template", "config123", HelperConfig{
+		Config: map[string]any{"delay_on": "00:00:05"},
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := map[string]int{"hours": 0, "minutes": 0, "seconds": 5}
+	got, ok := submittedData["delay_on"].(map[string]int)
+	if !ok {
+		t.Fatalf("submitted delay_on = %#v (%T), want a duration dict", submittedData["delay_on"], submittedData["delay_on"])
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("submitted delay_on = %v, want %v", got, want)
 	}
 }
 
