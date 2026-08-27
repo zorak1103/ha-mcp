@@ -132,6 +132,18 @@ func (s *GenericThermostatIntegrationTestSuite) TestGenericThermostatLifecycle()
 	s.Require().NoError(err, "Generic thermostat did not appear")
 	s.NotEmpty(entity.State, "Thermostat should have a state")
 
+	// Test update - regression coverage for issue #194: generic_thermostat's
+	// OPTIONS_FLOW advances through an "init" -> "presets" sequence just like
+	// its CONFIG_FLOW, so every update used to fail with "unexpected options
+	// flow result type: form" before updateHelperViaOptionsFlow learned to
+	// complete the trailing presets step.
+	err = s.Client().UpdateHelper(s.Context(), thermoEntityID, homeassistant.HelperConfig{
+		Config: map[string]any{
+			"cold_tolerance": 0.8,
+		},
+	})
+	s.Require().NoError(err, "Failed to update generic_thermostat")
+
 	// Test delete
 	err = s.Client().DeleteHelper(s.Context(), thermoEntityID)
 	s.Require().NoError(err, "Failed to delete generic_thermostat")
