@@ -57,6 +57,28 @@ func isSkippable(v any) bool {
 	return isString && s == ""
 }
 
+// maxArrayElements bounds every array-typed field the argReader accepts.
+// strSlice/anySlice pre-allocate their output slice sized directly from the
+// caller-supplied array's length (make([]string, 0, len(arr))) - without a
+// cap, a single manage_helper call with an absurdly large array (entity_ids,
+// tariffs, options, a schedule day's time blocks, ...) forces a
+// correspondingly large allocation before any per-element validation runs.
+// No real helper field plausibly needs more than a few hundred elements.
+const maxArrayElements = 1000
+
+// checkArrayLen records a failure and returns false when arr exceeds
+// maxArrayElements, so callers can bail out before allocating from its
+// length.
+func (r *argReader) checkArrayLen(key string, arr []any) bool {
+	if len(arr) > maxArrayElements {
+		r.errs = append(r.errs, fmt.Errorf(
+			"invalid value for %q: array has %d elements, exceeds maximum of %d", key, len(arr), maxArrayElements,
+		))
+		return false
+	}
+	return true
+}
+
 // str reads args[key] into config[key] as a string. A number is coerced to
 // its decimal form (an MCP client may send "3000" or 3000 for the same
 // field); a bool, array, or map is a hard error.
@@ -220,6 +242,9 @@ func (r *argReader) strSlice(key string) {
 		r.fail(key, "an array of strings", v)
 		return
 	}
+	if !r.checkArrayLen(key, arr) {
+		return
+	}
 	out := make([]string, 0, len(arr))
 	for _, elem := range arr {
 		switch e := elem.(type) {
@@ -247,6 +272,9 @@ func (r *argReader) anySlice(key string) {
 	arr, ok := v.([]any)
 	if !ok {
 		r.fail(key, "an array", v)
+		return
+	}
+	if !r.checkArrayLen(key, arr) {
 		return
 	}
 	r.config[key] = arr

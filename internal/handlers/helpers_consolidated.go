@@ -2591,10 +2591,6 @@ func formatHelperType(helperType string) string {
 	}
 }
 
-// addRenamedOptionalString copies args[argKey] to config[configKey] when
-// present and non-empty. Used for API field renames (heater_entity_id ->
-// heater, humidifier_entity_id -> humidifier, ...) where addOptionalString's
-// same-key convention doesn't fit.
 func convertToStringSlice(arr []any) []string {
 	result := make([]string, 0, len(arr))
 	for _, v := range arr {

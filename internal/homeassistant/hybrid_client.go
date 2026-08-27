@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -1050,21 +1051,32 @@ func toDurationDict(v any) (map[string]int, bool) {
 		}
 		return nil, false
 	case float64:
-		return secondsToDurationDict(val), true
+		return secondsToDurationDict(val)
 	case int:
-		return secondsToDurationDict(float64(val)), true
+		return secondsToDurationDict(float64(val))
 	default:
 		return nil, false
 	}
 }
 
-func secondsToDurationDict(totalSeconds float64) map[string]int {
+// secondsToDurationDict converts a seconds count into Home Assistant's
+// DurationSelector dict form. Returns ok=false for anything that isn't a
+// sane, non-negative, in-range duration (NaN/Inf, negative, or too large to
+// convert to int without silently overflowing - int(1e20) wraps to a
+// garbage negative value rather than erroring) so the caller forwards the
+// raw value untouched and lets Home Assistant produce its own validation
+// error, per toDurationDict's doc comment, instead of this function
+// fabricating a nonsensical duration.
+func secondsToDurationDict(totalSeconds float64) (map[string]int, bool) {
+	if math.IsNaN(totalSeconds) || math.IsInf(totalSeconds, 0) || totalSeconds < 0 || totalSeconds > math.MaxInt32 {
+		return nil, false
+	}
 	total := int(totalSeconds)
 	return map[string]int{
 		"hours":   total / 3600,
 		"minutes": (total % 3600) / 60,
 		"seconds": total % 60,
-	}
+	}, true
 }
 
 // =============================================================================
