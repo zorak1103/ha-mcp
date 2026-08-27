@@ -402,6 +402,8 @@ set -a && source .env.integration && set +a && go test -tags=integration -v ./in
 
 **TDD Required**: Tests MUST be written BEFORE writing or modifying code. Run `golangci-lint run --timeout=5m ./...` after implementation.
 
+**Pre-existing Failures Encountered Mid-Task**: If a test, lint run, or build fails for a reason unrelated to the current change (confirm via `git stash`/checkout against `main`, or by checking it's already documented above), do not silently work around it or leave it undocumented. Ask the user whether it should be filed as a new GitHub issue before ending the task.
+
 **File Editing Tool Priority**: Always use the dedicated file tools (Write, Edit) to create or modify files. Never use Bash with Python or shell commands to manipulate file content — the Write tool rewrites a complete file cleanly, the Edit tool makes surgical replacements. Python byte-level manipulation is error-prone, harder to read, and the wrong tool for the job.
 
 ### Extending Consolidated Tools (Modes/Actions)
