@@ -466,43 +466,7 @@ func (c *HybridClient) updateHelperViaOptionsFlow(ctx context.Context, entityID,
 		return fmt.Errorf("helper %q does not support updating field(s): %s", entityID, strings.Join(dropped, ", "))
 	}
 
-	// Normalise duration-shaped overrides. Home Assistant renders a
-	// DurationSelector field's current value as a
-	// {"hours":.,"minutes":.,"seconds":.} dict when the field already has a
-	// value - that's the primary way a duration field is detected here,
-	// generically, without a hardcoded list of field names - and rejects
-	// anything else on submission ("expected dict"). A duration field with
-	// no current value (e.g. template_binary_sensor's delay_on/delay_off,
-	// unset by default) never appears in currentValues at all, so it also
-	// falls back to isDurationField(key) - the same name list
-	// transformFieldValue uses on create - to catch a first-time override
-	// the dict-shape heuristic alone would miss. This is what
-	// buildFilterStepConfig already does for filter's window_size on
-	// create; the options-flow update path had no equivalent before.
-	//
-	// window_size is deliberately excluded from isDurationField (it's a
-	// duration only for two of filter's seven subtypes, and that list is
-	// keyed on field name alone), so the fallback above can't catch a
-	// first-time window_size override either. result.StepID - the filter's
-	// actual subtype, immutable after creation (CLAUDE.md's manage_helper
-	// update field docs) - is what buildFilterStepConfig already keys off
-	// on create via filterDurationWindowSteps; reused here as the
-	// update-path equivalent of the isDurationField fallback.
-	for key, userVal := range userConfig {
-		if _, alreadyDict := userVal.(map[string]any); alreadyDict {
-			continue
-		}
-		current, hasCurrent := currentValues[key]
-		_, currentIsDict := current.(map[string]any)
-		shouldConvert := currentIsDict || (!hasCurrent && isDurationField(key)) ||
-			(key == "window_size" && filterDurationWindowSteps[result.StepID])
-		if !shouldConvert {
-			continue
-		}
-		if d, ok := toDurationDict(userVal); ok {
-			userConfig[key] = d
-		}
-	}
+	normalizeOptionsFlowDurations(userConfig, currentValues, result.StepID)
 
 	// Merge user-provided values with current values
 	mergedConfig := mergeOptionsFlowConfig(currentValues, userConfig)
@@ -522,20 +486,72 @@ func (c *HybridClient) updateHelperViaOptionsFlow(ctx context.Context, entityID,
 
 	// Update name/icon via Entity Registry if provided - neither is part of
 	// any Options Flow schema.
-	if (hasIcon && icon != "") || (hasName && name != "") {
-		WaitForEntityAppear(ctx, c.ws.GetState, entityID, DefaultEntityPollerConfig())
-		updateCfg := EntityRegistryUpdateConfig{}
-		if hasIcon && icon != "" {
-			updateCfg.Icon = &icon
+	return c.applyNameIconViaRegistry(ctx, entityID, icon, hasIcon, name, hasName)
+}
+
+// normalizeOptionsFlowDurations converts each userConfig value that is
+// duration-shaped into Home Assistant's {"hours":.,"minutes":.,"seconds":.}
+// dict form in place. Split out of updateHelperViaOptionsFlow to keep that
+// function's cognitive complexity down.
+//
+// Home Assistant renders a DurationSelector field's current value as a
+// dict when the field already has a value - that's the primary way a
+// duration field is detected here, generically, without a hardcoded list
+// of field names - and rejects anything else on submission ("expected
+// dict"). A duration field with no current value (e.g.
+// template_binary_sensor's delay_on/delay_off, unset by default) never
+// appears in currentValues at all, so it also falls back to
+// isDurationField(key) - the same name list transformFieldValue uses on
+// create - to catch a first-time override the dict-shape heuristic alone
+// would miss. This is what buildFilterStepConfig already does for filter's
+// window_size on create; the options-flow update path had no equivalent
+// before.
+//
+// window_size is deliberately excluded from isDurationField (it's a
+// duration only for two of filter's seven subtypes, and that list is keyed
+// on field name alone), so the fallback above can't catch a first-time
+// window_size override either. stepID - the filter's actual subtype,
+// immutable after creation (CLAUDE.md's manage_helper update field docs) -
+// is what buildFilterStepConfig already keys off on create via
+// filterDurationWindowSteps; reused here as the update-path equivalent of
+// the isDurationField fallback.
+func normalizeOptionsFlowDurations(userConfig, currentValues map[string]any, stepID string) {
+	for key, userVal := range userConfig {
+		if _, alreadyDict := userVal.(map[string]any); alreadyDict {
+			continue
 		}
-		if hasName && name != "" {
-			updateCfg.Name = &name
+		current, hasCurrent := currentValues[key]
+		_, currentIsDict := current.(map[string]any)
+		shouldConvert := currentIsDict || (!hasCurrent && isDurationField(key)) ||
+			(key == "window_size" && filterDurationWindowSteps[stepID])
+		if !shouldConvert {
+			continue
 		}
-		if _, err := c.ws.UpdateEntityRegistryEntry(ctx, entityID, updateCfg); err != nil {
-			return fmt.Errorf("helper updated, but failed to set name/icon: %w", err)
+		if d, ok := toDurationDict(userVal); ok {
+			userConfig[key] = d
 		}
 	}
+}
 
+// applyNameIconViaRegistry sets name/icon via the Entity Registry after a
+// successful Options Flow submission - neither is part of any Options Flow
+// schema. Split out of updateHelperViaOptionsFlow to keep that function's
+// cognitive complexity down.
+func (c *HybridClient) applyNameIconViaRegistry(ctx context.Context, entityID, icon string, hasIcon bool, name string, hasName bool) error {
+	if !((hasIcon && icon != "") || (hasName && name != "")) {
+		return nil
+	}
+	WaitForEntityAppear(ctx, c.ws.GetState, entityID, DefaultEntityPollerConfig())
+	updateCfg := EntityRegistryUpdateConfig{}
+	if hasIcon && icon != "" {
+		updateCfg.Icon = &icon
+	}
+	if hasName && name != "" {
+		updateCfg.Name = &name
+	}
+	if _, err := c.ws.UpdateEntityRegistryEntry(ctx, entityID, updateCfg); err != nil {
+		return fmt.Errorf("helper updated, but failed to set name/icon: %w", err)
+	}
 	return nil
 }
 
@@ -736,7 +752,7 @@ func (c *HybridClient) createHelperViaConfigFlow(ctx context.Context, config Hel
 		return fmt.Errorf("config entry flow exceeded max steps (last step_id: %s)", flowResult.StepID)
 	}
 
-	// An unrecognised terminal type (neither form, create_entry, nor abort)
+	// An unrecognized terminal type (neither form, create_entry, nor abort)
 	// still leaves the flow open on HA's side - abort it rather than leaking
 	// it, same as every other exit path above.
 	_ = c.rest.AbortConfigEntryFlow(ctx, flowResult.FlowID)
@@ -1109,14 +1125,14 @@ func parseDurationString(s string) map[string]int {
 // toDurationDict normalises a value into Home Assistant's DurationSelector
 // dict form. Accepted input, in priority order: a map already in that shape
 // (durationDictFromMap/durationDictFromIntMap - any key outside
-// days/hours/minutes/seconds/milliseconds, or a recognised key with a
+// days/hours/minutes/seconds/milliseconds, or a recognized key with a
 // non-numeric value, is ok=false, not silently dropped, since that would
 // produce a syntactically valid but wrong duration HA has no way to
 // detect); a "H:MM:SS"/"H:MM"/"SS" string; or a bare number interpreted as
 // seconds - the form most naturally produced by a caller who doesn't know
 // HA expects a dict. Returns ok=false for anything else, so the caller can
 // forward the raw value and let Home Assistant produce its own validation
-// error rather than this fabricating a dict from unrecognised input.
+// error rather than this fabricating a dict from unrecognized input.
 func toDurationDict(v any) (map[string]int, bool) {
 	switch val := v.(type) {
 	case map[string]any:
@@ -1153,10 +1169,10 @@ const maxDurationComponent = math.MaxInt32
 
 // durationDictFromMap converts a map[string]any into Home Assistant's
 // DurationSelector dict form. Every key in val must be one of durationKeys -
-// an unrecognised key (e.g. a typo, or a shape that isn't actually a
+// an unrecognized key (e.g. a typo, or a shape that isn't actually a
 // duration) fails loudly rather than being silently dropped, which would
 // otherwise turn {"days": 1} into an empty (zero-second) duration with no
-// indication anything was lost. A recognised key with a non-numeric value
+// indication anything was lost. A recognized key with a non-numeric value
 // fails the same way, for the same reason.
 func durationDictFromMap(val map[string]any) (map[string]int, bool) {
 	allowed := make(map[string]bool, len(durationKeys))
@@ -1192,7 +1208,7 @@ func durationDictFromMap(val map[string]any) (map[string]int, bool) {
 			}
 			out[key] = n
 		default:
-			// A recognised key with a value of the wrong type (e.g. a
+			// A recognized key with a value of the wrong type (e.g. a
 			// numeric string) must fail loudly rather than being
 			// silently omitted - dropping it here would produce a
 			// syntactically valid but wrong duration (e.g.
@@ -1207,7 +1223,7 @@ func durationDictFromMap(val map[string]any) (map[string]int, bool) {
 
 // durationDictFromIntMap validates a map[string]int the same way
 // durationDictFromMap validates a map[string]any, so both accepted map
-// shapes reject the same unrecognised keys instead of one silently
+// shapes reject the same unrecognized keys instead of one silently
 // forwarding them.
 func durationDictFromIntMap(val map[string]int) (map[string]int, bool) {
 	allowed := make(map[string]bool, len(durationKeys))

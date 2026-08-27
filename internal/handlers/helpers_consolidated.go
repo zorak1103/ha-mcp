@@ -1005,37 +1005,13 @@ func (h *ConsolidatedHelperHandlers) handleUpdate(ctx context.Context, client ho
 		// domain has metadata - it does NOT mean it's a WebSocket helper. See
 		// buildKnownTypeUpdateConfig for why "group" must not take the merge path.
 		config, err = buildKnownTypeUpdateConfig(ctx, client, entityID, helperType, meta, args)
-		if err != nil {
-			return errorResult(err.Error()), nil
-		}
 	} else {
-		// Unknown helper type (sensor/binary_sensor without metadata)
-		// These are Config Entry Flow helpers - build loose config
-		//
-		// minMaxPlatform is resolved only when the caller actually supplied
-		// min_max_type, to avoid a registry fetch on every other config-entry
-		// update - and a mismatch here is a hard error, not a degraded skip:
-		// see resolveConfigEntryPlatformForMinMaxType's doc comment for why.
-		minMaxPlatform := ""
-		if _, hasMinMaxType := args["min_max_type"]; hasMinMaxType {
-			resolvedPlatform, platformErr := resolveConfigEntryPlatformForMinMaxType(ctx, client, entityID)
-			if platformErr != nil {
-				return errorResult(platformErr.Error()), nil
-			}
-			if resolvedPlatform != platformMinMax {
-				return errorResult(fmt.Sprintf(
-					"min_max_type is only valid for min_max helpers; %s is a %s helper", entityID, resolvedPlatform,
-				)), nil
-			}
-			minMaxPlatform = resolvedPlatform
-		}
-		config, err = buildConfigEntryUpdateConfig(configEntryUpdateContext{
-			entityDomain:   entityDomain,
-			minMaxPlatform: minMaxPlatform,
-		}, args)
-		if err != nil {
-			return errorResult(err.Error()), nil
-		}
+		// Unknown helper type (sensor/binary_sensor without metadata) - a
+		// Config Entry Flow helper.
+		config, err = buildUnknownTypeUpdateConfig(ctx, client, entityID, entityDomain, args)
+	}
+	if err != nil {
+		return errorResult(err.Error()), nil
 	}
 
 	// Create UpdateHelper request
@@ -1055,6 +1031,38 @@ func (h *ConsolidatedHelperHandlers) handleUpdate(ctx context.Context, client ho
 	}
 
 	return successResult(fmt.Sprintf("Helper '%s' updated successfully", entityID)), nil
+}
+
+// buildUnknownTypeUpdateConfig builds the update config for a helper whose
+// entity domain has no helperTypes entry (sensor/binary_sensor/...) - these
+// are always Config Entry Flow helpers, built as loose config rather than
+// through a typed helperTypes-driven builder. Split out of handleUpdate to
+// keep that function under the funlen limit.
+//
+// minMaxPlatform is resolved only when the caller actually supplied
+// min_max_type, to avoid a registry fetch on every other config-entry
+// update - and a mismatch here is a hard error, not a degraded skip: see
+// resolveConfigEntryPlatformForMinMaxType's doc comment for why.
+func buildUnknownTypeUpdateConfig(
+	ctx context.Context, client homeassistant.Client, entityID, entityDomain string, args map[string]any,
+) (map[string]any, error) {
+	minMaxPlatform := ""
+	if _, hasMinMaxType := args["min_max_type"]; hasMinMaxType {
+		resolvedPlatform, err := resolveConfigEntryPlatformForMinMaxType(ctx, client, entityID)
+		if err != nil {
+			return nil, err
+		}
+		if resolvedPlatform != platformMinMax {
+			return nil, fmt.Errorf(
+				"min_max_type is only valid for min_max helpers; %s is a %s helper", entityID, resolvedPlatform,
+			)
+		}
+		minMaxPlatform = resolvedPlatform
+	}
+	return buildConfigEntryUpdateConfig(configEntryUpdateContext{
+		entityDomain:   entityDomain,
+		minMaxPlatform: minMaxPlatform,
+	}, args)
 }
 
 // buildKnownTypeUpdateConfig builds the update config for a helperType that
@@ -2542,45 +2550,14 @@ func wrapperRecipeFor(constraint sourceEntityConstraint, sourceEntityID string) 
 //nolint:gocyclo // Validation switch with many specific field types
 func validateSingleField(field, helperType string, args map[string]any) error {
 	switch field {
-	case "options":
-		opts, ok := args["options"].([]any)
-		if !ok {
-			return fmt.Errorf("options is required for %s and must be an array", helperType)
-		}
-		if len(opts) == 0 {
-			return fmt.Errorf("options must be a non-empty array for %s", helperType)
-		}
-	case "entities":
-		ents, ok := args["entities"].([]any)
-		if !ok {
-			return fmt.Errorf("entities is required for %s and must be an array", helperType)
-		}
-		if len(ents) == 0 {
-			return fmt.Errorf("entities must be a non-empty array for %s", helperType)
-		}
+	case "options", "entities", "entity_ids":
+		return validateNonEmptyArrayField(field, helperType, args)
 	case "state":
-		state, _ := args["state"].(string)
-		if state == "" {
-			return fmt.Errorf("state (Jinja2 template) is required for %s", helperType)
-		}
+		return validateNonEmptyStringField(field, "Jinja2 template", helperType, args)
 	case configKeyEntityID:
-		entityID, _ := args[configKeyEntityID].(string)
-		if entityID == "" {
-			return fmt.Errorf("entity_id (source entity) is required for %s", helperType)
-		}
+		return validateNonEmptyStringField(field, "source entity", helperType, args)
 	case "source":
-		source, _ := args["source"].(string)
-		if source == "" {
-			return fmt.Errorf("source (source sensor entity ID) is required for %s", helperType)
-		}
-	case "entity_ids":
-		entityIDs, ok := args["entity_ids"].([]any)
-		if !ok {
-			return fmt.Errorf("entity_ids is required for %s and must be an array", helperType)
-		}
-		if len(entityIDs) == 0 {
-			return fmt.Errorf("entity_ids must be a non-empty array for %s", helperType)
-		}
+		return validateNonEmptyStringField(field, "source sensor entity ID", helperType, args)
 	case "min", "max":
 		// Accept the same numeric-or-numeric-string values the config
 		// builders coerce via argReader.num, so a required min/max isn't
@@ -2598,6 +2575,33 @@ func validateSingleField(field, helperType string, args map[string]any) error {
 		if v, exists := args[field]; !exists || isSkippable(v) {
 			return fmt.Errorf("%s is required for %s", field, helperType)
 		}
+	}
+	return nil
+}
+
+// validateNonEmptyArrayField validates args[field] is a non-empty []any,
+// the shape shared by options/entities/entity_ids - extracted to keep
+// validateSingleField's cognitive complexity down.
+func validateNonEmptyArrayField(field, helperType string, args map[string]any) error {
+	arr, ok := args[field].([]any)
+	if !ok {
+		return fmt.Errorf("%s is required for %s and must be an array", field, helperType)
+	}
+	if len(arr) == 0 {
+		return fmt.Errorf("%s must be a non-empty array for %s", field, helperType)
+	}
+	return nil
+}
+
+// validateNonEmptyStringField validates args[field] is a non-empty string,
+// the shape shared by state/entity_id/source - extracted to keep
+// validateSingleField's cognitive complexity down. description is the
+// human-readable parenthetical each field's error message already used
+// (e.g. "Jinja2 template", "source entity").
+func validateNonEmptyStringField(field, description, helperType string, args map[string]any) error {
+	s, _ := args[field].(string)
+	if s == "" {
+		return fmt.Errorf("%s (%s) is required for %s", field, description, helperType)
 	}
 	return nil
 }

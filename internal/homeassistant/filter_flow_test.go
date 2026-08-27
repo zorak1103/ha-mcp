@@ -229,7 +229,6 @@ func TestBuildFilterStepConfig(t *testing.T) {
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("buildFilterStepConfig(time_throttle) = %v, want %v", got, want)
 		}
-
 	})
 
 	t.Run("stray filters key is dropped by the allow-list", func(t *testing.T) {

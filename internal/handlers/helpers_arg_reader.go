@@ -108,7 +108,7 @@ func isSkippable(v any) bool {
 
 // maxArrayElements bounds every array-typed field the argReader accepts.
 // By the time args reaches this reader, the JSON decoder has already
-// materialised the full []any in memory - this cap does not prevent that
+// materialized the full []any in memory - this cap does not prevent that
 // allocation. What it bounds is everything downstream of it: the output
 // slice this package allocates from the input's length, and the size of
 // the config payload eventually sent to Home Assistant. No real helper
@@ -176,10 +176,10 @@ const maxScalarStringLen = 65536
 // anySlice() for values whose shape they can't otherwise validate). raw()
 // and anySlice() (its string-element case) both also call this directly for
 // a value at their own top level.
-func (r *argReader) checkStringLen(key, s string, max int) bool {
-	if len(s) > max {
+func (r *argReader) checkStringLen(key, s string, maxLen int) bool {
+	if len(s) > maxLen {
 		r.errs = append(r.errs, fmt.Errorf(
-			"invalid value for %q: string has %d bytes, exceeds maximum of %d", key, len(s), max,
+			"invalid value for %q: string has %d bytes, exceeds maximum of %d", key, len(s), maxLen,
 		))
 		return false
 	}
@@ -332,55 +332,63 @@ func (r *argReader) integer(key string) {
 	r.config[key] = n
 }
 
+// outOfInt32Range reports whether f (already confirmed integral by the
+// caller) exceeds the int32 bound every toInt branch enforces - mirrors
+// secondsToDurationDict's guard, since no real helper field (round_digits,
+// sampling_size, min/max_samples, ...) needs a wider range and every
+// platform's int is at least 32 bits.
+func outOfInt32Range(f float64) bool {
+	return f < math.MinInt32 || f > math.MaxInt32
+}
+
 func toInt(v any) (int, bool) {
 	switch val := v.(type) {
 	case int:
-		if val < math.MinInt32 || val > math.MaxInt32 {
+		if outOfInt32Range(float64(val)) {
 			return 0, false
 		}
 		return val, true
 	case int64:
-		if val < math.MinInt32 || val > math.MaxInt32 {
+		if outOfInt32Range(float64(val)) {
 			return 0, false
 		}
 		return int(val), true
 	case float64:
-		if math.IsNaN(val) || math.IsInf(val, 0) || val != math.Trunc(val) {
-			return 0, false
-		}
-		if val < math.MinInt32 || val > math.MaxInt32 {
+		if math.IsNaN(val) || math.IsInf(val, 0) || val != math.Trunc(val) || outOfInt32Range(val) {
 			// Converting an out-of-range float to int is
 			// implementation-defined in Go (e.g. int(1e20) silently
 			// becomes math.MinInt64, not a clamp or a panic) - reject
 			// rather than forward a garbage value into the config sent to
-			// Home Assistant. Bounded to int32 range, mirroring
-			// secondsToDurationDict's guard, since no real helper field
-			// (round_digits, sampling_size, min/max_samples, ...) needs a
-			// wider range and every platform's int is at least 32 bits.
+			// Home Assistant.
 			return 0, false
 		}
 		return int(val), true
 	case string:
-		if n, err := strconv.Atoi(val); err == nil {
-			// strconv.Atoi parses into platform int (64-bit on amd64/arm64),
-			// so a whole-number string like "5000000000" succeeds here
-			// without ever reaching the float64 fallback's bound check
-			// below - needs the same int32 bound the other branches enforce.
-			if n < math.MinInt32 || n > math.MaxInt32 {
-				return 0, false
-			}
-			return n, true
-		}
-		if f, err := strconv.ParseFloat(val, 64); err == nil && !math.IsInf(f, 0) && f == math.Trunc(f) {
-			if f < math.MinInt32 || f > math.MaxInt32 {
-				return 0, false
-			}
-			return int(f), true
-		}
-		return 0, false
+		return intFromString(val)
 	default:
 		return 0, false
 	}
+}
+
+// intFromString is toInt's string branch, split out to keep toInt's
+// cognitive complexity down. strconv.Atoi's fast path and the
+// strconv.ParseFloat whole-number fallback each need their own int32
+// bound check, mirroring toInt's other branches.
+func intFromString(s string) (int, bool) {
+	if n, err := strconv.Atoi(s); err == nil {
+		// strconv.Atoi parses into platform int (64-bit on amd64/arm64),
+		// so a whole-number string like "5000000000" succeeds here
+		// without ever reaching the float64 fallback below - needs the
+		// same int32 bound toInt's other branches enforce.
+		if outOfInt32Range(float64(n)) {
+			return 0, false
+		}
+		return n, true
+	}
+	if f, err := strconv.ParseFloat(s, 64); err == nil && !math.IsInf(f, 0) && f == math.Trunc(f) && !outOfInt32Range(f) {
+		return int(f), true
+	}
+	return 0, false
 }
 
 // boolean reads args[key] into config[key] as a bool. Accepts strconv's

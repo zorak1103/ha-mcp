@@ -28,9 +28,12 @@ const (
 	kindPolymorphic
 )
 
-// helperArgKinds is the default kind for every manage_helper schema
-// property that isn't dispatch-only (see nonBuilderSchemaFields) and whose
-// kind doesn't vary by helper type (see helperArgKindOverrides).
+// helperArgKinds is the kind for every manage_helper schema property that
+// isn't dispatch-only (see nonBuilderSchemaFields). A field whose Go type
+// genuinely varies by helper type (e.g. "initial") is kindPolymorphic here
+// rather than modeled per-type, since manage_helper has a single flat
+// schema - one property definition per field name shared across every
+// helper type - so there is only ever one declared Type to check against.
 var helperArgKinds = map[string]helperArgKind{
 	"name":                    kindString,
 	"icon":                    kindString,
@@ -119,19 +122,6 @@ var helperArgKinds = map[string]helperArgKind{
 	"wet_tolerance":           kindNumber,
 }
 
-// helperArgKindOverrides handles args whose kind depends on the helper
-// type being built. "initial" is the canonical case: input_boolean reads
-// it as a bool, input_number as a number, counter as a whole number, and
-// the three string-valued input_* types as a string.
-var helperArgKindOverrides = map[string]map[string]helperArgKind{
-	"input_boolean":  {"initial": kindBool},
-	"input_number":   {"initial": kindNumber},
-	"counter":        {"initial": kindInt},
-	"input_text":     {"initial": kindString},
-	"input_select":   {"initial": kindString},
-	"input_datetime": {"initial": kindString},
-}
-
 // nonBuilderSchemaFields are manage_helper schema properties consumed by
 // action dispatch (handleManageHelper/handleCreate/handleUpdate/...)
 // rather than by any config builder, so they have no meaningful "builder
@@ -142,16 +132,6 @@ var nonBuilderSchemaFields = map[string]bool{
 	"verbose": true,
 	"type":    true,
 	"id":      true,
-}
-
-func kindForType(typeName, field string) (helperArgKind, bool) {
-	if perType, ok := helperArgKindOverrides[typeName]; ok {
-		if kind, ok := perType[field]; ok {
-			return kind, true
-		}
-	}
-	kind, ok := helperArgKinds[field]
-	return kind, ok
 }
 
 func schemaTypeFor(kind helperArgKind) string {

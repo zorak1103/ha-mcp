@@ -1221,8 +1221,6 @@ func (c *RESTClient) SubmitConfigEntryOptionsFlowStep(ctx context.Context, flowI
 	return &result, nil
 }
 
-// AbortConfigEntryOptionsFlow aborts an active options flow.
-// Endpoint: DELETE /api/config/config_entries/options/flow/{flow_id}
 // AbortConfigEntryFlow aborts an active config-entry setup flow (the flow
 // createHelperViaConfigFlow drives for a helper's initial creation) - a
 // distinct HA REST endpoint from AbortConfigEntryOptionsFlow below, which
