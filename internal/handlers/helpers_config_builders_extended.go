@@ -152,7 +152,7 @@ func buildGenericHygrostatConfig(config, args map[string]any) error {
 	r.strAs("target_sensor_entity_id", "target_sensor")
 
 	// device_class is required by API
-	config["device_class"] = deviceClassHumidifierValue
+	config["device_class"] = hygrostatDeviceClass
 
 	r.num("min_humidity")
 	r.num("max_humidity")
@@ -166,7 +166,7 @@ func buildGenericHygrostatConfig(config, args map[string]any) error {
 // This function is called by buildConfigEntryUpdateConfig to handle new helper types.
 //
 //nolint:funlen // Large number of fields for extended helper types
-func addExtendedConfigEntryFields(config, args map[string]any, entityDomain, minMaxPlatform string) error {
+func addExtendedConfigEntryFields(config, args map[string]any, entryCtx configEntryUpdateContext) error {
 	r := newArgReader(config, args)
 
 	// utility_meter fields
@@ -180,7 +180,7 @@ func addExtendedConfigEntryFields(config, args map[string]any, entityDomain, min
 
 	// min_max fields
 	r.strSlice("entity_ids")
-	addMinMaxTypeField(r, minMaxPlatform)
+	addMinMaxTypeField(r, entryCtx.minMaxPlatform)
 	r.integer("round_digits")
 
 	// statistics fields
@@ -240,9 +240,9 @@ func addExtendedConfigEntryFields(config, args map[string]any, entityDomain, min
 	// helper being updated is actually a generic_hygrostat (its entity domain
 	// is "humidifier"), not every config-entry helper type that shares this
 	// one-size-fits-all update builder.
-	if entityDomain == entityDomainHumidifier {
+	if entryCtx.entityDomain == hygrostatEntityDomain {
 		if _, exists := config["device_class"]; !exists {
-			config["device_class"] = deviceClassHumidifierValue
+			config["device_class"] = hygrostatDeviceClass
 		}
 	}
 	r.num("min_humidity")

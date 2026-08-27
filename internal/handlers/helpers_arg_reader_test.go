@@ -28,6 +28,10 @@ func TestArgReader_Str(t *testing.T) {
 		{name: "bool errors", args: map[string]any{"k": true}, wantErr: true},
 		{name: "array errors", args: map[string]any{"k": []any{"x"}}, wantErr: true},
 		{name: "map errors", args: map[string]any{"k": map[string]any{}}, wantErr: true},
+		{
+			name: "oversized string errors instead of being stored verbatim",
+			args: map[string]any{"k": strings.Repeat("x", maxScalarStringLen+1)}, wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -79,6 +83,10 @@ func TestArgReader_Num(t *testing.T) {
 		{name: "bool errors", args: map[string]any{"k": true}, wantErr: true},
 		{name: "NaN errors", args: map[string]any{"k": math.NaN()}, wantErr: true},
 		{name: "array errors", args: map[string]any{"k": []any{1.0}}, wantErr: true},
+		{
+			name: "oversized numeric string errors before being parsed",
+			args: map[string]any{"k": strings.Repeat("9", maxNumericStringLen+1)}, wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -139,6 +147,10 @@ func TestArgReader_Integer(t *testing.T) {
 			name: "int64 value exceeding int32 errors, consistent with the float64/string branches",
 			args: map[string]any{"k": int64(5000000000)}, wantErr: true,
 		},
+		{
+			name: "oversized numeric string errors before being parsed",
+			args: map[string]any{"k": strings.Repeat("9", maxNumericStringLen+1)}, wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -178,6 +190,10 @@ func TestArgReader_Boolean(t *testing.T) {
 		{name: "number 2 errors", args: map[string]any{"k": 2.0}, wantErr: true},
 		{name: "unrecognized string errors", args: map[string]any{"k": "maybe"}, wantErr: true},
 		{name: "array errors", args: map[string]any{"k": []any{}}, wantErr: true},
+		{
+			name: "oversized string errors before being parsed",
+			args: map[string]any{"k": strings.Repeat("x", maxNumericStringLen+1)}, wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -214,6 +230,10 @@ func TestArgReader_StrSlice(t *testing.T) {
 		{name: "non-array errors", args: map[string]any{"k": "x"}, wantErr: true},
 		{name: "bool element errors", args: map[string]any{"k": []any{true}}, wantErr: true},
 		{name: "map element errors", args: map[string]any{"k": []any{map[string]any{}}}, wantErr: true},
+		{
+			name: "oversized string element errors instead of being stored verbatim",
+			args: map[string]any{"k": []any{strings.Repeat("x", maxScalarStringLen+1)}}, wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -298,6 +318,14 @@ func TestArgReader_Raw(t *testing.T) {
 		{name: "bool errors", args: map[string]any{"k": true}, wantErr: true},
 		{name: "array errors", args: map[string]any{"k": []any{}}, wantErr: true},
 		{name: "oversized map errors", args: map[string]any{"k": oversizedMap()}, wantErr: true},
+		{
+			name: "map with nested map value errors instead of being carried through unbounded",
+			args: map[string]any{"k": map[string]any{"minutes": map[string]any{"nested": 1.0}}}, wantErr: true,
+		},
+		{
+			name: "map with nested array value errors instead of being carried through unbounded",
+			args: map[string]any{"k": map[string]any{"minutes": []any{1.0, 2.0}}}, wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -380,4 +408,35 @@ func containsAll(s string, subs []string) bool {
 		}
 	}
 	return true
+}
+
+// TestArgTypeError_ContainersAreSummarizedNotFullyRendered guards against a
+// caller sending an oversized array/map to a scalar-typed field: the error
+// path must describe the container by kind and size, not render every
+// element via fmt.Sprintf("%v", ...) - doing so would defeat
+// maxErrorValueLen's own stated purpose (bounding the cost of reporting a
+// bad value) by paying the full render cost before truncating the result.
+func TestArgTypeError_ContainersAreSummarizedNotFullyRendered(t *testing.T) {
+	t.Parallel()
+
+	hugeArray := make([]any, 200000)
+	for i := range hugeArray {
+		hugeArray[i] = i
+	}
+
+	config := map[string]any{}
+	r := newArgReader(config, map[string]any{"k": hugeArray})
+	r.str("k")
+
+	err := r.err()
+	if err == nil {
+		t.Fatal("expected an error for an array sent to a string field")
+	}
+	msg := err.Error()
+	if len(msg) > 500 {
+		t.Fatalf("error message is %d bytes, want a bounded summary, not a rendering of every element: %.100s...", len(msg), msg)
+	}
+	if !strings.Contains(msg, "200000") {
+		t.Errorf("error message %q should describe the container's size", msg)
+	}
 }

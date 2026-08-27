@@ -1030,6 +1030,7 @@ type mockRESTOperations struct {
 	initConfigEntryOptionsFlowFunc       func(ctx context.Context, entryID string) (*OptionsFlowResult, error)
 	submitConfigEntryOptionsFlowStepFunc func(ctx context.Context, flowID string, data map[string]any) (*OptionsFlowResult, error)
 	abortConfigEntryOptionsFlowFunc      func(ctx context.Context, flowID string) error
+	abortConfigEntryFlowFunc             func(ctx context.Context, flowID string) error
 	getCalendarsFunc                     func(ctx context.Context) ([]CalendarEntry, error)
 	getCalendarEventsFunc                func(ctx context.Context, entityID, start, end string) ([]CalendarEvent, error)
 	getCameraSnapshotFunc                func(ctx context.Context, entityID string) ([]byte, string, error)
@@ -1146,6 +1147,13 @@ func (m *mockRESTOperations) SubmitConfigEntryOptionsFlowStep(ctx context.Contex
 		return m.submitConfigEntryOptionsFlowStepFunc(ctx, flowID, data)
 	}
 	return nil, nil
+}
+
+func (m *mockRESTOperations) AbortConfigEntryFlow(ctx context.Context, flowID string) error {
+	if m.abortConfigEntryFlowFunc != nil {
+		return m.abortConfigEntryFlowFunc(ctx, flowID)
+	}
+	return nil
 }
 
 func (m *mockRESTOperations) AbortConfigEntryOptionsFlow(ctx context.Context, flowID string) error {
@@ -2603,6 +2611,115 @@ func TestUpdateHelperViaOptionsFlow_UnsupportedFieldFailsLoudly(t *testing.T) {
 	}
 	if !aborted {
 		t.Error("options flow should be aborted when a field is unsupported")
+	}
+}
+
+// TestCreateHelperViaConfigFlow_StepSubmitErrorAbortsFlow is a regression
+// test for the asymmetry an adversarial review found between this function
+// and updateHelperViaOptionsFlow: every error return inside the multi-step
+// loop used to return immediately without aborting the flow, leaving an
+// orphaned flow object in Home Assistant until its own timeout reaped it.
+func TestCreateHelperViaConfigFlow_StepSubmitErrorAbortsFlow(t *testing.T) {
+	t.Parallel()
+
+	var abortedFlowID string
+	mockWS := &mockWSOperations{}
+	mockREST := &mockRESTOperations{
+		initConfigEntryFlowFunc: func(context.Context, string) (*ConfigEntryFlowResult, error) {
+			return &ConfigEntryFlowResult{FlowID: "flow123", Type: flowTypeForm, StepID: "user"}, nil
+		},
+		submitConfigEntryFlowStepFunc: func(context.Context, string, map[string]any) (*ConfigEntryFlowResult, error) {
+			return nil, fmt.Errorf("boom")
+		},
+		abortConfigEntryFlowFunc: func(_ context.Context, flowID string) error {
+			abortedFlowID = flowID
+			return nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	err := client.createHelperViaConfigFlow(context.Background(), HelperConfig{
+		Platform: "threshold",
+		Config:   map[string]any{"entity_id": "sensor.x", "lower": 5.0},
+	})
+
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if abortedFlowID != "flow123" {
+		t.Errorf("abortedFlowID = %q, want %q - the flow must be aborted, not leaked", abortedFlowID, "flow123")
+	}
+}
+
+// TestCreateHelperViaConfigFlow_ValidationErrorsAbortsFlow guards the same
+// leak for the validation-errors exit path.
+func TestCreateHelperViaConfigFlow_ValidationErrorsAbortsFlow(t *testing.T) {
+	t.Parallel()
+
+	var abortedFlowID string
+	mockWS := &mockWSOperations{}
+	mockREST := &mockRESTOperations{
+		initConfigEntryFlowFunc: func(context.Context, string) (*ConfigEntryFlowResult, error) {
+			return &ConfigEntryFlowResult{FlowID: "flow456", Type: flowTypeForm, StepID: "user"}, nil
+		},
+		submitConfigEntryFlowStepFunc: func(context.Context, string, map[string]any) (*ConfigEntryFlowResult, error) {
+			return &ConfigEntryFlowResult{
+				FlowID: "flow456", Type: flowTypeForm, StepID: "user",
+				Errors: map[string]string{"lower": "invalid"},
+			}, nil
+		},
+		abortConfigEntryFlowFunc: func(_ context.Context, flowID string) error {
+			abortedFlowID = flowID
+			return nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	err := client.createHelperViaConfigFlow(context.Background(), HelperConfig{
+		Platform: "threshold",
+		Config:   map[string]any{"entity_id": "sensor.x", "lower": 5.0},
+	})
+
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if abortedFlowID != "flow456" {
+		t.Errorf("abortedFlowID = %q, want %q - the flow must be aborted, not leaked", abortedFlowID, "flow456")
+	}
+}
+
+// TestCreateHelperViaConfigFlow_MaxStepsExceededAbortsFlow guards the same
+// leak for the max-steps-exceeded exit path.
+func TestCreateHelperViaConfigFlow_MaxStepsExceededAbortsFlow(t *testing.T) {
+	t.Parallel()
+
+	var abortedFlowID string
+	mockWS := &mockWSOperations{}
+	mockREST := &mockRESTOperations{
+		initConfigEntryFlowFunc: func(context.Context, string) (*ConfigEntryFlowResult, error) {
+			return &ConfigEntryFlowResult{FlowID: "flow789", Type: flowTypeForm, StepID: "user"}, nil
+		},
+		submitConfigEntryFlowStepFunc: func(context.Context, string, map[string]any) (*ConfigEntryFlowResult, error) {
+			// Never advances past "form", forcing the maxSteps safety limit.
+			return &ConfigEntryFlowResult{FlowID: "flow789", Type: flowTypeForm, StepID: "user"}, nil
+		},
+		abortConfigEntryFlowFunc: func(_ context.Context, flowID string) error {
+			abortedFlowID = flowID
+			return nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	err := client.createHelperViaConfigFlow(context.Background(), HelperConfig{
+		Platform: "threshold",
+		Config:   map[string]any{"entity_id": "sensor.x", "lower": 5.0},
+	})
+
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if abortedFlowID != "flow789" {
+		t.Errorf("abortedFlowID = %q, want %q - the flow must be aborted, not leaked", abortedFlowID, "flow789")
 	}
 }
 

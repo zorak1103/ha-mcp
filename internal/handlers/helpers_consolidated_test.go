@@ -904,7 +904,7 @@ func TestBuildConfigEntryUpdateConfig_MinMaxTypeGatedByPlatform(t *testing.T) {
 
 	args := map[string]any{"min_max_type": "max"}
 
-	notMinMax, err := buildConfigEntryUpdateConfig("sensor", "group", args)
+	notMinMax, err := buildConfigEntryUpdateConfig(configEntryUpdateContext{entityDomain: "sensor", minMaxPlatform: "group"}, args)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -912,7 +912,7 @@ func TestBuildConfigEntryUpdateConfig_MinMaxTypeGatedByPlatform(t *testing.T) {
 		t.Errorf(`buildConfigEntryUpdateConfig("sensor", "group", ...) wrote config["type"] = %v, want absent - min_max_type must not leak into a non-min_max platform's update`, notMinMax["type"])
 	}
 
-	isMinMax, err := buildConfigEntryUpdateConfig("sensor", platformMinMax, args)
+	isMinMax, err := buildConfigEntryUpdateConfig(configEntryUpdateContext{entityDomain: "sensor", minMaxPlatform: platformMinMax}, args)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -4137,7 +4137,7 @@ func TestUpdatableFields_AreActuallyReadByUpdatePath(t *testing.T) {
 				// real integration platform for every entry here, same as what
 				// resolveConfigEntryPlatformForMinMaxType would return.
 				var err error
-				config, err = buildConfigEntryUpdateConfig(meta.entityPrefix, meta.platform, args)
+				config, err = buildConfigEntryUpdateConfig(configEntryUpdateContext{entityDomain: meta.entityPrefix, minMaxPlatform: meta.platform}, args)
 				if err != nil {
 					t.Fatalf("buildConfigEntryUpdateConfig(%q, ...) returned error: %v", name, err)
 				}
@@ -4389,6 +4389,47 @@ func TestMergeCurrentHelperState_CounterRestoreFalseSurvivesMerge(t *testing.T) 
 
 	if restore, present := merged["restore"]; !present || restore != false {
 		t.Errorf(`merged["restore"] = %v (present=%v), want false (present=true) to survive the merge`, restore, present)
+	}
+}
+
+// TestMergeCurrentHelperState_CallerCannotBypassPerTypeExclusion guards
+// against perTypeUpdateExcludedFields only blocking a value from being
+// silently re-added from stored config, while leaving the door open for the
+// caller to push the same field through by naming it directly in args. That
+// would defeat the exclusion table's entire purpose the moment a real
+// WS-helper type gets an entry - not exploitable via "filter" today (it's a
+// Config Entry Flow type routed around this function entirely), so a
+// synthetic exclusion is added here to exercise the general mechanism
+// itself. Deliberately not t.Parallel(): it mutates the package-level
+// perTypeUpdateExcludedFields map and restores it before returning, and
+// Go's testing package only runs parallel siblings after every serial
+// top-level test (this one included) has finished.
+func TestMergeCurrentHelperState_CallerCannotBypassPerTypeExclusion(t *testing.T) {
+	original, hadEntry := perTypeUpdateExcludedFields["counter"]
+	perTypeUpdateExcludedFields["counter"] = map[string]bool{"step": true}
+	t.Cleanup(func() {
+		if hadEntry {
+			perTypeUpdateExcludedFields["counter"] = original
+		} else {
+			delete(perTypeUpdateExcludedFields, "counter")
+		}
+	})
+
+	entityID := "counter.test_entity"
+	client := &UniversalMockClient{
+		GetHelperConfigFn: func(context.Context, string, string) (map[string]any, error) {
+			return map[string]any{"step": 1.0, "icon": "mdi:test"}, nil
+		},
+	}
+
+	merged, _, err := mergeCurrentHelperState(context.Background(), client, entityID, "counter", helperTypes["counter"],
+		map[string]any{"step": 5.0})
+	if err != nil {
+		t.Fatalf("mergeCurrentHelperState returned err: %v", err)
+	}
+
+	if v, present := merged["step"]; present {
+		t.Errorf(`merged["step"] = %v, want absent - a caller supplying an update-excluded field directly must not bypass the exclusion`, v)
 	}
 }
 

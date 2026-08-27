@@ -67,7 +67,24 @@ const maxErrorValueLen = 80
 // truncateArgValue renders v for inclusion in an error message, cut to
 // maxErrorValueLen runes so an oversized container (e.g. a 1000-element
 // array with one bad element) doesn't dominate the response.
+//
+// Slices and maps are summarized by kind and length instead of being run
+// through fmt.Sprintf: %v on a container recurses into every element before
+// truncation ever gets a chance to run, so a large array/map sent to a
+// scalar-typed field would pay the full render cost regardless of
+// maxErrorValueLen - defeating the exact cost bound this function exists to
+// provide. Only these two container types reach this function today (raw()
+// is the only reader that accepts a bare map and already length-checks it
+// via checkMapLen; every array-typed reader length-checks via
+// checkArrayLen), but a type switch here can't miss a large scalar since
+// scalars have no "size" to summarize away.
 func truncateArgValue(v any) string {
+	switch val := v.(type) {
+	case []any:
+		return fmt.Sprintf("array with %d elements", len(val))
+	case map[string]any:
+		return fmt.Sprintf("object with %d keys", len(val))
+	}
 	s := fmt.Sprintf("%v", v)
 	r := []rune(s)
 	if len(r) <= maxErrorValueLen {
@@ -121,6 +138,36 @@ func (r *argReader) checkMapLen(key string, m map[string]any) bool {
 	return true
 }
 
+// maxNumericStringLen bounds a string this reader will attempt to parse as a
+// number, whole number, or boolean (num/integer/boolean). A real value in
+// this position - a numeric literal, a boolean spelling - is always a
+// handful of characters; anything past this is either malformed input or an
+// attempt to force strconv to scan a large buffer for no legitimate reason.
+// Checked before any parsing is attempted, unlike the array/map bounds
+// above which only bound what happens after a successful type match.
+const maxNumericStringLen = 64
+
+// maxScalarStringLen bounds any string field accepted verbatim or coerced
+// through str/strAs/strSlice (e.g. name, icon, a template's state or
+// availability expression). Generous enough for any real Home Assistant
+// template or identifier while still closing off a multi-megabyte string in
+// a single field, which only costs memory and outbound bandwidth to Home
+// Assistant with no legitimate use.
+const maxScalarStringLen = 65536
+
+// checkStringLen records a failure and returns false when s exceeds max
+// bytes, so callers can bail out before an expensive parse/lower-case pass
+// or before storing the value verbatim.
+func (r *argReader) checkStringLen(key, s string, max int) bool {
+	if len(s) > max {
+		r.errs = append(r.errs, fmt.Errorf(
+			"invalid value for %q: string has %d bytes, exceeds maximum of %d", key, len(s), max,
+		))
+		return false
+	}
+	return true
+}
+
 // str reads args[key] into config[key] as a string. A number is coerced to
 // its decimal form (an MCP client may send "3000" or 3000 for the same
 // field); a bool, array, or map is a hard error.
@@ -137,6 +184,9 @@ func (r *argReader) strAs(argKey, configKey string) {
 	}
 	switch val := v.(type) {
 	case string:
+		if !r.checkStringLen(argKey, val, maxScalarStringLen) {
+			return
+		}
 		r.config[configKey] = val
 	case float64:
 		r.config[configKey] = strconv.FormatFloat(val, 'f', -1, 64)
@@ -154,6 +204,9 @@ func (r *argReader) strAs(argKey, configKey string) {
 func (r *argReader) num(key string) {
 	v, ok := r.args[key]
 	if !ok || isSkippable(v) {
+		return
+	}
+	if s, isString := v.(string); isString && !r.checkStringLen(key, s, maxNumericStringLen) {
 		return
 	}
 	f, ok := toFloat(v)
@@ -193,6 +246,9 @@ func toFloat(v any) (float64, bool) {
 func (r *argReader) integer(key string) {
 	v, ok := r.args[key]
 	if !ok || isSkippable(v) {
+		return
+	}
+	if s, isString := v.(string); isString && !r.checkStringLen(key, s, maxNumericStringLen) {
 		return
 	}
 	n, ok := toInt(v)
@@ -267,6 +323,9 @@ func (r *argReader) boolean(key string) {
 	case bool:
 		r.config[key] = val
 	case string:
+		if !r.checkStringLen(key, val, maxNumericStringLen) {
+			return
+		}
 		if b, ok := parseBoolLoose(val); ok {
 			r.config[key] = b
 			return
@@ -318,6 +377,10 @@ func (r *argReader) strSlice(key string) {
 	for i, elem := range arr {
 		switch e := elem.(type) {
 		case string:
+			if len(e) > maxScalarStringLen {
+				r.failElem(key, i, fmt.Sprintf("a string under %d bytes", maxScalarStringLen), elem)
+				return
+			}
 			out = append(out, e)
 		case float64:
 			out = append(out, strconv.FormatFloat(e, 'f', -1, 64))
@@ -368,6 +431,21 @@ func (r *argReader) raw(key string) {
 	case map[string]any:
 		if !r.checkMapLen(key, val) {
 			return
+		}
+		// A legitimate value here (e.g. filter's window_size as a
+		// {"hours":.,"minutes":.,"seconds":.} duration dict) is always
+		// flat - every value a plain number or string. checkMapLen only
+		// bounds the top-level key count; without this, a caller could
+		// nest an arbitrarily large container one level down (still under
+		// 1000 top-level keys) and have it carried through to the HTTP
+		// body sent to Home Assistant unbounded and unvalidated until
+		// toDurationDict eventually rejects it downstream.
+		for elemKey, elem := range val {
+			switch elem.(type) {
+			case map[string]any, []any:
+				r.fail(key, fmt.Sprintf("a flat object (key %q must not itself be a nested object or array)", elemKey), elem)
+				return
+			}
 		}
 	}
 	r.config[key] = v

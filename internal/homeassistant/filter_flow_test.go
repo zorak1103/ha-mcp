@@ -24,6 +24,10 @@ func TestParseDurationString(t *testing.T) {
 		{name: "too many parts", in: "1:2:3:4", want: nil},
 		{name: "non-numeric", in: "abc", want: nil},
 		{name: "non-numeric in HH:MM:SS", in: "00:aa:30", want: nil},
+		{name: "negative hours rejected instead of forwarding a negative duration", in: "-1:30:00", want: nil},
+		{name: "negative minutes rejected", in: "1:-30:00", want: nil},
+		{name: "negative seconds-only rejected", in: "-90", want: nil},
+		{name: "component exceeding MaxInt32 rejected instead of overflowing", in: "99999999999:00:00", want: nil},
 	}
 
 	for _, tt := range tests {
@@ -262,13 +266,13 @@ func TestFilterToSchemaFields(t *testing.T) {
 	schema := []OptionsFlowField{{Name: "radius"}, {Name: "precision"}}
 	userConfig := map[string]any{"radius": 3.0, "name": "should be dropped", "filters": "should be dropped too"}
 
-	filtered, dropped := filterToSchemaFields(userConfig, schema)
+	filtered, dropped := restrictToSchemaFields(userConfig, schema)
 
 	if len(filtered) != 1 || filtered["radius"] != 3.0 {
-		t.Errorf("filterToSchemaFields filtered = %v, want only radius=3.0", filtered)
+		t.Errorf("restrictToSchemaFields filtered = %v, want only radius=3.0", filtered)
 	}
 	wantDropped := []string{"filters", "name"}
 	if !reflect.DeepEqual(dropped, wantDropped) {
-		t.Errorf("filterToSchemaFields dropped = %v, want %v", dropped, wantDropped)
+		t.Errorf("restrictToSchemaFields dropped = %v, want %v", dropped, wantDropped)
 	}
 }

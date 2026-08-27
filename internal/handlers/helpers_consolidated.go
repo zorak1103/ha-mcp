@@ -46,15 +46,15 @@ const (
 	helperTypeRandomBinarySensor   = "random_binary_sensor"
 	serviceSetValue                = "set_value"
 	helperActionUpdate             = "update"
-	entityDomainHumidifier         = "humidifier" // generic_hygrostat's validEntityDomains entry - an entity domain, not an integration platform name
-	// deviceClassHumidifierValue is generic_hygrostat's required device_class
-	// config value - a different field than entityDomainHumidifier above
+	hygrostatEntityDomain          = "humidifier" // generic_hygrostat's validEntityDomains entry - an entity domain, not an integration platform name
+	// hygrostatDeviceClass is generic_hygrostat's required device_class
+	// config value - a different field than hygrostatEntityDomain above
 	// (that one identifies the entity's domain; this one is a value written
 	// into the helper's own config), which happens to share the same
 	// literal. Kept as one named constant so the two create/update builders
 	// that both need it don't drift into differently-named local copies of
 	// the same string.
-	deviceClassHumidifierValue = "humidifier"
+	hygrostatDeviceClass = "humidifier"
 )
 
 // sourceEntityConstraint restricts one args field of a helper type to a set
@@ -1029,7 +1029,10 @@ func (h *ConsolidatedHelperHandlers) handleUpdate(ctx context.Context, client ho
 			}
 			minMaxPlatform = resolvedPlatform
 		}
-		config, err = buildConfigEntryUpdateConfig(entityDomain, minMaxPlatform, args)
+		config, err = buildConfigEntryUpdateConfig(configEntryUpdateContext{
+			entityDomain:   entityDomain,
+			minMaxPlatform: minMaxPlatform,
+		}, args)
 		if err != nil {
 			return errorResult(err.Error()), nil
 		}
@@ -1147,18 +1150,21 @@ func mergeCurrentHelperState(ctx context.Context, client homeassistant.Client, e
 		currentName = name
 	}
 
-	// Caller-supplied values always win, EXCEPT the two "leave unset"
-	// spellings argReader itself treats identically (see isSkippable): an
-	// explicit JSON null, and an empty string. This API has no "clear this
-	// field" spelling, so letting either through here would overwrite a good
-	// merged value with a value that argReader.str/num/etc. then silently
-	// skips writing into the built config - resetting that field to HA's
-	// default instead of either preserving it or rejecting the call with an
-	// explanation.
+	// Caller-supplied values always win, EXCEPT: the two "leave unset"
+	// spellings argReader itself treats identically (see isSkippable) - an
+	// explicit JSON null, and an empty string, since this API has no "clear
+	// this field" spelling and letting either through would overwrite a good
+	// merged value with one that argReader.str/num/etc. then silently skips
+	// writing into the built config; and any field isUpdateExcludedField
+	// reports for typeName - the exclusion table above exists precisely to
+	// stop a field from reaching the update payload, and a caller naming it
+	// directly here must not be a back door around that, the same as the
+	// first loop already refuses to reintroduce it from stored config.
 	for k, v := range args {
-		if !isSkippable(v) {
-			merged[k] = v
+		if isSkippable(v) || isUpdateExcludedField(typeName, k) {
+			continue
 		}
+		merged[k] = v
 	}
 
 	return merged, currentName, nil
@@ -1960,6 +1966,18 @@ func (h *ConsolidatedHelperHandlers) handleGroupEntities(ctx context.Context, cl
 // Config Builders
 // =============================================================================
 
+// configEntryUpdateContext groups the two platform-identifying strings needed
+// to build a config-entry helper's update payload. Both entityDomain and
+// minMaxPlatform are plain strings with unrelated meanings (the entity's HA
+// domain vs. a resolved min_max integration platform, only ever non-empty
+// when the caller supplied min_max_type) - as adjacent positional parameters
+// of the same type they were silently transposable at any call site with no
+// compiler error. Named fields close that off.
+type configEntryUpdateContext struct {
+	entityDomain   string
+	minMaxPlatform string
+}
+
 // buildConfigEntryUpdateConfig builds a loose config for Config Entry helper
 // updates. Extracts all recognized Config Entry fields from args.
 //
@@ -1970,7 +1988,7 @@ func (h *ConsolidatedHelperHandlers) handleGroupEntities(ctx context.Context, cl
 // "buildConfigEntryUpdateConfig leaked entity_id" gotcha).
 //
 //nolint:gocyclo // Routing to type-specific builders requires switch over all helper types
-func buildConfigEntryUpdateConfig(entityDomain, minMaxPlatform string, args map[string]any) (map[string]any, error) {
+func buildConfigEntryUpdateConfig(entryCtx configEntryUpdateContext, args map[string]any) (map[string]any, error) {
 	config := make(map[string]any)
 	r := newArgReader(config, args)
 
@@ -2011,7 +2029,7 @@ func buildConfigEntryUpdateConfig(entityDomain, minMaxPlatform string, args map[
 	}
 
 	// Add fields for extended helper types
-	if err := addExtendedConfigEntryFields(config, args, entityDomain, minMaxPlatform); err != nil {
+	if err := addExtendedConfigEntryFields(config, args, entryCtx); err != nil {
 		return nil, err
 	}
 
