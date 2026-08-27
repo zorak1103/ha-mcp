@@ -2025,9 +2025,9 @@ var helperConfigBuilders = map[string]configBuilderFunc{
 	platformGroup:                  buildGroupConfig,
 	helperTypeTemplateSensor:       buildTemplateSensorConfig,
 	helperTypeTemplateBinarySensor: buildTemplateBinarySensorConfig,
-	"threshold":                    buildThresholdConfigConsolidated,
-	"derivative":                   buildDerivativeConfigConsolidated,
-	"integral":                     buildIntegralConfigConsolidated,
+	"threshold":                    buildThresholdConfig,
+	"derivative":                   buildDerivativeConfig,
+	"integral":                     buildIntegralConfig,
 	platformUtilityMeter:           buildUtilityMeterConfig,
 	platformMinMax:                 buildMinMaxConfig,
 	platformStatistics:             buildStatisticsConfig,
@@ -2176,7 +2176,7 @@ func buildTemplateBinarySensorConfig(config, args map[string]any) error {
 	return r.err()
 }
 
-func buildThresholdConfigConsolidated(config, args map[string]any) error {
+func buildThresholdConfig(config, args map[string]any) error {
 	r := newArgReader(config, args)
 	r.num("lower")
 	r.num("upper")
@@ -2186,7 +2186,7 @@ func buildThresholdConfigConsolidated(config, args map[string]any) error {
 	return r.err()
 }
 
-func buildDerivativeConfigConsolidated(config, args map[string]any) error {
+func buildDerivativeConfig(config, args map[string]any) error {
 	r := newArgReader(config, args)
 	r.integer("round")
 	r.str("time_window")
@@ -2196,7 +2196,7 @@ func buildDerivativeConfigConsolidated(config, args map[string]any) error {
 	return r.err()
 }
 
-func buildIntegralConfigConsolidated(config, args map[string]any) error {
+func buildIntegralConfig(config, args map[string]any) error {
 	r := newArgReader(config, args)
 	r.str("method")
 	r.integer("round")

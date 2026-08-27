@@ -982,7 +982,6 @@ func isDurationField(fieldName string) bool {
 	return durationFields[fieldName]
 }
 
-// parseDurationString converts "HH:MM:SS" format to Config Entry Flow dict format.
 // parseDurationString parses "H:MM:SS", "MM:SS", or "SS" into Home
 // Assistant's DurationSelector dict form. Returns nil for anything else.
 func parseDurationString(s string) map[string]int {
