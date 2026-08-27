@@ -88,7 +88,7 @@ func buildExtendedHelperProperties() map[string]mcp.JSONSchema {
 		},
 		"precision": {
 			Type:        "number",
-			Description: "Number of decimal places (statistics)",
+			Description: "Number of decimal places (statistics; filter, default 2)",
 		},
 
 		// trend specific fields
@@ -115,17 +115,46 @@ func buildExtendedHelperProperties() map[string]mcp.JSONSchema {
 
 		// random specific fields (minimum/maximum already defined in schema)
 
-		// filter specific fields
+		// filter specific fields. Home Assistant's filter config-entry flow
+		// takes exactly one filter type per helper via this field - there is
+		// no "filters" array parameter to configure multiple filters (HA's
+		// flow rejects a "filters" key outright alongside "filter"; see
+		// CLAUDE.md's filter gotcha).
 		"filter": {
-			Type:        "string",
-			Description: "Filter type (filter, required): outlier, lowpass, time_simple_moving_average, time_throttle, throttle",
-		},
-		"filters": {
-			Type:        "array",
-			Description: "List of filters to apply (filter, optional - for multiple filters)",
-			Items: &mcp.JSONSchema{
-				Type: "object",
+			Type: "string",
+			Description: "Filter algorithm (filter, required): outlier, lowpass, range, throttle, " +
+				"time_simple_moving_average, time_throttle. Determines which of the filter-specific " +
+				"fields below apply.",
+			Enum: []string{
+				"outlier", "lowpass", "range", "throttle",
+				"time_simple_moving_average", "time_throttle",
 			},
+		},
+		"window_size": {
+			// Type intentionally omitted: the valid shape is polymorphic.
+			// outlier/lowpass/throttle: a whole number of samples (default 1).
+			// time_simple_moving_average/time_throttle: a REQUIRED duration -
+			// give "HH:MM:SS", a number of seconds, or a
+			// {"hours":.,"minutes":.,"seconds":.} object.
+			Description: "Filter window size (filter). For outlier/lowpass/throttle: a whole number " +
+				"of samples (default 1). For time_simple_moving_average/time_throttle: a duration, " +
+				"REQUIRED - give \"HH:MM:SS\", a number of seconds, or an hours/minutes/seconds object.",
+		},
+		"radius": {
+			Type:        "number",
+			Description: "Maximum deviation from the median before a value is treated as an outlier (filter type=outlier, default 2.0)",
+		},
+		"time_constant": {
+			Type:        "number",
+			Description: "Loop time constant in seconds (filter type=lowpass, default 10)",
+		},
+		"lower_bound": {
+			Type:        "number",
+			Description: "Lower clamp bound (filter type=range)",
+		},
+		"upper_bound": {
+			Type:        "number",
+			Description: "Upper clamp bound (filter type=range)",
 		},
 
 		// tod (Time of Day) specific fields

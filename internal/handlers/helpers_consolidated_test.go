@@ -904,12 +904,18 @@ func TestBuildConfigEntryUpdateConfig_MinMaxTypeGatedByPlatform(t *testing.T) {
 
 	args := map[string]any{"min_max_type": "max"}
 
-	notMinMax := buildConfigEntryUpdateConfig("sensor", "group", args)
+	notMinMax, err := buildConfigEntryUpdateConfig("sensor", "group", args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if _, present := notMinMax["type"]; present {
 		t.Errorf(`buildConfigEntryUpdateConfig("sensor", "group", ...) wrote config["type"] = %v, want absent - min_max_type must not leak into a non-min_max platform's update`, notMinMax["type"])
 	}
 
-	isMinMax := buildConfigEntryUpdateConfig("sensor", platformMinMax, args)
+	isMinMax, err := buildConfigEntryUpdateConfig("sensor", platformMinMax, args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if got := isMinMax["type"]; got != "max" {
 		t.Errorf(`buildConfigEntryUpdateConfig("sensor", %q, ...) config["type"] = %v, want "max"`, platformMinMax, got)
 	}
@@ -4063,7 +4069,7 @@ func updatableFieldSentinel(name, field string) any {
 	}
 
 	switch field {
-	case "options", "entities", "tariffs", "filters", "entity_ids",
+	case "options", "entities", "tariffs", "entity_ids",
 		"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday":
 		return []any{"probe"}
 	case "has_date", "has_time", "restore", "all", "delta_values", "net_consumption",
@@ -4074,16 +4080,19 @@ func updatableFieldSentinel(name, field string) any {
 		"cold_tolerance", "hot_tolerance", "min_humidity", "max_humidity",
 		"target_humidity", "dry_tolerance", "wet_tolerance", "minimum", "maximum",
 		"round", "time_window", "round_digits", "sampling_size", "precision",
-		"min_samples", "max_samples", "delay_on", "delay_off":
-		// addOptionalInt/addOptionalFloat and the two manual delay_on/delay_off
-		// assertions in buildConfigEntryUpdateConfig all assert .(float64).
+		"min_samples", "max_samples", "delay_on", "delay_off",
+		"radius", "time_constant", "lower_bound", "upper_bound":
+		// argReader's num/integer/str readers all accept a float64 (str
+		// coerces it to a decimal string), so one numeric sentinel exercises
+		// every numeric-or-numeric-string field uniformly.
 		return float64(1)
 	default:
 		// icon, state, source, unit_of_measurement, device_class, state_class,
 		// unit_time, unit_prefix, method, group_type, mode, pattern, duration,
 		// cycle, max_age, after_time, before_time, after_offset, before_offset,
 		// heater_entity_id, target_sensor_entity_id, humidifier_entity_id,
-		// target_domain: every remaining name is read as a plain string.
+		// target_domain, window_size (raw - accepts a string): every
+		// remaining name is read as a plain string.
 		return "test-value"
 	}
 }
@@ -4127,7 +4136,11 @@ func TestUpdatableFields_AreActuallyReadByUpdatePath(t *testing.T) {
 				// is passed as the resolved min_max_type platform too - it's the
 				// real integration platform for every entry here, same as what
 				// resolveConfigEntryPlatformForMinMaxType would return.
-				config = buildConfigEntryUpdateConfig(meta.entityPrefix, meta.platform, args)
+				var err error
+				config, err = buildConfigEntryUpdateConfig(meta.entityPrefix, meta.platform, args)
+				if err != nil {
+					t.Fatalf("buildConfigEntryUpdateConfig(%q, ...) returned error: %v", name, err)
+				}
 			} else {
 				var err error
 				config, err = buildHelperConfig(name, "Test Name", args)

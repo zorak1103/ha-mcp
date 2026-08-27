@@ -338,7 +338,7 @@ var helperTypes = map[string]helperTypeMetadata{
 		entityPrefix:       "sensor",
 		supportedActions:   []string{},
 		requiredFields:     []string{"entity_id", "filter"},
-		optionalFields:     []string{"icon", "filters"},
+		optionalFields:     []string{"icon", "window_size", "radius", "time_constant", "lower_bound", "upper_bound", "precision"},
 		validEntityDomains: []string{"sensor"},
 		sourceEntities:     []sourceEntityConstraint{{field: attrEntityID, domains: []string{"sensor"}}},
 	},
@@ -465,8 +465,12 @@ func (h *ConsolidatedHelperHandlers) manageHelperTool() mcp.Tool {
 			Description: "Icon for the helper (e.g., mdi:counter)",
 		},
 		"initial": {
-			Type:        "string",
-			Description: "Initial value (type depends on helper type)",
+			// Type intentionally omitted: the valid shape depends on the
+			// helper type being created - bool for input_boolean, number for
+			// input_number, whole number for counter, string for
+			// input_text/input_select/input_datetime.
+			Description: "Initial value: true/false (input_boolean), a number (input_number), a whole " +
+				"number (counter), or a string (input_text, input_select, input_datetime)",
 		},
 		"min": {
 			Type:        "number",
@@ -1017,7 +1021,10 @@ func (h *ConsolidatedHelperHandlers) handleUpdate(ctx context.Context, client ho
 			}
 			minMaxPlatform = resolvedPlatform
 		}
-		config = buildConfigEntryUpdateConfig(entityDomain, minMaxPlatform, args)
+		config, err = buildConfigEntryUpdateConfig(entityDomain, minMaxPlatform, args)
+		if err != nil {
+			return errorResult(err.Error()), nil
+		}
 	}
 
 	// Create UpdateHelper request
@@ -1953,53 +1960,52 @@ func (h *ConsolidatedHelperHandlers) handleGroupEntities(ctx context.Context, cl
 // "buildConfigEntryUpdateConfig leaked entity_id" gotcha).
 //
 //nolint:gocyclo // Routing to type-specific builders requires switch over all helper types
-func buildConfigEntryUpdateConfig(entityDomain, minMaxPlatform string, args map[string]any) map[string]any {
+func buildConfigEntryUpdateConfig(entityDomain, minMaxPlatform string, args map[string]any) (map[string]any, error) {
 	config := make(map[string]any)
+	r := newArgReader(config, args)
 
 	// Common fields
-	addOptionalString(config, args, "name")
-	addOptionalString(config, args, "icon")
+	r.str("name")
+	r.str("icon")
 
 	// Template helper fields
-	addOptionalString(config, args, "state")
-	addOptionalString(config, args, "source")
-	addOptionalString(config, args, "unit_of_measurement")
-	addOptionalString(config, args, "device_class")
-	addOptionalString(config, args, "state_class")
+	r.str("state")
+	r.str("source")
+	r.str("unit_of_measurement")
+	r.str("device_class")
+	r.str("state_class")
 
 	// Threshold helper fields
-	addOptionalFloat(config, args, "lower")
-	addOptionalFloat(config, args, "upper")
-	addOptionalFloat(config, args, "hysteresis")
+	r.num("lower")
+	r.num("upper")
+	r.num("hysteresis")
 
 	// Derivative/Integral helper fields
-	addOptionalInt(config, args, "round")
-	addOptionalInt(config, args, "time_window")
-	addOptionalString(config, args, "unit_time")
-	addOptionalString(config, args, "unit_prefix")
-	addOptionalString(config, args, "method")
+	r.integer("round")
+	r.str("time_window")
+	r.str("unit_time")
+	r.str("unit_prefix")
+	r.str("method")
 
 	// Group helper fields
-	if entities, ok := args["entities"].([]any); ok {
-		config["entities"] = entities
-	}
-	if all, ok := args["all"].(bool); ok {
-		config["all"] = all
-	}
-	addOptionalString(config, args, "group_type")
+	r.anySlice("entities")
+	r.boolean("all")
+	r.str("group_type")
 
 	// Template binary sensor fields
-	if delayOn, ok := args["delay_on"].(float64); ok {
-		config["delay_on"] = int(delayOn)
-	}
-	if delayOff, ok := args["delay_off"].(float64); ok {
-		config["delay_off"] = int(delayOff)
+	r.str("delay_on")
+	r.str("delay_off")
+
+	if err := r.err(); err != nil {
+		return nil, err
 	}
 
 	// Add fields for extended helper types
-	addExtendedConfigEntryFields(config, args, entityDomain, minMaxPlatform)
+	if err := addExtendedConfigEntryFields(config, args, entityDomain, minMaxPlatform); err != nil {
+		return nil, err
+	}
 
-	return config
+	return config, nil
 }
 
 // configBuilderFunc is a function that builds type-specific helper configuration.
@@ -2010,18 +2016,18 @@ var helperConfigBuilders = map[string]configBuilderFunc{
 	platformInputBoolean:           buildInputBooleanConfig,
 	platformInputButton:            buildInputButtonConfig,
 	platformInputNumber:            buildInputNumberConfig,
-	platformInputText:              buildInputTextConfigWrapper,
-	platformInputSelect:            buildInputSelectConfigWrapper,
-	platformInputDatetime:          buildInputDatetimeConfigWrapper,
+	platformInputText:              buildInputTextConfig,
+	platformInputSelect:            buildInputSelectConfig,
+	platformInputDatetime:          buildInputDatetimeConfig,
 	platformCounter:                buildCounterConfig,
-	platformTimer:                  buildTimerConfigWrapper,
-	platformSchedule:               buildScheduleConfigWrapper,
-	platformGroup:                  buildGroupConfigWrapper,
+	platformTimer:                  buildTimerConfig,
+	platformSchedule:               buildScheduleConfig,
+	platformGroup:                  buildGroupConfig,
 	helperTypeTemplateSensor:       buildTemplateSensorConfig,
 	helperTypeTemplateBinarySensor: buildTemplateBinarySensorConfig,
-	"threshold":                    buildThresholdConfigWrapper,
-	"derivative":                   buildDerivativeConfigWrapper,
-	"integral":                     buildIntegralConfigWrapper,
+	"threshold":                    buildThresholdConfigConsolidated,
+	"derivative":                   buildDerivativeConfigConsolidated,
+	"integral":                     buildIntegralConfigConsolidated,
 	platformUtilityMeter:           buildUtilityMeterConfig,
 	platformMinMax:                 buildMinMaxConfig,
 	platformStatistics:             buildStatisticsConfig,
@@ -2037,7 +2043,11 @@ var helperConfigBuilders = map[string]configBuilderFunc{
 
 func buildHelperConfig(helperType, name string, args map[string]any) (map[string]any, error) {
 	config := map[string]any{"name": name}
-	addOptionalString(config, args, "icon")
+	r := newArgReader(config, args)
+	r.str("icon")
+	if err := r.err(); err != nil {
+		return config, err
+	}
 
 	if builder, exists := helperConfigBuilders[helperType]; exists {
 		return config, builder(config, args)
@@ -2047,8 +2057,9 @@ func buildHelperConfig(helperType, name string, args map[string]any) (map[string
 }
 
 func buildInputBooleanConfig(config, args map[string]any) error {
-	addOptionalBool(config, args, "initial")
-	return nil
+	r := newArgReader(config, args)
+	r.boolean("initial")
+	return r.err()
 }
 
 func buildInputButtonConfig(_, _ map[string]any) error {
@@ -2056,14 +2067,18 @@ func buildInputButtonConfig(_, _ map[string]any) error {
 }
 
 func buildInputNumberConfig(config, args map[string]any) error {
-	addOptionalFloat(config, args, "min")
-	addOptionalFloat(config, args, "max")
-	addOptionalFloat(config, args, "step")
-	addOptionalFloat(config, args, "initial")
-	addOptionalString(config, args, "mode")
-	addOptionalString(config, args, "unit_of_measurement")
-	if minVal, hasMin := args["min"].(float64); hasMin {
-		if maxVal, hasMax := args["max"].(float64); hasMax {
+	r := newArgReader(config, args)
+	r.num("min")
+	r.num("max")
+	r.num("step")
+	r.num("initial")
+	r.str("mode")
+	r.str("unit_of_measurement")
+	if err := r.err(); err != nil {
+		return err
+	}
+	if minVal, hasMin := config["min"].(float64); hasMin {
+		if maxVal, hasMax := config["max"].(float64); hasMax {
 			if err := ValidateRange(minVal, maxVal, "input_number"); err != nil {
 				return err
 			}
@@ -2072,51 +2087,44 @@ func buildInputNumberConfig(config, args map[string]any) error {
 	return nil
 }
 
-func buildInputTextConfig(config, args map[string]any) {
-	addOptionalFloat(config, args, "min")
-	addOptionalFloat(config, args, "max")
-	addOptionalString(config, args, "mode")
-	addOptionalString(config, args, "pattern")
-	addOptionalString(config, args, "initial")
+func buildInputTextConfig(config, args map[string]any) error {
+	r := newArgReader(config, args)
+	r.num("min")
+	r.num("max")
+	r.str("mode")
+	r.str("pattern")
+	r.str("initial")
+	return r.err()
 }
 
-func buildInputTextConfigWrapper(config, args map[string]any) error {
-	buildInputTextConfig(config, args)
-	return nil
+func buildInputSelectConfig(config, args map[string]any) error {
+	r := newArgReader(config, args)
+	r.str("initial")
+	r.strSlice("options")
+	return r.err()
 }
 
-func buildInputSelectConfig(config, args map[string]any) {
-	addOptionalString(config, args, "initial")
-	if options, ok := args["options"].([]any); ok {
-		config["options"] = convertToStringSlice(options)
-	}
-}
-
-func buildInputSelectConfigWrapper(config, args map[string]any) error {
-	buildInputSelectConfig(config, args)
-	return nil
-}
-
-func buildInputDatetimeConfig(config, args map[string]any) {
-	addOptionalBool(config, args, "has_date")
-	addOptionalBool(config, args, "has_time")
-	addOptionalString(config, args, "initial")
-}
-
-func buildInputDatetimeConfigWrapper(config, args map[string]any) error {
-	buildInputDatetimeConfig(config, args)
-	return nil
+func buildInputDatetimeConfig(config, args map[string]any) error {
+	r := newArgReader(config, args)
+	r.boolean("has_date")
+	r.boolean("has_time")
+	r.str("initial")
+	return r.err()
 }
 
 func buildCounterConfig(config, args map[string]any) error {
-	addOptionalInt(config, args, "initial")
-	addOptionalInt(config, args, "step")
-	addOptionalInt(config, args, "minimum")
-	addOptionalInt(config, args, "maximum")
-	addOptionalBool(config, args, "restore")
-	if minVal, hasMin := args["minimum"].(float64); hasMin {
-		if maxVal, hasMax := args["maximum"].(float64); hasMax {
-			if err := ValidateRange(minVal, maxVal, "counter"); err != nil {
+	r := newArgReader(config, args)
+	r.integer("initial")
+	r.integer("step")
+	r.integer("minimum")
+	r.integer("maximum")
+	r.boolean("restore")
+	if err := r.err(); err != nil {
+		return err
+	}
+	if minVal, hasMin := config["minimum"].(int); hasMin {
+		if maxVal, hasMax := config["maximum"].(int); hasMax {
+			if err := ValidateRange(float64(minVal), float64(maxVal), "counter"); err != nil {
 				return err
 			}
 		}
@@ -2124,98 +2132,78 @@ func buildCounterConfig(config, args map[string]any) error {
 	return nil
 }
 
-func buildTimerConfig(config, args map[string]any) {
-	addOptionalString(config, args, "duration")
-	addOptionalBool(config, args, "restore")
+func buildTimerConfig(config, args map[string]any) error {
+	r := newArgReader(config, args)
+	r.str("duration")
+	r.boolean("restore")
+	return r.err()
 }
 
-func buildTimerConfigWrapper(config, args map[string]any) error {
-	buildTimerConfig(config, args)
-	return nil
-}
-
-func buildScheduleConfig(config, args map[string]any) {
+func buildScheduleConfig(config, args map[string]any) error {
+	r := newArgReader(config, args)
 	days := []string{"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
 	for _, day := range days {
-		if daySchedule, ok := args[day].([]any); ok {
-			config[day] = daySchedule
-		}
+		r.anySlice(day)
 	}
+	return r.err()
 }
 
-func buildScheduleConfigWrapper(config, args map[string]any) error {
-	buildScheduleConfig(config, args)
-	return nil
-}
-
-func buildGroupConfig(config, args map[string]any) {
-	addOptionalBool(config, args, "all")
-	addOptionalString(config, args, "group_type")
-	if entities, ok := args["entities"].([]any); ok {
-		config["entities"] = entities
-	}
-}
-
-func buildGroupConfigWrapper(config, args map[string]any) error {
-	buildGroupConfig(config, args)
-	return nil
+func buildGroupConfig(config, args map[string]any) error {
+	r := newArgReader(config, args)
+	r.boolean("all")
+	r.str("group_type")
+	r.anySlice("entities")
+	return r.err()
 }
 
 func buildTemplateSensorConfig(config, args map[string]any) error {
-	config["state"] = args["state"]
-	addOptionalString(config, args, "unit_of_measurement")
-	addOptionalString(config, args, "state_class")
+	r := newArgReader(config, args)
+	r.str("state")
+	r.str("unit_of_measurement")
+	r.str("state_class")
 	config["template_type"] = "sensor"
-	addOptionalString(config, args, "device_class")
-	return nil
+	r.str("device_class")
+	return r.err()
 }
 
 func buildTemplateBinarySensorConfig(config, args map[string]any) error {
-	config["state"] = args["state"]
-	addOptionalString(config, args, "delay_on")
-	addOptionalString(config, args, "delay_off")
+	r := newArgReader(config, args)
+	r.str("state")
+	r.str("delay_on")
+	r.str("delay_off")
 	config["template_type"] = "binary_sensor"
-	addOptionalString(config, args, "device_class")
-	return nil
+	r.str("device_class")
+	return r.err()
 }
 
-func buildThresholdConfigConsolidated(config, args map[string]any) {
-	addOptionalFloat(config, args, "lower")
-	addOptionalFloat(config, args, "upper")
-	addOptionalFloat(config, args, "hysteresis")
-	addOptionalString(config, args, "device_class")
-	config["entity_id"] = args["entity_id"]
+func buildThresholdConfigConsolidated(config, args map[string]any) error {
+	r := newArgReader(config, args)
+	r.num("lower")
+	r.num("upper")
+	r.num("hysteresis")
+	r.str("device_class")
+	r.str("entity_id")
+	return r.err()
 }
 
-func buildThresholdConfigWrapper(config, args map[string]any) error {
-	buildThresholdConfigConsolidated(config, args)
-	return nil
+func buildDerivativeConfigConsolidated(config, args map[string]any) error {
+	r := newArgReader(config, args)
+	r.integer("round")
+	r.str("time_window")
+	r.str("unit_time")
+	r.str("unit_prefix")
+	r.str("source")
+	return r.err()
 }
 
-func buildDerivativeConfigConsolidated(config, args map[string]any) {
-	addOptionalInt(config, args, "round")
-	addOptionalString(config, args, "time_window")
-	addOptionalString(config, args, "unit_time")
-	addOptionalString(config, args, "unit_prefix")
-	config["source"] = args["source"]
-}
-
-func buildDerivativeConfigWrapper(config, args map[string]any) error {
-	buildDerivativeConfigConsolidated(config, args)
-	return nil
-}
-
-func buildIntegralConfigConsolidated(config, args map[string]any) {
-	addOptionalString(config, args, "method")
-	addOptionalInt(config, args, "round")
-	addOptionalString(config, args, "unit_time")
-	addOptionalString(config, args, "unit_prefix")
-	config["source"] = args["source"]
-}
-
-func buildIntegralConfigWrapper(config, args map[string]any) error {
-	buildIntegralConfigConsolidated(config, args)
-	return nil
+func buildIntegralConfigConsolidated(config, args map[string]any) error {
+	r := newArgReader(config, args)
+	r.str("method")
+	r.integer("round")
+	r.str("unit_time")
+	r.str("unit_prefix")
+	r.str("source")
+	return r.err()
 }
 
 // =============================================================================
@@ -2551,9 +2539,10 @@ func validateSingleField(field, helperType string, args map[string]any) error {
 			return fmt.Errorf("entity_ids must be a non-empty array for %s", helperType)
 		}
 	case "min", "max":
-		// Check for numeric fields (float64)
-		_, ok := args[field].(float64)
-		if !ok {
+		// Accept the same numeric-or-numeric-string values the config
+		// builders coerce via argReader.num, so a required min/max isn't
+		// rejected here only to have succeeded downstream.
+		if _, ok := toFloat(args[field]); !ok {
 			return fmt.Errorf("%s must be a number for %s", field, helperType)
 		}
 	default:
@@ -2602,40 +2591,10 @@ func formatHelperType(helperType string) string {
 	}
 }
 
-func addOptionalString(config, args map[string]any, key string) {
-	if val, ok := args[key].(string); ok && val != "" {
-		config[key] = val
-	}
-}
-
 // addRenamedOptionalString copies args[argKey] to config[configKey] when
 // present and non-empty. Used for API field renames (heater_entity_id ->
 // heater, humidifier_entity_id -> humidifier, ...) where addOptionalString's
 // same-key convention doesn't fit.
-func addRenamedOptionalString(config, args map[string]any, argKey, configKey string) {
-	if val, ok := args[argKey].(string); ok && val != "" {
-		config[configKey] = val
-	}
-}
-
-func addOptionalFloat(config, args map[string]any, key string) {
-	if val, ok := args[key].(float64); ok {
-		config[key] = val
-	}
-}
-
-func addOptionalInt(config, args map[string]any, key string) {
-	if val, ok := args[key].(float64); ok {
-		config[key] = int(val)
-	}
-}
-
-func addOptionalBool(config, args map[string]any, key string) {
-	if val, ok := args[key].(bool); ok {
-		config[key] = val
-	}
-}
-
 func convertToStringSlice(arr []any) []string {
 	result := make([]string, 0, len(arr))
 	for _, v := range arr {
