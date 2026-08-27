@@ -46,7 +46,15 @@ const (
 	helperTypeRandomBinarySensor   = "random_binary_sensor"
 	serviceSetValue                = "set_value"
 	helperActionUpdate             = "update"
-	entityDomainHumidifier         = "humidifier" // generic_hygrostat's validEntityDomains entry - an entity domain, not an integration platform name
+	hygrostatEntityDomain          = "humidifier" // generic_hygrostat's validEntityDomains entry - an entity domain, not an integration platform name
+	// hygrostatDeviceClass is generic_hygrostat's required device_class
+	// config value - a different field than hygrostatEntityDomain above
+	// (that one identifies the entity's domain; this one is a value written
+	// into the helper's own config), which happens to share the same
+	// literal. Kept as one named constant so the two create/update builders
+	// that both need it don't drift into differently-named local copies of
+	// the same string.
+	hygrostatDeviceClass = "humidifier"
 )
 
 // sourceEntityConstraint restricts one args field of a helper type to a set
@@ -338,7 +346,7 @@ var helperTypes = map[string]helperTypeMetadata{
 		entityPrefix:       "sensor",
 		supportedActions:   []string{},
 		requiredFields:     []string{"entity_id", "filter"},
-		optionalFields:     []string{"icon", "filters"},
+		optionalFields:     []string{"icon", "window_size", "radius", "time_constant", "lower_bound", "upper_bound", "precision"},
 		validEntityDomains: []string{"sensor"},
 		sourceEntities:     []sourceEntityConstraint{{field: attrEntityID, domains: []string{"sensor"}}},
 	},
@@ -465,8 +473,12 @@ func (h *ConsolidatedHelperHandlers) manageHelperTool() mcp.Tool {
 			Description: "Icon for the helper (e.g., mdi:counter)",
 		},
 		"initial": {
-			Type:        "string",
-			Description: "Initial value (type depends on helper type)",
+			// Type intentionally omitted: the valid shape depends on the
+			// helper type being created - bool for input_boolean, number for
+			// input_number, whole number for counter, string for
+			// input_text/input_select/input_datetime.
+			Description: "Initial value: true/false (input_boolean), a number (input_number), a whole " +
+				"number (counter), or a string (input_text, input_select, input_datetime)",
 		},
 		"min": {
 			Type:        "number",
@@ -993,31 +1005,13 @@ func (h *ConsolidatedHelperHandlers) handleUpdate(ctx context.Context, client ho
 		// domain has metadata - it does NOT mean it's a WebSocket helper. See
 		// buildKnownTypeUpdateConfig for why "group" must not take the merge path.
 		config, err = buildKnownTypeUpdateConfig(ctx, client, entityID, helperType, meta, args)
-		if err != nil {
-			return errorResult(err.Error()), nil
-		}
 	} else {
-		// Unknown helper type (sensor/binary_sensor without metadata)
-		// These are Config Entry Flow helpers - build loose config
-		//
-		// minMaxPlatform is resolved only when the caller actually supplied
-		// min_max_type, to avoid a registry fetch on every other config-entry
-		// update - and a mismatch here is a hard error, not a degraded skip:
-		// see resolveConfigEntryPlatformForMinMaxType's doc comment for why.
-		minMaxPlatform := ""
-		if _, hasMinMaxType := args["min_max_type"]; hasMinMaxType {
-			resolvedPlatform, platformErr := resolveConfigEntryPlatformForMinMaxType(ctx, client, entityID)
-			if platformErr != nil {
-				return errorResult(platformErr.Error()), nil
-			}
-			if resolvedPlatform != platformMinMax {
-				return errorResult(fmt.Sprintf(
-					"min_max_type is only valid for min_max helpers; %s is a %s helper", entityID, resolvedPlatform,
-				)), nil
-			}
-			minMaxPlatform = resolvedPlatform
-		}
-		config = buildConfigEntryUpdateConfig(entityDomain, minMaxPlatform, args)
+		// Unknown helper type (sensor/binary_sensor without metadata) - a
+		// Config Entry Flow helper.
+		config, err = buildUnknownTypeUpdateConfig(ctx, client, entityID, entityDomain, args)
+	}
+	if err != nil {
+		return errorResult(err.Error()), nil
 	}
 
 	// Create UpdateHelper request
@@ -1037,6 +1031,38 @@ func (h *ConsolidatedHelperHandlers) handleUpdate(ctx context.Context, client ho
 	}
 
 	return successResult(fmt.Sprintf("Helper '%s' updated successfully", entityID)), nil
+}
+
+// buildUnknownTypeUpdateConfig builds the update config for a helper whose
+// entity domain has no helperTypes entry (sensor/binary_sensor/...) - these
+// are always Config Entry Flow helpers, built as loose config rather than
+// through a typed helperTypes-driven builder. Split out of handleUpdate to
+// keep that function under the funlen limit.
+//
+// minMaxPlatform is resolved only when the caller actually supplied
+// min_max_type, to avoid a registry fetch on every other config-entry
+// update - and a mismatch here is a hard error, not a degraded skip: see
+// resolveConfigEntryPlatformForMinMaxType's doc comment for why.
+func buildUnknownTypeUpdateConfig(
+	ctx context.Context, client homeassistant.Client, entityID, entityDomain string, args map[string]any,
+) (map[string]any, error) {
+	minMaxPlatform := ""
+	if _, hasMinMaxType := args["min_max_type"]; hasMinMaxType {
+		resolvedPlatform, err := resolveConfigEntryPlatformForMinMaxType(ctx, client, entityID)
+		if err != nil {
+			return nil, err
+		}
+		if resolvedPlatform != platformMinMax {
+			return nil, fmt.Errorf(
+				"min_max_type is only valid for min_max helpers; %s is a %s helper", entityID, resolvedPlatform,
+			)
+		}
+		minMaxPlatform = resolvedPlatform
+	}
+	return buildConfigEntryUpdateConfig(configEntryUpdateContext{
+		entityDomain:   entityDomain,
+		minMaxPlatform: minMaxPlatform,
+	}, args)
 }
 
 // buildKnownTypeUpdateConfig builds the update config for a helperType that
@@ -1132,16 +1158,21 @@ func mergeCurrentHelperState(ctx context.Context, client homeassistant.Client, e
 		currentName = name
 	}
 
-	// Caller-supplied values always win, EXCEPT an explicit JSON null: this
-	// API has no "clear this field" spelling, so treating null as "clear"
-	// would let a caller's stray null overwrite a good merged value and then
-	// get silently dropped by the field-typed args[key].(T) reads in each
-	// build*Config function - resetting that field to HA's default instead
-	// of either preserving it or rejecting the call with an explanation.
+	// Caller-supplied values always win, EXCEPT: the two "leave unset"
+	// spellings argReader itself treats identically (see isSkippable) - an
+	// explicit JSON null, and an empty string, since this API has no "clear
+	// this field" spelling and letting either through would overwrite a good
+	// merged value with one that argReader.str/num/etc. then silently skips
+	// writing into the built config; and any field isUpdateExcludedField
+	// reports for typeName - the exclusion table above exists precisely to
+	// stop a field from reaching the update payload, and a caller naming it
+	// directly here must not be a back door around that, the same as the
+	// first loop already refuses to reintroduce it from stored config.
 	for k, v := range args {
-		if v != nil {
-			merged[k] = v
+		if isSkippable(v) || isUpdateExcludedField(typeName, k) {
+			continue
 		}
+		merged[k] = v
 	}
 
 	return merged, currentName, nil
@@ -1943,6 +1974,18 @@ func (h *ConsolidatedHelperHandlers) handleGroupEntities(ctx context.Context, cl
 // Config Builders
 // =============================================================================
 
+// configEntryUpdateContext groups the two platform-identifying strings needed
+// to build a config-entry helper's update payload. Both entityDomain and
+// minMaxPlatform are plain strings with unrelated meanings (the entity's HA
+// domain vs. a resolved min_max integration platform, only ever non-empty
+// when the caller supplied min_max_type) - as adjacent positional parameters
+// of the same type they were silently transposable at any call site with no
+// compiler error. Named fields close that off.
+type configEntryUpdateContext struct {
+	entityDomain   string
+	minMaxPlatform string
+}
+
 // buildConfigEntryUpdateConfig builds a loose config for Config Entry helper
 // updates. Extracts all recognized Config Entry fields from args.
 //
@@ -1953,53 +1996,58 @@ func (h *ConsolidatedHelperHandlers) handleGroupEntities(ctx context.Context, cl
 // "buildConfigEntryUpdateConfig leaked entity_id" gotcha).
 //
 //nolint:gocyclo // Routing to type-specific builders requires switch over all helper types
-func buildConfigEntryUpdateConfig(entityDomain, minMaxPlatform string, args map[string]any) map[string]any {
+func buildConfigEntryUpdateConfig(entryCtx configEntryUpdateContext, args map[string]any) (map[string]any, error) {
 	config := make(map[string]any)
+	r := newArgReader(config, args)
 
 	// Common fields
-	addOptionalString(config, args, "name")
-	addOptionalString(config, args, "icon")
+	r.str("name")
+	r.str("icon")
 
 	// Template helper fields
-	addOptionalString(config, args, "state")
-	addOptionalString(config, args, "source")
-	addOptionalString(config, args, "unit_of_measurement")
-	addOptionalString(config, args, "device_class")
-	addOptionalString(config, args, "state_class")
+	r.str("state")
+	r.strID("source")
+	r.str("unit_of_measurement")
+	r.str("device_class")
+	r.str("state_class")
 
 	// Threshold helper fields
-	addOptionalFloat(config, args, "lower")
-	addOptionalFloat(config, args, "upper")
-	addOptionalFloat(config, args, "hysteresis")
+	r.num("lower")
+	r.num("upper")
+	r.num("hysteresis")
 
-	// Derivative/Integral helper fields
-	addOptionalInt(config, args, "round")
-	addOptionalInt(config, args, "time_window")
-	addOptionalString(config, args, "unit_time")
-	addOptionalString(config, args, "unit_prefix")
-	addOptionalString(config, args, "method")
+	// Derivative/Integral helper fields. time_window is read here as a
+	// plain string, but internal/homeassistant's isDurationField reinterprets
+	// it by name and converts it to a duration dict before submission - a
+	// new duration-shaped field added here must also be added to that list.
+	r.integer("round")
+	r.str("time_window")
+	r.str("unit_time")
+	r.str("unit_prefix")
+	r.str("method")
 
 	// Group helper fields
-	if entities, ok := args["entities"].([]any); ok {
-		config["entities"] = entities
-	}
-	if all, ok := args["all"].(bool); ok {
-		config["all"] = all
-	}
-	addOptionalString(config, args, "group_type")
+	r.anySlice("entities")
+	r.boolean("all")
+	r.str("group_type")
 
-	// Template binary sensor fields
-	if delayOn, ok := args["delay_on"].(float64); ok {
-		config["delay_on"] = int(delayOn)
-	}
-	if delayOff, ok := args["delay_off"].(float64); ok {
-		config["delay_off"] = int(delayOff)
+	// Template binary sensor fields. delay_on/delay_off are read here as
+	// plain strings but reinterpreted as durations by name in
+	// internal/homeassistant's isDurationField - see the time_window
+	// comment above.
+	r.str("delay_on")
+	r.str("delay_off")
+
+	if err := r.err(); err != nil {
+		return nil, err
 	}
 
 	// Add fields for extended helper types
-	addExtendedConfigEntryFields(config, args, entityDomain, minMaxPlatform)
+	if err := addExtendedConfigEntryFields(config, args, entryCtx); err != nil {
+		return nil, err
+	}
 
-	return config
+	return config, nil
 }
 
 // configBuilderFunc is a function that builds type-specific helper configuration.
@@ -2010,18 +2058,18 @@ var helperConfigBuilders = map[string]configBuilderFunc{
 	platformInputBoolean:           buildInputBooleanConfig,
 	platformInputButton:            buildInputButtonConfig,
 	platformInputNumber:            buildInputNumberConfig,
-	platformInputText:              buildInputTextConfigWrapper,
-	platformInputSelect:            buildInputSelectConfigWrapper,
-	platformInputDatetime:          buildInputDatetimeConfigWrapper,
+	platformInputText:              buildInputTextConfig,
+	platformInputSelect:            buildInputSelectConfig,
+	platformInputDatetime:          buildInputDatetimeConfig,
 	platformCounter:                buildCounterConfig,
-	platformTimer:                  buildTimerConfigWrapper,
-	platformSchedule:               buildScheduleConfigWrapper,
-	platformGroup:                  buildGroupConfigWrapper,
+	platformTimer:                  buildTimerConfig,
+	platformSchedule:               buildScheduleConfig,
+	platformGroup:                  buildGroupConfig,
 	helperTypeTemplateSensor:       buildTemplateSensorConfig,
 	helperTypeTemplateBinarySensor: buildTemplateBinarySensorConfig,
-	"threshold":                    buildThresholdConfigWrapper,
-	"derivative":                   buildDerivativeConfigWrapper,
-	"integral":                     buildIntegralConfigWrapper,
+	"threshold":                    buildThresholdConfig,
+	"derivative":                   buildDerivativeConfig,
+	"integral":                     buildIntegralConfig,
 	platformUtilityMeter:           buildUtilityMeterConfig,
 	platformMinMax:                 buildMinMaxConfig,
 	platformStatistics:             buildStatisticsConfig,
@@ -2037,7 +2085,11 @@ var helperConfigBuilders = map[string]configBuilderFunc{
 
 func buildHelperConfig(helperType, name string, args map[string]any) (map[string]any, error) {
 	config := map[string]any{"name": name}
-	addOptionalString(config, args, "icon")
+	r := newArgReader(config, args)
+	r.str("icon")
+	if err := r.err(); err != nil {
+		return config, err
+	}
 
 	if builder, exists := helperConfigBuilders[helperType]; exists {
 		return config, builder(config, args)
@@ -2047,8 +2099,9 @@ func buildHelperConfig(helperType, name string, args map[string]any) (map[string
 }
 
 func buildInputBooleanConfig(config, args map[string]any) error {
-	addOptionalBool(config, args, "initial")
-	return nil
+	r := newArgReader(config, args)
+	r.boolean("initial")
+	return r.err()
 }
 
 func buildInputButtonConfig(_, _ map[string]any) error {
@@ -2056,14 +2109,18 @@ func buildInputButtonConfig(_, _ map[string]any) error {
 }
 
 func buildInputNumberConfig(config, args map[string]any) error {
-	addOptionalFloat(config, args, "min")
-	addOptionalFloat(config, args, "max")
-	addOptionalFloat(config, args, "step")
-	addOptionalFloat(config, args, "initial")
-	addOptionalString(config, args, "mode")
-	addOptionalString(config, args, "unit_of_measurement")
-	if minVal, hasMin := args["min"].(float64); hasMin {
-		if maxVal, hasMax := args["max"].(float64); hasMax {
+	r := newArgReader(config, args)
+	r.num("min")
+	r.num("max")
+	r.num("step")
+	r.num("initial")
+	r.str("mode")
+	r.str("unit_of_measurement")
+	if err := r.err(); err != nil {
+		return err
+	}
+	if minVal, hasMin := config["min"].(float64); hasMin {
+		if maxVal, hasMax := config["max"].(float64); hasMax {
 			if err := ValidateRange(minVal, maxVal, "input_number"); err != nil {
 				return err
 			}
@@ -2072,51 +2129,44 @@ func buildInputNumberConfig(config, args map[string]any) error {
 	return nil
 }
 
-func buildInputTextConfig(config, args map[string]any) {
-	addOptionalFloat(config, args, "min")
-	addOptionalFloat(config, args, "max")
-	addOptionalString(config, args, "mode")
-	addOptionalString(config, args, "pattern")
-	addOptionalString(config, args, "initial")
+func buildInputTextConfig(config, args map[string]any) error {
+	r := newArgReader(config, args)
+	r.num("min")
+	r.num("max")
+	r.str("mode")
+	r.str("pattern")
+	r.str("initial")
+	return r.err()
 }
 
-func buildInputTextConfigWrapper(config, args map[string]any) error {
-	buildInputTextConfig(config, args)
-	return nil
+func buildInputSelectConfig(config, args map[string]any) error {
+	r := newArgReader(config, args)
+	r.str("initial")
+	r.strSlice("options")
+	return r.err()
 }
 
-func buildInputSelectConfig(config, args map[string]any) {
-	addOptionalString(config, args, "initial")
-	if options, ok := args["options"].([]any); ok {
-		config["options"] = convertToStringSlice(options)
-	}
-}
-
-func buildInputSelectConfigWrapper(config, args map[string]any) error {
-	buildInputSelectConfig(config, args)
-	return nil
-}
-
-func buildInputDatetimeConfig(config, args map[string]any) {
-	addOptionalBool(config, args, "has_date")
-	addOptionalBool(config, args, "has_time")
-	addOptionalString(config, args, "initial")
-}
-
-func buildInputDatetimeConfigWrapper(config, args map[string]any) error {
-	buildInputDatetimeConfig(config, args)
-	return nil
+func buildInputDatetimeConfig(config, args map[string]any) error {
+	r := newArgReader(config, args)
+	r.boolean("has_date")
+	r.boolean("has_time")
+	r.str("initial")
+	return r.err()
 }
 
 func buildCounterConfig(config, args map[string]any) error {
-	addOptionalInt(config, args, "initial")
-	addOptionalInt(config, args, "step")
-	addOptionalInt(config, args, "minimum")
-	addOptionalInt(config, args, "maximum")
-	addOptionalBool(config, args, "restore")
-	if minVal, hasMin := args["minimum"].(float64); hasMin {
-		if maxVal, hasMax := args["maximum"].(float64); hasMax {
-			if err := ValidateRange(minVal, maxVal, "counter"); err != nil {
+	r := newArgReader(config, args)
+	r.integer("initial")
+	r.integer("step")
+	r.integer("minimum")
+	r.integer("maximum")
+	r.boolean("restore")
+	if err := r.err(); err != nil {
+		return err
+	}
+	if minVal, hasMin := config["minimum"].(int); hasMin {
+		if maxVal, hasMax := config["maximum"].(int); hasMax {
+			if err := ValidateRange(float64(minVal), float64(maxVal), "counter"); err != nil {
 				return err
 			}
 		}
@@ -2124,98 +2174,87 @@ func buildCounterConfig(config, args map[string]any) error {
 	return nil
 }
 
-func buildTimerConfig(config, args map[string]any) {
-	addOptionalString(config, args, "duration")
-	addOptionalBool(config, args, "restore")
+func buildTimerConfig(config, args map[string]any) error {
+	r := newArgReader(config, args)
+	r.str("duration")
+	r.boolean("restore")
+	return r.err()
 }
 
-func buildTimerConfigWrapper(config, args map[string]any) error {
-	buildTimerConfig(config, args)
-	return nil
-}
-
-func buildScheduleConfig(config, args map[string]any) {
+func buildScheduleConfig(config, args map[string]any) error {
+	r := newArgReader(config, args)
 	days := []string{"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
 	for _, day := range days {
-		if daySchedule, ok := args[day].([]any); ok {
-			config[day] = daySchedule
-		}
+		r.anySlice(day)
 	}
+	return r.err()
 }
 
-func buildScheduleConfigWrapper(config, args map[string]any) error {
-	buildScheduleConfig(config, args)
-	return nil
-}
-
-func buildGroupConfig(config, args map[string]any) {
-	addOptionalBool(config, args, "all")
-	addOptionalString(config, args, "group_type")
-	if entities, ok := args["entities"].([]any); ok {
-		config["entities"] = entities
-	}
-}
-
-func buildGroupConfigWrapper(config, args map[string]any) error {
-	buildGroupConfig(config, args)
-	return nil
+func buildGroupConfig(config, args map[string]any) error {
+	r := newArgReader(config, args)
+	r.boolean("all")
+	r.str("group_type")
+	r.anySlice("entities")
+	return r.err()
 }
 
 func buildTemplateSensorConfig(config, args map[string]any) error {
-	config["state"] = args["state"]
-	addOptionalString(config, args, "unit_of_measurement")
-	addOptionalString(config, args, "state_class")
+	r := newArgReader(config, args)
+	r.str("state")
+	r.str("unit_of_measurement")
+	r.str("state_class")
 	config["template_type"] = "sensor"
-	addOptionalString(config, args, "device_class")
-	return nil
+	r.str("device_class")
+	return r.err()
 }
 
+// buildTemplateBinarySensorConfig builds configuration for a template
+// binary_sensor helper. delay_on/delay_off are read here as plain strings
+// but reinterpreted as durations by name in internal/homeassistant's
+// isDurationField - see buildDerivativeConfig's time_window comment.
 func buildTemplateBinarySensorConfig(config, args map[string]any) error {
-	config["state"] = args["state"]
-	addOptionalString(config, args, "delay_on")
-	addOptionalString(config, args, "delay_off")
+	r := newArgReader(config, args)
+	r.str("state")
+	r.str("delay_on")
+	r.str("delay_off")
 	config["template_type"] = "binary_sensor"
-	addOptionalString(config, args, "device_class")
-	return nil
+	r.str("device_class")
+	return r.err()
 }
 
-func buildThresholdConfigConsolidated(config, args map[string]any) {
-	addOptionalFloat(config, args, "lower")
-	addOptionalFloat(config, args, "upper")
-	addOptionalFloat(config, args, "hysteresis")
-	addOptionalString(config, args, "device_class")
-	config["entity_id"] = args["entity_id"]
+func buildThresholdConfig(config, args map[string]any) error {
+	r := newArgReader(config, args)
+	r.num("lower")
+	r.num("upper")
+	r.num("hysteresis")
+	r.str("device_class")
+	r.strID("entity_id")
+	return r.err()
 }
 
-func buildThresholdConfigWrapper(config, args map[string]any) error {
-	buildThresholdConfigConsolidated(config, args)
-	return nil
+// buildDerivativeConfig builds configuration for derivative helper.
+// time_window is read here as a plain string but reinterpreted as a
+// duration by name in internal/homeassistant's isDurationField - a new
+// duration-shaped field must also be added to that list to convert
+// correctly.
+func buildDerivativeConfig(config, args map[string]any) error {
+	r := newArgReader(config, args)
+	r.integer("round")
+	r.str("time_window")
+	r.str("unit_time")
+	r.str("unit_prefix")
+	r.strID("source")
+	return r.err()
 }
 
-func buildDerivativeConfigConsolidated(config, args map[string]any) {
-	addOptionalInt(config, args, "round")
-	addOptionalString(config, args, "time_window")
-	addOptionalString(config, args, "unit_time")
-	addOptionalString(config, args, "unit_prefix")
-	config["source"] = args["source"]
-}
-
-func buildDerivativeConfigWrapper(config, args map[string]any) error {
-	buildDerivativeConfigConsolidated(config, args)
-	return nil
-}
-
-func buildIntegralConfigConsolidated(config, args map[string]any) {
-	addOptionalString(config, args, "method")
-	addOptionalInt(config, args, "round")
-	addOptionalString(config, args, "unit_time")
-	addOptionalString(config, args, "unit_prefix")
-	config["source"] = args["source"]
-}
-
-func buildIntegralConfigWrapper(config, args map[string]any) error {
-	buildIntegralConfigConsolidated(config, args)
-	return nil
+func buildIntegralConfig(config, args map[string]any) error {
+	r := newArgReader(config, args)
+	r.str("method")
+	r.integer("round")
+	r.str("unit_time")
+	r.str("unit_prefix")
+	r.strID("source")
+	return r.err()
 }
 
 // =============================================================================
@@ -2511,56 +2550,58 @@ func wrapperRecipeFor(constraint sourceEntityConstraint, sourceEntityID string) 
 //nolint:gocyclo // Validation switch with many specific field types
 func validateSingleField(field, helperType string, args map[string]any) error {
 	switch field {
-	case "options":
-		opts, ok := args["options"].([]any)
-		if !ok {
-			return fmt.Errorf("options is required for %s and must be an array", helperType)
-		}
-		if len(opts) == 0 {
-			return fmt.Errorf("options must be a non-empty array for %s", helperType)
-		}
-	case "entities":
-		ents, ok := args["entities"].([]any)
-		if !ok {
-			return fmt.Errorf("entities is required for %s and must be an array", helperType)
-		}
-		if len(ents) == 0 {
-			return fmt.Errorf("entities must be a non-empty array for %s", helperType)
-		}
+	case "options", "entities", "entity_ids":
+		return validateNonEmptyArrayField(field, helperType, args)
 	case "state":
-		state, _ := args["state"].(string)
-		if state == "" {
-			return fmt.Errorf("state (Jinja2 template) is required for %s", helperType)
-		}
+		return validateNonEmptyStringField(field, "Jinja2 template", helperType, args)
 	case configKeyEntityID:
-		entityID, _ := args[configKeyEntityID].(string)
-		if entityID == "" {
-			return fmt.Errorf("entity_id (source entity) is required for %s", helperType)
-		}
+		return validateNonEmptyStringField(field, "source entity", helperType, args)
 	case "source":
-		source, _ := args["source"].(string)
-		if source == "" {
-			return fmt.Errorf("source (source sensor entity ID) is required for %s", helperType)
-		}
-	case "entity_ids":
-		entityIDs, ok := args["entity_ids"].([]any)
-		if !ok {
-			return fmt.Errorf("entity_ids is required for %s and must be an array", helperType)
-		}
-		if len(entityIDs) == 0 {
-			return fmt.Errorf("entity_ids must be a non-empty array for %s", helperType)
-		}
+		return validateNonEmptyStringField(field, "source sensor entity ID", helperType, args)
 	case "min", "max":
-		// Check for numeric fields (float64)
-		_, ok := args[field].(float64)
-		if !ok {
+		// Accept the same numeric-or-numeric-string values the config
+		// builders coerce via argReader.num, so a required min/max isn't
+		// rejected here only to have succeeded downstream.
+		if _, ok := toFloat(args[field]); !ok {
 			return fmt.Errorf("%s must be a number for %s", field, helperType)
 		}
 	default:
-		val, _ := args[field].(string)
-		if val == "" {
+		// Presence-only: whether a present value is well-formed for this
+		// field is the config builder's job (argReader reports a proper
+		// type-mismatch error there). Every default-case field happens to
+		// be string-typed today, but asserting to string here and treating
+		// a failed assertion as "absent" would misreport "wrong type" as
+		// "is required" - a lie, since the caller did supply it.
+		if v, exists := args[field]; !exists || isSkippable(v) {
 			return fmt.Errorf("%s is required for %s", field, helperType)
 		}
+	}
+	return nil
+}
+
+// validateNonEmptyArrayField validates args[field] is a non-empty []any,
+// the shape shared by options/entities/entity_ids - extracted to keep
+// validateSingleField's cognitive complexity down.
+func validateNonEmptyArrayField(field, helperType string, args map[string]any) error {
+	arr, ok := args[field].([]any)
+	if !ok {
+		return fmt.Errorf("%s is required for %s and must be an array", field, helperType)
+	}
+	if len(arr) == 0 {
+		return fmt.Errorf("%s must be a non-empty array for %s", field, helperType)
+	}
+	return nil
+}
+
+// validateNonEmptyStringField validates args[field] is a non-empty string,
+// the shape shared by state/entity_id/source - extracted to keep
+// validateSingleField's cognitive complexity down. description is the
+// human-readable parenthetical each field's error message already used
+// (e.g. "Jinja2 template", "source entity").
+func validateNonEmptyStringField(field, description, helperType string, args map[string]any) error {
+	s, _ := args[field].(string)
+	if s == "" {
+		return fmt.Errorf("%s (%s) is required for %s", field, description, helperType)
 	}
 	return nil
 }
@@ -2599,40 +2640,6 @@ func formatHelperType(helperType string) string {
 		return "Template binary sensor"
 	default:
 		return strings.ReplaceAll(helperType, "_", " ")
-	}
-}
-
-func addOptionalString(config, args map[string]any, key string) {
-	if val, ok := args[key].(string); ok && val != "" {
-		config[key] = val
-	}
-}
-
-// addRenamedOptionalString copies args[argKey] to config[configKey] when
-// present and non-empty. Used for API field renames (heater_entity_id ->
-// heater, humidifier_entity_id -> humidifier, ...) where addOptionalString's
-// same-key convention doesn't fit.
-func addRenamedOptionalString(config, args map[string]any, argKey, configKey string) {
-	if val, ok := args[argKey].(string); ok && val != "" {
-		config[configKey] = val
-	}
-}
-
-func addOptionalFloat(config, args map[string]any, key string) {
-	if val, ok := args[key].(float64); ok {
-		config[key] = val
-	}
-}
-
-func addOptionalInt(config, args map[string]any, key string) {
-	if val, ok := args[key].(float64); ok {
-		config[key] = int(val)
-	}
-}
-
-func addOptionalBool(config, args map[string]any, key string) {
-	if val, ok := args[key].(bool); ok {
-		config[key] = val
 	}
 }
 

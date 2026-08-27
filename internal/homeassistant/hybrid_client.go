@@ -5,6 +5,9 @@ package homeassistant
 import (
 	"context"
 	"fmt"
+	"math"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -170,6 +173,7 @@ type RESTOperations interface {
 	// Config Entry Flow operations (for helpers requiring HTTP-based flow)
 	InitConfigEntryFlow(ctx context.Context, handler string) (*ConfigEntryFlowResult, error)
 	SubmitConfigEntryFlowStep(ctx context.Context, flowID string, data map[string]any) (*ConfigEntryFlowResult, error)
+	AbortConfigEntryFlow(ctx context.Context, flowID string) error
 	DeleteConfigEntry(ctx context.Context, entryID string) (requireRestart bool, err error)
 
 	// Config Entry Options Flow operations (for reading current option values)
@@ -410,10 +414,22 @@ func (c *HybridClient) DeleteHelper(ctx context.Context, helperID string) error 
 
 // updateHelperViaOptionsFlow updates a Config Entry-based helper via Options Flow REST API.
 func (c *HybridClient) updateHelperViaOptionsFlow(ctx context.Context, entityID, configEntryID string, config HelperConfig) error {
-	// Extract icon from config - Options Flow doesn't support icons
+	// Extract icon from config - Options Flow doesn't support icons; applied
+	// via the Entity Registry after a successful submission instead.
 	icon, hasIcon := config.Config["icon"].(string)
 	if hasIcon {
 		delete(config.Config, "icon")
+	}
+
+	// Extract name the same way: a config-entry helper's display name lives
+	// in the entity registry, not in any Options Flow schema - most declare
+	// no "name" field at all (e.g. min_max, filter), so leaving it in
+	// config.Config would either be rejected outright by a PREVENT_EXTRA
+	// schema or, after the schema-field check below, treated as an
+	// unsupported field.
+	name, hasName := config.Config["name"].(string)
+	if hasName {
+		delete(config.Config, "name")
 	}
 
 	// Init Options Flow
@@ -435,8 +451,25 @@ func (c *HybridClient) updateHelperViaOptionsFlow(ctx context.Context, entityID,
 	// Extract current values from schema
 	currentValues := extractOptionsFromSchema(result.DataSchema)
 
+	// Reject (not silently drop) any user-supplied field this step's schema
+	// doesn't declare. Home Assistant's Options Flow forms use PREVENT_EXTRA
+	// voluptuous schemas, so submitting a stray key fails the whole request
+	// with an opaque "extra keys not allowed" error - but silently dropping
+	// it here instead would report the update as successful while quietly
+	// discarding a change the caller explicitly asked for. A failed
+	// menu-navigation match (navigateOptionsFlowMenu returning the original,
+	// unresolved menu result) makes this the only signal the caller gets, so
+	// this must fail loudly rather than log-and-continue.
+	userConfig, dropped := restrictToSchemaFields(config.Config, result.DataSchema)
+	if len(dropped) > 0 {
+		_ = c.rest.AbortConfigEntryOptionsFlow(ctx, result.FlowID)
+		return fmt.Errorf("helper %q does not support updating field(s): %s", entityID, strings.Join(dropped, ", "))
+	}
+
+	normalizeOptionsFlowDurations(userConfig, currentValues, result.StepID)
+
 	// Merge user-provided values with current values
-	mergedConfig := mergeOptionsFlowConfig(currentValues, config.Config)
+	mergedConfig := mergeOptionsFlowConfig(currentValues, userConfig)
 
 	// Submit merged config
 	submitResult, err := c.rest.SubmitConfigEntryOptionsFlowStep(ctx, result.FlowID, mergedConfig)
@@ -451,16 +484,99 @@ func (c *HybridClient) updateHelperViaOptionsFlow(ctx context.Context, entityID,
 		return fmt.Errorf("unexpected options flow result type: %s", submitResult.Type)
 	}
 
-	// Update icon via Entity Registry if provided
-	if hasIcon && icon != "" {
-		WaitForEntityAppear(ctx, c.ws.GetState, entityID, DefaultEntityPollerConfig())
-		updateCfg := EntityRegistryUpdateConfig{Icon: &icon}
-		if _, err := c.ws.UpdateEntityRegistryEntry(ctx, entityID, updateCfg); err != nil {
-			return fmt.Errorf("helper updated, but failed to set icon: %w", err)
+	// Update name/icon via Entity Registry if provided - neither is part of
+	// any Options Flow schema.
+	return c.applyNameIconViaRegistry(ctx, entityID, icon, hasIcon, name, hasName)
+}
+
+// normalizeOptionsFlowDurations converts each userConfig value that is
+// duration-shaped into Home Assistant's {"hours":.,"minutes":.,"seconds":.}
+// dict form in place. Split out of updateHelperViaOptionsFlow to keep that
+// function's cognitive complexity down.
+//
+// Home Assistant renders a DurationSelector field's current value as a
+// dict when the field already has a value - that's the primary way a
+// duration field is detected here, generically, without a hardcoded list
+// of field names - and rejects anything else on submission ("expected
+// dict"). A duration field with no current value (e.g.
+// template_binary_sensor's delay_on/delay_off, unset by default) never
+// appears in currentValues at all, so it also falls back to
+// isDurationField(key) - the same name list transformFieldValue uses on
+// create - to catch a first-time override the dict-shape heuristic alone
+// would miss. This is what buildFilterStepConfig already does for filter's
+// window_size on create; the options-flow update path had no equivalent
+// before.
+//
+// window_size is deliberately excluded from isDurationField (it's a
+// duration only for two of filter's seven subtypes, and that list is keyed
+// on field name alone), so the fallback above can't catch a first-time
+// window_size override either. stepID - the filter's actual subtype,
+// immutable after creation (CLAUDE.md's manage_helper update field docs) -
+// is what buildFilterStepConfig already keys off on create via
+// filterDurationWindowSteps; reused here as the update-path equivalent of
+// the isDurationField fallback.
+func normalizeOptionsFlowDurations(userConfig, currentValues map[string]any, stepID string) {
+	for key, userVal := range userConfig {
+		if _, alreadyDict := userVal.(map[string]any); alreadyDict {
+			continue
+		}
+		current, hasCurrent := currentValues[key]
+		_, currentIsDict := current.(map[string]any)
+		shouldConvert := currentIsDict || (!hasCurrent && isDurationField(key)) ||
+			(key == "window_size" && filterDurationWindowSteps[stepID])
+		if !shouldConvert {
+			continue
+		}
+		if d, ok := toDurationDict(userVal); ok {
+			userConfig[key] = d
 		}
 	}
+}
 
+// applyNameIconViaRegistry sets name/icon via the Entity Registry after a
+// successful Options Flow submission - neither is part of any Options Flow
+// schema. Split out of updateHelperViaOptionsFlow to keep that function's
+// cognitive complexity down.
+func (c *HybridClient) applyNameIconViaRegistry(ctx context.Context, entityID, icon string, hasIcon bool, name string, hasName bool) error {
+	if (!hasIcon || icon == "") && (!hasName || name == "") {
+		return nil
+	}
+	WaitForEntityAppear(ctx, c.ws.GetState, entityID, DefaultEntityPollerConfig())
+	updateCfg := EntityRegistryUpdateConfig{}
+	if hasIcon && icon != "" {
+		updateCfg.Icon = &icon
+	}
+	if hasName && name != "" {
+		updateCfg.Name = &name
+	}
+	if _, err := c.ws.UpdateEntityRegistryEntry(ctx, entityID, updateCfg); err != nil {
+		return fmt.Errorf("helper updated, but failed to set name/icon: %w", err)
+	}
 	return nil
+}
+
+// restrictToSchemaFields separates userConfig into keys dataSchema declares
+// and keys it doesn't, returning the filtered map and the sorted list of
+// unsupported keys - the caller decides what to do with the latter (see
+// updateHelperViaOptionsFlow, which hard-fails rather than silently
+// dropping them).
+func restrictToSchemaFields(userConfig map[string]any, dataSchema []OptionsFlowField) (map[string]any, []string) {
+	allowed := make(map[string]bool, len(dataSchema))
+	for _, field := range dataSchema {
+		allowed[field.Name] = true
+	}
+
+	filtered := make(map[string]any, len(userConfig))
+	var dropped []string
+	for k, v := range userConfig {
+		if allowed[k] {
+			filtered[k] = v
+			continue
+		}
+		dropped = append(dropped, k)
+	}
+	slices.Sort(dropped)
+	return filtered, dropped
 }
 
 // mergeOptionsFlowConfig merges user-provided config values with current schema values.
@@ -580,12 +696,18 @@ func (c *HybridClient) createHelperViaConfigFlow(ctx context.Context, config Hel
 	if flowResult.Type == "menu" {
 		subtype := c.determineHelperSubtype(config)
 		if subtype == "" {
+			_ = c.rest.AbortConfigEntryFlow(ctx, flowResult.FlowID)
 			return fmt.Errorf("config entry flow requires subtype selection but none provided")
 		}
-		flowResult, err = c.rest.SubmitConfigEntryFlowStep(ctx, flowResult.FlowID, map[string]any{
+		// Captured before the call: on error the new flowResult may be nil,
+		// so it can't be relied on to abort the flow it was just about to
+		// replace - the same reason the loop below tracks currentFlowID.
+		menuFlowID := flowResult.FlowID
+		flowResult, err = c.rest.SubmitConfigEntryFlowStep(ctx, menuFlowID, map[string]any{
 			"next_step_id": subtype,
 		})
 		if err != nil {
+			_ = c.rest.AbortConfigEntryFlow(ctx, menuFlowID)
 			return fmt.Errorf("submit config entry flow menu step: %w", err)
 		}
 	}
@@ -594,14 +716,17 @@ func (c *HybridClient) createHelperViaConfigFlow(ctx context.Context, config Hel
 	// Some platforms (statistics, trend, filter) require multiple form submissions
 	maxSteps := 5 // Safety limit to prevent infinite loops
 	for i := 0; i < maxSteps && flowResult.Type == flowTypeForm; i++ {
-		// Save step ID before submission (in case of error, flowResult might be nil)
+		// Save step ID and flow ID before submission (in case of error, the
+		// new flowResult might be nil).
 		currentStepID := flowResult.StepID
+		currentFlowID := flowResult.FlowID
 
 		// Transform config for the current step
 		stepConfig := c.buildConfigForFlowStep(config, currentStepID)
 
-		flowResult, err = c.rest.SubmitConfigEntryFlowStep(ctx, flowResult.FlowID, stepConfig)
+		flowResult, err = c.rest.SubmitConfigEntryFlowStep(ctx, currentFlowID, stepConfig)
 		if err != nil {
+			_ = c.rest.AbortConfigEntryFlow(ctx, currentFlowID)
 			return fmt.Errorf("submit config entry flow step %s: %w", currentStepID, err)
 		}
 
@@ -616,15 +741,21 @@ func (c *HybridClient) createHelperViaConfigFlow(ctx context.Context, config Hel
 
 		// Check for validation errors
 		if flowResult.Type == flowTypeForm && len(flowResult.Errors) > 0 {
+			_ = c.rest.AbortConfigEntryFlow(ctx, currentFlowID)
 			return fmt.Errorf("config entry flow validation errors: %v", flowResult.Errors)
 		}
 	}
 
 	// Still in form state after max steps
 	if flowResult.Type == flowTypeForm {
+		_ = c.rest.AbortConfigEntryFlow(ctx, flowResult.FlowID)
 		return fmt.Errorf("config entry flow exceeded max steps (last step_id: %s)", flowResult.StepID)
 	}
 
+	// An unrecognized terminal type (neither form, create_entry, nor abort)
+	// still leaves the flow open on HA's side - abort it rather than leaking
+	// it, same as every other exit path above.
+	_ = c.rest.AbortConfigEntryFlow(ctx, flowResult.FlowID)
 	return fmt.Errorf("unexpected config entry flow result type: %s", flowResult.Type)
 }
 
@@ -673,20 +804,81 @@ func (c *HybridClient) buildConfigForFlowStep(config HelperConfig, stepID string
 		return c.transformConfigForFlow(config)
 
 	case platformFilter:
-		// Filter "user" step wants entity_id, name, and filter (all together)
-		if stepID == "user" {
-			return c.transformConfigForFlow(config)
-		}
-		// Second step (filter-specific like "outlier", "lowpass", etc.) wants entity_id only (NO name, NO filter)
-		result := c.transformConfigForFlow(config)
-		delete(result, "name")   // name already set in user step
-		delete(result, "filter") // filter already set in user step
-		return result
+		return c.buildFilterStepConfig(config, stepID)
 
 	default:
 		// Default: return full transformed config
 		return c.transformConfigForFlow(config)
 	}
+}
+
+// filterStepFields is the exact key set Home Assistant's filter config-entry
+// flow accepts at each step. Step "user" is DATA_SCHEMA_SETUP; every other
+// step id IS the filter type name itself (HA's get_next_step returns
+// user_input[CONF_FILTER_NAME]), and its schema is the per-type schema
+// extended with entity_id/filter/precision. Without this allow-list, a
+// stray key surviving from the "user" step (like the removed "filters"
+// parameter) reaches HA's PREVENT_EXTRA voluptuous schema and produces
+// "extra keys not allowed" instead of a working create.
+var filterStepFields = map[string]map[string]bool{
+	"user":                       {"name": true, "entity_id": true, "filter": true},
+	"outlier":                    {"entity_id": true, "filter": true, "precision": true, "window_size": true, "radius": true},
+	"lowpass":                    {"entity_id": true, "filter": true, "precision": true, "window_size": true, "time_constant": true},
+	"range":                      {"entity_id": true, "filter": true, "precision": true, "lower_bound": true, "upper_bound": true},
+	"throttle":                   {"entity_id": true, "filter": true, "precision": true, "window_size": true},
+	"time_simple_moving_average": {"entity_id": true, "filter": true, "precision": true, "window_size": true},
+	"time_throttle":              {"entity_id": true, "filter": true, "precision": true, "window_size": true},
+}
+
+// filterDurationWindowSteps are the filter steps whose window_size is a
+// DurationSelector (HA's cv.positive_time_period_dict) rather than a plain
+// sample-count NumberSelector. This is the create-path, filter-specific
+// counterpart to isDurationField's generic by-field-name list - see that
+// function's doc comment for why window_size can't just be added there.
+var filterDurationWindowSteps = map[string]bool{
+	"time_simple_moving_average": true,
+	"time_throttle":              true,
+}
+
+// buildFilterStepConfig shapes a filter helper's config for one step of
+// Home Assistant's config-entry flow. Keyed on stepID - HA's own answer to
+// "which filter is this" - rather than on config.Config["filter"], so an
+// unknown future filter type degrades to forwarding the full transformed
+// config (this function's pre-allow-list behavior) instead of silently
+// emptying the payload. Restricted to that step's schema fields
+// (filterStepFields), with window_size converted to a duration dict for
+// the two subtypes that need it (filterDurationWindowSteps).
+//
+// If toDurationDict fails for a duration-shaped window_size, this
+// deliberately falls through to submitting the raw value rather than
+// failing the create call locally: consistent with this file's general
+// convention of letting Home Assistant's own config-flow validation produce
+// the error (e.g. its "expected dict" message) instead of duplicating that
+// validation here. The tradeoff is that a malformed window_size surfaces as
+// HA's opaque error rather than argReader's own clearer one - argReader.raw
+// only bounds window_size's size and top-level shape at read time, it
+// doesn't know here which filter subtype makes it duration-shaped.
+func (c *HybridClient) buildFilterStepConfig(config HelperConfig, stepID string) map[string]any {
+	full := c.transformConfigForFlow(config)
+	allowed, known := filterStepFields[stepID]
+	if !known {
+		return full
+	}
+
+	result := make(map[string]any, len(allowed))
+	for k, v := range full {
+		if !allowed[k] {
+			continue
+		}
+		if k == "window_size" && filterDurationWindowSteps[stepID] {
+			if d, ok := toDurationDict(v); ok {
+				result[k] = d
+				continue
+			}
+		}
+		result[k] = v
+	}
+	return result
 }
 
 // determineHelperSubtype extracts the subtype for multi-step flows.
@@ -836,8 +1028,8 @@ func (c *HybridClient) shouldSkipConfigField(key, platform string) bool {
 
 // transformFieldValue transforms a config field value if needed.
 func (c *HybridClient) transformFieldValue(key string, value any) any {
-	if strVal, ok := value.(string); ok && isDurationField(key) {
-		if duration := parseDurationString(strVal); duration != nil {
+	if isDurationField(key) {
+		if duration, ok := toDurationDict(value); ok {
 			return duration
 		}
 	}
@@ -858,6 +1050,20 @@ func (c *HybridClient) addSensorGroupDefaults(config HelperConfig, result map[st
 }
 
 // isDurationField checks if a field name typically contains duration values.
+// Used by transformFieldValue (create) and, as a no-current-value fallback,
+// by updateHelperViaOptionsFlow's duration-normalisation loop (update) - see
+// that loop's doc comment for how the two paths fit together.
+//
+// filter's "window_size" is deliberately NOT in this list even though it's
+// a duration for two of the seven filter types (time_simple_moving_average,
+// time_throttle): this list is keyed on field name alone and is used
+// generically across every helper type, but window_size is a plain
+// sample-count NumberSelector for the other five filter types
+// (outlier/lowpass/range/throttle) - adding it here would make
+// transformFieldValue convert a sample count into a bogus duration dict for
+// those. window_size's duration-ness is per-filter-type, not per-field-name,
+// so it's handled separately and explicitly by filterDurationWindowSteps
+// (create, scoped to buildFilterStepConfig) instead.
 func isDurationField(fieldName string) bool {
 	durationFields := map[string]bool{
 		"time_window":      true,
@@ -868,11 +1074,45 @@ func isDurationField(fieldName string) bool {
 	return durationFields[fieldName]
 }
 
-// parseDurationString converts "HH:MM:SS" format to Config Entry Flow dict format.
+// parseDurationString parses "H:MM:SS", "H:MM", or "SS" into Home
+// Assistant's DurationSelector dict form. A 2-part string is HH:MM, matching
+// Home Assistant's own cv.time_period_str - NOT MM:SS. Returns nil for
+// anything else.
 func parseDurationString(s string) map[string]int {
+	parts := strings.Split(s, ":")
 	var hours, minutes, seconds int
-	n, err := fmt.Sscanf(s, "%d:%d:%d", &hours, &minutes, &seconds)
-	if err != nil || n != 3 {
+	var err error
+	switch len(parts) {
+	case 3:
+		hours, err = strconv.Atoi(parts[0])
+		if err == nil {
+			minutes, err = strconv.Atoi(parts[1])
+		}
+		if err == nil {
+			seconds, err = strconv.Atoi(parts[2])
+		}
+	case 2:
+		// Matches Home Assistant's own cv.time_period_str, which parses a
+		// 2-part string as HH:MM (hour = parts[0], minute = parts[1]), not
+		// MM:SS - "1:30" is 1h30m, not 90 seconds.
+		hours, err = strconv.Atoi(parts[0])
+		if err == nil {
+			minutes, err = strconv.Atoi(parts[1])
+		}
+	case 1:
+		seconds, err = strconv.Atoi(parts[0])
+	default:
+		return nil
+	}
+	if err != nil {
+		return nil
+	}
+	// Mirrors durationDictFromMap/secondsToDurationDict's guard: a negative
+	// or out-of-range component is a syntactically valid but nonsensical
+	// duration that must be rejected here, not forwarded to Home Assistant.
+	if hours < 0 || hours > maxDurationComponent ||
+		minutes < 0 || minutes > maxDurationComponent ||
+		seconds < 0 || seconds > maxDurationComponent {
 		return nil
 	}
 	return map[string]int{
@@ -880,6 +1120,142 @@ func parseDurationString(s string) map[string]int {
 		"minutes": minutes,
 		"seconds": seconds,
 	}
+}
+
+// toDurationDict normalises a value into Home Assistant's DurationSelector
+// dict form. Accepted input, in priority order: a map already in that shape
+// (durationDictFromMap/durationDictFromIntMap - any key outside
+// days/hours/minutes/seconds/milliseconds, or a recognized key with a
+// non-numeric value, is ok=false, not silently dropped, since that would
+// produce a syntactically valid but wrong duration HA has no way to
+// detect); a "H:MM:SS"/"H:MM"/"SS" string; or a bare number interpreted as
+// seconds - the form most naturally produced by a caller who doesn't know
+// HA expects a dict. Returns ok=false for anything else, so the caller can
+// forward the raw value and let Home Assistant produce its own validation
+// error rather than this fabricating a dict from unrecognized input.
+func toDurationDict(v any) (map[string]int, bool) {
+	switch val := v.(type) {
+	case map[string]any:
+		return durationDictFromMap(val)
+	case map[string]int:
+		return durationDictFromIntMap(val)
+	case string:
+		if d := parseDurationString(val); d != nil {
+			return d, true
+		}
+		return nil, false
+	case float64:
+		return secondsToDurationDict(val)
+	case int:
+		return secondsToDurationDict(float64(val))
+	default:
+		return nil, false
+	}
+}
+
+// durationKeys are every key Home Assistant's cv.time_period_dict accepts.
+var durationKeys = []string{"days", "hours", "minutes", "seconds", "milliseconds"}
+
+// maxDurationComponent bounds every individual component (hours, minutes,
+// a bare seconds count, ...) accepted by parseDurationString,
+// durationDictFromMap, durationDictFromIntMap, and secondsToDurationDict.
+// One named constant instead of a bare math.MaxInt32 repeated at each call
+// site, so the four duration-conversion guards can't silently drift out of
+// sync with each other. int32 range, not int64, because converting a wider
+// value to int is implementation-defined in Go for out-of-range floats
+// (int(1e20) silently becomes garbage, not a clamp or a panic) and no real
+// helper field needs a wider range than that.
+const maxDurationComponent = math.MaxInt32
+
+// durationDictFromMap converts a map[string]any into Home Assistant's
+// DurationSelector dict form. Every key in val must be one of durationKeys -
+// an unrecognized key (e.g. a typo, or a shape that isn't actually a
+// duration) fails loudly rather than being silently dropped, which would
+// otherwise turn {"days": 1} into an empty (zero-second) duration with no
+// indication anything was lost. A recognized key with a non-numeric value
+// fails the same way, for the same reason.
+func durationDictFromMap(val map[string]any) (map[string]int, bool) {
+	allowed := make(map[string]bool, len(durationKeys))
+	for _, key := range durationKeys {
+		allowed[key] = true
+	}
+	for key := range val {
+		if !allowed[key] {
+			return nil, false
+		}
+	}
+
+	out := make(map[string]int, len(durationKeys))
+	for _, key := range durationKeys {
+		raw, exists := val[key]
+		if !exists {
+			continue
+		}
+		switch n := raw.(type) {
+		case float64:
+			// Mirrors secondsToDurationDict's guard: converting an
+			// out-of-range/NaN/Inf float to int is implementation-defined
+			// in Go (e.g. int(1e300) silently becomes garbage, not a clamp
+			// or a panic) - reject rather than forward a syntactically
+			// valid but nonsensical duration component to Home Assistant.
+			if math.IsNaN(n) || math.IsInf(n, 0) || n < 0 || n > maxDurationComponent {
+				return nil, false
+			}
+			out[key] = int(n)
+		case int:
+			if n < 0 || n > maxDurationComponent {
+				return nil, false
+			}
+			out[key] = n
+		default:
+			// A recognized key with a value of the wrong type (e.g. a
+			// numeric string) must fail loudly rather than being
+			// silently omitted - dropping it here would produce a
+			// syntactically valid but wrong duration (e.g.
+			// {"hours":"1","minutes":30} silently becoming a 30-second
+			// duration instead of 1h30m) that HA has no way to detect
+			// as wrong, since the resulting dict is well-formed.
+			return nil, false
+		}
+	}
+	return out, true
+}
+
+// durationDictFromIntMap validates a map[string]int the same way
+// durationDictFromMap validates a map[string]any, so both accepted map
+// shapes reject the same unrecognized keys instead of one silently
+// forwarding them.
+func durationDictFromIntMap(val map[string]int) (map[string]int, bool) {
+	allowed := make(map[string]bool, len(durationKeys))
+	for _, key := range durationKeys {
+		allowed[key] = true
+	}
+	for key := range val {
+		if !allowed[key] {
+			return nil, false
+		}
+	}
+	return val, true
+}
+
+// secondsToDurationDict converts a seconds count into Home Assistant's
+// DurationSelector dict form. Returns ok=false for anything that isn't a
+// sane, non-negative, in-range duration (NaN/Inf, negative, or too large to
+// convert to int without silently overflowing - int(1e20) wraps to a
+// garbage negative value rather than erroring) so the caller forwards the
+// raw value untouched and lets Home Assistant produce its own validation
+// error, per toDurationDict's doc comment, instead of this function
+// fabricating a nonsensical duration.
+func secondsToDurationDict(totalSeconds float64) (map[string]int, bool) {
+	if math.IsNaN(totalSeconds) || math.IsInf(totalSeconds, 0) || totalSeconds < 0 || totalSeconds > maxDurationComponent {
+		return nil, false
+	}
+	total := int(totalSeconds)
+	return map[string]int{
+		"hours":   total / 3600,
+		"minutes": (total % 3600) / 60,
+		"seconds": total % 60,
+	}, true
 }
 
 // =============================================================================

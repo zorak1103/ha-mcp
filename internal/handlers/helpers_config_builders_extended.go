@@ -3,75 +3,52 @@ package handlers
 
 // buildUtilityMeterConfig builds configuration for utility_meter helper.
 func buildUtilityMeterConfig(config, args map[string]any) error {
-	// Required: source
-	if source, ok := args["source"].(string); ok {
-		config["source"] = source
-	}
-
-	// Optional fields
-	addOptionalString(config, args, "cycle")
-	addOptionalFloat(config, args, "offset")
-	addOptionalBool(config, args, "delta_values")
-	addOptionalBool(config, args, "net_consumption")
-	addOptionalBool(config, args, "periodically_resetting")
-
-	// Tariffs array
-	if tariffs, ok := args["tariffs"].([]any); ok {
-		config["tariffs"] = convertToStringSlice(tariffs)
-	}
-
-	return nil
+	r := newArgReader(config, args)
+	r.strID("source")
+	r.str("cycle")
+	r.num("offset")
+	r.boolean("delta_values")
+	r.boolean("net_consumption")
+	r.boolean("periodically_resetting")
+	r.strSlice("tariffs")
+	return r.err()
 }
 
 // buildMinMaxConfig builds configuration for min_max helper.
 func buildMinMaxConfig(config, args map[string]any) error {
-	// Required: entity_ids
-	if entityIDs, ok := args["entity_ids"].([]any); ok {
-		config["entity_ids"] = convertToStringSlice(entityIDs)
-	}
-
-	// Required: min_max_type maps to HA's "type" config field. Kept distinct
-	// from the tool's own top-level helper-type selector ("type": "min_max"),
-	// which shares the same args map - reading args["type"] here would always
-	// see the selector value instead of the caller's intended calculation.
-	if minMaxType, ok := args["min_max_type"].(string); ok && minMaxType != "" {
-		config["type"] = minMaxType
-	}
-
-	// Optional fields
-	addOptionalInt(config, args, "round_digits")
-
-	return nil
+	r := newArgReader(config, args)
+	r.strSlice("entity_ids")
+	// min_max_type maps to HA's "type" config field. Kept distinct from the
+	// tool's own top-level helper-type selector ("type": "min_max"), which
+	// shares the same args map - reading args["type"] here would always see
+	// the selector value instead of the caller's intended calculation.
+	r.strAs("min_max_type", "type")
+	r.integer("round_digits")
+	return r.err()
 }
 
 // buildStatisticsConfig builds configuration for statistics helper.
 func buildStatisticsConfig(config, args map[string]any) error {
-	// Required: entity_id, state_characteristic
-	addOptionalString(config, args, "entity_id")
-	addOptionalString(config, args, "state_characteristic")
-
-	// Optional fields
-	addOptionalInt(config, args, "sampling_size")
-	addOptionalString(config, args, "max_age")
-	addOptionalFloat(config, args, "percentile")
-	addOptionalInt(config, args, "precision")
-
-	return nil
+	r := newArgReader(config, args)
+	r.strID("entity_id")
+	r.str("state_characteristic")
+	r.integer("sampling_size")
+	r.str("max_age")
+	r.num("percentile")
+	r.integer("precision")
+	return r.err()
 }
 
 // buildTrendConfig builds configuration for trend helper.
 func buildTrendConfig(config, args map[string]any) error {
-	// Required: entity_id
-	addOptionalString(config, args, "entity_id")
-
-	// Optional fields
-	addOptionalFloat(config, args, "min_gradient")
-	addOptionalInt(config, args, "min_samples")
-	addOptionalFloat(config, args, "sample_duration")
-	addOptionalInt(config, args, "max_samples")
-	addOptionalBool(config, args, "invert")
-
-	return nil
+	r := newArgReader(config, args)
+	r.strID("entity_id")
+	r.num("min_gradient")
+	r.integer("min_samples")
+	r.num("sample_duration")
+	r.integer("max_samples")
+	r.boolean("invert")
+	return r.err()
 }
 
 // buildRandomSensorConfig builds configuration for random sensor helper.
@@ -79,11 +56,10 @@ func buildRandomSensorConfig(config, args map[string]any) error {
 	// Set type routing field for menu navigation
 	config["type"] = "sensor"
 
-	// Optional fields
-	addOptionalFloat(config, args, "minimum")
-	addOptionalFloat(config, args, "maximum")
-
-	return nil
+	r := newArgReader(config, args)
+	r.num("minimum")
+	r.num("maximum")
+	return r.err()
 }
 
 // buildRandomBinarySensorConfig builds configuration for random binary_sensor helper.
@@ -94,181 +70,188 @@ func buildRandomBinarySensorConfig(config, _ map[string]any) error {
 	return nil
 }
 
-// buildFilterConfig builds configuration for filter helper.
+// buildFilterConfig builds configuration for filter helper. window_size is
+// read via raw() rather than a typed reader because its valid shape
+// depends on the filter type: a plain sample-count number for
+// outlier/lowpass/throttle, but a duration for
+// time_simple_moving_average/time_throttle - normalised later by
+// hybrid_client.go's toDurationDict, the one place that owns the duration
+// question. The "filters" array parameter is deliberately not supported:
+// Home Assistant's config-entry flow for filter takes exactly one filter
+// type per helper and rejects an additional "filters" key outright (see
+// CLAUDE.md's filter gotcha).
 func buildFilterConfig(config, args map[string]any) error {
-	// Required: entity_id, filter (filter type name)
-	addOptionalString(config, args, "entity_id")
-	addOptionalString(config, args, "filter")
-
-	// Optional: filters array (pass through as-is)
-	if filters, ok := args["filters"].([]any); ok {
-		config["filters"] = filters
-	}
-
-	return nil
+	r := newArgReader(config, args)
+	r.strID("entity_id")
+	r.strID("filter")
+	r.raw("window_size")
+	r.num("radius")
+	r.num("time_constant")
+	r.num("lower_bound")
+	r.num("upper_bound")
+	r.integer("precision")
+	return r.err()
 }
 
 // buildTodConfig builds configuration for tod (Time of Day) helper.
 func buildTodConfig(config, args map[string]any) error {
-	// Required: after_time, before_time
-	addOptionalString(config, args, "after_time")
-	addOptionalString(config, args, "before_time")
-
-	// Optional fields
-	addOptionalString(config, args, "after_offset")
-	addOptionalString(config, args, "before_offset")
-
-	return nil
+	r := newArgReader(config, args)
+	r.str("after_time")
+	r.str("before_time")
+	r.str("after_offset")
+	r.str("before_offset")
+	return r.err()
 }
 
 // buildGenericThermostatConfig builds configuration for generic_thermostat helper.
 func buildGenericThermostatConfig(config, args map[string]any) error {
+	r := newArgReader(config, args)
 	// Map user-friendly field names to API field names
 	// API expects: heater, target_sensor, ac_mode (not heater_entity_id, target_sensor_entity_id)
-	addRenamedOptionalString(config, args, "heater_entity_id", "heater")
-	addRenamedOptionalString(config, args, "target_sensor_entity_id", "target_sensor")
+	r.strIDAs("heater_entity_id", "heater")
+	r.strIDAs("target_sensor_entity_id", "target_sensor")
 
-	// ac_mode is required by API
-	if acMode, ok := args["ac_mode"].(bool); ok {
-		config["ac_mode"] = acMode
-	} else {
-		config["ac_mode"] = false // Default to heating mode
+	// ac_mode is required by the API; default to heating mode when the
+	// caller omits it (or sends an explicit null). A caller-supplied value
+	// of the wrong type is a hard error via r.boolean, not silently
+	// replaced by the default.
+	r.boolean("ac_mode")
+	if v, has := args["ac_mode"]; !has || isSkippable(v) {
+		config["ac_mode"] = false
 	}
 
-	// Optional fields
-	addOptionalFloat(config, args, "min_temp")
-	addOptionalFloat(config, args, "max_temp")
-	addOptionalFloat(config, args, "target_temp")
-	addOptionalFloat(config, args, "cold_tolerance")
-	addOptionalFloat(config, args, "hot_tolerance")
-
-	return nil
+	r.num("min_temp")
+	r.num("max_temp")
+	r.num("target_temp")
+	r.num("cold_tolerance")
+	r.num("hot_tolerance")
+	return r.err()
 }
 
 // buildSwitchAsXConfig builds configuration for switch_as_x helper.
 func buildSwitchAsXConfig(config, args map[string]any) error {
+	r := newArgReader(config, args)
 	// Required: entity_id (switch entity)
 	// Note: name field should NOT be sent to API
-	addOptionalString(config, args, "entity_id")
+	r.strID("entity_id")
 
-	// target_domain is routing field for menu navigation (stored but filtered by shouldSkipConfigField)
-	if targetDomain, ok := args["target_domain"].(string); ok {
-		config["target_domain"] = targetDomain
-	}
+	// target_domain is a routing field for menu navigation (stored but
+	// filtered by shouldSkipConfigField before API submission).
+	r.str("target_domain")
 
-	// Optional fields
-	addOptionalBool(config, args, "invert")
-
-	return nil
+	r.boolean("invert")
+	return r.err()
 }
 
 // buildGenericHygrostatConfig builds configuration for generic_hygrostat helper.
 func buildGenericHygrostatConfig(config, args map[string]any) error {
-	const deviceClassHumidifierValue = "humidifier"
-
+	r := newArgReader(config, args)
 	// Map user-friendly field names to API field names
 	// API expects: humidifier, target_sensor, device_class (not humidifier_entity_id, target_sensor_entity_id)
-	addRenamedOptionalString(config, args, "humidifier_entity_id", "humidifier")
-	addRenamedOptionalString(config, args, "target_sensor_entity_id", "target_sensor")
+	r.strIDAs("humidifier_entity_id", "humidifier")
+	r.strIDAs("target_sensor_entity_id", "target_sensor")
 
 	// device_class is required by API
-	config["device_class"] = deviceClassHumidifierValue
+	config["device_class"] = hygrostatDeviceClass
 
-	// Optional fields
-	addOptionalFloat(config, args, "min_humidity")
-	addOptionalFloat(config, args, "max_humidity")
-	addOptionalFloat(config, args, "target_humidity")
-	addOptionalFloat(config, args, "dry_tolerance")
-	addOptionalFloat(config, args, "wet_tolerance")
-
-	return nil
+	r.num("min_humidity")
+	r.num("max_humidity")
+	r.num("target_humidity")
+	r.num("dry_tolerance")
+	r.num("wet_tolerance")
+	return r.err()
 }
 
 // addExtendedConfigEntryFields adds extended helper fields to update config.
 // This function is called by buildConfigEntryUpdateConfig to handle new helper types.
 //
 //nolint:funlen // Large number of fields for extended helper types
-func addExtendedConfigEntryFields(config, args map[string]any, entityDomain, minMaxPlatform string) {
+func addExtendedConfigEntryFields(config, args map[string]any, entryCtx configEntryUpdateContext) error {
+	r := newArgReader(config, args)
+
 	// utility_meter fields
-	addOptionalString(config, args, "source")
-	addOptionalString(config, args, "cycle")
-	addOptionalFloat(config, args, "offset")
-	addOptionalBool(config, args, "delta_values")
-	addOptionalBool(config, args, "net_consumption")
-	addOptionalBool(config, args, "periodically_resetting")
-	if tariffs, ok := args["tariffs"].([]any); ok {
-		config["tariffs"] = convertToStringSlice(tariffs)
-	}
+	r.strID("source")
+	r.str("cycle")
+	r.num("offset")
+	r.boolean("delta_values")
+	r.boolean("net_consumption")
+	r.boolean("periodically_resetting")
+	r.strSlice("tariffs")
 
 	// min_max fields
-	if entityIDs, ok := args["entity_ids"].([]any); ok {
-		config["entity_ids"] = convertToStringSlice(entityIDs)
-	}
-	addMinMaxTypeField(config, args, minMaxPlatform)
-	addOptionalInt(config, args, "round_digits")
+	r.strSlice("entity_ids")
+	addMinMaxTypeField(r, entryCtx.minMaxPlatform)
+	r.integer("round_digits")
 
 	// statistics fields
-	addOptionalString(config, args, "state_characteristic")
-	addOptionalInt(config, args, "sampling_size")
-	addOptionalString(config, args, "max_age")
-	addOptionalFloat(config, args, "percentile")
-	addOptionalInt(config, args, "precision")
+	r.str("state_characteristic")
+	r.integer("sampling_size")
+	r.str("max_age")
+	r.num("percentile")
+	r.integer("precision")
 
 	// trend fields
-	addOptionalFloat(config, args, "min_gradient")
-	addOptionalInt(config, args, "min_samples")
-	addOptionalFloat(config, args, "sample_duration")
-	addOptionalInt(config, args, "max_samples")
-	addOptionalBool(config, args, "invert")
+	r.num("min_gradient")
+	r.integer("min_samples")
+	r.num("sample_duration")
+	r.integer("max_samples")
+	r.boolean("invert")
 
 	// random fields
-	addOptionalFloat(config, args, "minimum")
-	addOptionalFloat(config, args, "maximum")
+	r.num("minimum")
+	r.num("maximum")
 
 	// filter fields
-	if filters, ok := args["filters"].([]any); ok {
-		config["filters"] = filters
-	}
+	r.raw("window_size")
+	r.num("radius")
+	r.num("time_constant")
+	r.num("lower_bound")
+	r.num("upper_bound")
 
 	// tod fields
-	addOptionalString(config, args, "after_time")
-	addOptionalString(config, args, "before_time")
-	addOptionalString(config, args, "after_offset")
-	addOptionalString(config, args, "before_offset")
+	r.str("after_time")
+	r.str("before_time")
+	r.str("after_offset")
+	r.str("before_offset")
 
 	// generic_thermostat fields (map to API field names)
-	addRenamedOptionalString(config, args, "heater_entity_id", "heater")
-	addRenamedOptionalString(config, args, "target_sensor_entity_id", "target_sensor")
-	if acMode, ok := args["ac_mode"].(bool); ok {
-		config["ac_mode"] = acMode
-	}
-	addOptionalFloat(config, args, "min_temp")
-	addOptionalFloat(config, args, "max_temp")
-	addOptionalFloat(config, args, "target_temp")
-	addOptionalFloat(config, args, "cold_tolerance")
-	addOptionalFloat(config, args, "hot_tolerance")
+	r.strIDAs("heater_entity_id", "heater")
+	r.strIDAs("target_sensor_entity_id", "target_sensor")
+	// Unlike buildGenericThermostatConfig's create path, ac_mode gets NO
+	// default here when omitted - and that's deliberate, not a gap to
+	// "fix" by mirroring create. mergeOptionsFlowConfig already preserves
+	// the helper's current ac_mode when userConfig omits the key; defaulting
+	// it to false here would override that preserved value on every update
+	// that doesn't explicitly pass ac_mode, defeating the merge entirely.
+	r.boolean("ac_mode")
+	r.num("min_temp")
+	r.num("max_temp")
+	r.num("target_temp")
+	r.num("cold_tolerance")
+	r.num("hot_tolerance")
 
 	// switch_as_x fields
-	addOptionalString(config, args, "target_domain")
+	r.str("target_domain")
 
 	// generic_hygrostat fields (map to API field names)
-	addRenamedOptionalString(config, args, "humidifier_entity_id", "humidifier")
-	addRenamedOptionalString(config, args, "target_sensor_entity_id", "target_sensor")
+	r.strIDAs("humidifier_entity_id", "humidifier")
+	r.strIDAs("target_sensor_entity_id", "target_sensor")
 	// device_class is required for hygrostat - only default it when the
 	// helper being updated is actually a generic_hygrostat (its entity domain
 	// is "humidifier"), not every config-entry helper type that shares this
 	// one-size-fits-all update builder.
-	if entityDomain == entityDomainHumidifier {
-		const deviceClassHumidifier = "humidifier"
+	if entryCtx.entityDomain == hygrostatEntityDomain {
 		if _, exists := config["device_class"]; !exists {
-			config["device_class"] = deviceClassHumidifier
+			config["device_class"] = hygrostatDeviceClass
 		}
 	}
-	addOptionalFloat(config, args, "min_humidity")
-	addOptionalFloat(config, args, "max_humidity")
-	addOptionalFloat(config, args, "target_humidity")
-	addOptionalFloat(config, args, "dry_tolerance")
-	addOptionalFloat(config, args, "wet_tolerance")
+	r.num("min_humidity")
+	r.num("max_humidity")
+	r.num("target_humidity")
+	r.num("dry_tolerance")
+	r.num("wet_tolerance")
+
+	return r.err()
 }
 
 // addMinMaxTypeField writes config["type"] from args["min_max_type"] only
@@ -280,11 +263,9 @@ func addExtendedConfigEntryFields(config, args map[string]any, entityDomain, min
 // unconditional write here previously let min_max_type leak into "type" for
 // any of them, silently changing e.g. a sensor group's aggregation type
 // since HA's group CONF_TYPE enum is a superset of min_max's.
-func addMinMaxTypeField(config, args map[string]any, minMaxPlatform string) {
+func addMinMaxTypeField(r *argReader, minMaxPlatform string) {
 	if minMaxPlatform != platformMinMax {
 		return
 	}
-	if minMaxType, ok := args["min_max_type"].(string); ok && minMaxType != "" {
-		config["type"] = minMaxType
-	}
+	r.strAs("min_max_type", "type")
 }

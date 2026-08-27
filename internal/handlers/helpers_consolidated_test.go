@@ -904,12 +904,18 @@ func TestBuildConfigEntryUpdateConfig_MinMaxTypeGatedByPlatform(t *testing.T) {
 
 	args := map[string]any{"min_max_type": "max"}
 
-	notMinMax := buildConfigEntryUpdateConfig("sensor", "group", args)
+	notMinMax, err := buildConfigEntryUpdateConfig(configEntryUpdateContext{entityDomain: "sensor", minMaxPlatform: "group"}, args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if _, present := notMinMax["type"]; present {
 		t.Errorf(`buildConfigEntryUpdateConfig("sensor", "group", ...) wrote config["type"] = %v, want absent - min_max_type must not leak into a non-min_max platform's update`, notMinMax["type"])
 	}
 
-	isMinMax := buildConfigEntryUpdateConfig("sensor", platformMinMax, args)
+	isMinMax, err := buildConfigEntryUpdateConfig(configEntryUpdateContext{entityDomain: "sensor", minMaxPlatform: platformMinMax}, args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if got := isMinMax["type"]; got != "max" {
 		t.Errorf(`buildConfigEntryUpdateConfig("sensor", %q, ...) config["type"] = %v, want "max"`, platformMinMax, got)
 	}
@@ -4063,7 +4069,7 @@ func updatableFieldSentinel(name, field string) any {
 	}
 
 	switch field {
-	case "options", "entities", "tariffs", "filters", "entity_ids",
+	case "options", "entities", "tariffs", "entity_ids",
 		"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday":
 		return []any{"probe"}
 	case "has_date", "has_time", "restore", "all", "delta_values", "net_consumption",
@@ -4074,16 +4080,19 @@ func updatableFieldSentinel(name, field string) any {
 		"cold_tolerance", "hot_tolerance", "min_humidity", "max_humidity",
 		"target_humidity", "dry_tolerance", "wet_tolerance", "minimum", "maximum",
 		"round", "time_window", "round_digits", "sampling_size", "precision",
-		"min_samples", "max_samples", "delay_on", "delay_off":
-		// addOptionalInt/addOptionalFloat and the two manual delay_on/delay_off
-		// assertions in buildConfigEntryUpdateConfig all assert .(float64).
+		"min_samples", "max_samples", "delay_on", "delay_off",
+		"radius", "time_constant", "lower_bound", "upper_bound":
+		// argReader's num/integer/str readers all accept a float64 (str
+		// coerces it to a decimal string), so one numeric sentinel exercises
+		// every numeric-or-numeric-string field uniformly.
 		return float64(1)
 	default:
 		// icon, state, source, unit_of_measurement, device_class, state_class,
 		// unit_time, unit_prefix, method, group_type, mode, pattern, duration,
 		// cycle, max_age, after_time, before_time, after_offset, before_offset,
 		// heater_entity_id, target_sensor_entity_id, humidifier_entity_id,
-		// target_domain: every remaining name is read as a plain string.
+		// target_domain, window_size (raw - accepts a string): every
+		// remaining name is read as a plain string.
 		return "test-value"
 	}
 }
@@ -4127,7 +4136,11 @@ func TestUpdatableFields_AreActuallyReadByUpdatePath(t *testing.T) {
 				// is passed as the resolved min_max_type platform too - it's the
 				// real integration platform for every entry here, same as what
 				// resolveConfigEntryPlatformForMinMaxType would return.
-				config = buildConfigEntryUpdateConfig(meta.entityPrefix, meta.platform, args)
+				var err error
+				config, err = buildConfigEntryUpdateConfig(configEntryUpdateContext{entityDomain: meta.entityPrefix, minMaxPlatform: meta.platform}, args)
+				if err != nil {
+					t.Fatalf("buildConfigEntryUpdateConfig(%q, ...) returned error: %v", name, err)
+				}
 			} else {
 				var err error
 				config, err = buildHelperConfig(name, "Test Name", args)
@@ -4376,6 +4389,100 @@ func TestMergeCurrentHelperState_CounterRestoreFalseSurvivesMerge(t *testing.T) 
 
 	if restore, present := merged["restore"]; !present || restore != false {
 		t.Errorf(`merged["restore"] = %v (present=%v), want false (present=true) to survive the merge`, restore, present)
+	}
+}
+
+// TestMergeCurrentHelperState_CallerCannotBypassPerTypeExclusion guards
+// against perTypeUpdateExcludedFields only blocking a value from being
+// silently re-added from stored config, while leaving the door open for the
+// caller to push the same field through by naming it directly in args. That
+// would defeat the exclusion table's entire purpose the moment a real
+// WS-helper type gets an entry - not exploitable via "filter" today (it's a
+// Config Entry Flow type routed around this function entirely), so a
+// synthetic exclusion is added here to exercise the general mechanism
+// itself. Deliberately not t.Parallel(): it mutates the package-level
+// perTypeUpdateExcludedFields map and restores it before returning, and
+// Go's testing package only runs parallel siblings after every serial
+// top-level test (this one included) has finished.
+func TestMergeCurrentHelperState_CallerCannotBypassPerTypeExclusion(t *testing.T) {
+	original, hadEntry := perTypeUpdateExcludedFields["counter"]
+	perTypeUpdateExcludedFields["counter"] = map[string]bool{"step": true}
+	t.Cleanup(func() {
+		if hadEntry {
+			perTypeUpdateExcludedFields["counter"] = original
+		} else {
+			delete(perTypeUpdateExcludedFields, "counter")
+		}
+	})
+
+	entityID := "counter.test_entity"
+	client := &UniversalMockClient{
+		GetHelperConfigFn: func(context.Context, string, string) (map[string]any, error) {
+			return map[string]any{"step": 1.0, "icon": "mdi:test"}, nil
+		},
+	}
+
+	merged, _, err := mergeCurrentHelperState(context.Background(), client, entityID, "counter", helperTypes["counter"],
+		map[string]any{"step": 5.0})
+	if err != nil {
+		t.Fatalf("mergeCurrentHelperState returned err: %v", err)
+	}
+
+	if v, present := merged["step"]; present {
+		t.Errorf(`merged["step"] = %v, want absent - a caller supplying an update-excluded field directly must not bypass the exclusion`, v)
+	}
+}
+
+// TestMergeCurrentHelperState_EmptyStringArgDoesNotOverridePreservedField
+// guards against the merge loop treating a caller-sent empty string as a
+// real overriding value. argReader's own contract (helpers_arg_reader.go)
+// declares empty string a universal "leave unset" spelling, same as an
+// absent key or an explicit null - so a client following that contract to
+// mean "don't touch unit_of_measurement" must not have it silently cleared
+// just because the merge loop's override check only excluded nil.
+func TestMergeCurrentHelperState_EmptyStringArgDoesNotOverridePreservedField(t *testing.T) {
+	t.Parallel()
+
+	entityID := "input_number.test_entity"
+	client := &UniversalMockClient{
+		GetHelperConfigFn: func(context.Context, string, string) (map[string]any, error) {
+			return map[string]any{"min": 0.0, "max": 100.0, "unit_of_measurement": "%", "icon": "mdi:test"}, nil
+		},
+	}
+
+	merged, _, err := mergeCurrentHelperState(context.Background(), client, entityID, "input_number", helperTypes["input_number"],
+		map[string]any{"min": 0.0, "max": 100.0, "unit_of_measurement": ""})
+	if err != nil {
+		t.Fatalf("mergeCurrentHelperState returned err: %v", err)
+	}
+
+	if got := merged["unit_of_measurement"]; got != "%" {
+		t.Errorf(`merged["unit_of_measurement"] = %q, want "%%" (empty-string arg must not override the preserved value)`, got)
+	}
+}
+
+// TestValidateSingleField_DefaultCasePresentWrongTypedValueIsNotMisreportedAsMissing
+// guards validateSingleField's default branch (used by every required field
+// without a dedicated case, e.g. "filter", "min_max_type", "after_time",
+// "heater_entity_id", ...): a value that IS present but isn't a string used
+// to be silently coerced to "" via a failed type assertion and then
+// reported as "is required" - a lie, since the caller did supply it, and a
+// duplicate of the type error argReader.str already gives on the actual
+// build*Config call. Presence must be checked independently of type; type
+// checking is the builder's job.
+func TestValidateSingleField_DefaultCasePresentWrongTypedValueIsNotMisreportedAsMissing(t *testing.T) {
+	t.Parallel()
+
+	if err := validateSingleField("filter", "filter", map[string]any{"filter": 5.0}); err != nil {
+		t.Errorf(`validateSingleField("filter", present but non-string) = %v, want nil`, err)
+	}
+
+	if err := validateSingleField("filter", "filter", map[string]any{}); err == nil {
+		t.Error(`validateSingleField("filter", absent) = nil, want an error for a genuinely missing required field`)
+	}
+
+	if err := validateSingleField("filter", "filter", map[string]any{"filter": ""}); err == nil {
+		t.Error(`validateSingleField("filter", empty string) = nil, want an error - empty string is still "unset" for a required field`)
 	}
 }
 

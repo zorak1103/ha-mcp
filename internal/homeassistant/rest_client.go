@@ -1221,7 +1221,49 @@ func (c *RESTClient) SubmitConfigEntryOptionsFlowStep(ctx context.Context, flowI
 	return &result, nil
 }
 
-// AbortConfigEntryOptionsFlow aborts an active options flow.
+// AbortConfigEntryFlow aborts an active config-entry setup flow (the flow
+// createHelperViaConfigFlow drives for a helper's initial creation) - a
+// distinct HA REST endpoint from AbortConfigEntryOptionsFlow below, which
+// only aborts an options flow (an existing helper's update). Home Assistant
+// tracks the two flow kinds under separate URL prefixes
+// (config_entries/flow vs config_entries/options/flow) with no shared abort
+// endpoint, so a failed multi-step create (statistics: 3 steps, filter: 2)
+// would otherwise leave an orphaned flow object in HA until its own
+// flow-manager timeout reaps it.
+func (c *RESTClient) AbortConfigEntryFlow(ctx context.Context, flowID string) error {
+	url := fmt.Sprintf("%s/api/config/config_entries/flow/%s", c.baseURL, neturl.PathEscape(flowID))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, http.NoBody)
+	if err != nil {
+		return fmt.Errorf("creating abort config entry flow request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.doRequest(ctx, req)
+	if err != nil {
+		return fmt.Errorf("executing abort config entry flow request: %w", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNoContent {
+		return nil
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	return &APIError{
+		StatusCode: resp.StatusCode,
+		Message:    fmt.Sprintf("failed to abort config entry flow: %s", string(body)),
+	}
+}
+
+// AbortConfigEntryOptionsFlow aborts an active options flow (an existing
+// helper's update, driven by updateHelperViaOptionsFlow) - the Options Flow
+// counterpart to AbortConfigEntryFlow above.
 // Endpoint: DELETE /api/config/config_entries/options/flow/{flow_id}
 func (c *RESTClient) AbortConfigEntryOptionsFlow(ctx context.Context, flowID string) error {
 	url := fmt.Sprintf("%s/api/config/config_entries/options/flow/%s", c.baseURL, neturl.PathEscape(flowID))
