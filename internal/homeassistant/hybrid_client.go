@@ -538,7 +538,7 @@ func normalizeOptionsFlowDurations(userConfig, currentValues map[string]any, ste
 // schema. Split out of updateHelperViaOptionsFlow to keep that function's
 // cognitive complexity down.
 func (c *HybridClient) applyNameIconViaRegistry(ctx context.Context, entityID, icon string, hasIcon bool, name string, hasName bool) error {
-	if !((hasIcon && icon != "") || (hasName && name != "")) {
+	if (!hasIcon || icon == "") && (!hasName || name == "") {
 		return nil
 	}
 	WaitForEntityAppear(ctx, c.ws.GetState, entityID, DefaultEntityPollerConfig())

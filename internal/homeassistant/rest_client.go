@@ -1261,6 +1261,10 @@ func (c *RESTClient) AbortConfigEntryFlow(ctx context.Context, flowID string) er
 	}
 }
 
+// AbortConfigEntryOptionsFlow aborts an active options flow (an existing
+// helper's update, driven by updateHelperViaOptionsFlow) - the Options Flow
+// counterpart to AbortConfigEntryFlow above.
+// Endpoint: DELETE /api/config/config_entries/options/flow/{flow_id}
 func (c *RESTClient) AbortConfigEntryOptionsFlow(ctx context.Context, flowID string) error {
 	url := fmt.Sprintf("%s/api/config/config_entries/options/flow/%s", c.baseURL, neturl.PathEscape(flowID))
 
