@@ -296,6 +296,126 @@ func TestArgReader_AnySlice(t *testing.T) {
 	}
 }
 
+// TestArgReader_AnySlice_BoundsElementSize is a regression test: anySlice
+// used to validate only the top-level array length, letting each element -
+// a schedule day's time block, a group's entity - carry an arbitrarily
+// large or deeply nested value through unbounded, the same DoS shape raw()
+// was hardened against.
+func TestArgReader_AnySlice_BoundsElementSize(t *testing.T) {
+	t.Parallel()
+
+	t.Run("oversized string element errors", func(t *testing.T) {
+		t.Parallel()
+		config := map[string]any{}
+		r := newArgReader(config, map[string]any{"k": []any{strings.Repeat("a", maxScalarStringLen+1)}})
+		r.anySlice("k")
+		if r.err() == nil {
+			t.Fatal("expected an error for an oversized string element")
+		}
+	})
+
+	t.Run("map element with oversized string value errors", func(t *testing.T) {
+		t.Parallel()
+		config := map[string]any{}
+		r := newArgReader(config, map[string]any{
+			"k": []any{map[string]any{"from": strings.Repeat("a", maxScalarStringLen+1)}},
+		})
+		r.anySlice("k")
+		if r.err() == nil {
+			t.Fatal("expected an error for an oversized string value nested in a map element")
+		}
+	})
+
+	t.Run("map element with nested container value errors", func(t *testing.T) {
+		t.Parallel()
+		config := map[string]any{}
+		r := newArgReader(config, map[string]any{
+			"k": []any{map[string]any{"from": map[string]any{"nested": true}}},
+		})
+		r.anySlice("k")
+		if r.err() == nil {
+			t.Fatal("expected an error for a map element nested one level too deep")
+		}
+	})
+
+	t.Run("oversized map element errors", func(t *testing.T) {
+		t.Parallel()
+		config := map[string]any{}
+		r := newArgReader(config, map[string]any{"k": []any{oversizedMap()}})
+		r.anySlice("k")
+		if r.err() == nil {
+			t.Fatal("expected an error for a map element exceeding maxArrayElements keys")
+		}
+	})
+
+	t.Run("valid flat map and string elements still pass", func(t *testing.T) {
+		t.Parallel()
+		config := map[string]any{}
+		r := newArgReader(config, map[string]any{
+			"k": []any{map[string]any{"from": "08:00", "to": "22:00"}, "sensor.x"},
+		})
+		r.anySlice("k")
+		if err := r.err(); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if _, ok := config["k"].([]any); !ok {
+			t.Fatalf("config[k] = %v, want []any", config["k"])
+		}
+	})
+}
+
+// TestArgReader_StrID is a regression test: entity-identifier fields
+// (entity_id, source, filter, ...) used strAs, which silently stringifies a
+// numeric value (e.g. entity_id: 12345 -> "12345") instead of failing with
+// argReader's own clear type error - deferring the failure to an opaque
+// Home Assistant "entity not found" error instead.
+func TestArgReader_StrID(t *testing.T) {
+	t.Parallel()
+
+	t.Run("valid string passes through", func(t *testing.T) {
+		t.Parallel()
+		config := map[string]any{}
+		r := newArgReader(config, map[string]any{"entity_id": "sensor.x"})
+		r.strID("entity_id")
+		checkReader(t, r, config, "entity_id", "sensor.x", true, false)
+	})
+
+	t.Run("numeric value is rejected, not coerced", func(t *testing.T) {
+		t.Parallel()
+		config := map[string]any{}
+		r := newArgReader(config, map[string]any{"entity_id": 12345.0})
+		r.strID("entity_id")
+		if r.err() == nil {
+			t.Fatal("expected an error for a numeric entity_id, want it rejected rather than silently stringified")
+		}
+	})
+
+	t.Run("oversized string errors", func(t *testing.T) {
+		t.Parallel()
+		config := map[string]any{}
+		r := newArgReader(config, map[string]any{"entity_id": strings.Repeat("a", maxScalarStringLen+1)})
+		r.strID("entity_id")
+		if r.err() == nil {
+			t.Fatal("expected an error for an oversized entity_id")
+		}
+	})
+
+	t.Run("absent, nil, and empty string skip silently", func(t *testing.T) {
+		t.Parallel()
+		for _, v := range []any{nil, ""} {
+			config := map[string]any{}
+			r := newArgReader(config, map[string]any{"entity_id": v})
+			r.strID("entity_id")
+			if err := r.err(); err != nil {
+				t.Fatalf("unexpected error for %v: %v", v, err)
+			}
+			if _, present := config["entity_id"]; present {
+				t.Fatalf("config[entity_id] should not be set for %v", v)
+			}
+		}
+	})
+}
+
 func TestArgReader_Raw(t *testing.T) {
 	t.Parallel()
 
@@ -325,6 +445,14 @@ func TestArgReader_Raw(t *testing.T) {
 		{
 			name: "map with nested array value errors instead of being carried through unbounded",
 			args: map[string]any{"k": map[string]any{"minutes": []any{1.0, 2.0}}}, wantErr: true,
+		},
+		{
+			name: "oversized top-level string errors instead of being carried through unbounded",
+			args: map[string]any{"k": strings.Repeat("a", maxScalarStringLen+1)}, wantErr: true,
+		},
+		{
+			name: "map with oversized string value errors instead of being carried through unbounded",
+			args: map[string]any{"k": map[string]any{"minutes": strings.Repeat("a", maxScalarStringLen+1)}}, wantErr: true,
 		},
 	}
 

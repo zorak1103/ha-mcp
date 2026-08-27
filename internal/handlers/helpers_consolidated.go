@@ -1998,7 +1998,7 @@ func buildConfigEntryUpdateConfig(entryCtx configEntryUpdateContext, args map[st
 
 	// Template helper fields
 	r.str("state")
-	r.str("source")
+	r.strID("source")
 	r.str("unit_of_measurement")
 	r.str("device_class")
 	r.str("state_class")
@@ -2008,7 +2008,10 @@ func buildConfigEntryUpdateConfig(entryCtx configEntryUpdateContext, args map[st
 	r.num("upper")
 	r.num("hysteresis")
 
-	// Derivative/Integral helper fields
+	// Derivative/Integral helper fields. time_window is read here as a
+	// plain string, but internal/homeassistant's isDurationField reinterprets
+	// it by name and converts it to a duration dict before submission - a
+	// new duration-shaped field added here must also be added to that list.
 	r.integer("round")
 	r.str("time_window")
 	r.str("unit_time")
@@ -2020,7 +2023,10 @@ func buildConfigEntryUpdateConfig(entryCtx configEntryUpdateContext, args map[st
 	r.boolean("all")
 	r.str("group_type")
 
-	// Template binary sensor fields
+	// Template binary sensor fields. delay_on/delay_off are read here as
+	// plain strings but reinterpreted as durations by name in
+	// internal/homeassistant's isDurationField - see the time_window
+	// comment above.
 	r.str("delay_on")
 	r.str("delay_off")
 
@@ -2194,6 +2200,10 @@ func buildTemplateSensorConfig(config, args map[string]any) error {
 	return r.err()
 }
 
+// buildTemplateBinarySensorConfig builds configuration for a template
+// binary_sensor helper. delay_on/delay_off are read here as plain strings
+// but reinterpreted as durations by name in internal/homeassistant's
+// isDurationField - see buildDerivativeConfig's time_window comment.
 func buildTemplateBinarySensorConfig(config, args map[string]any) error {
 	r := newArgReader(config, args)
 	r.str("state")
@@ -2210,17 +2220,22 @@ func buildThresholdConfig(config, args map[string]any) error {
 	r.num("upper")
 	r.num("hysteresis")
 	r.str("device_class")
-	r.str("entity_id")
+	r.strID("entity_id")
 	return r.err()
 }
 
+// buildDerivativeConfig builds configuration for derivative helper.
+// time_window is read here as a plain string but reinterpreted as a
+// duration by name in internal/homeassistant's isDurationField - a new
+// duration-shaped field must also be added to that list to convert
+// correctly.
 func buildDerivativeConfig(config, args map[string]any) error {
 	r := newArgReader(config, args)
 	r.integer("round")
 	r.str("time_window")
 	r.str("unit_time")
 	r.str("unit_prefix")
-	r.str("source")
+	r.strID("source")
 	return r.err()
 }
 
@@ -2230,7 +2245,7 @@ func buildIntegralConfig(config, args map[string]any) error {
 	r.integer("round")
 	r.str("unit_time")
 	r.str("unit_prefix")
-	r.str("source")
+	r.strID("source")
 	return r.err()
 }
 

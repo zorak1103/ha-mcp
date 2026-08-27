@@ -2770,6 +2770,98 @@ func TestUpdateHelperViaOptionsFlow_ConvertsUnsetDurationFieldOnFirstSet(t *test
 	}
 }
 
+// TestUpdateHelperViaOptionsFlow_ConvertsWindowSizeOnFirstSetForDurationFilterType
+// is a regression test: window_size is deliberately excluded from
+// isDurationField (it's a duration only for two of filter's seven
+// subtypes, and isDurationField is keyed on field name alone - see its doc
+// comment). That's correct for the dict-shape heuristic, but it also
+// disabled the "no current value yet" fallback specifically for
+// window_size: a time_simple_moving_average/time_throttle filter whose
+// window_size was never previously set would have a first-time update's
+// raw value forwarded unconverted. The filter's step_id - the actual
+// filter subtype, immutable after creation - is what should decide this,
+// not the field-name list.
+func TestUpdateHelperViaOptionsFlow_ConvertsWindowSizeOnFirstSetForDurationFilterType(t *testing.T) {
+	t.Parallel()
+
+	mockWS := &mockWSOperations{}
+	var submittedData map[string]any
+	mockREST := &mockRESTOperations{
+		initConfigEntryOptionsFlowFunc: func(context.Context, string) (*OptionsFlowResult, error) {
+			return &OptionsFlowResult{
+				FlowID: "flow999",
+				Type:   "form",
+				StepID: "time_simple_moving_average",
+				DataSchema: []OptionsFlowField{
+					{Name: "entity_id", Description: map[string]any{"suggested_value": "sensor.x"}},
+					{Name: "window_size", Description: map[string]any{"suggested_value": nil}},
+				},
+			}, nil
+		},
+		submitConfigEntryOptionsFlowStepFunc: func(_ context.Context, _ string, data map[string]any) (*OptionsFlowResult, error) {
+			submittedData = data
+			return &OptionsFlowResult{Type: "create_entry"}, nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	err := client.updateHelperViaOptionsFlow(context.Background(), "sensor.my_filter", "config999", HelperConfig{
+		Config: map[string]any{"window_size": "00:00:30"},
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := map[string]int{"hours": 0, "minutes": 0, "seconds": 30}
+	got, ok := submittedData["window_size"].(map[string]int)
+	if !ok {
+		t.Fatalf("submitted window_size = %#v (%T), want a duration dict", submittedData["window_size"], submittedData["window_size"])
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("submitted window_size = %v, want %v", got, want)
+	}
+}
+
+// TestUpdateHelperViaOptionsFlow_LeavesWindowSizeAloneForNonDurationFilterType
+// guards the other side of the same fix: a filter subtype whose window_size
+// is a plain sample-count number (e.g. outlier) must NOT be run through
+// duration conversion just because the field name matches.
+func TestUpdateHelperViaOptionsFlow_LeavesWindowSizeAloneForNonDurationFilterType(t *testing.T) {
+	t.Parallel()
+
+	mockWS := &mockWSOperations{}
+	var submittedData map[string]any
+	mockREST := &mockRESTOperations{
+		initConfigEntryOptionsFlowFunc: func(context.Context, string) (*OptionsFlowResult, error) {
+			return &OptionsFlowResult{
+				FlowID: "flow998",
+				Type:   "form",
+				StepID: "outlier",
+				DataSchema: []OptionsFlowField{
+					{Name: "entity_id", Description: map[string]any{"suggested_value": "sensor.x"}},
+					{Name: "window_size", Description: map[string]any{"suggested_value": nil}},
+				},
+			}, nil
+		},
+		submitConfigEntryOptionsFlowStepFunc: func(_ context.Context, _ string, data map[string]any) (*OptionsFlowResult, error) {
+			submittedData = data
+			return &OptionsFlowResult{Type: "create_entry"}, nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	err := client.updateHelperViaOptionsFlow(context.Background(), "sensor.my_filter", "config998", HelperConfig{
+		Config: map[string]any{"window_size": 4.0},
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := submittedData["window_size"]; got != 4.0 {
+		t.Errorf("submitted window_size = %v (%T), want 4.0 untouched", got, got)
+	}
+}
+
 func TestHybridClient_DeleteConfigEntry(t *testing.T) {
 	t.Parallel()
 

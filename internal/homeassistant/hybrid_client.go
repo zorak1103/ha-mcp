@@ -479,13 +479,23 @@ func (c *HybridClient) updateHelperViaOptionsFlow(ctx context.Context, entityID,
 	// the dict-shape heuristic alone would miss. This is what
 	// buildFilterStepConfig already does for filter's window_size on
 	// create; the options-flow update path had no equivalent before.
+	//
+	// window_size is deliberately excluded from isDurationField (it's a
+	// duration only for two of filter's seven subtypes, and that list is
+	// keyed on field name alone), so the fallback above can't catch a
+	// first-time window_size override either. result.StepID - the filter's
+	// actual subtype, immutable after creation (CLAUDE.md's manage_helper
+	// update field docs) - is what buildFilterStepConfig already keys off
+	// on create via filterDurationWindowSteps; reused here as the
+	// update-path equivalent of the isDurationField fallback.
 	for key, userVal := range userConfig {
 		if _, alreadyDict := userVal.(map[string]any); alreadyDict {
 			continue
 		}
 		current, hasCurrent := currentValues[key]
 		_, currentIsDict := current.(map[string]any)
-		shouldConvert := currentIsDict || (!hasCurrent && isDurationField(key))
+		shouldConvert := currentIsDict || (!hasCurrent && isDurationField(key)) ||
+			(key == "window_size" && filterDurationWindowSteps[result.StepID])
 		if !shouldConvert {
 			continue
 		}
@@ -819,7 +829,19 @@ var filterDurationWindowSteps = map[string]bool{
 // "which filter is this" - rather than on config.Config["filter"], so an
 // unknown future filter type degrades to forwarding the full transformed
 // config (this function's pre-allow-list behavior) instead of silently
-// emptying the payload.
+// emptying the payload. Restricted to that step's schema fields
+// (filterStepFields), with window_size converted to a duration dict for
+// the two subtypes that need it (filterDurationWindowSteps).
+//
+// If toDurationDict fails for a duration-shaped window_size, this
+// deliberately falls through to submitting the raw value rather than
+// failing the create call locally: consistent with this file's general
+// convention of letting Home Assistant's own config-flow validation produce
+// the error (e.g. its "expected dict" message) instead of duplicating that
+// validation here. The tradeoff is that a malformed window_size surfaces as
+// HA's opaque error rather than argReader's own clearer one - argReader.raw
+// only bounds window_size's size and top-level shape at read time, it
+// doesn't know here which filter subtype makes it duration-shaped.
 func (c *HybridClient) buildFilterStepConfig(config HelperConfig, stepID string) map[string]any {
 	full := c.transformConfigForFlow(config)
 	allowed, known := filterStepFields[stepID]

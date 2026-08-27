@@ -4,7 +4,7 @@ package handlers
 // buildUtilityMeterConfig builds configuration for utility_meter helper.
 func buildUtilityMeterConfig(config, args map[string]any) error {
 	r := newArgReader(config, args)
-	r.str("source")
+	r.strID("source")
 	r.str("cycle")
 	r.num("offset")
 	r.boolean("delta_values")
@@ -30,7 +30,7 @@ func buildMinMaxConfig(config, args map[string]any) error {
 // buildStatisticsConfig builds configuration for statistics helper.
 func buildStatisticsConfig(config, args map[string]any) error {
 	r := newArgReader(config, args)
-	r.str("entity_id")
+	r.strID("entity_id")
 	r.str("state_characteristic")
 	r.integer("sampling_size")
 	r.str("max_age")
@@ -42,7 +42,7 @@ func buildStatisticsConfig(config, args map[string]any) error {
 // buildTrendConfig builds configuration for trend helper.
 func buildTrendConfig(config, args map[string]any) error {
 	r := newArgReader(config, args)
-	r.str("entity_id")
+	r.strID("entity_id")
 	r.num("min_gradient")
 	r.integer("min_samples")
 	r.num("sample_duration")
@@ -82,8 +82,8 @@ func buildRandomBinarySensorConfig(config, _ map[string]any) error {
 // CLAUDE.md's filter gotcha).
 func buildFilterConfig(config, args map[string]any) error {
 	r := newArgReader(config, args)
-	r.str("entity_id")
-	r.str("filter")
+	r.strID("entity_id")
+	r.strID("filter")
 	r.raw("window_size")
 	r.num("radius")
 	r.num("time_constant")
@@ -108,8 +108,8 @@ func buildGenericThermostatConfig(config, args map[string]any) error {
 	r := newArgReader(config, args)
 	// Map user-friendly field names to API field names
 	// API expects: heater, target_sensor, ac_mode (not heater_entity_id, target_sensor_entity_id)
-	r.strAs("heater_entity_id", "heater")
-	r.strAs("target_sensor_entity_id", "target_sensor")
+	r.strIDAs("heater_entity_id", "heater")
+	r.strIDAs("target_sensor_entity_id", "target_sensor")
 
 	// ac_mode is required by the API; default to heating mode when the
 	// caller omits it (or sends an explicit null). A caller-supplied value
@@ -133,7 +133,7 @@ func buildSwitchAsXConfig(config, args map[string]any) error {
 	r := newArgReader(config, args)
 	// Required: entity_id (switch entity)
 	// Note: name field should NOT be sent to API
-	r.str("entity_id")
+	r.strID("entity_id")
 
 	// target_domain is a routing field for menu navigation (stored but
 	// filtered by shouldSkipConfigField before API submission).
@@ -148,8 +148,8 @@ func buildGenericHygrostatConfig(config, args map[string]any) error {
 	r := newArgReader(config, args)
 	// Map user-friendly field names to API field names
 	// API expects: humidifier, target_sensor, device_class (not humidifier_entity_id, target_sensor_entity_id)
-	r.strAs("humidifier_entity_id", "humidifier")
-	r.strAs("target_sensor_entity_id", "target_sensor")
+	r.strIDAs("humidifier_entity_id", "humidifier")
+	r.strIDAs("target_sensor_entity_id", "target_sensor")
 
 	// device_class is required by API
 	config["device_class"] = hygrostatDeviceClass
@@ -170,7 +170,7 @@ func addExtendedConfigEntryFields(config, args map[string]any, entryCtx configEn
 	r := newArgReader(config, args)
 
 	// utility_meter fields
-	r.str("source")
+	r.strID("source")
 	r.str("cycle")
 	r.num("offset")
 	r.boolean("delta_values")
@@ -215,8 +215,8 @@ func addExtendedConfigEntryFields(config, args map[string]any, entryCtx configEn
 	r.str("before_offset")
 
 	// generic_thermostat fields (map to API field names)
-	r.strAs("heater_entity_id", "heater")
-	r.strAs("target_sensor_entity_id", "target_sensor")
+	r.strIDAs("heater_entity_id", "heater")
+	r.strIDAs("target_sensor_entity_id", "target_sensor")
 	// Unlike buildGenericThermostatConfig's create path, ac_mode gets NO
 	// default here when omitted - and that's deliberate, not a gap to
 	// "fix" by mirroring create. mergeOptionsFlowConfig already preserves
@@ -234,8 +234,8 @@ func addExtendedConfigEntryFields(config, args map[string]any, entryCtx configEn
 	r.str("target_domain")
 
 	// generic_hygrostat fields (map to API field names)
-	r.strAs("humidifier_entity_id", "humidifier")
-	r.strAs("target_sensor_entity_id", "target_sensor")
+	r.strIDAs("humidifier_entity_id", "humidifier")
+	r.strIDAs("target_sensor_entity_id", "target_sensor")
 	// device_class is required for hygrostat - only default it when the
 	// helper being updated is actually a generic_hygrostat (its entity domain
 	// is "humidifier"), not every config-entry helper type that shares this

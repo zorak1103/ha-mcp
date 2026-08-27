@@ -24,6 +24,11 @@ import (
 // merged value (helpers_consolidated.go). Empty string is the de-facto
 // "unset" spelling MCP clients emit for an optional field - a defined value
 // semantic, not a type failure.
+//
+// Method naming: str/strAs/strID/num are short because they're the readers
+// used at the overwhelming majority of call sites; integer/boolean/anySlice
+// are spelled out because an abbreviation (int/bool) would collide with a
+// Go built-in type name at the call site, which reads worse than it saves.
 type argReader struct {
 	config map[string]any
 	args   map[string]any
@@ -158,12 +163,49 @@ const maxScalarStringLen = 65536
 // checkStringLen records a failure and returns false when s exceeds max
 // bytes, so callers can bail out before an expensive parse/lower-case pass
 // or before storing the value verbatim.
+//
+// Every method that can produce a string-shaped leaf value - at any nesting
+// level - must call this before storing/parsing it; there is no single
+// place in this file where a length check would cover every case, so a new
+// coercion method must pick the shape matching its own value handling
+// rather than skip the check because none of the existing examples matches
+// exactly: str()/strAs() check the string case inside their type switch;
+// num()/integer()/boolean() check up front, before parsing is attempted,
+// since a numeric/boolean string is always short; checkFlatMapValues checks
+// each string value found one level inside a map (used by raw() and
+// anySlice() for values whose shape they can't otherwise validate). raw()
+// and anySlice() (its string-element case) both also call this directly for
+// a value at their own top level.
 func (r *argReader) checkStringLen(key, s string, max int) bool {
 	if len(s) > max {
 		r.errs = append(r.errs, fmt.Errorf(
 			"invalid value for %q: string has %d bytes, exceeds maximum of %d", key, len(s), max,
 		))
 		return false
+	}
+	return true
+}
+
+// checkFlatMapValues records a failure and returns false if any value in m
+// is itself a nested container (map or array) or an oversized string.
+// Enforced one level deep - e.g. filter's window_size as a
+// {"hours":.,"minutes":.,"seconds":.} duration dict, or a schedule day's
+// {"from":.,"to":.} time block are always flat, every value a plain number
+// or bounded string. Shared by raw() and anySlice(), the two readers that
+// accept a value shape this package can't fully validate up front and must
+// instead just bound, so a caller can't smuggle an arbitrarily large or
+// deeply nested payload through under the guise of a legitimate flat value.
+func (r *argReader) checkFlatMapValues(key string, m map[string]any) bool {
+	for elemKey, elem := range m {
+		switch e := elem.(type) {
+		case map[string]any, []any:
+			r.fail(key, fmt.Sprintf("a flat object (key %q must not itself be a nested object or array)", elemKey), elem)
+			return false
+		case string:
+			if !r.checkStringLen(fmt.Sprintf("%s.%s", key, elemKey), e, maxScalarStringLen) {
+				return false
+			}
+		}
 	}
 	return true
 }
@@ -197,6 +239,37 @@ func (r *argReader) strAs(argKey, configKey string) {
 	default:
 		r.fail(argKey, "a string", v)
 	}
+}
+
+// strID reads args[key] as a strict string with no numeric coercion, for
+// fields that identify an entity or config object (entity_id, source,
+// filter, ...) rather than holding a numeric value spelled as a string.
+// str()/strAs() silently stringify a float64/int/int64 - correct for a
+// genuinely numeric field expressed as a string (e.g. offset, cycle), but
+// the wrong call for an identifier: a caller bug that sends entity_id:
+// 12345 would otherwise be accepted here and only surface later as an
+// opaque Home Assistant "entity not found" error instead of this reader's
+// own clear type message.
+func (r *argReader) strID(key string) {
+	r.strIDAs(key, key)
+}
+
+// strIDAs is strID with a different arg/config key, for identifier fields
+// Home Assistant's API renames (e.g. heater_entity_id -> heater).
+func (r *argReader) strIDAs(argKey, configKey string) {
+	v, ok := r.args[argKey]
+	if !ok || isSkippable(v) {
+		return
+	}
+	s, ok := v.(string)
+	if !ok {
+		r.fail(argKey, "a string", v)
+		return
+	}
+	if !r.checkStringLen(argKey, s, maxScalarStringLen) {
+		return
+	}
+	r.config[configKey] = s
 }
 
 // num reads args[key] into config[key] as a float64. A numeric string is
@@ -396,6 +469,12 @@ func (r *argReader) strSlice(key string) {
 
 // anySlice reads args[key] into config[key] verbatim as a []any (for
 // fields whose elements are objects, e.g. schedule's per-day time blocks).
+// Each element is still bounded the same way raw()'s value is: a flat map
+// can't nest a further container and its string values are length-capped,
+// and a bare string element is length-capped - checkArrayLen alone only
+// bounds the number of elements, not their size, so without this a single
+// element could carry an arbitrarily large or deeply nested payload through
+// unbounded.
 func (r *argReader) anySlice(key string) {
 	v, ok := r.args[key]
 	if !ok || isSkippable(v) {
@@ -409,6 +488,19 @@ func (r *argReader) anySlice(key string) {
 	if !r.checkArrayLen(key, arr) {
 		return
 	}
+	for i, elem := range arr {
+		elemKey := fmt.Sprintf("%s[%d]", key, i)
+		switch e := elem.(type) {
+		case map[string]any:
+			if !r.checkMapLen(elemKey, e) || !r.checkFlatMapValues(elemKey, e) {
+				return
+			}
+		case string:
+			if !r.checkStringLen(elemKey, e, maxScalarStringLen) {
+				return
+			}
+		}
+	}
 	r.config[key] = arr
 }
 
@@ -418,7 +510,9 @@ func (r *argReader) anySlice(key string) {
 // duration for others (normalised later in hybrid_client.go's
 // toDurationDict). Only bools and arrays are rejected outright; everything
 // else passes through for HA (or that later normalisation step) to
-// validate.
+// validate - but a string value, at the top level or one level inside a
+// duration-dict-shaped map, is still length-capped via checkStringLen, the
+// same as every other reader in this file.
 func (r *argReader) raw(key string) {
 	v, ok := r.args[key]
 	if !ok || isSkippable(v) {
@@ -428,24 +522,24 @@ func (r *argReader) raw(key string) {
 	case bool, []any:
 		r.fail(key, "a number, string, or duration object", v)
 		return
+	case string:
+		if !r.checkStringLen(key, val, maxScalarStringLen) {
+			return
+		}
 	case map[string]any:
 		if !r.checkMapLen(key, val) {
 			return
 		}
 		// A legitimate value here (e.g. filter's window_size as a
 		// {"hours":.,"minutes":.,"seconds":.} duration dict) is always
-		// flat - every value a plain number or string. checkMapLen only
-		// bounds the top-level key count; without this, a caller could
-		// nest an arbitrarily large container one level down (still under
-		// 1000 top-level keys) and have it carried through to the HTTP
-		// body sent to Home Assistant unbounded and unvalidated until
-		// toDurationDict eventually rejects it downstream.
-		for elemKey, elem := range val {
-			switch elem.(type) {
-			case map[string]any, []any:
-				r.fail(key, fmt.Sprintf("a flat object (key %q must not itself be a nested object or array)", elemKey), elem)
-				return
-			}
+		// flat - every value a plain number or bounded string.
+		// checkFlatMapValues rejects a nested container one level down
+		// and bounds any string value, so a caller can't smuggle an
+		// arbitrarily large or deeply nested payload through to the
+		// HTTP body sent to Home Assistant under the guise of a
+		// duration dict.
+		if !r.checkFlatMapValues(key, val) {
+			return
 		}
 	}
 	r.config[key] = v
