@@ -99,8 +99,27 @@ type helperTypeMetadata struct {
 // CLAUDE.md's "manage_helper update field docs" gotcha) - not a
 // storage-config gap, since GetHelperConfig's "<platform>/list" does return
 // it; the update builder just never forwards it.
-var perTypeUpdateExcludedFields = map[string]map[string]bool{
-	"filter": {"filter": true},
+var perTypeUpdateExcludedFields = buildPerTypeUpdateExcludedFields()
+
+// buildPerTypeUpdateExcludedFields returns the base per-type update-excluded
+// field map, merged with device_class exclusions for template subtypes whose
+// device_class is config-flow-only (not present in their OPTIONS_FLOW schema).
+func buildPerTypeUpdateExcludedFields() map[string]map[string]bool {
+	m := map[string]map[string]bool{
+		"filter": {"filter": true},
+	}
+	for typeName := range perTypeDeviceClassSupport {
+		if perTypeDeviceClassUpdateSupport[typeName] {
+			// Also declared in this type's OPTIONS_FLOW schema (currently
+			// only template_number) - not excluded from update.
+			continue
+		}
+		if m[typeName] == nil {
+			m[typeName] = map[string]bool{}
+		}
+		m[typeName]["device_class"] = true
+	}
+	return m
 }
 
 // isUpdateIdentifierField reports whether field is the tool's own "which
@@ -150,11 +169,12 @@ func updatableFieldNames(typeName string) []string {
 // accepts" reference, generated from helperTypes so it can never drift
 // from the code — same intent as manage_entity/manage_device's generated
 // "Safe fields" lists. "icon" is omitted from every per-type line (it's
-// accepted on all 26 types, so listing it 26 times would triple this
+// accepted on all 41 types, so listing it 41 times would triple this
 // block's size for zero information) - the caller documents it once instead.
 //
-// Renders to roughly 1-2KB, added to manage_helper's tool description on
-// every tools/list call. Only one group of types
+// Renders to roughly 3.3KB across the 41 types (issue #206's 15 template_*
+// subtypes account for more than half of that), added to manage_helper's
+// tool description on every tools/list call. Only one group of types
 // (input_boolean/input_button/random_binary_sensor) shares an identical
 // remaining field set (icon-only, i.e. empty after the icon hoist) - not
 // enough duplication across the other types to justify grouping
@@ -182,234 +202,292 @@ func updatableFieldsDescription() string {
 }
 
 // helperTypes contains metadata for all supported helper types.
-var helperTypes = map[string]helperTypeMetadata{
-	"input_boolean": {
-		platform:           "input_boolean",
-		entityPrefix:       "input_boolean",
-		supportedActions:   []string{"toggle"},
-		requiredFields:     []string{},
-		optionalFields:     []string{"icon", "initial"},
-		validEntityDomains: []string{"input_boolean"},
-	},
-	"input_number": {
-		platform:           "input_number",
-		entityPrefix:       "input_number",
-		supportedActions:   []string{"set"},
-		requiredFields:     []string{"min", "max"},
-		optionalFields:     []string{"icon", "step", "initial", "mode", "unit_of_measurement"},
-		validEntityDomains: []string{"input_number"},
-	},
-	"input_text": {
-		platform:           "input_text",
-		entityPrefix:       "input_text",
-		supportedActions:   []string{"set"},
-		requiredFields:     []string{},
-		optionalFields:     []string{"icon", "min", "max", "mode", "pattern", "initial"},
-		validEntityDomains: []string{"input_text"},
-	},
-	"input_select": {
-		platform:           "input_select",
-		entityPrefix:       "input_select",
-		supportedActions:   []string{"select", "set_options"},
-		requiredFields:     []string{"options"},
-		optionalFields:     []string{"icon", "initial"},
-		validEntityDomains: []string{"input_select"},
-	},
-	"input_datetime": {
-		platform:           "input_datetime",
-		entityPrefix:       "input_datetime",
-		supportedActions:   []string{"set"},
-		requiredFields:     []string{},
-		optionalFields:     []string{"icon", "has_date", "has_time", "initial"},
-		validEntityDomains: []string{"input_datetime"},
-	},
-	"input_button": {
-		platform:           "input_button",
-		entityPrefix:       "input_button",
-		supportedActions:   []string{"press"},
-		requiredFields:     []string{},
-		optionalFields:     []string{"icon"},
-		validEntityDomains: []string{"input_button"},
-	},
-	"counter": {
-		platform:           "counter",
-		entityPrefix:       "counter",
-		supportedActions:   []string{"increment", "decrement", "reset", "set"},
-		requiredFields:     []string{},
-		optionalFields:     []string{"icon", "initial", "step", "minimum", "maximum", "restore"},
-		validEntityDomains: []string{"counter"},
-	},
-	"timer": {
-		platform:           "timer",
-		entityPrefix:       "timer",
-		supportedActions:   []string{"start", "pause", "cancel", "finish", "change"},
-		requiredFields:     []string{},
-		optionalFields:     []string{"icon", "duration", "restore"},
-		validEntityDomains: []string{"timer"},
-	},
-	"schedule": {
-		platform:           "schedule",
-		entityPrefix:       "schedule",
-		supportedActions:   []string{"reload"},
-		requiredFields:     []string{},
-		optionalFields:     []string{"icon", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"},
-		validEntityDomains: []string{"schedule"},
-	},
-	"group": {
-		platform:           "group",
-		entityPrefix:       "group",
-		supportedActions:   []string{"add_entities", "remove_entities", "reload"},
-		requiredFields:     []string{"entities"},
-		optionalFields:     []string{"icon", "all", "group_type"},
-		validEntityDomains: []string{"group"},
-	},
-	"template_sensor": {
-		platform:           platformTemplate,
-		entityPrefix:       "sensor",
-		supportedActions:   []string{},
-		requiredFields:     []string{"state"},
-		optionalFields:     []string{"icon", "unit_of_measurement", "device_class", "state_class"},
-		validEntityDomains: []string{"sensor"},
-	},
-	"template_binary_sensor": {
-		platform:           platformTemplate,
-		entityPrefix:       "binary_sensor",
-		supportedActions:   []string{},
-		requiredFields:     []string{"state"},
-		optionalFields:     []string{"icon", "device_class", "delay_on", "delay_off"},
-		validEntityDomains: []string{"binary_sensor"},
-	},
-	"threshold": {
-		platform:           "threshold",
-		entityPrefix:       "binary_sensor",
-		supportedActions:   []string{},
-		requiredFields:     []string{"entity_id"},
-		optionalFields:     []string{"icon", "lower", "upper", "hysteresis", "device_class"},
-		validEntityDomains: []string{"binary_sensor"},
-	},
-	"derivative": {
-		platform:           "derivative",
-		entityPrefix:       "sensor",
-		supportedActions:   []string{},
-		requiredFields:     []string{"source"},
-		optionalFields:     []string{"icon", "round", "time_window", "unit_time", "unit_prefix"},
-		validEntityDomains: []string{"sensor"},
-	},
-	"integral": {
-		platform:           "integration",
-		entityPrefix:       "sensor",
-		supportedActions:   []string{"reset"},
-		requiredFields:     []string{"source"},
-		optionalFields:     []string{"icon", "method", "round", "unit_time", "unit_prefix"},
-		validEntityDomains: []string{"sensor"},
-	},
-	"utility_meter": {
-		platform:           platformUtilityMeter,
-		entityPrefix:       "sensor",
-		supportedActions:   []string{"calibrate"},
-		requiredFields:     []string{"source"},
-		optionalFields:     []string{"icon", "cycle", "offset", "delta_values", "net_consumption", "periodically_resetting", "tariffs"},
-		validEntityDomains: []string{"sensor", "select"},
-		sourceEntities:     []sourceEntityConstraint{{field: "source", domains: []string{"sensor"}}},
-	},
-	"min_max": {
-		platform:           platformMinMax,
-		entityPrefix:       "sensor",
-		supportedActions:   []string{},
-		requiredFields:     []string{"entity_ids", "min_max_type"},
-		optionalFields:     []string{"icon", "round_digits"},
-		validEntityDomains: []string{"sensor"},
-	},
-	"statistics": {
-		platform:           platformStatistics,
-		entityPrefix:       "sensor",
-		supportedActions:   []string{},
-		requiredFields:     []string{"entity_id"},
-		optionalFields:     []string{"icon", "state_characteristic", "sampling_size", "max_age", "percentile", "precision"},
-		validEntityDomains: []string{"sensor"},
-		sourceEntities:     []sourceEntityConstraint{{field: attrEntityID, domains: []string{"sensor", "binary_sensor"}}},
-	},
-	"trend": {
-		platform:           platformTrend,
-		entityPrefix:       "binary_sensor",
-		supportedActions:   []string{},
-		requiredFields:     []string{"entity_id"},
-		optionalFields:     []string{"icon", "min_gradient", "min_samples", "sample_duration", "max_samples", "invert"},
-		validEntityDomains: []string{"binary_sensor"},
-		sourceEntities:     []sourceEntityConstraint{{field: attrEntityID, domains: []string{"sensor", "counter"}}},
-	},
-	"random_sensor": {
-		platform:           platformRandom,
-		entityPrefix:       "sensor",
-		supportedActions:   []string{},
-		requiredFields:     []string{},
-		optionalFields:     []string{"icon", "minimum", "maximum"},
-		validEntityDomains: []string{"sensor"},
-	},
-	"random_binary_sensor": {
-		platform:           platformRandom,
-		entityPrefix:       "binary_sensor",
-		supportedActions:   []string{},
-		requiredFields:     []string{},
-		optionalFields:     []string{"icon"},
-		validEntityDomains: []string{"binary_sensor"},
-	},
-	"filter": {
-		platform:           platformFilter,
-		entityPrefix:       "sensor",
-		supportedActions:   []string{},
-		requiredFields:     []string{"entity_id", "filter"},
-		optionalFields:     []string{"icon", "window_size", "radius", "time_constant", "lower_bound", "upper_bound", "precision"},
-		validEntityDomains: []string{"sensor"},
-		sourceEntities:     []sourceEntityConstraint{{field: attrEntityID, domains: []string{"sensor"}}},
-	},
-	"tod": {
-		platform:           platformTod,
-		entityPrefix:       "binary_sensor",
-		supportedActions:   []string{},
-		requiredFields:     []string{"after_time", "before_time"},
-		optionalFields:     []string{"icon", "after_offset", "before_offset"},
-		validEntityDomains: []string{"binary_sensor"},
-	},
-	"generic_thermostat": {
-		platform:         platformGenericThermostat,
-		entityPrefix:     "climate",
-		supportedActions: []string{},
-		requiredFields:   []string{"heater_entity_id", "target_sensor_entity_id"},
-		// slices.Clip drops the spare capacity append() leaves on a
-		// full-literal slice, so a future in-place append elsewhere can't
-		// silently share/mutate this backing array.
-		optionalFields: slices.Clip(append(
-			[]string{"icon", "ac_mode", "min_temp", "max_temp", "target_temp", "cold_tolerance", "hot_tolerance"},
-			genericThermostatPresetFieldNames()...,
-		)),
-		validEntityDomains: []string{"climate"},
-		sourceEntities: []sourceEntityConstraint{
-			{field: "heater_entity_id", domains: []string{"switch", "fan"}},
-			{field: "target_sensor_entity_id", domains: []string{"sensor"}, deviceClasses: []string{"temperature"}},
+var helperTypes = buildHelperTypesRegistry()
+
+// buildInputHelperTypesGroup returns metadata for the basic WS-backed input_* helpers.
+func buildInputHelperTypesGroup() map[string]helperTypeMetadata {
+	return map[string]helperTypeMetadata{
+		"input_boolean": {
+			platform:           "input_boolean",
+			entityPrefix:       "input_boolean",
+			supportedActions:   []string{"toggle"},
+			requiredFields:     []string{},
+			optionalFields:     []string{"icon", "initial"},
+			validEntityDomains: []string{"input_boolean"},
 		},
-	},
-	"switch_as_x": {
-		platform:           platformSwitchAsX,
-		entityPrefix:       "light",
-		supportedActions:   []string{},
-		requiredFields:     []string{"entity_id", "target_domain"},
-		optionalFields:     []string{"icon", "invert"},
-		validEntityDomains: []string{"cover", "fan", "light", "lock", "siren", "valve"},
-		sourceEntities:     []sourceEntityConstraint{{field: attrEntityID, domains: []string{"switch"}}},
-	},
-	"generic_hygrostat": {
-		platform:           platformGenericHygrostat,
-		entityPrefix:       "humidifier",
-		supportedActions:   []string{},
-		requiredFields:     []string{"humidifier_entity_id", "target_sensor_entity_id"},
-		optionalFields:     []string{"icon", "min_humidity", "max_humidity", "target_humidity", "dry_tolerance", "wet_tolerance"},
-		validEntityDomains: []string{"humidifier"},
-		sourceEntities: []sourceEntityConstraint{
-			{field: "humidifier_entity_id", domains: []string{"switch", "fan"}},
-			{field: "target_sensor_entity_id", domains: []string{"sensor"}, deviceClasses: []string{"humidity"}},
+		"input_number": {
+			platform:           "input_number",
+			entityPrefix:       "input_number",
+			supportedActions:   []string{"set"},
+			requiredFields:     []string{"min", "max"},
+			optionalFields:     []string{"icon", "step", "initial", "mode", "unit_of_measurement"},
+			validEntityDomains: []string{"input_number"},
 		},
-	},
+		"input_text": {
+			platform:           "input_text",
+			entityPrefix:       "input_text",
+			supportedActions:   []string{"set"},
+			requiredFields:     []string{},
+			optionalFields:     []string{"icon", "min", "max", "mode", "pattern", "initial"},
+			validEntityDomains: []string{"input_text"},
+		},
+		"input_select": {
+			platform:           "input_select",
+			entityPrefix:       "input_select",
+			supportedActions:   []string{"select", "set_options"},
+			requiredFields:     []string{"options"},
+			optionalFields:     []string{"icon", "initial"},
+			validEntityDomains: []string{"input_select"},
+		},
+		"input_datetime": {
+			platform:           "input_datetime",
+			entityPrefix:       "input_datetime",
+			supportedActions:   []string{"set"},
+			requiredFields:     []string{},
+			optionalFields:     []string{"icon", "has_date", "has_time", "initial"},
+			validEntityDomains: []string{"input_datetime"},
+		},
+		"input_button": {
+			platform:           "input_button",
+			entityPrefix:       "input_button",
+			supportedActions:   []string{"press"},
+			requiredFields:     []string{},
+			optionalFields:     []string{"icon"},
+			validEntityDomains: []string{"input_button"},
+		},
+	}
+}
+
+// buildStateHelperTypesGroup returns metadata for the remaining WS-backed
+// state helpers (counter/timer/schedule/group) plus the two base template_*
+// helper types (template_sensor/template_binary_sensor - not to be confused
+// with the newer template_* subtypes merged in via templateHelperTypes()).
+func buildStateHelperTypesGroup() map[string]helperTypeMetadata {
+	return map[string]helperTypeMetadata{
+		"counter": {
+			platform:           "counter",
+			entityPrefix:       "counter",
+			supportedActions:   []string{"increment", "decrement", "reset", "set"},
+			requiredFields:     []string{},
+			optionalFields:     []string{"icon", "initial", "step", "minimum", "maximum", "restore"},
+			validEntityDomains: []string{"counter"},
+		},
+		"timer": {
+			platform:           "timer",
+			entityPrefix:       "timer",
+			supportedActions:   []string{"start", "pause", "cancel", "finish", "change"},
+			requiredFields:     []string{},
+			optionalFields:     []string{"icon", "duration", "restore"},
+			validEntityDomains: []string{"timer"},
+		},
+		"schedule": {
+			platform:           "schedule",
+			entityPrefix:       "schedule",
+			supportedActions:   []string{"reload"},
+			requiredFields:     []string{},
+			optionalFields:     []string{"icon", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"},
+			validEntityDomains: []string{"schedule"},
+		},
+		"group": {
+			platform:           "group",
+			entityPrefix:       "group",
+			supportedActions:   []string{"add_entities", "remove_entities", "reload"},
+			requiredFields:     []string{"entities"},
+			optionalFields:     []string{"icon", "all", "group_type"},
+			validEntityDomains: []string{"group"},
+		},
+		"template_sensor": {
+			platform:           platformTemplate,
+			entityPrefix:       "sensor",
+			supportedActions:   []string{},
+			requiredFields:     []string{"state"},
+			optionalFields:     []string{"icon", "unit_of_measurement", "device_class", "state_class"},
+			validEntityDomains: []string{"sensor"},
+		},
+		"template_binary_sensor": {
+			platform:           platformTemplate,
+			entityPrefix:       "binary_sensor",
+			supportedActions:   []string{},
+			requiredFields:     []string{"state"},
+			optionalFields:     []string{"icon", "device_class", "delay_on", "delay_off"},
+			validEntityDomains: []string{"binary_sensor"},
+		},
+	}
+}
+
+// buildSensorCalcHelperTypesGroup returns metadata for the Config Entry
+// helpers that derive a sensor/binary_sensor from a single source entity.
+func buildSensorCalcHelperTypesGroup() map[string]helperTypeMetadata {
+	return map[string]helperTypeMetadata{
+		"threshold": {
+			platform:           "threshold",
+			entityPrefix:       "binary_sensor",
+			supportedActions:   []string{},
+			requiredFields:     []string{"entity_id"},
+			optionalFields:     []string{"icon", "lower", "upper", "hysteresis", "device_class"},
+			validEntityDomains: []string{"binary_sensor"},
+		},
+		"derivative": {
+			platform:           "derivative",
+			entityPrefix:       "sensor",
+			supportedActions:   []string{},
+			requiredFields:     []string{"source"},
+			optionalFields:     []string{"icon", "round", "time_window", "unit_time", "unit_prefix"},
+			validEntityDomains: []string{"sensor"},
+		},
+		"integral": {
+			platform:           "integration",
+			entityPrefix:       "sensor",
+			supportedActions:   []string{"reset"},
+			requiredFields:     []string{"source"},
+			optionalFields:     []string{"icon", "method", "round", "unit_time", "unit_prefix"},
+			validEntityDomains: []string{"sensor"},
+		},
+		"utility_meter": {
+			platform:           platformUtilityMeter,
+			entityPrefix:       "sensor",
+			supportedActions:   []string{"calibrate"},
+			requiredFields:     []string{"source"},
+			optionalFields:     []string{"icon", "cycle", "offset", "delta_values", "net_consumption", "periodically_resetting", "tariffs"},
+			validEntityDomains: []string{"sensor", "select"},
+			sourceEntities:     []sourceEntityConstraint{{field: "source", domains: []string{"sensor"}}},
+		},
+		"min_max": {
+			platform:           platformMinMax,
+			entityPrefix:       "sensor",
+			supportedActions:   []string{},
+			requiredFields:     []string{"entity_ids", "min_max_type"},
+			optionalFields:     []string{"icon", "round_digits"},
+			validEntityDomains: []string{"sensor"},
+		},
+	}
+}
+
+// buildSensorAggregateHelperTypesGroup returns metadata for the remaining
+// Config Entry sensor/binary_sensor helpers (statistics, trend, random,
+// filter, time-of-day).
+func buildSensorAggregateHelperTypesGroup() map[string]helperTypeMetadata {
+	return map[string]helperTypeMetadata{
+		"statistics": {
+			platform:           platformStatistics,
+			entityPrefix:       "sensor",
+			supportedActions:   []string{},
+			requiredFields:     []string{"entity_id"},
+			optionalFields:     []string{"icon", "state_characteristic", "sampling_size", "max_age", "percentile", "precision"},
+			validEntityDomains: []string{"sensor"},
+			sourceEntities:     []sourceEntityConstraint{{field: attrEntityID, domains: []string{"sensor", "binary_sensor"}}},
+		},
+		"trend": {
+			platform:           platformTrend,
+			entityPrefix:       "binary_sensor",
+			supportedActions:   []string{},
+			requiredFields:     []string{"entity_id"},
+			optionalFields:     []string{"icon", "min_gradient", "min_samples", "sample_duration", "max_samples", "invert"},
+			validEntityDomains: []string{"binary_sensor"},
+			sourceEntities:     []sourceEntityConstraint{{field: attrEntityID, domains: []string{"sensor", "counter"}}},
+		},
+		"random_sensor": {
+			platform:           platformRandom,
+			entityPrefix:       "sensor",
+			supportedActions:   []string{},
+			requiredFields:     []string{},
+			optionalFields:     []string{"icon", "minimum", "maximum"},
+			validEntityDomains: []string{"sensor"},
+		},
+		"random_binary_sensor": {
+			platform:           platformRandom,
+			entityPrefix:       "binary_sensor",
+			supportedActions:   []string{},
+			requiredFields:     []string{},
+			optionalFields:     []string{"icon"},
+			validEntityDomains: []string{"binary_sensor"},
+		},
+		"filter": {
+			platform:           platformFilter,
+			entityPrefix:       "sensor",
+			supportedActions:   []string{},
+			requiredFields:     []string{"entity_id", "filter"},
+			optionalFields:     []string{"icon", "window_size", "radius", "time_constant", "lower_bound", "upper_bound", "precision"},
+			validEntityDomains: []string{"sensor"},
+			sourceEntities:     []sourceEntityConstraint{{field: attrEntityID, domains: []string{"sensor"}}},
+		},
+		"tod": {
+			platform:           platformTod,
+			entityPrefix:       "binary_sensor",
+			supportedActions:   []string{},
+			requiredFields:     []string{"after_time", "before_time"},
+			optionalFields:     []string{"icon", "after_offset", "before_offset"},
+			validEntityDomains: []string{"binary_sensor"},
+		},
+	}
+}
+
+// buildClimateHelperTypesGroup returns metadata for the climate/humidifier/
+// switch_as_x Config Entry helpers.
+func buildClimateHelperTypesGroup() map[string]helperTypeMetadata {
+	return map[string]helperTypeMetadata{
+		"generic_thermostat": {
+			platform:         platformGenericThermostat,
+			entityPrefix:     "climate",
+			supportedActions: []string{},
+			requiredFields:   []string{"heater_entity_id", "target_sensor_entity_id"},
+			// slices.Clip drops the spare capacity append() leaves on a
+			// full-literal slice, so a future in-place append elsewhere can't
+			// silently share/mutate this backing array.
+			optionalFields: slices.Clip(append(
+				[]string{"icon", "ac_mode", "min_temp", "max_temp", "target_temp", "cold_tolerance", "hot_tolerance"},
+				genericThermostatPresetFieldNames()...,
+			)),
+			validEntityDomains: []string{"climate"},
+			sourceEntities: []sourceEntityConstraint{
+				{field: "heater_entity_id", domains: []string{"switch", "fan"}},
+				{field: "target_sensor_entity_id", domains: []string{"sensor"}, deviceClasses: []string{"temperature"}},
+			},
+		},
+		"switch_as_x": {
+			platform:           platformSwitchAsX,
+			entityPrefix:       "light",
+			supportedActions:   []string{},
+			requiredFields:     []string{"entity_id", "target_domain"},
+			optionalFields:     []string{"icon", "invert"},
+			validEntityDomains: []string{"cover", "fan", "light", "lock", "siren", "valve"},
+			sourceEntities:     []sourceEntityConstraint{{field: attrEntityID, domains: []string{"switch"}}},
+		},
+		"generic_hygrostat": {
+			platform:           platformGenericHygrostat,
+			entityPrefix:       "humidifier",
+			supportedActions:   []string{},
+			requiredFields:     []string{"humidifier_entity_id", "target_sensor_entity_id"},
+			optionalFields:     []string{"icon", "min_humidity", "max_humidity", "target_humidity", "dry_tolerance", "wet_tolerance"},
+			validEntityDomains: []string{"humidifier"},
+			sourceEntities: []sourceEntityConstraint{
+				{field: "humidifier_entity_id", domains: []string{"switch", "fan"}},
+				{field: "target_sensor_entity_id", domains: []string{"sensor"}, deviceClasses: []string{"humidity"}},
+			},
+		},
+	}
+}
+
+// buildHelperTypesRegistry returns the base helperTypeMetadata registry for
+// all non-template-subtype helpers, merged with metadata for the
+// template_* subtypes (see helpers_template_types.go).
+func buildHelperTypesRegistry() map[string]helperTypeMetadata {
+	m := map[string]helperTypeMetadata{}
+	for _, group := range []map[string]helperTypeMetadata{
+		buildInputHelperTypesGroup(),
+		buildStateHelperTypesGroup(),
+		buildSensorCalcHelperTypesGroup(),
+		buildSensorAggregateHelperTypesGroup(),
+		buildClimateHelperTypesGroup(),
+	} {
+		for typeName, meta := range group {
+			m[typeName] = meta
+		}
+	}
+	for typeName, meta := range templateHelperTypes() {
+		m[typeName] = meta
+	}
+	return m
 }
 
 // allSupportedActions lists all valid actions for the helper_action tool.
@@ -421,12 +499,21 @@ var allSupportedActions = []string{
 }
 
 // allHelperTypeNames lists all valid helper types for the manage_helper create action (sorted).
-var allHelperTypeNames = []string{
-	"counter", "derivative", "filter", "generic_hygrostat", "generic_thermostat",
-	"group", "input_boolean", "input_button", "input_datetime", "input_number",
-	"input_select", "input_text", "integral", "min_max", "random_binary_sensor",
-	"random_sensor", "schedule", "statistics", "switch_as_x", "template_binary_sensor",
-	"template_sensor", "threshold", "timer", "tod", "trend", "utility_meter",
+var allHelperTypeNames = sortedHelperTypeNames()
+
+// sortedHelperTypeNames returns the full, sorted list of helper type names -
+// the base set plus the template_* subtype names (see helpers_template_types.go).
+func sortedHelperTypeNames() []string {
+	names := []string{
+		"counter", "derivative", "filter", "generic_hygrostat", "generic_thermostat",
+		"group", "input_boolean", "input_button", "input_datetime", "input_number",
+		"input_select", "input_text", "integral", "min_max", "random_binary_sensor",
+		"random_sensor", "schedule", "statistics", "switch_as_x", "template_binary_sensor",
+		"template_sensor", "threshold", "timer", "tod", "trend", "utility_meter",
+	}
+	names = append(names, templateSubtypeNames()...)
+	slices.Sort(names)
+	return names
 }
 
 // ConsolidatedHelperHandlers provides unified MCP tool handlers for all helper types.
@@ -472,7 +559,7 @@ func (h *ConsolidatedHelperHandlers) manageHelperTool() mcp.Tool {
 		},
 		"type": {
 			Type:        "string",
-			Description: "Helper type (required for create): input_boolean, input_number, input_text, input_select, input_datetime, input_button, counter, timer, schedule, group, template_sensor, template_binary_sensor, threshold, derivative, integral, utility_meter, min_max, statistics, trend, random_sensor, random_binary_sensor, filter, tod, generic_thermostat, switch_as_x, generic_hygrostat",
+			Description: fmt.Sprintf("Helper type (required for create) - see Enum for the full list of %d supported types", len(typeNames)),
 			Enum:        typeNames,
 		},
 		"entity_id": {
@@ -603,7 +690,7 @@ func (h *ConsolidatedHelperHandlers) manageHelperTool() mcp.Tool {
 		},
 		"state": {
 			Type:        "string",
-			Description: "Jinja2 template for state (template_sensor, template_binary_sensor, required)",
+			Description: "Jinja2 template for state (template_sensor and most template_* subtypes - required for template_sensor and for most template_* subtypes, optional for template_binary_sensor/template_alarm_control_panel/template_switch)",
 		},
 		"device_class": {
 			Type:        "string",
@@ -664,6 +751,17 @@ func (h *ConsolidatedHelperHandlers) manageHelperTool() mcp.Tool {
 		props[k] = v
 	}
 
+	// Merge template subtype properties (button/cover/device_tracker/event/
+	// fan/image/light/lock/number/select/switch/update/vacuum/weather/
+	// alarm_control_panel) - skip any name already declared above (state,
+	// min, max, step, device_class, unit_of_measurement, icon, ...) so a
+	// shared field name keeps its existing single definition.
+	for k, v := range templateHelperProperties() {
+		if _, exists := props[k]; !exists {
+			props[k] = v
+		}
+	}
+
 	return mcp.Tool{
 		Name: "manage_helper",
 		Description: `Manage Home Assistant helpers - list, create, update, delete, or get details.
@@ -673,6 +771,7 @@ Helper Types:
 - Stateful helpers: counter, timer, schedule
 - Entity grouping: group
 - Advanced helpers: template_sensor, template_binary_sensor, threshold, derivative, integral
+- Template subtypes: template_alarm_control_panel, template_button, template_cover, template_device_tracker, template_event, template_fan, template_image, template_light, template_lock, template_number, template_select, template_switch, template_update, template_vacuum, template_weather
 - Utility helpers: utility_meter, min_max, statistics, trend, filter
 - Random generators: random_sensor, random_binary_sensor
 - Time-based: tod (Time of Day)
@@ -1022,6 +1121,12 @@ func (h *ConsolidatedHelperHandlers) handleUpdate(ctx context.Context, client ho
 		return errorResult(fmt.Sprintf("invalid entity_id format: %s (expected format: 'domain.object_id')", entityID)), nil
 	}
 
+	// Reject a same-domain entity that isn't actually a helper before doing
+	// anything else - see checkHelperOnlyDomain's doc comment.
+	if err := checkHelperOnlyDomain(ctx, client, entityID, entityDomain); err != nil {
+		return errorResult(err.Error()), nil
+	}
+
 	// Determine helper type from entity domain
 	// For most platforms, the helper type matches the entity domain
 	// Special cases: sensor/binary_sensor could be template/threshold/derivative/integral/group
@@ -1094,7 +1199,7 @@ func (h *ConsolidatedHelperHandlers) handleUpdate(ctx context.Context, client ho
 		}
 	}
 
-	return successResult(renderUpdateResultMessage(entityID, args, appliedKeys, partial)), nil
+	return successResult(renderUpdateResultMessage(entityID, entityDomain, args, appliedKeys, partial)), nil
 }
 
 // renderUpdateResultMessage renders handleUpdate's success text, folding
@@ -1102,8 +1207,8 @@ func (h *ConsolidatedHelperHandlers) handleUpdate(ctx context.Context, client ho
 // split out of handleUpdate to keep its cognitive complexity down. A
 // partial apply is still a successful result: the fields every options
 // flow step DID accept have already been committed to Home Assistant.
-func renderUpdateResultMessage(entityID string, args map[string]any, appliedKeys map[string]bool, partial *homeassistant.PartialApplyError) string {
-	applied, ignored, skipped := splitAppliedFields(args, appliedKeys)
+func renderUpdateResultMessage(entityID, entityDomain string, args map[string]any, appliedKeys map[string]bool, partial *homeassistant.PartialApplyError) string {
+	applied, ignored, skipped := splitAppliedFields(entityDomain, args, appliedKeys)
 	if partial == nil {
 		return updateSuccessMessage(entityID, applied, ignored, skipped)
 	}
@@ -1119,10 +1224,7 @@ func renderUpdateResultMessage(entityID string, args map[string]any, appliedKeys
 	}
 	var stillApplied []string
 	for _, argName := range applied {
-		key := argName
-		if alias, ok := updateConfigKeyAliases[argName]; ok {
-			key = alias
-		}
+		key := resolveUpdateConfigKey(entityDomain, argName)
 		if !rejectedConfigKeys[key] {
 			stillApplied = append(stillApplied, argName)
 		}
@@ -1195,7 +1297,7 @@ func renderPartialApplyWarning(partial *homeassistant.PartialApplyError) string 
 // from the same config map in place after using them, so reading config's
 // keys after the call would misreport icon/name as ignored even when they
 // were applied via the entity registry.
-func splitAppliedFields(args map[string]any, appliedKeys map[string]bool) (applied, ignored, skipped []string) {
+func splitAppliedFields(entityDomain string, args map[string]any, appliedKeys map[string]bool) (applied, ignored, skipped []string) {
 	for name := range args {
 		if updateDispatchOnlyArgNames[name] {
 			continue
@@ -1210,10 +1312,7 @@ func splitAppliedFields(args map[string]any, appliedKeys map[string]bool) (appli
 			skipped = append(skipped, name)
 			continue
 		}
-		key := name
-		if alias, ok := updateConfigKeyAliases[name]; ok {
-			key = alias
-		}
+		key := resolveUpdateConfigKey(entityDomain, name)
 		if appliedKeys[key] {
 			applied = append(applied, name)
 		} else {
@@ -1408,6 +1507,17 @@ func (h *ConsolidatedHelperHandlers) handleDelete(ctx context.Context, client ho
 		return errorResult(err.Error()), nil
 	}
 
+	// Reject a same-domain entity that isn't actually a helper before doing
+	// anything else - same gap checkHelperOnlyDomain closed for update
+	// (issue #206 review, W4): without this, DeleteHelper routes any entity
+	// carrying a config_entry_id to DeleteConfigEntry, which for a real
+	// integration entity (light.hue_office, a Zigbee switch.*, ...) deletes
+	// the whole integration, not just that entity.
+	entityDomain, _ := ParseHelperEntityID(entityID)
+	if err := checkHelperOnlyDomain(ctx, client, entityID, entityDomain); err != nil {
+		return errorResult(err.Error()), nil
+	}
+
 	if err := client.DeleteHelper(ctx, entityID); err != nil {
 		return errorResult(fmt.Sprintf("Error deleting helper: %v", err)), nil
 	}
@@ -1439,6 +1549,13 @@ func (h *ConsolidatedHelperHandlers) handleGetDetails(ctx context.Context, clien
 		"climate", "humidifier", "select":
 		return h.handleGetDetailsGeneric(ctx, client, args, platform)
 	default:
+		// Entity domains created by the 15 new template_* subtypes (issue
+		// #206) are plain state-backed entities, same as climate/humidifier/
+		// select above - reuse templateSubtypeDomains rather than listing
+		// all 15 domains again here.
+		if templateSubtypeDomains[platform] {
+			return h.handleGetDetailsGeneric(ctx, client, args, platform)
+		}
 		return errorResult(fmt.Sprintf("get_details is not supported for helper type: %s", platform)), nil
 	}
 }
@@ -2207,7 +2324,18 @@ func buildConfigEntryUpdateConfig(entryCtx configEntryUpdateContext, args map[st
 	r.str("state")
 	r.strID("source")
 	r.str("unit_of_measurement")
-	r.str("device_class")
+	// device_class is skipped here for template subtype domains whose
+	// OPTIONS_FLOW schema doesn't declare it (issue #206) - most of the 15
+	// don't (see perTypeUpdateExcludedFields' doc comment); template_number
+	// is the one exception, and deviceClassSupportedOnTemplateUpdate is what
+	// lets it through while still excluding the other 14. Reading it here
+	// unconditionally for every template domain, as an earlier version of
+	// this fix did, made splitAppliedFields report a caller-supplied
+	// device_class as "applied" for those 14 even though no options flow
+	// step ever accepted it.
+	if deviceClassSupportedOnTemplateUpdate(entryCtx.entityDomain) {
+		r.str("device_class")
+	}
 	r.str("state_class")
 
 	// Threshold helper fields
@@ -2253,33 +2381,44 @@ func buildConfigEntryUpdateConfig(entryCtx configEntryUpdateContext, args map[st
 type configBuilderFunc func(config, args map[string]any) error
 
 // helperConfigBuilders maps helper types to their configuration builders.
-var helperConfigBuilders = map[string]configBuilderFunc{
-	platformInputBoolean:           buildInputBooleanConfig,
-	platformInputButton:            buildInputButtonConfig,
-	platformInputNumber:            buildInputNumberConfig,
-	platformInputText:              buildInputTextConfig,
-	platformInputSelect:            buildInputSelectConfig,
-	platformInputDatetime:          buildInputDatetimeConfig,
-	platformCounter:                buildCounterConfig,
-	platformTimer:                  buildTimerConfig,
-	platformSchedule:               buildScheduleConfig,
-	platformGroup:                  buildGroupConfig,
-	helperTypeTemplateSensor:       buildTemplateSensorConfig,
-	helperTypeTemplateBinarySensor: buildTemplateBinarySensorConfig,
-	"threshold":                    buildThresholdConfig,
-	"derivative":                   buildDerivativeConfig,
-	"integral":                     buildIntegralConfig,
-	platformUtilityMeter:           buildUtilityMeterConfig,
-	platformMinMax:                 buildMinMaxConfig,
-	platformStatistics:             buildStatisticsConfig,
-	platformTrend:                  buildTrendConfig,
-	helperTypeRandomSensor:         buildRandomSensorConfig,
-	helperTypeRandomBinarySensor:   buildRandomBinarySensorConfig,
-	platformFilter:                 buildFilterConfig,
-	platformTod:                    buildTodConfig,
-	platformGenericThermostat:      buildGenericThermostatConfig,
-	platformSwitchAsX:              buildSwitchAsXConfig,
-	platformGenericHygrostat:       buildGenericHygrostatConfig,
+var helperConfigBuilders = buildHelperConfigBuildersRegistry()
+
+// buildHelperConfigBuildersRegistry returns the base configBuilderFunc
+// registry, merged with per-subtype builders for the template_* subtypes
+// (see helpers_template_types.go).
+func buildHelperConfigBuildersRegistry() map[string]configBuilderFunc {
+	m := map[string]configBuilderFunc{
+		platformInputBoolean:           buildInputBooleanConfig,
+		platformInputButton:            buildInputButtonConfig,
+		platformInputNumber:            buildInputNumberConfig,
+		platformInputText:              buildInputTextConfig,
+		platformInputSelect:            buildInputSelectConfig,
+		platformInputDatetime:          buildInputDatetimeConfig,
+		platformCounter:                buildCounterConfig,
+		platformTimer:                  buildTimerConfig,
+		platformSchedule:               buildScheduleConfig,
+		platformGroup:                  buildGroupConfig,
+		helperTypeTemplateSensor:       buildTemplateSensorConfig,
+		helperTypeTemplateBinarySensor: buildTemplateBinarySensorConfig,
+		"threshold":                    buildThresholdConfig,
+		"derivative":                   buildDerivativeConfig,
+		"integral":                     buildIntegralConfig,
+		platformUtilityMeter:           buildUtilityMeterConfig,
+		platformMinMax:                 buildMinMaxConfig,
+		platformStatistics:             buildStatisticsConfig,
+		platformTrend:                  buildTrendConfig,
+		helperTypeRandomSensor:         buildRandomSensorConfig,
+		helperTypeRandomBinarySensor:   buildRandomBinarySensorConfig,
+		platformFilter:                 buildFilterConfig,
+		platformTod:                    buildTodConfig,
+		platformGenericThermostat:      buildGenericThermostatConfig,
+		platformSwitchAsX:              buildSwitchAsXConfig,
+		platformGenericHygrostat:       buildGenericHygrostatConfig,
+	}
+	for typeName := range templateSubtypes {
+		m[typeName] = buildTemplateHelperConfig(typeName)
+	}
+	return m
 }
 
 func buildHelperConfig(helperType, name string, args map[string]any) (map[string]any, error) {
@@ -2623,6 +2762,109 @@ func hasAnyUpdatableSourceEntityField(args map[string]any) bool {
 	return false
 }
 
+// preExistingHelperOnlyDomains are the entity domains helperTypes already
+// legitimately owned before issue #206's 15 template_* subtypes (sensor,
+// binary_sensor, climate, humidifier, select) plus the original WS-helper
+// domains (input_*, counter, timer, schedule, group) - domains
+// checkHelperOnlyDomain deliberately does NOT gate. They have the same
+// real-integration-collision ambiguity in principle (sensor/binary_sensor
+// already had it before this branch), but are partially covered by
+// checkUpdateSourceEntityDomain/resolveConfigEntryPlatformForMinMaxType
+// already; conflating the two would grow this fix well beyond the
+// regression it's closing. This is the one hand-maintained literal in this
+// group - newlyWidenedHelperDomains below is derived from it plus
+// helperTypes so it can't drift out of sync with a newly added helper type.
+var preExistingHelperOnlyDomains = map[string]bool{
+	"sensor": true, "binary_sensor": true, "climate": true, "humidifier": true, "select": true,
+	"input_boolean": true, "input_number": true, "input_text": true, "input_select": true,
+	"input_datetime": true, "input_button": true, "counter": true, "timer": true,
+	"schedule": true, "group": true,
+}
+
+// newlyWidenedHelperDomains is the set of entity domains HelperPlatforms
+// (helper_common.go) gained for the 15 new template_* subtypes (issue
+// #206) plus switch_as_x's siren/valve targets - domains a real,
+// non-helper integration can also create entities in (a Hue light is
+// domain "light" too, a Zigbee plug is domain "switch"). Derived from
+// helperTypes' validEntityDomains minus preExistingHelperOnlyDomains, so a
+// future helper type touching a new domain is automatically covered by
+// checkHelperOnlyDomain without anyone having to remember to update this
+// set by hand - the exact drift risk a hand-maintained list here would
+// otherwise reopen.
+var newlyWidenedHelperDomains = buildNewlyWidenedHelperDomains()
+
+func buildNewlyWidenedHelperDomains() map[string]bool {
+	m := map[string]bool{}
+	for _, meta := range helperTypes {
+		for _, domain := range meta.validEntityDomains {
+			if !preExistingHelperOnlyDomains[domain] {
+				m[domain] = true
+			}
+		}
+	}
+	return m
+}
+
+// widenedHelperOnlyDomains maps each of newlyWidenedHelperDomains to the
+// set of real HA integration platforms allowed to own an entity there,
+// derived from helperTypes' validEntityDomains so it can't drift (e.g.
+// switch_as_x legitimately owns light.*/cover.*/.../valve.*, the 15
+// template_* subtypes each legitimately own exactly their own domain).
+var widenedHelperOnlyDomains = buildWidenedHelperOnlyDomains()
+
+func buildWidenedHelperOnlyDomains() map[string]map[string]bool {
+	m := make(map[string]map[string]bool, len(newlyWidenedHelperDomains))
+	for _, meta := range helperTypes {
+		for _, domain := range meta.validEntityDomains {
+			if !newlyWidenedHelperDomains[domain] {
+				continue
+			}
+			if m[domain] == nil {
+				m[domain] = map[string]bool{}
+			}
+			m[domain][meta.platform] = true
+		}
+	}
+	return m
+}
+
+// checkHelperOnlyDomain rejects handleUpdate's target entity when its
+// domain is one of newlyWidenedHelperDomains and the entity registry's
+// actual platform isn't one of the platforms widenedHelperOnlyDomains
+// allows for that domain. Before this check, ParseHelperEntityID's
+// domain-only match was handleUpdate's only gate: a real, non-helper
+// entity sharing one of these domains (light.hue_office, a Zigbee
+// switch.*, ...) would reach client.UpdateHelper, which routes any entity
+// with a config_entry_id to an Options Flow submission against THAT
+// entity's real config entry - silently editing/reloading a real
+// integration instead of a helper. Unlike checkUpdateSourceEntityDomain, a
+// registry fetch failure or a not-found entity hard-fails rather than
+// degrading to an unchecked update: proceeding unchecked is exactly the
+// gap this closes, so there is nothing safe to degrade to.
+func checkHelperOnlyDomain(ctx context.Context, client homeassistant.Client, entityID, entityDomain string) error {
+	allowed, gated := widenedHelperOnlyDomains[entityDomain]
+	if !gated {
+		return nil
+	}
+	entries, err := client.GetEntityRegistry(ctx)
+	if err != nil {
+		return fmt.Errorf("cannot verify %s is a helper entity: entity registry fetch failed: %w", entityID, err)
+	}
+	for _, entry := range entries {
+		if entry.EntityID != entityID {
+			continue
+		}
+		if allowed[entry.Platform] {
+			return nil
+		}
+		return fmt.Errorf(
+			"%s is not a helper entity - it belongs to the %q integration; manage_helper only manages helper-created entities",
+			entityID, entry.Platform,
+		)
+	}
+	return fmt.Errorf("cannot verify %s is a helper entity: entity not found in entity registry", entityID)
+}
+
 // checkUpdateSourceEntityDomain re-validates domain-constrained source
 // fields on update (create-time validation alone left helpers with domain-
 // constrained source fields updatable into a mismatched source with no
@@ -2632,17 +2874,20 @@ func hasAnyUpdatableSourceEntityField(args map[string]any) bool {
 // (yaml_defined.go:19-20) - unlike mergeCurrentHelperState's merge-fetch
 // failure, skipping this check only skips a validation, not a data-loss risk.
 //
-// This fetch and HybridClient.UpdateHelper's own registry fetch immediately
-// afterward are not deduplicated: UpdateHelper's fetch goes through its
-// internal c.ws.GetEntityRegistry (bypassing CachedClient by construction,
-// the same way DeleteHelper's routing fetch does), so even routing this
-// call through a caching client would not save the second WS round-trip.
-// Sharing one fetch across the handlers/homeassistant package boundary
-// would mean threading entity-registry entries through the Client
-// interface's UpdateHelper signature - a bigger interface change than the
-// second registry fetch's cost justifies today; hasAnyUpdatableSourceEntityField
-// already skips this fetch entirely for the common case where the update
-// touches no source-constrained field.
+// This fetch, checkHelperOnlyDomain's own fetch, and
+// HybridClient.UpdateHelper's routing fetch immediately afterward are not
+// deduplicated - up to three GetEntityRegistry round-trips per update.
+// UpdateHelper's fetch goes through its internal c.ws.GetEntityRegistry
+// (bypassing CachedClient by construction, the same way DeleteHelper's
+// routing fetch does), so even routing this call through a caching client
+// would not save that round-trip; checkHelperOnlyDomain's fetch only fires
+// for the 16 domains gated in widenedHelperOnlyDomains. Sharing one fetch
+// across the handlers/homeassistant package boundary would mean threading
+// entity-registry entries through the Client interface's UpdateHelper
+// signature - a bigger interface change than the fetch cost justifies
+// today; hasAnyUpdatableSourceEntityField already skips this particular
+// fetch entirely for the common case where the update touches no
+// source-constrained field.
 func checkUpdateSourceEntityDomain(ctx context.Context, client homeassistant.Client, entityID string, args map[string]any) error {
 	if !hasAnyUpdatableSourceEntityField(args) {
 		return nil

@@ -995,9 +995,15 @@ func TestManageHelper_Update_MinMaxTypeHardFailsOnRegistryFetchError(t *testing.
 // updated" identifier (handleUpdate reads args["entity_id"] for that) - not
 // a caller-suppliable source value - so it must never be validated against
 // on the update path. Exercised directly (rather than through the handler)
-// because switch_as_x's real target domains (cover/fan/light/lock/siren/
-// valve) aren't in HelperPlatforms, so a handler-level test can't reach this
-// case via ParseHelperEntityID at all.
+// to isolate updatableSourceEntities' own filtering from the rest of
+// handleUpdate's pipeline (checkHelperOnlyDomain, meta lookup, ...) that a
+// full handler-level test would also have to set up. switch_as_x's real
+// target domains (cover/fan/light/lock/siren/valve) ARE in HelperPlatforms
+// as of issue #206 (added there for the 15 template_* subtypes, which
+// share several of the same domains), so a handler-level test reaching
+// this case via ParseHelperEntityID is possible today - see
+// TestManageHelper_Update_RejectsNonHelperEntityInWidenedDomain and its
+// siblings for that path.
 func TestUpdatableSourceEntities_ExcludesEntityIDField(t *testing.T) {
 	t.Parallel()
 
@@ -1039,6 +1045,250 @@ func TestUpdatableSourceEntities_ExcludesEntityIDField(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestManageHelper_Update_RejectsNonHelperEntityInWidenedDomain is the
+// regression test for the finding this fixes: HelperPlatforms gained 16
+// entity domains for issue #206's 15 template_* subtypes and switch_as_x's
+// siren/valve targets (helper_common.go), but ParseHelperEntityID matches
+// on domain alone - it can't distinguish a template helper's
+// "light.my_template" from a real integration's "light.hue_office". Before
+// checkHelperOnlyDomain, handleUpdate had no other gate: it would call
+// client.UpdateHelper on the real entity, and HybridClient.UpdateHelper
+// routes ANY entity with a non-empty config_entry_id (which every real
+// integration entity has) to an Options Flow submission against that
+// entity's own config entry - silently editing/reloading a real
+// integration instead of a helper.
+func TestManageHelper_Update_RejectsNonHelperEntityInWidenedDomain(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		entityID string
+		platform string
+	}{
+		{name: "real Hue light", entityID: "light.hue_office", platform: "hue"},
+		{name: "real Zigbee switch", entityID: "switch.zigbee_plug", platform: "mqtt"},
+		{name: "real Z-Wave cover", entityID: "cover.garage_door", platform: "zwave_js"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			client := &UniversalMockClient{
+				GetEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+					return []homeassistant.EntityRegistryEntry{
+						{EntityID: tt.entityID, Platform: tt.platform, ConfigEntryID: "real_config_entry"},
+					}, nil
+				},
+				UpdateHelperFn: func(context.Context, string, homeassistant.HelperConfig) error {
+					t.Fatal("UpdateHelper should not be called for an entity that isn't a helper")
+					return nil
+				},
+			}
+
+			h := NewConsolidatedHelperHandlers()
+			result, err := h.handleManageHelper(context.Background(), client, map[string]any{
+				"action":    "update",
+				"entity_id": tt.entityID,
+				"name":      "renamed",
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !result.IsError {
+				t.Fatalf("expected update on %s (platform %q) to be rejected", tt.entityID, tt.platform)
+			}
+			text := result.Content[0].Text
+			if !strings.Contains(text, tt.platform) {
+				t.Errorf("error message = %q, want it to name the owning platform %q", text, tt.platform)
+			}
+		})
+	}
+}
+
+// TestManageHelper_Update_AllowsHelperEntityInWidenedDomain is the
+// positive-path complement of the rejection test above: a genuine
+// template_* subtype or switch_as_x helper entity in one of the newly
+// widened domains must still update successfully.
+func TestManageHelper_Update_AllowsHelperEntityInWidenedDomain(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		entityID string
+		platform string
+	}{
+		{name: "template_light helper", entityID: "light.my_template", platform: platformTemplate},
+		{name: "switch_as_x helper", entityID: "cover.my_switch_as_x", platform: platformSwitchAsX},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			client := &UniversalMockClient{
+				GetEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+					return []homeassistant.EntityRegistryEntry{
+						{EntityID: tt.entityID, Platform: tt.platform, ConfigEntryID: "helper_config_entry"},
+					}, nil
+				},
+				UpdateHelperFn: func(context.Context, string, homeassistant.HelperConfig) error {
+					return nil
+				},
+			}
+
+			h := NewConsolidatedHelperHandlers()
+			result, err := h.handleManageHelper(context.Background(), client, map[string]any{
+				"action":    "update",
+				"entity_id": tt.entityID,
+				"icon":      "mdi:test",
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result.IsError {
+				t.Fatalf("expected update on genuine helper %s (platform %q) to succeed, got: %s", tt.entityID, tt.platform, result.Content[0].Text)
+			}
+		})
+	}
+}
+
+// TestManageHelper_Update_WidenedDomainHardFailsOnRegistryFetchError pins
+// checkHelperOnlyDomain's hard-fail convention (unlike
+// checkUpdateSourceEntityDomain's degrade-to-unchecked): degrading here
+// would silently readmit the exact gap this check closes.
+func TestManageHelper_Update_WidenedDomainHardFailsOnRegistryFetchError(t *testing.T) {
+	t.Parallel()
+
+	client := &UniversalMockClient{
+		GetEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+			return nil, fmt.Errorf("registry unavailable")
+		},
+		UpdateHelperFn: func(context.Context, string, homeassistant.HelperConfig) error {
+			t.Fatal("UpdateHelper should not be called when the registry fetch needed to verify the entity is a helper fails")
+			return nil
+		},
+	}
+
+	h := NewConsolidatedHelperHandlers()
+	result, err := h.handleManageHelper(context.Background(), client, map[string]any{
+		"action":    "update",
+		"entity_id": "light.my_template",
+		"name":      "renamed",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected an error result when the registry fetch fails")
+	}
+}
+
+// TestManageHelper_Update_WidenedDomainHardFailsWhenEntityNotInRegistry
+// covers the other checkHelperOnlyDomain failure path: a well-formed
+// entity_id in a widened domain that the registry simply doesn't know
+// about must not be treated as "not a helper, so skip the check" - that
+// would be indistinguishable from a caller successfully bypassing it.
+func TestManageHelper_Update_WidenedDomainHardFailsWhenEntityNotInRegistry(t *testing.T) {
+	t.Parallel()
+
+	client := &UniversalMockClient{
+		GetEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+			return []homeassistant.EntityRegistryEntry{}, nil
+		},
+		UpdateHelperFn: func(context.Context, string, homeassistant.HelperConfig) error {
+			t.Fatal("UpdateHelper should not be called for an entity absent from the registry")
+			return nil
+		},
+	}
+
+	h := NewConsolidatedHelperHandlers()
+	result, err := h.handleManageHelper(context.Background(), client, map[string]any{
+		"action":    "update",
+		"entity_id": "light.mystery",
+		"name":      "renamed",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected an error result when the entity isn't found in the registry")
+	}
+}
+
+// TestManageHelper_Delete_RejectsNonHelperEntityInWidenedDomain is
+// handleDelete's mirror of TestManageHelper_Update_RejectsNonHelperEntityInWidenedDomain
+// (W4 of the issue #206 review): handleDelete had no checkHelperOnlyDomain
+// call at all, so DeleteHelper - which routes any entity carrying a
+// config_entry_id to DeleteConfigEntry - would delete a real integration's
+// whole config entry (not just the one entity) for a same-domain, non-helper
+// target like light.hue_office.
+func TestManageHelper_Delete_RejectsNonHelperEntityInWidenedDomain(t *testing.T) {
+	t.Parallel()
+
+	entityID := "light.hue_office"
+	client := &UniversalMockClient{
+		GetEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+			return []homeassistant.EntityRegistryEntry{
+				{EntityID: entityID, Platform: "hue", ConfigEntryID: "real_config_entry"},
+			}, nil
+		},
+		DeleteHelperFn: func(context.Context, string) error {
+			t.Fatal("DeleteHelper should not be called for an entity that isn't a helper")
+			return nil
+		},
+	}
+
+	h := NewConsolidatedHelperHandlers()
+	result, err := h.handleManageHelper(context.Background(), client, map[string]any{
+		"action":    "delete",
+		"entity_id": entityID,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected delete on %s (platform \"hue\") to be rejected", entityID)
+	}
+	if !strings.Contains(result.Content[0].Text, "hue") {
+		t.Errorf("error message = %q, want it to name the owning platform %q", result.Content[0].Text, "hue")
+	}
+}
+
+// TestManageHelper_Delete_AllowsHelperEntityInWidenedDomain is the
+// positive-path complement: a genuine template_* subtype helper entity in
+// a newly widened domain must still delete successfully.
+func TestManageHelper_Delete_AllowsHelperEntityInWidenedDomain(t *testing.T) {
+	t.Parallel()
+
+	entityID := "light.my_template"
+	client := &UniversalMockClient{
+		GetEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+			return []homeassistant.EntityRegistryEntry{
+				{EntityID: entityID, Platform: platformTemplate, ConfigEntryID: "helper_config_entry"},
+			}, nil
+		},
+		DeleteHelperFn: func(context.Context, string) error {
+			return nil
+		},
+		GetStateFn: func(context.Context, string) (*homeassistant.Entity, error) {
+			return nil, fmt.Errorf("not found")
+		},
+	}
+
+	h := NewConsolidatedHelperHandlers()
+	result, err := h.handleManageHelper(context.Background(), client, map[string]any{
+		"action":    "delete",
+		"entity_id": entityID,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected delete on genuine helper %s to succeed, got: %s", entityID, result.Content[0].Text)
 	}
 }
 
@@ -1706,6 +1956,144 @@ func TestManageHelper_Update_SuccessMessageHandlesAPIFieldRenames(t *testing.T) 
 	}
 	if !strings.Contains(text, `applied: "away_temp", "heater_entity_id"`) {
 		t.Errorf("success message = %q, want both fields reported as applied by their ARG names", text)
+	}
+}
+
+// TestManageHelper_Update_SuccessMessageHandlesTemplateSubtypeRenames pins
+// the update-path equivalent of CLAUDE.md's "manage_helper update field
+// docs" gotcha for the 15 new template_* subtypes (issue #206): each of
+// these renames a caller-facing arg name to a different HA config key only
+// for some subtypes ("set_position"->"set_cover_position" for
+// template_cover, "lock_code_format"->"code_format" for template_lock,
+// "options_template"->"options" for template_select, "state"->
+// "value_template" for template_switch) - a static updateConfigKeyAliases
+// entry can't express this since the same arg name renames differently (or
+// not at all) on a different subtype's domain. Before resolveUpdateConfigKey
+// existed, a successful update reported every one of these as "ignored -
+// not accepted by this helper type" despite Home Assistant actually
+// accepting it.
+func TestManageHelper_Update_SuccessMessageHandlesTemplateSubtypeRenames(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		entityID string
+		args     map[string]any
+		wantArg  string
+	}{
+		{
+			name:     "template_cover set_position",
+			entityID: "cover.my_cover",
+			args:     map[string]any{"set_position": map[string]any{"action": "input_boolean.toggle"}},
+			wantArg:  "set_position",
+		},
+		{
+			name:     "template_lock lock_code_format",
+			entityID: "lock.my_lock",
+			args:     map[string]any{"lock_code_format": "{{ 'number' }}"},
+			wantArg:  "lock_code_format",
+		},
+		{
+			name:     "template_select options_template",
+			entityID: "select.my_select",
+			args:     map[string]any{"options_template": "{{ ['a', 'b'] }}"},
+			wantArg:  "options_template",
+		},
+		{
+			name:     "template_switch state",
+			entityID: "switch.my_switch",
+			args:     map[string]any{"state": "{{ 'on' }}"},
+			wantArg:  "state",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			client := &UniversalMockClient{}
+			client.GetEntityRegistryFn = func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+				return []homeassistant.EntityRegistryEntry{
+					{EntityID: tt.entityID, Platform: platformTemplate, ConfigEntryID: "config123"},
+				}, nil
+			}
+			client.UpdateHelperFn = func(context.Context, string, homeassistant.HelperConfig) error {
+				return nil
+			}
+
+			h := NewConsolidatedHelperHandlers()
+			args := map[string]any{"action": "update", "entity_id": tt.entityID}
+			for k, v := range tt.args {
+				args[k] = v
+			}
+			result, err := h.handleManageHelper(context.Background(), client, args)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result.IsError {
+				t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+			}
+
+			text := result.Content[0].Text
+			if strings.Contains(text, fmt.Sprintf("ignored - not accepted by this helper type: %q", tt.wantArg)) {
+				t.Errorf("success message = %q, want %q reported as applied, not ignored", text, tt.wantArg)
+			}
+			if !strings.Contains(text, fmt.Sprintf("applied: %q", tt.wantArg)) {
+				t.Errorf("success message = %q, want %q reported as applied", text, tt.wantArg)
+			}
+		})
+	}
+}
+
+// TestManageHelper_Update_TemplateSubtypeDeviceClassNeverApplied pins the
+// fix for device_class being read unconditionally into a template subtype's
+// update config (both by buildConfigEntryUpdateConfig's own generic
+// "Template helper fields" block and by addTemplateConfigEntryUpdateFields)
+// regardless of whether that subtype's OPTIONS_FLOW schema declares it.
+// perTypeUpdateExcludedFields already documents device_class as excluded on
+// update for every one of the 15 new subtypes (the 4 in
+// perTypeDeviceClassSupport support it on CONFIG_FLOW/create only; the
+// other 11 never declare it at all) - the success message must agree with
+// that document, not just the docs helper (updatableFieldNames) that reads
+// it.
+func TestManageHelper_Update_TemplateSubtypeDeviceClassNeverApplied(t *testing.T) {
+	t.Parallel()
+
+	for _, entityID := range []string{"cover.my_cover", "switch.my_switch"} {
+		t.Run(entityID, func(t *testing.T) {
+			t.Parallel()
+
+			client := &UniversalMockClient{}
+			client.GetEntityRegistryFn = func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+				return []homeassistant.EntityRegistryEntry{
+					{EntityID: entityID, Platform: platformTemplate, ConfigEntryID: "config123"},
+				}, nil
+			}
+			client.UpdateHelperFn = func(context.Context, string, homeassistant.HelperConfig) error {
+				return nil
+			}
+
+			h := NewConsolidatedHelperHandlers()
+			result, err := h.handleManageHelper(context.Background(), client, map[string]any{
+				"action":       "update",
+				"entity_id":    entityID,
+				"device_class": "some_class",
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result.IsError {
+				t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+			}
+
+			text := result.Content[0].Text
+			if strings.Contains(text, `applied: "device_class"`) {
+				t.Errorf("success message = %q, want device_class reported as ignored, not applied", text)
+			}
+			if !strings.Contains(text, `ignored - not accepted by this helper type: "device_class"`) {
+				t.Errorf("success message = %q, want device_class reported as ignored", text)
+			}
+		})
 	}
 }
 
@@ -3547,6 +3935,68 @@ func TestManageHelper_GetDetails(t *testing.T) {
 	runHandlerTestCases(t, tests, h.handleManageHelper)
 }
 
+// TestManageHelper_GetDetails_TemplateSubtypeDomains pins the fix routing
+// the 15 new template_* subtype domains (issue #206) to the same generic
+// get_details path already used for climate/humidifier/select, instead of
+// hitting "get_details is not supported for helper type: %s". JSON format
+// works immediately (JSONHelperFormatter.FormatHelperDetail ignores
+// helperType entirely); natural format still returns the SAME
+// "unsupported helper type" error climate/humidifier/select already
+// return today (NaturalHelperFormatter.FormatHelperDetail has no case for
+// any of them) - a pre-existing gap this fix does not create or hide.
+func TestManageHelper_GetDetails_TemplateSubtypeDomains(t *testing.T) {
+	t.Parallel()
+
+	tests := []handlerTestCase{
+		{
+			name: "get_details for template_cover entity with json format",
+			args: map[string]any{
+				"action":    "get_details",
+				"entity_id": "cover.my_cover",
+				"format":    "json",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetStateFn = func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+					return &homeassistant.Entity{
+						EntityID: entityID,
+						State:    "closed",
+						Attributes: map[string]any{
+							"friendly_name": "My Cover",
+						},
+					}, nil
+				}
+			},
+			wantError:    false,
+			wantContains: []string{"cover.my_cover", "\"state\"", "\"closed\""},
+		},
+		{
+			name: "get_details for template_light entity with natural format matches climate's pre-existing gap",
+			args: map[string]any{
+				"action":    "get_details",
+				"entity_id": "light.my_light",
+				"format":    "natural",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetStateFn = func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+					return &homeassistant.Entity{
+						EntityID: entityID,
+						State:    "on",
+						Attributes: map[string]any{
+							"friendly_name": "My Light",
+						},
+					}, nil
+				}
+			},
+			wantError:       true,
+			wantContains:    []string{"unsupported helper type: light"},
+			wantNotContains: []string{"get_details is not supported for helper type"},
+		},
+	}
+
+	h := NewConsolidatedHelperHandlers()
+	runHandlerTestCases(t, tests, h.handleManageHelper)
+}
+
 // =============================================================================
 // manage_helper - List Tests
 // =============================================================================
@@ -4489,10 +4939,12 @@ func updatableFieldSentinel(name, field string) any {
 
 	switch field {
 	case "options", "entities", "tariffs", "entity_ids",
-		"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday":
+		"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+		"fan_speed_list":
 		return []any{"probe"}
 	case "has_date", "has_time", "restore", "all", "delta_values", "net_consumption",
-		"periodically_resetting", "invert", "ac_mode":
+		"periodically_resetting", "invert", "ac_mode",
+		"code_arm_required", "verify_ssl", "backup", "specific_version":
 		return true
 	case "lower", "upper", "hysteresis", "min", "max", "step", "offset", "percentile",
 		"min_gradient", "sample_duration", "min_temp", "max_temp", "target_temp",
@@ -4501,24 +4953,104 @@ func updatableFieldSentinel(name, field string) any {
 		"round", "time_window", "round_digits", "sampling_size", "precision",
 		"min_samples", "max_samples", "delay_on", "delay_off",
 		"radius", "time_constant", "lower_bound", "upper_bound",
+		"speed_count",
 		"away_temp", "eco_temp", "home_temp", "comfort_temp", "sleep_temp", "activity_temp":
 		// argReader's num/integer/str readers all accept a float64 (str
 		// coerces it to a decimal string), so one numeric sentinel exercises
 		// every numeric-or-numeric-string field uniformly.
 		return float64(1)
+	case "disarm", "arm_away", "arm_custom_bypass", "arm_home", "arm_night", "arm_vacation",
+		"trigger", "press", "open", "close", "stop", "set_position", "turn_on", "turn_off",
+		"set_percentage", "install", "select_option", "lock", "unlock", "set_value",
+		"set_level", "set_hs", "set_temperature", "start", "set_fan_speed", "pause",
+		"return_to_base", "clean_spot", "locate":
+		// An HA ActionSelector value: a single action object is enough to
+		// exercise argReader.actionValue uniformly across every action field.
+		return map[string]any{"action": "input_boolean.toggle"}
 	default:
 		// icon, state, source, unit_of_measurement, device_class, state_class,
 		// unit_time, unit_prefix, method, group_type, mode, pattern, duration,
 		// cycle, max_age, after_time, before_time, after_offset, before_offset,
 		// heater_entity_id, target_sensor_entity_id, humidifier_entity_id,
-		// target_domain, window_size (raw - accepts a string): every
+		// target_domain, window_size (raw - accepts a string), and every
+		// template subtype's plain-string/template field (position, level,
+		// hs, temperature, code_format, lock_code_format, options_template,
+		// event_type, event_types, percentage, url, in_zones, latitude,
+		// longitude, location_accuracy, fan_speed, condition, humidity,
+		// temperature_unit, forecast_daily, forecast_hourly, availability,
+		// device_id, installed_version, latest_version, in_progress,
+		// release_summary, release_url, title, update_percentage): every
 		// remaining name is read as a plain string.
 		return "test-value"
 	}
 }
 
+// TestUpdatableFieldSentinel_AgreesWithTemplateFieldKind guards the drift
+// risk in updatableFieldSentinel's hand-maintained case lists: for every
+// arg name owned by a template subtype (or templateUniversalFields), the
+// sentinel value's Go type must match what that field's templateFieldKind
+// actually produces via argReader (tplAction -> map[string]any,
+// tplNumber -> float64, tplBool -> bool, tplStringArray -> []any,
+// tplTemplate/tplString -> string). A future template field added with a
+// kind that doesn't match whichever hardcoded case list happens to catch
+// its name would otherwise pass TestUpdatableFields_AreActuallyReadByUpdatePath
+// for the wrong reason (or fail confusingly) instead of failing here with
+// a precise, actionable mismatch.
+func TestUpdatableFieldSentinel_AgreesWithTemplateFieldKind(t *testing.T) {
+	t.Parallel()
+
+	kindByArg := make(map[string]templateFieldKind)
+	for _, subtype := range templateSubtypes {
+		for _, f := range subtype.fields {
+			kindByArg[f.arg] = f.kind
+		}
+	}
+	for _, f := range templateUniversalFields {
+		kindByArg[f.arg] = f.kind
+	}
+
+	for arg, kind := range kindByArg {
+		got := updatableFieldSentinel("template_sensor", arg) // name is irrelevant except for "initial", which no template field uses
+		switch kind {
+		case tplAction:
+			if _, ok := got.(map[string]any); !ok {
+				t.Errorf("field %q has kind tplAction but sentinel returned %T, want map[string]any", arg, got)
+			}
+		case tplNumber:
+			if _, ok := got.(float64); !ok {
+				t.Errorf("field %q has kind tplNumber but sentinel returned %T, want float64", arg, got)
+			}
+		case tplBool:
+			if _, ok := got.(bool); !ok {
+				t.Errorf("field %q has kind tplBool but sentinel returned %T, want bool", arg, got)
+			}
+		case tplStringArray:
+			if _, ok := got.([]any); !ok {
+				t.Errorf("field %q has kind tplStringArray but sentinel returned %T, want []any", arg, got)
+			}
+		case tplTemplate, tplString:
+			if _, ok := got.(string); !ok {
+				t.Errorf("field %q has kind %v but sentinel returned %T, want string", arg, kind, got)
+			}
+		}
+	}
+}
+
 // updateConfigKeyAliases now lives in production (helpers_config_builders_extended.go)
 // so splitAppliedFields can use the same table these contract tests do.
+
+// configKeyFor resolves the config key a field lands under for helper type
+// name, delegating to the same production resolver splitAppliedFields uses
+// (resolveUpdateConfigKey) rather than a second, hand-maintained per-type
+// alias table. A hand-copied table here could disagree with
+// resolveTemplateFieldsForDomain's domain-dependent renames (e.g. "state"
+// -> value_template only for template_alarm_control_panel/template_switch,
+// "open"/"close"/"stop"/"set_position" -> *_cover only for template_cover)
+// without this test noticing - exactly the drift class this contract test
+// exists to catch.
+func configKeyFor(name, field string) string {
+	return resolveUpdateConfigKey(helperTypes[name].entityPrefix, field)
+}
 
 // TestUpdatableFields_AreActuallyReadByUpdatePath asserts every field name
 // updatableFieldNames() advertises as accepted on update is actually
@@ -4563,10 +5095,7 @@ func TestUpdatableFields_AreActuallyReadByUpdatePath(t *testing.T) {
 			}
 
 			for _, field := range fields {
-				key := field
-				if alias, ok := updateConfigKeyAliases[field]; ok {
-					key = alias
-				}
+				key := configKeyFor(name, field)
 				if _, present := config[key]; !present {
 					t.Errorf("field %q (config key %q) is listed as updatable for %q but was not read by the update builder - add it to perTypeUpdateExcludedFields or fix the builder", field, key, name)
 				}

@@ -12,13 +12,13 @@ import (
 	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
 
-// TestManageHelper_SchemaIncludesExtendedTypes verifies all 27 helper types are included in the schema.
+// TestManageHelper_SchemaIncludesExtendedTypes verifies all 41 helper types are included in the schema.
 func TestManageHelper_SchemaIncludesExtendedTypes(t *testing.T) {
 	handlers := NewConsolidatedHelperHandlers()
 	tool := handlers.manageHelperTool()
 
 	typeEnum := tool.InputSchema.Properties["type"].Enum
-	require.Len(t, typeEnum, 26, "Expected 26 helper types in schema (15 original + 11 new)")
+	require.Len(t, typeEnum, 41, "Expected 41 helper types in schema (26 previous + 15 template subtypes, issue #206)")
 
 	// Verify new types are present
 	newTypes := []string{

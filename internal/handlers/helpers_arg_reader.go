@@ -552,3 +552,78 @@ func (r *argReader) raw(key string) {
 	}
 	r.config[key] = v
 }
+
+// maxActionDepth and maxActionNodes bound an HA action sequence
+// (ActionSelector) value read by actionValue. Unlike raw()'s duration
+// dicts, an action's shape (target/data) is arbitrary by nature and can't
+// be validated as flat, so it's bounded by nesting depth and total node
+// count instead.
+//
+// maxActionDepth=16 leaves headroom for a routine, non-adversarial `choose`
+// action: list -> option map -> conditions/sequence lists -> action map ->
+// target map -> entity_id list -> string is already depth 9 with the
+// leaf at depth 1 counted as the outermost list; nested `if`/`repeat`
+// blocks or a `choose` two levels deep push that further. A tighter bound
+// (8, this constant's original value) rejected that shape outright - see
+// TestActionValue_AcceptsRealisticChooseAction.
+const (
+	maxActionDepth = 16
+	maxActionNodes = 2000
+)
+
+// actionValue reads an HA action sequence (ActionSelector): a single
+// action object (e.g. {"action": "switch.turn_on", "target": {...}}) or a
+// list of them. Bounded by depth, node count, AND per-string/key byte
+// length (boundedActionShape checks all three) rather than checked for a
+// specific shape, since HA validates the actual action semantics itself -
+// this only guards against an unbounded payload being forwarded verbatim
+// into the HTTP body sent to Home Assistant. The byte-length bound matters
+// as much as the other two: depth/node count alone would still let a
+// single {"action": "<huge string>"} value through, since that shape is
+// only 2 nodes at depth 2.
+func (r *argReader) actionValue(key string) {
+	v, ok := r.args[key]
+	if !ok || isSkippable(v) {
+		return
+	}
+	switch v.(type) {
+	case map[string]any, []any:
+	default:
+		r.fail(key, "an action object or a list of action objects", v)
+		return
+	}
+	nodes := 0
+	if !boundedActionShape(v, 1, &nodes) {
+		r.fail(key, fmt.Sprintf(
+			"an action value within depth %d, %d total values, and %d bytes per string/key", maxActionDepth, maxActionNodes, maxScalarStringLen,
+		), v)
+		return
+	}
+	r.config[key] = v
+}
+
+// boundedActionShape reports whether v's nesting depth and total node
+// count both stay within actionValue's limits.
+func boundedActionShape(v any, depth int, nodes *int) bool {
+	*nodes++
+	if *nodes > maxActionNodes || depth > maxActionDepth {
+		return false
+	}
+	switch val := v.(type) {
+	case map[string]any:
+		for key, elem := range val {
+			if len(key) > maxScalarStringLen || !boundedActionShape(elem, depth+1, nodes) {
+				return false
+			}
+		}
+	case []any:
+		for _, elem := range val {
+			if !boundedActionShape(elem, depth+1, nodes) {
+				return false
+			}
+		}
+	case string:
+		return len(val) <= maxScalarStringLen
+	}
+	return true
+}

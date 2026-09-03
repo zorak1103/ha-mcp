@@ -304,6 +304,10 @@ func addExtendedConfigEntryFields(config, args map[string]any, entryCtx configEn
 	r.num("dry_tolerance")
 	r.num("wet_tolerance")
 
+	// template subtype fields (button/cover/device_tracker/event/fan/image/
+	// light/lock/number/select/switch/update/vacuum/weather/alarm_control_panel)
+	addTemplateConfigEntryUpdateFields(r, entryCtx.entityDomain)
+
 	return r.err()
 }
 
@@ -355,6 +359,9 @@ var updateConfigKeyAliases = map[string]string{
 	"target_sensor_entity_id": "target_sensor",
 	"humidifier_entity_id":    "humidifier",
 	"min_max_type":            "type",
+	"fan_speed_list":          "fan_speeds",
+	"lock_code_format":        "code_format",
+	"options_template":        "options",
 }
 
 // configKeyToArgName is the reverse of updateConfigKeyAliases: HA's
