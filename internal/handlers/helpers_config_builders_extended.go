@@ -1,6 +1,44 @@
 // Package handlers provides MCP tool handlers for Home Assistant operations.
 package handlers
 
+// genericThermostatPresetFieldNames returns generic_thermostat's optional
+// preset temperature fields (HA's PRESETS_SCHEMA, CONF_PRESETS.values()) -
+// the tool arg name matches HA's own config key exactly, no renaming
+// needed. Shared by the create and update builders so the two field lists
+// cannot drift. Returns a fresh slice on every call so callers appending
+// to it (e.g. helperTypes' optionalFields) can never alias or mutate a
+// shared backing array.
+func genericThermostatPresetFieldNames() []string {
+	names := make([]string, len(genericThermostatPresets))
+	for i, p := range genericThermostatPresets {
+		names[i] = p.field
+	}
+	return names
+}
+
+// genericThermostatPreset pairs a preset config field with the label used
+// in its generated schema description.
+type genericThermostatPreset struct {
+	field string
+	label string
+}
+
+// genericThermostatPresets is the single source of truth for
+// generic_thermostat's six optional preset temperature fields (HA's
+// CONF_PRESETS.values()) - genericThermostatPresetFieldNames() (read by the
+// create/update config builders) and buildGenericThermostatPresetSchema()
+// (the manage_helper JSON schema, helpers_schema_extended.go) both derive
+// from this one list, so a field can't be added to the builders' side
+// without also appearing in the schema, or vice versa.
+var genericThermostatPresets = []genericThermostatPreset{
+	{field: "away_temp", label: "Away"},
+	{field: "eco_temp", label: "Eco"},
+	{field: "home_temp", label: "Home"},
+	{field: "comfort_temp", label: "Comfort"},
+	{field: "sleep_temp", label: "Sleep"},
+	{field: "activity_temp", label: "Activity"},
+}
+
 // buildUtilityMeterConfig builds configuration for utility_meter helper.
 func buildUtilityMeterConfig(config, args map[string]any) error {
 	r := newArgReader(config, args)
@@ -135,6 +173,9 @@ func buildGenericThermostatConfig(config, args map[string]any) error {
 	r.num("target_temp")
 	r.num("cold_tolerance")
 	r.num("hot_tolerance")
+	for _, field := range genericThermostatPresetFieldNames() {
+		r.num(field)
+	}
 	return r.err()
 }
 
@@ -229,7 +270,8 @@ func addExtendedConfigEntryFields(config, args map[string]any, entryCtx configEn
 	r.strIDAs("target_sensor_entity_id", "target_sensor")
 	// Unlike buildGenericThermostatConfig's create path, ac_mode gets NO
 	// default here when omitted - and that's deliberate, not a gap to
-	// "fix" by mirroring create. mergeOptionsFlowConfig already preserves
+	// "fix" by mirroring create. buildStepSubmission's update-mode
+	// round-trip (internal/homeassistant/flow_steps.go) already preserves
 	// the helper's current ac_mode when userConfig omits the key; defaulting
 	// it to false here would override that preserved value on every update
 	// that doesn't explicitly pass ac_mode, defeating the merge entirely.
@@ -239,6 +281,7 @@ func addExtendedConfigEntryFields(config, args map[string]any, entryCtx configEn
 	r.num("target_temp")
 	r.num("cold_tolerance")
 	r.num("hot_tolerance")
+	addGenericThermostatPresetFields(r, entryCtx.entityDomain)
 
 	// switch_as_x fields
 	r.str("target_domain")
@@ -282,4 +325,72 @@ func addMinMaxTypeField(r *argReader, minMaxPlatform string) {
 		return
 	}
 	r.strAs("min_max_type", "type")
+}
+
+// addGenericThermostatPresetFields reads generic_thermostat's optional
+// preset temperature fields only when the helper being updated is
+// actually a generic_thermostat (its entity domain is "climate") - mirrors
+// addMinMaxTypeField's gate above and the device_class gate below.
+// addExtendedConfigEntryFields is a one-size-fits-all update builder
+// shared by every config-entry helper type; an unconditional read here
+// would let away_temp/eco_temp/... leak into any of them even though no
+// other type's Options Flow schema declares those keys.
+func addGenericThermostatPresetFields(r *argReader, entityDomain string) {
+	if entityDomain != thermostatEntityDomain {
+		return
+	}
+	for _, field := range genericThermostatPresetFieldNames() {
+		r.num(field)
+	}
+}
+
+// updateConfigKeyAliases maps a manage_helper arg name to the config map
+// key it lands under once the update builder runs, for the handful of
+// fields Home Assistant's API renames on write (see CLAUDE.md's "Config
+// Entry API Field Mapping" gotcha). splitAppliedFields
+// (helpers_consolidated.go) uses this to report a renamed field as applied
+// under the caller's own arg name rather than mistaking the rename for the
+// field never having been read at all - the two contract tests
+// (TestUpdatableFields_AreActuallyReadByUpdatePath,
+// TestCreatableFields_AreActuallyReadByCreatePath) already depend on this
+// exact table to look up the right config key.
+var updateConfigKeyAliases = map[string]string{
+	"heater_entity_id":        "heater",
+	"target_sensor_entity_id": "target_sensor",
+	"humidifier_entity_id":    "humidifier",
+	"min_max_type":            "type",
+	"fan_speed_list":          "fan_speeds",
+	"lock_code_format":        "code_format",
+	"options_template":        "options",
+}
+
+// configKeyToArgName is the reverse of updateConfigKeyAliases: HA's
+// options/config flow reports rejected fields by their CONFIG key (e.g.
+// "heater"), but a PartialApplyError warning reads better naming the
+// caller's own arg name (e.g. "heater_entity_id") - the name actually used
+// in the manage_helper call that produced it.
+var configKeyToArgName = reverseAliasMap(updateConfigKeyAliases)
+
+func reverseAliasMap(aliases map[string]string) map[string]string {
+	reversed := make(map[string]string, len(aliases))
+	for argName, configKey := range aliases {
+		reversed[configKey] = argName
+	}
+	return reversed
+}
+
+// argNamesForConfigKeys translates a *homeassistant.PartialApplyError's
+// Fields (HA's config key names) back to the caller's manage_helper arg
+// names via configKeyToArgName, passing through any field with no known
+// alias unchanged.
+func argNamesForConfigKeys(configKeys []string) []string {
+	argNames := make([]string, len(configKeys))
+	for i, key := range configKeys {
+		if argName, ok := configKeyToArgName[key]; ok {
+			argNames[i] = argName
+		} else {
+			argNames[i] = key
+		}
+	}
+	return argNames
 }

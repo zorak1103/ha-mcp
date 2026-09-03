@@ -1576,6 +1576,425 @@ func TestManageHelper_Update(t *testing.T) {
 	runHandlerTestCases(t, tests, h.handleManageHelper)
 }
 
+// TestManageHelper_Update_SuccessMessageEchoesAppliedFields regression-tests
+// updateSuccessMessage: a bare "updated successfully" gave a caller no way to
+// tell a full application from a partial one (relevant here because a
+// config-entry field no step's schema accepted is rejected before this
+// point - see hybrid_client.go's unconsumedUserFields checks - but a
+// caller had no positive confirmation of what DID apply). The message
+// must name the caller-supplied fields, sorted, and exclude
+// manage_helper's own dispatch/identifier args.
+func TestManageHelper_Update_SuccessMessageEchoesAppliedFields(t *testing.T) {
+	t.Parallel()
+
+	client := &UniversalMockClient{}
+	client.UpdateHelperFn = func(context.Context, string, homeassistant.HelperConfig) error {
+		return nil
+	}
+
+	h := NewConsolidatedHelperHandlers()
+	result, err := h.handleManageHelper(context.Background(), client, map[string]any{
+		"action":    "update",
+		"entity_id": "counter.visitors",
+		"step":      float64(5),
+		"minimum":   float64(0),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+	}
+
+	text := result.Content[0].Text
+	if !strings.Contains(text, `applied: "minimum", "step"`) {
+		t.Errorf("success message = %q, want it to name the applied fields sorted (minimum, step)", text)
+	}
+	if strings.Contains(text, "entity_id") || strings.Contains(text, "action") {
+		t.Errorf("success message = %q, must not echo manage_helper's own dispatch args", text)
+	}
+}
+
+// TestManageHelper_Update_SuccessMessageOmitsFieldsThatNeverReachedThePayload
+// regression-tests updateSuccessMessage: it originally derived its
+// "applied" list from the caller's raw args, so two classes of field were
+// reported as applied while nothing was ever sent for them:
+//
+//  1. manage_helper's own output args (format, verbose) - declared top-level
+//     schema properties, so a schema-conformant caller can always pass them.
+//  2. Any field the resolved helper type's config builder never reads (a
+//     typo, or a field belonging to a different helper type). No arg
+//     validation exists anywhere in the stack, and the flow engine's
+//     unconsumedUserFields guard inspects the BUILT config, not args, so it
+//     is structurally unable to catch these.
+//
+// The message must name only what actually reached the payload, and report
+// the rest as ignored rather than applied.
+func TestManageHelper_Update_SuccessMessageOmitsFieldsThatNeverReachedThePayload(t *testing.T) {
+	t.Parallel()
+
+	client := &UniversalMockClient{}
+	client.UpdateHelperFn = func(context.Context, string, homeassistant.HelperConfig) error {
+		return nil
+	}
+
+	h := NewConsolidatedHelperHandlers()
+	result, err := h.handleManageHelper(context.Background(), client, map[string]any{
+		"action":    "update",
+		"entity_id": "counter.visitors",
+		"format":    "json",
+		"verbose":   true,
+		"step":      float64(5),
+		"away_temp": float64(16), // generic_thermostat's field - no counter builder reads it
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+	}
+
+	text := result.Content[0].Text
+	// Exact-match the applied list: had away_temp been counted as applied,
+	// the rendered list would read "away_temp, step" and this would fail.
+	if !strings.Contains(text, `(applied: "step")`) {
+		t.Errorf("success message = %q, want the applied list to be exactly \"step\"", text)
+	}
+	if strings.Contains(text, "format") || strings.Contains(text, "verbose") {
+		t.Errorf("success message = %q, must not report manage_helper's own output args as helper fields", text)
+	}
+	if !strings.Contains(text, "away_temp") {
+		t.Errorf("success message = %q, want a field no builder read to be reported as ignored", text)
+	}
+}
+
+// TestManageHelper_Update_SuccessMessageHandlesAPIFieldRenames guards a
+// regression where splitAppliedFields compared caller arg names directly
+// against the built config's map keys, without accounting for the handful
+// of fields Home Assistant's API renames (heater_entity_id -> heater,
+// target_sensor_entity_id -> target_sensor, humidifier_entity_id ->
+// humidifier, min_max_type -> type - see updateConfigKeyAliases). Every one
+// of those fields was, despite being genuinely applied, reported as
+// "ignored - not accepted by this helper type" - including
+// generic_thermostat's own required heater_entity_id, the field this
+// entire feature branch is about.
+func TestManageHelper_Update_SuccessMessageHandlesAPIFieldRenames(t *testing.T) {
+	t.Parallel()
+
+	client := &UniversalMockClient{}
+	client.UpdateHelperFn = func(context.Context, string, homeassistant.HelperConfig) error {
+		return nil
+	}
+
+	h := NewConsolidatedHelperHandlers()
+	result, err := h.handleManageHelper(context.Background(), client, map[string]any{
+		"action":           "update",
+		"entity_id":        "climate.thermo",
+		"heater_entity_id": "switch.new_heater",
+		"away_temp":        float64(15),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+	}
+
+	text := result.Content[0].Text
+	if strings.Contains(text, "ignored") {
+		t.Errorf("success message = %q, want neither renamed field reported as ignored", text)
+	}
+	if !strings.Contains(text, `applied: "away_temp", "heater_entity_id"`) {
+		t.Errorf("success message = %q, want both fields reported as applied by their ARG names", text)
+	}
+}
+
+// TestManageHelper_Update_SuccessMessageHandlesMinMaxTypeAlias covers the
+// second renamed field updateConfigKeyAliases handles - min_max_type
+// writes config["type"], not config["min_max_type"].
+func TestManageHelper_Update_SuccessMessageHandlesMinMaxTypeAlias(t *testing.T) {
+	t.Parallel()
+
+	client := &UniversalMockClient{
+		GetEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+			return []homeassistant.EntityRegistryEntry{
+				{EntityID: "sensor.my_minmax", Platform: platformMinMax, ConfigEntryID: "config123"},
+			}, nil
+		},
+		UpdateHelperFn: func(context.Context, string, homeassistant.HelperConfig) error {
+			return nil
+		},
+	}
+
+	h := NewConsolidatedHelperHandlers()
+	result, err := h.handleManageHelper(context.Background(), client, map[string]any{
+		"action":       "update",
+		"entity_id":    "sensor.my_minmax",
+		"min_max_type": "max",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+	}
+
+	text := result.Content[0].Text
+	if !strings.Contains(text, `applied: "min_max_type"`) {
+		t.Errorf("success message = %q, want min_max_type reported as applied", text)
+	}
+	if strings.Contains(text, "ignored") {
+		t.Errorf("success message = %q, want min_max_type not reported as ignored", text)
+	}
+}
+
+// TestManageHelper_Update_SuccessMessageReportsNullAndEmptyAsSkipped guards
+// the third splitAppliedFields bucket: argReader.isSkippable treats an
+// explicit JSON null and an empty string as "no value supplied" and never
+// writes either into the built config - such a field is neither genuinely
+// applied (nothing was sent) nor "not accepted by this helper type" (the
+// field IS a real, accepted counter field); it must get its own wording.
+func TestManageHelper_Update_SuccessMessageReportsNullAndEmptyAsSkipped(t *testing.T) {
+	t.Parallel()
+
+	client := &UniversalMockClient{}
+	client.UpdateHelperFn = func(context.Context, string, homeassistant.HelperConfig) error {
+		return nil
+	}
+
+	h := NewConsolidatedHelperHandlers()
+	result, err := h.handleManageHelper(context.Background(), client, map[string]any{
+		"action":    "update",
+		"entity_id": "counter.visitors",
+		"step":      float64(5),
+		"icon":      "",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+	}
+
+	text := result.Content[0].Text
+	if !strings.Contains(text, "no value supplied") || !strings.Contains(text, "icon") {
+		t.Errorf("success message = %q, want icon reported as skipped (no value supplied)", text)
+	}
+	if strings.Contains(text, "not accepted by this helper type") {
+		t.Errorf("success message = %q, icon must not be reported as unaccepted - it IS a valid field", text)
+	}
+}
+
+// TestManageHelper_Create_PartialApplyRendersSuccessWithWarning guards a
+// *homeassistant.PartialApplyError from CreateHelper: it means the config
+// entry already exists on Home Assistant's side. The result must be a
+// SUCCESS carrying a WARNING naming the rejected field(s) - not an error
+// result, which would read as "nothing happened" and risk a caller
+// retrying create and duplicating the helper.
+func TestManageHelper_Create_PartialApplyRendersSuccessWithWarning(t *testing.T) {
+	t.Parallel()
+
+	client := &UniversalMockClient{
+		GetStateFn: func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+			return &homeassistant.Entity{EntityID: entityID, Attributes: map[string]any{"device_class": "temperature"}}, nil
+		},
+	}
+	client.CreateHelperFn = func(context.Context, homeassistant.HelperConfig) error {
+		return &homeassistant.PartialApplyError{
+			Op:       homeassistant.PartialApplyCreate,
+			Platform: "generic_thermostat",
+			Fields:   []string{"away_temp"},
+		}
+	}
+
+	h := NewConsolidatedHelperHandlers()
+	result, err := h.handleManageHelper(context.Background(), client, map[string]any{
+		"action":                  "create",
+		"type":                    "generic_thermostat",
+		"id":                      "my_thermostat",
+		"name":                    "My Thermostat",
+		"heater_entity_id":        "switch.heater",
+		"target_sensor_entity_id": "sensor.temp",
+		"away_temp":               float64(16),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected a success result carrying a warning, got an error result: %s", result.Content[0].Text)
+	}
+
+	text := result.Content[0].Text
+	if !strings.Contains(text, "created successfully") {
+		t.Errorf("success message = %q, want it to still say the helper was created", text)
+	}
+	if !strings.Contains(text, "WARNING") {
+		t.Errorf("success message = %q, want a WARNING block", text)
+	}
+	if !strings.Contains(text, "away_temp") {
+		t.Errorf("success message = %q, want it to name the unaccepted field away_temp", text)
+	}
+	if !strings.Contains(text, "do not retry create") {
+		t.Errorf("success message = %q, want it to warn against retrying create", text)
+	}
+}
+
+// TestManageHelper_Update_PartialApplyRendersSuccessWithWarning is the
+// update-side mirror of TestManageHelper_Create_PartialApplyRendersSuccessWithWarning:
+// a *homeassistant.PartialApplyError from UpdateHelper means every field
+// every options flow step DID accept (heater_entity_id here) has already
+// been committed. The result must be a success naming heater_entity_id as
+// applied, with away_temp moved OUT of "applied" and into a WARNING -
+// away_temp reached the locally-built config payload (so
+// splitAppliedFields alone would call it applied) but was rejected by
+// every step of the real options flow.
+func TestManageHelper_Update_PartialApplyRendersSuccessWithWarning(t *testing.T) {
+	t.Parallel()
+
+	client := &UniversalMockClient{}
+	client.UpdateHelperFn = func(context.Context, string, homeassistant.HelperConfig) error {
+		return &homeassistant.PartialApplyError{
+			Op:     homeassistant.PartialApplyUpdate,
+			Fields: []string{"away_temp"},
+		}
+	}
+
+	h := NewConsolidatedHelperHandlers()
+	result, err := h.handleManageHelper(context.Background(), client, map[string]any{
+		"action":           "update",
+		"entity_id":        "climate.thermo",
+		"heater_entity_id": "switch.new_heater",
+		"away_temp":        float64(16),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected a success result carrying a warning, got an error result: %s", result.Content[0].Text)
+	}
+
+	text := result.Content[0].Text
+	if !strings.Contains(text, "updated successfully") {
+		t.Errorf("success message = %q, want it to still say the helper was updated", text)
+	}
+	if !strings.Contains(text, `applied: "heater_entity_id"`) {
+		t.Errorf("success message = %q, want heater_entity_id reported as applied", text)
+	}
+	if strings.Contains(text, `applied: "away_temp"`) || strings.Contains(text, `"away_temp", "heater_entity_id"`) {
+		t.Errorf("success message = %q, away_temp must NOT be reported as applied - HA rejected it", text)
+	}
+	if !strings.Contains(text, "WARNING") || !strings.Contains(text, "away_temp") {
+		t.Errorf("success message = %q, want a WARNING naming away_temp", text)
+	}
+}
+
+// TestUpdateSuccessMessage_BoundsTheEchoedFieldList guards the fact that
+// field names echoed back into LLM-facing text come straight from
+// caller-supplied JSON keys, which nothing in the stack validates or bounds
+// (internal/mcp does no InputSchema/additionalProperties enforcement). An
+// over-long name is truncated and an over-long list is capped.
+func TestUpdateSuccessMessage_BoundsTheEchoedFieldList(t *testing.T) {
+	t.Parallel()
+
+	longName := strings.Repeat("x", 500)
+	applied := []string{longName}
+	for i := range 40 {
+		applied = append(applied, fmt.Sprintf("field%02d", i))
+	}
+
+	msg := updateSuccessMessage("counter.visitors", applied, nil, nil)
+
+	if strings.Contains(msg, longName) {
+		t.Errorf("message echoes a 500-char field name verbatim: %q", msg)
+	}
+	if len(msg) > 1000 {
+		t.Errorf("message length = %d, want it bounded well below the 41 supplied names", len(msg))
+	}
+	if !strings.Contains(msg, "more") {
+		t.Errorf("message = %q, want a truncation marker naming how many were omitted", msg)
+	}
+}
+
+// TestUpdateSuccessMessage_IgnoredOnlyStillShowsIgnoredClause guards the
+// early bare-message guard: `len(applied) == 0 && len(ignored) == 0 &&
+// len(skipped) == 0` must require ALL three empty, not just applied. With
+// only ignored non-empty, the message must still carry the ignored clause
+// rather than short-circuiting to the bare "updated successfully".
+func TestUpdateSuccessMessage_IgnoredOnlyStillShowsIgnoredClause(t *testing.T) {
+	t.Parallel()
+
+	msg := updateSuccessMessage("counter.visitors", nil, []string{"away_temp"}, nil)
+
+	if !strings.Contains(msg, "ignored - not accepted by this helper type") {
+		t.Errorf("message = %q, want the ignored clause present even though applied/skipped are empty", msg)
+	}
+	if !strings.Contains(msg, "away_temp") {
+		t.Errorf("message = %q, want it to name away_temp", msg)
+	}
+}
+
+// TestUpdateSuccessMessage_SkippedOnlyStillShowsSkippedClause is the
+// skipped-side mirror of the ignored-only test above: with only skipped
+// non-empty, the bare-message guard must not short-circuit past the
+// skipped clause either.
+func TestUpdateSuccessMessage_SkippedOnlyStillShowsSkippedClause(t *testing.T) {
+	t.Parallel()
+
+	msg := updateSuccessMessage("counter.visitors", nil, nil, []string{"icon"})
+
+	if !strings.Contains(msg, "no value supplied") {
+		t.Errorf("message = %q, want the skipped clause present even though applied/ignored are empty", msg)
+	}
+	if !strings.Contains(msg, "icon") {
+		t.Errorf("message = %q, want it to name icon", msg)
+	}
+}
+
+// TestRenderPartialApplyWarning_CreateNamesConfigFlowAndPlatform pins the
+// Op-based wording branch in renderPartialApplyWarning: PartialApplyCreate
+// must produce the "config flow"/platform-naming wording, never the
+// update-side "options flow" wording (which would silently drop the
+// platform name a create-side warning needs).
+func TestRenderPartialApplyWarning_CreateNamesConfigFlowAndPlatform(t *testing.T) {
+	t.Parallel()
+
+	partial := &homeassistant.PartialApplyError{
+		Op:       homeassistant.PartialApplyCreate,
+		Platform: "generic_thermostat",
+		Fields:   []string{"away_temp"},
+	}
+	msg := renderPartialApplyWarning(partial)
+
+	if !strings.Contains(msg, "generic_thermostat config flow") {
+		t.Errorf("renderPartialApplyWarning(create) = %q, want it to name the config flow and platform", msg)
+	}
+	if strings.Contains(msg, "options flow") {
+		t.Errorf("renderPartialApplyWarning(create) = %q, must not use the update-side wording", msg)
+	}
+}
+
+// TestRenderPartialApplyWarning_UpdateNamesOptionsFlow is the update-side
+// mirror: PartialApplyUpdate must produce the "options flow" wording,
+// never the create-side "config flow" wording (Platform is the entity
+// DOMAIN on update, not the real integration platform - naming it would
+// be misleading, see PartialApplyOp's doc comment).
+func TestRenderPartialApplyWarning_UpdateNamesOptionsFlow(t *testing.T) {
+	t.Parallel()
+
+	partial := &homeassistant.PartialApplyError{
+		Op:     homeassistant.PartialApplyUpdate,
+		Fields: []string{"away_temp"},
+	}
+	msg := renderPartialApplyWarning(partial)
+
+	if !strings.Contains(msg, "options flow") {
+		t.Errorf("renderPartialApplyWarning(update) = %q, want it to name the options flow", msg)
+	}
+	if strings.Contains(msg, "config flow") {
+		t.Errorf("renderPartialApplyWarning(update) = %q, must not use the create-side wording", msg)
+	}
+}
+
 // TestManageHelper_Update_NameField verifies that the name passed to update is
 // forwarded to the API correctly, including unicode characters (umlauts etc.).
 func TestManageHelper_Update_NameField(t *testing.T) {
@@ -4084,7 +4503,8 @@ func updatableFieldSentinel(name, field string) any {
 		"round", "time_window", "round_digits", "sampling_size", "precision",
 		"min_samples", "max_samples", "delay_on", "delay_off",
 		"radius", "time_constant", "lower_bound", "upper_bound",
-		"speed_count":
+		"speed_count",
+		"away_temp", "eco_temp", "home_temp", "comfort_temp", "sleep_temp", "activity_temp":
 		// argReader's num/integer/str readers all accept a float64 (str
 		// coerces it to a decimal string), so one numeric sentinel exercises
 		// every numeric-or-numeric-string field uniformly.
@@ -4115,18 +4535,8 @@ func updatableFieldSentinel(name, field string) any {
 	}
 }
 
-// updateConfigKeyAliases maps an args field name to the config key it lands
-// under after the update builder runs, for the few fields HA's API renames.
-// See CLAUDE.md's "Config Entry API Field Mapping" gotcha.
-var updateConfigKeyAliases = map[string]string{
-	"heater_entity_id":        "heater",
-	"target_sensor_entity_id": "target_sensor",
-	"humidifier_entity_id":    "humidifier",
-	"min_max_type":            "type",
-	"fan_speed_list":          "fan_speeds",
-	"lock_code_format":        "code_format",
-	"options_template":        "options",
-}
+// updateConfigKeyAliases now lives in production (helpers_config_builders_extended.go)
+// so splitAppliedFields can use the same table these contract tests do.
 
 // updateConfigKeyAliasesByType overrides updateConfigKeyAliases for field
 // names whose HA config key genuinely differs by helper type - three
