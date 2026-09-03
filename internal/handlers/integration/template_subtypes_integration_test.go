@@ -219,6 +219,7 @@ var templateSubtypeCases = []templateSubtypeCase{
 				"temperature": "{{ 20 }}",
 			}
 		},
+		updateArg: func(actionTargetEntityID string) (string, any) { return "forecast_daily", "{{ [] }}" },
 	},
 }
 
@@ -314,5 +315,13 @@ func parenListAfter(msg, prefix string) []string {
 	if end == -1 {
 		return nil
 	}
-	return strings.Split(msg[start:start+end], ", ")
+	parts := strings.Split(msg[start:start+end], ", ")
+	// updateSuccessMessage renders each field name via
+	// homeassistant.BoundedFieldList, which wraps every name in %q (double
+	// quotes) - strip them here so callers compare against plain field
+	// names, not the quoted wire format.
+	for i, p := range parts {
+		parts[i] = strings.Trim(p, `"`)
+	}
+	return parts
 }
