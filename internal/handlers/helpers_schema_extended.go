@@ -208,6 +208,30 @@ func buildExtendedHelperProperties() map[string]mcp.JSONSchema {
 			Type:        "number",
 			Description: "Hot tolerance in degrees (generic_thermostat)",
 		},
+		"away_temp": {
+			Type:        "number",
+			Description: "Away preset temperature (generic_thermostat)",
+		},
+		"eco_temp": {
+			Type:        "number",
+			Description: "Eco preset temperature (generic_thermostat)",
+		},
+		"home_temp": {
+			Type:        "number",
+			Description: "Home preset temperature (generic_thermostat)",
+		},
+		"comfort_temp": {
+			Type:        "number",
+			Description: "Comfort preset temperature (generic_thermostat)",
+		},
+		"sleep_temp": {
+			Type:        "number",
+			Description: "Sleep preset temperature (generic_thermostat)",
+		},
+		"activity_temp": {
+			Type:        "number",
+			Description: "Activity preset temperature (generic_thermostat)",
+		},
 
 		// switch_as_x specific fields
 		"target_domain": {

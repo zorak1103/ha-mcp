@@ -363,7 +363,7 @@ var helperTypes = map[string]helperTypeMetadata{
 		entityPrefix:       "climate",
 		supportedActions:   []string{},
 		requiredFields:     []string{"heater_entity_id", "target_sensor_entity_id"},
-		optionalFields:     []string{"icon", "ac_mode", "min_temp", "max_temp", "target_temp", "cold_tolerance", "hot_tolerance"},
+		optionalFields:     append([]string{"icon", "ac_mode", "min_temp", "max_temp", "target_temp", "cold_tolerance", "hot_tolerance"}, genericThermostatPresetFields...),
 		validEntityDomains: []string{"climate"},
 		sourceEntities: []sourceEntityConstraint{
 			{field: "heater_entity_id", domains: []string{"switch", "fan"}},

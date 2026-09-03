@@ -4081,7 +4081,8 @@ func updatableFieldSentinel(name, field string) any {
 		"target_humidity", "dry_tolerance", "wet_tolerance", "minimum", "maximum",
 		"round", "time_window", "round_digits", "sampling_size", "precision",
 		"min_samples", "max_samples", "delay_on", "delay_off",
-		"radius", "time_constant", "lower_bound", "upper_bound":
+		"radius", "time_constant", "lower_bound", "upper_bound",
+		"away_temp", "eco_temp", "home_temp", "comfort_temp", "sleep_temp", "activity_temp":
 		// argReader's num/integer/str readers all accept a float64 (str
 		// coerces it to a decimal string), so one numeric sentinel exercises
 		// every numeric-or-numeric-string field uniformly.

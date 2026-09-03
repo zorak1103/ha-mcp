@@ -1,6 +1,14 @@
 // Package handlers provides MCP tool handlers for Home Assistant operations.
 package handlers
 
+// genericThermostatPresetFields are generic_thermostat's optional preset
+// temperature fields (HA's PRESETS_SCHEMA, CONF_PRESETS.values()) - the tool
+// arg name matches HA's own config key exactly, no renaming needed. Shared
+// by the create and update builders so the two field lists cannot drift.
+var genericThermostatPresetFields = []string{
+	"away_temp", "eco_temp", "home_temp", "comfort_temp", "sleep_temp", "activity_temp",
+}
+
 // buildUtilityMeterConfig builds configuration for utility_meter helper.
 func buildUtilityMeterConfig(config, args map[string]any) error {
 	r := newArgReader(config, args)
@@ -135,6 +143,9 @@ func buildGenericThermostatConfig(config, args map[string]any) error {
 	r.num("target_temp")
 	r.num("cold_tolerance")
 	r.num("hot_tolerance")
+	for _, field := range genericThermostatPresetFields {
+		r.num(field)
+	}
 	return r.err()
 }
 
@@ -229,7 +240,8 @@ func addExtendedConfigEntryFields(config, args map[string]any, entryCtx configEn
 	r.strIDAs("target_sensor_entity_id", "target_sensor")
 	// Unlike buildGenericThermostatConfig's create path, ac_mode gets NO
 	// default here when omitted - and that's deliberate, not a gap to
-	// "fix" by mirroring create. mergeOptionsFlowConfig already preserves
+	// "fix" by mirroring create. buildStepSubmission's update-mode
+	// round-trip (internal/homeassistant/flow_steps.go) already preserves
 	// the helper's current ac_mode when userConfig omits the key; defaulting
 	// it to false here would override that preserved value on every update
 	// that doesn't explicitly pass ac_mode, defeating the merge entirely.
@@ -239,6 +251,9 @@ func addExtendedConfigEntryFields(config, args map[string]any, entryCtx configEn
 	r.num("target_temp")
 	r.num("cold_tolerance")
 	r.num("hot_tolerance")
+	for _, field := range genericThermostatPresetFields {
+		r.num(field)
+	}
 
 	// switch_as_x fields
 	r.str("target_domain")

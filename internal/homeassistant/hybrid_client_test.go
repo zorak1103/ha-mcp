@@ -2861,6 +2861,112 @@ func TestUpdateHelperViaOptionsFlow_GenericThermostatPresetsStepPreservesExistin
 	}
 }
 
+// TestUpdateHelperViaOptionsFlow_PresetFieldReachesPresetsStep is issue
+// #202's core regression test: away_temp belongs to the "presets" step,
+// not "init", and must be routed there instead of being rejected against
+// "init"'s schema (which doesn't declare it) - the bug the deferred
+// unconsumed-field check in PR2's flow engine exists to fix.
+func TestUpdateHelperViaOptionsFlow_PresetFieldReachesPresetsStep(t *testing.T) {
+	t.Parallel()
+
+	var submittedPayloads []map[string]any
+	step := 0
+	mockWS := &mockWSOperations{}
+	mockREST := &mockRESTOperations{
+		initConfigEntryOptionsFlowFunc: func(context.Context, string) (*OptionsFlowResult, error) {
+			return &OptionsFlowResult{
+				FlowID: "flow202",
+				Type:   flowTypeForm,
+				StepID: "init",
+				DataSchema: []OptionsFlowField{
+					{Name: "heater", Description: map[string]any{"suggested_value": "switch.heater"}},
+					{Name: "target_sensor", Description: map[string]any{"suggested_value": "sensor.temp"}},
+					{Name: "ac_mode", Description: map[string]any{"suggested_value": false}},
+				},
+			}, nil
+		},
+		submitConfigEntryOptionsFlowStepFunc: func(_ context.Context, _ string, data map[string]any) (*OptionsFlowResult, error) {
+			submittedPayloads = append(submittedPayloads, data)
+			step++
+			if step == 1 {
+				return &OptionsFlowResult{
+					FlowID: "flow202",
+					Type:   flowTypeForm,
+					StepID: "presets",
+					DataSchema: []OptionsFlowField{
+						{Name: "away_temp", Description: map[string]any{"suggested_value": 16.0}},
+						{Name: "eco_temp", Description: map[string]any{"suggested_value": nil}},
+					},
+				}, nil
+			}
+			return &OptionsFlowResult{FlowID: "flow202", Type: flowTypeCreateEntry}, nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	err := client.updateHelperViaOptionsFlow(context.Background(), "climate.my_thermostat", "config202", HelperConfig{
+		Platform: "climate",
+		Config:   map[string]any{"away_temp": 15.0},
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(submittedPayloads) != 2 {
+		t.Fatalf("got %d submissions, want 2", len(submittedPayloads))
+	}
+	if _, present := submittedPayloads[0]["away_temp"]; present {
+		t.Errorf("init step payload = %#v, want away_temp NOT present - init's schema doesn't declare it", submittedPayloads[0])
+	}
+	presetsPayload := submittedPayloads[1]
+	if presetsPayload["away_temp"] != 15.0 {
+		t.Errorf("presets step payload = %#v, want away_temp overridden to 15.0", presetsPayload)
+	}
+}
+
+// TestUpdateHelperViaOptionsFlow_UnknownFieldStillFailsAfterPresetsStep
+// guards the other side: a field no step's schema declares (not even the
+// presets step) must still be rejected, proving the deferred check doesn't
+// degrade into accepting anything.
+func TestUpdateHelperViaOptionsFlow_UnknownFieldStillFailsAfterPresetsStep(t *testing.T) {
+	t.Parallel()
+
+	step := 0
+	mockWS := &mockWSOperations{}
+	mockREST := &mockRESTOperations{
+		initConfigEntryOptionsFlowFunc: func(context.Context, string) (*OptionsFlowResult, error) {
+			return &OptionsFlowResult{
+				FlowID:     "flow202b",
+				Type:       flowTypeForm,
+				StepID:     "init",
+				DataSchema: []OptionsFlowField{{Name: "heater"}},
+			}, nil
+		},
+		submitConfigEntryOptionsFlowStepFunc: func(context.Context, string, map[string]any) (*OptionsFlowResult, error) {
+			step++
+			if step == 1 {
+				return &OptionsFlowResult{
+					FlowID:     "flow202b",
+					Type:       flowTypeForm,
+					StepID:     "presets",
+					DataSchema: []OptionsFlowField{{Name: "away_temp"}},
+				}, nil
+			}
+			return &OptionsFlowResult{FlowID: "flow202b", Type: flowTypeCreateEntry}, nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	err := client.updateHelperViaOptionsFlow(context.Background(), "climate.my_thermostat", "config202b", HelperConfig{
+		Platform: "climate",
+		Config:   map[string]any{"nonsense_temp": 1.0},
+	})
+
+	if err == nil || !strings.Contains(err.Error(), "nonsense_temp") {
+		t.Fatalf("got error %v, want it to name the unrecognized field nonsense_temp", err)
+	}
+}
+
 // TestUpdateHelperViaOptionsFlow_GenericThermostatPresetsStepSubmitErrorAborts
 // guards submitOptionsFlowPresetsStep's own abort path, uncovered before this
 // test: if the presets-step submission itself fails, the flow must be

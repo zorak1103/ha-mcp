@@ -116,7 +116,9 @@ func (s *GenericThermostatIntegrationTestSuite) TestGenericThermostatLifecycle()
 
 	// Create generic thermostat (using API field names). min_temp is a
 	// vol.Optional field on generic_thermostat's OPTIONS_SCHEMA - set here
-	// so the update step below can prove it survives untouched.
+	// so the update step below can prove it survives untouched. away_temp
+	// is a preset temperature (issue #202) - set here to prove create
+	// routes it to the trailing "presets" step instead of dropping it.
 	thermoConfig := homeassistant.HelperConfig{
 		Platform: "generic_thermostat",
 		Config: map[string]any{
@@ -125,6 +127,7 @@ func (s *GenericThermostatIntegrationTestSuite) TestGenericThermostatLifecycle()
 			"target_sensor": sensorEntityID, // API field name
 			"ac_mode":       false,          // Required field
 			"min_temp":      10.0,
+			"away_temp":     16.0,
 		},
 	}
 
@@ -151,6 +154,7 @@ func (s *GenericThermostatIntegrationTestSuite) TestGenericThermostatLifecycle()
 	err = s.Client().UpdateHelper(s.Context(), thermoEntityID, homeassistant.HelperConfig{
 		Config: map[string]any{
 			"cold_tolerance": 0.8,
+			"eco_temp":       18.0,
 		},
 	})
 	s.Require().NoError(err, "Failed to update generic_thermostat")
@@ -171,6 +175,13 @@ func (s *GenericThermostatIntegrationTestSuite) TestGenericThermostatLifecycle()
 	s.Require().NoError(err, "Failed to get generic_thermostat config entry options")
 	s.InDelta(0.8, options["cold_tolerance"], 0.001, "cold_tolerance should reflect the update")
 	s.InDelta(10.0, options["min_temp"], 0.001, "min_temp should survive the update untouched")
+	// away_temp lives on the trailing "presets" step, not "init" -
+	// GetConfigEntryOptions must walk both steps (PR2's
+	// readAllOptionsFlowSteps) for these to be visible at all, and the
+	// update above must not have wiped away_temp while only setting
+	// eco_temp on the same step (issue #202).
+	s.InDelta(16.0, options["away_temp"], 0.001, "away_temp set at create should survive an update to a different preset field")
+	s.InDelta(18.0, options["eco_temp"], 0.001, "eco_temp should reflect the update")
 
 	// Test delete
 	err = s.Client().DeleteHelper(s.Context(), thermoEntityID)
@@ -226,4 +237,100 @@ func (s *GenericThermostatIntegrationTestSuite) TestGenericThermostatWithToleran
 	_ = s.Client().DeleteHelper(s.Context(), inputEntityID)
 	_ = s.Client().DeleteHelper(s.Context(), heaterEntityID)
 	_ = s.Client().DeleteHelper(s.Context(), boolEntityID)
+}
+
+// TestGenericThermostatPresetsViaTool is issue #202's tool-dispatch
+// regression test: TestGenericThermostatLifecycle above drives generic_thermostat
+// through s.Client().CreateHelper/UpdateHelper directly, which bypasses
+// manage_helper's handler entirely (helperTypes' declared fields,
+// buildGenericThermostatConfig, addExtendedConfigEntryFields) - it can only
+// prove the underlying flow engine routes an already-known field correctly,
+// not that away_temp/eco_temp are actually exposed as manage_helper
+// arguments at all. This drives create and update through the real tool.
+func (s *GenericThermostatIntegrationTestSuite) TestGenericThermostatPresetsViaTool() {
+	// createThermostatSources' own input_number/template sensor pair
+	// (unclassedInputEntityID/unclassedSensorEntityID) isn't used as the
+	// target_sensor here - manage_helper's device_class preflight requires
+	// one below - but must still be cleaned up.
+	boolEntityID, heaterEntityID, unclassedInputEntityID, unclassedSensorEntityID := s.createThermostatSources("thermo_td", 20.0)
+
+	// generic_thermostat's target_sensor requires device_class=temperature
+	// (enforced by manage_helper's own preflight, checkSourceEntityDomain) -
+	// unlike createThermostatSources' plain template sensor, which only
+	// works because TestGenericThermostatLifecycle bypasses that check by
+	// calling the client directly.
+	inputName := GenerateTestID("thermo_td_input")
+	inputEntityID := BuildEntityID("input_number", inputName)
+	err := s.Client().CreateHelper(s.Context(), homeassistant.HelperConfig{
+		Platform: "input_number",
+		Config:   map[string]any{"name": inputName, "min": 0.0, "max": 50.0, "initial": 20.0},
+	})
+	s.Require().NoError(err, "Failed to create input_number")
+	_, err = s.WaitForEntity(inputEntityID, 5*time.Second)
+	s.Require().NoError(err)
+
+	sensorName := GenerateTestID("thermo_td_sensor")
+	sensorEntityID := BuildEntityID("sensor", sensorName)
+	err = s.Client().CreateHelper(s.Context(), homeassistant.HelperConfig{
+		Platform: "template",
+		Config: map[string]any{
+			"name":                sensorName,
+			"state":               "{{ states('" + inputEntityID + "') | float }}",
+			"device_class":        "temperature",
+			"unit_of_measurement": "°C",
+		},
+	})
+	s.Require().NoError(err, "Failed to create classed template sensor")
+	_, err = s.WaitForEntity(sensorEntityID, 5*time.Second)
+	s.Require().NoError(err)
+
+	thermoName := GenerateTestID("thermo_td")
+	thermoEntityID := BuildEntityID("climate", thermoName)
+
+	s.RegisterCleanup(func() {
+		_ = s.Client().DeleteHelper(s.Context(), thermoEntityID)
+		_ = s.Client().DeleteHelper(s.Context(), sensorEntityID)
+		_ = s.Client().DeleteHelper(s.Context(), inputEntityID)
+		_ = s.Client().DeleteHelper(s.Context(), unclassedSensorEntityID)
+		_ = s.Client().DeleteHelper(s.Context(), unclassedInputEntityID)
+		_ = s.Client().DeleteHelper(s.Context(), heaterEntityID)
+		_ = s.Client().DeleteHelper(s.Context(), boolEntityID)
+	})
+
+	result := s.CallTool("manage_helper", map[string]any{
+		"action":                  "create",
+		"type":                    "generic_thermostat",
+		"id":                      thermoName,
+		"name":                    thermoName,
+		"heater_entity_id":        heaterEntityID,
+		"target_sensor_entity_id": sensorEntityID,
+		"away_temp":               16.0,
+	})
+	s.Require().False(result.IsError, "manage_helper create should succeed, got: %s", resultText(result))
+
+	_, err = s.WaitForEntity(thermoEntityID, 5*time.Second)
+	s.Require().NoError(err, "Generic thermostat did not appear")
+
+	result = s.CallTool("manage_helper", map[string]any{
+		"action":    "update",
+		"entity_id": thermoEntityID,
+		"eco_temp":  18.0,
+	})
+	s.Require().False(result.IsError, "manage_helper update should succeed, got: %s", resultText(result))
+
+	registry, err := s.Client().GetEntityRegistry(s.Context())
+	s.Require().NoError(err, "Failed to get entity registry")
+	var configEntryID string
+	for _, regEntry := range registry {
+		if regEntry.EntityID == thermoEntityID {
+			configEntryID = regEntry.ConfigEntryID
+			break
+		}
+	}
+	s.Require().NotEmpty(configEntryID, "Generic thermostat should have a config_entry_id")
+
+	options, err := s.Client().GetConfigEntryOptions(s.Context(), configEntryID)
+	s.Require().NoError(err, "Failed to get generic_thermostat config entry options")
+	s.InDelta(16.0, options["away_temp"], 0.001, "away_temp set via manage_helper create should be readable")
+	s.InDelta(18.0, options["eco_temp"], 0.001, "eco_temp set via manage_helper update should be readable")
 }
