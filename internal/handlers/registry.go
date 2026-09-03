@@ -4,6 +4,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
@@ -67,14 +68,15 @@ func (f *entityRegistryFilter) matches(entry homeassistant.EntityRegistryEntry) 
 }
 
 // buildDeviceIDsInArea populates the deviceIDsInArea map with devices in the target area.
-func (f *entityRegistryFilter) buildDeviceIDsInArea(ctx context.Context, client homeassistant.Client) {
+// buildDeviceIDsInArea populates the deviceIDsInArea map with devices in the target area.
+func (f *entityRegistryFilter) buildDeviceIDsInArea(ctx context.Context, client homeassistant.Client) error {
 	if f.areaID == "" {
-		return
+		return nil
 	}
 
 	devices, err := client.GetDeviceRegistry(ctx)
 	if err != nil {
-		return
+		return fmt.Errorf("failed to get device registry: %w", err)
 	}
 
 	for _, device := range devices {
@@ -82,6 +84,7 @@ func (f *entityRegistryFilter) buildDeviceIDsInArea(ctx context.Context, client 
 			f.deviceIDsInArea[device.ID] = true
 		}
 	}
+	return nil
 }
 
 // filterEntityRegistry applies the filter to a list of entries.

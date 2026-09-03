@@ -161,7 +161,9 @@ func (h *ConsolidatedRegistryHandlers) handleEntities(
 	}
 
 	filter := newEntityRegistryFilterFromArgs(args)
-	filter.buildDeviceIDsInArea(ctx, client)
+	if err = filter.buildDeviceIDsInArea(ctx, client); err != nil {
+		return errorResult(fmt.Sprintf("Error getting device registry: %v", err)), nil
+	}
 	filtered := filter.filterEntityRegistry(entries)
 
 	slices.SortFunc(filtered, func(a, b homeassistant.EntityRegistryEntry) int {
@@ -175,6 +177,15 @@ func (h *ConsolidatedRegistryHandlers) handleEntities(
 	}
 
 	paginated := ApplyPagination(filtered, paginationParams)
+	return h.formatEntitiesResponse(ctx, paginated, args)
+}
+
+// formatEntitiesResponse renders the paginated entity registry using the requested format.
+func (h *ConsolidatedRegistryHandlers) formatEntitiesResponse(
+	ctx context.Context,
+	paginated PaginatedResponse[homeassistant.EntityRegistryEntry],
+	args map[string]any,
+) (*mcp.ToolsCallResult, error) {
 	verbose, _ := args["verbose"].(bool)
 	includeDisabled, _ := args["include_disabled"].(bool)
 
@@ -187,7 +198,7 @@ func (h *ConsolidatedRegistryHandlers) handleEntities(
 	opts := formatter.RegistryOptions{
 		Verbose:         verbose,
 		IncludeDisabled: includeDisabled,
-		Limit:           paginationParams.Limit,
+		Limit:           paginated.Pagination.Limit,
 	}
 	output, err := f.FormatEntityRegistry(ctx, paginated.Items, opts)
 	if err != nil {

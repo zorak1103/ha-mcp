@@ -451,6 +451,15 @@ func TestConsolidatedRegistryHandlers_HandleGetRegistry_Errors(t *testing.T) {
 			client:       &mockConsolidatedRegistryClient{areaErr: errors.New("connection failed")},
 			wantContains: "Error",
 		},
+		{
+			name: "entities with area_id filter propagates device registry error",
+			args: map[string]any{"type": "entities", "area_id": "area1"},
+			client: &mockConsolidatedRegistryClient{
+				entityRegistry: []homeassistant.EntityRegistryEntry{{EntityID: "light.one"}},
+				deviceErr:      errors.New("connection failed"),
+			},
+			wantContains: "Error getting device registry",
+		},
 	}
 
 	for _, tt := range tests {
