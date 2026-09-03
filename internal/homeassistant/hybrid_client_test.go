@@ -2918,9 +2918,16 @@ func TestUpdateHelperViaOptionsFlow_PresetFieldReachesPresetsStep(t *testing.T) 
 	if _, present := submittedPayloads[0]["away_temp"]; present {
 		t.Errorf("init step payload = %#v, want away_temp NOT present - init's schema doesn't declare it", submittedPayloads[0])
 	}
+	initPayload := submittedPayloads[0]
+	if initPayload["heater"] != "switch.heater" || initPayload["target_sensor"] != "sensor.temp" || initPayload["ac_mode"] != false {
+		t.Errorf("init step payload = %#v, want heater/target_sensor/ac_mode round-tripped from their suggested_value", initPayload)
+	}
 	presetsPayload := submittedPayloads[1]
 	if presetsPayload["away_temp"] != 15.0 {
 		t.Errorf("presets step payload = %#v, want away_temp overridden to 15.0", presetsPayload)
+	}
+	if _, present := presetsPayload["eco_temp"]; present {
+		t.Errorf("presets step payload = %#v, want eco_temp NOT present - its suggested_value is nil (never set), must not be fabricated", presetsPayload)
 	}
 }
 
@@ -2964,6 +2971,52 @@ func TestUpdateHelperViaOptionsFlow_UnknownFieldStillFailsAfterPresetsStep(t *te
 
 	if err == nil || !strings.Contains(err.Error(), "nonsense_temp") {
 		t.Fatalf("got error %v, want it to name the unrecognized field nonsense_temp", err)
+	}
+}
+
+// TestUpdateHelperViaOptionsFlow_UnconsumedFieldErrorSaysUpdateWasApplied
+// pins W1's remediated wording: by the time the unconsumed-field check
+// runs, HA has already committed the fields every step DID claim (e.g.
+// heater below) - the error must say the update was applied and only the
+// named field(s) were not, not read like nothing happened at all (a
+// caller retrying the whole update on a "does not support updating"-style
+// message could plausibly resubmit already-applied fields unnecessarily,
+// or worse, treat the helper as unchanged).
+func TestUpdateHelperViaOptionsFlow_UnconsumedFieldErrorSaysUpdateWasApplied(t *testing.T) {
+	t.Parallel()
+
+	mockWS := &mockWSOperations{}
+	mockREST := &mockRESTOperations{
+		initConfigEntryOptionsFlowFunc: func(context.Context, string) (*OptionsFlowResult, error) {
+			return &OptionsFlowResult{
+				FlowID:     "flowW1",
+				Type:       flowTypeForm,
+				StepID:     "init",
+				DataSchema: []OptionsFlowField{{Name: "heater"}},
+			}, nil
+		},
+		submitConfigEntryOptionsFlowStepFunc: func(context.Context, string, map[string]any) (*OptionsFlowResult, error) {
+			return &OptionsFlowResult{FlowID: "flowW1", Type: flowTypeCreateEntry}, nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	err := client.updateHelperViaOptionsFlow(context.Background(), "climate.my_thermostat", "configW1", HelperConfig{
+		Platform: "climate",
+		Config:   map[string]any{"heater": "switch.heater", "nonsense_temp": 1.0},
+	})
+
+	if err == nil {
+		t.Fatal("expected an error for an unsupported field, got nil")
+	}
+	if !strings.Contains(err.Error(), "nonsense_temp") {
+		t.Errorf("error should name the unaccepted field, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "was updated") {
+		t.Errorf("error should state the update was applied, not read as if nothing happened, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "NOT been applied") {
+		t.Errorf("error should clarify the unaccepted field specifically was NOT applied, got: %v", err)
 	}
 }
 
@@ -3441,6 +3494,131 @@ func TestCreateHelperViaConfigFlow_GenericThermostatPresetsStepSubmitsEmptyConfi
 	}
 	if len(submittedPayloads[1]) != 0 {
 		t.Errorf("presets step payload = %#v, want empty map", submittedPayloads[1])
+	}
+}
+
+// TestCreateHelperViaConfigFlow_PresetFieldReachesPresetsStep is issue
+// #202's create-path counterpart to
+// TestUpdateHelperViaOptionsFlow_PresetFieldReachesPresetsStep: unlike
+// TestCreateHelperViaConfigFlow_GenericThermostatPresetsStepSubmitsEmptyConfig
+// above (which uses steps with no DataSchema at all, so
+// forwardEverythingUnnested's degrade path handles them), this uses a
+// realistic schema for both steps - matching what HA actually returns - to
+// prove buildStepSubmission's flowModeCreate branch routes a field
+// declared only by a later step there instead of dropping/misrouting it,
+// the same property already pinned for flowModeUpdate.
+func TestCreateHelperViaConfigFlow_PresetFieldReachesPresetsStep(t *testing.T) {
+	t.Parallel()
+
+	var submittedPayloads []map[string]any
+	step := 0
+	mockWS := &mockWSOperations{}
+	mockREST := &mockRESTOperations{
+		initConfigEntryFlowFunc: func(context.Context, string) (*ConfigEntryFlowResult, error) {
+			return &ConfigEntryFlowResult{
+				FlowID: "flow202create",
+				Type:   flowTypeForm,
+				StepID: "user",
+				DataSchema: []OptionsFlowField{
+					{Name: "name"},
+					{Name: "heater"},
+					{Name: "target_sensor"},
+					{Name: "ac_mode"},
+				},
+			}, nil
+		},
+		submitConfigEntryFlowStepFunc: func(_ context.Context, _ string, data map[string]any) (*ConfigEntryFlowResult, error) {
+			submittedPayloads = append(submittedPayloads, data)
+			step++
+			if step == 1 {
+				return &ConfigEntryFlowResult{
+					FlowID:     "flow202create",
+					Type:       flowTypeForm,
+					StepID:     "presets",
+					DataSchema: []OptionsFlowField{{Name: "away_temp"}, {Name: "eco_temp"}},
+				}, nil
+			}
+			return &ConfigEntryFlowResult{FlowID: "flow202create", Type: flowTypeCreateEntry}, nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	err := client.createHelperViaConfigFlow(context.Background(), HelperConfig{
+		Platform: "generic_thermostat",
+		Config: map[string]any{
+			"name":          "my_thermostat",
+			"heater":        "switch.heater",
+			"target_sensor": "sensor.temp",
+			"ac_mode":       false,
+			"away_temp":     16.0,
+		},
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(submittedPayloads) != 2 {
+		t.Fatalf("got %d submissions, want 2", len(submittedPayloads))
+	}
+	if _, present := submittedPayloads[0]["away_temp"]; present {
+		t.Errorf("user step payload = %#v, want away_temp NOT present - user's schema doesn't declare it", submittedPayloads[0])
+	}
+	presetsPayload := submittedPayloads[1]
+	if presetsPayload["away_temp"] != 16.0 {
+		t.Errorf("presets step payload = %#v, want away_temp = 16.0", presetsPayload)
+	}
+	if _, present := presetsPayload["eco_temp"]; present {
+		t.Errorf("presets step payload = %#v, want eco_temp NOT present - caller never supplied it", presetsPayload)
+	}
+}
+
+// TestCreateHelperViaConfigFlow_PresetsStepAbsentReportsUnaccepted pins
+// W1's current, pre-remediation observable behavior: on an HA version whose
+// generic_thermostat config flow has no trailing "presets" step, the flow
+// completes (create_entry) before away_temp is ever claimed by any step's
+// schema, and the resulting error must still name the field - the entry
+// already exists at that point (see CLAUDE.md's #202 entry for why this is
+// a report-only failure, not a rollback).
+func TestCreateHelperViaConfigFlow_PresetsStepAbsentReportsUnaccepted(t *testing.T) {
+	t.Parallel()
+
+	mockWS := &mockWSOperations{}
+	mockREST := &mockRESTOperations{
+		initConfigEntryFlowFunc: func(context.Context, string) (*ConfigEntryFlowResult, error) {
+			return &ConfigEntryFlowResult{
+				FlowID: "flow202noPresets",
+				Type:   flowTypeForm,
+				StepID: "user",
+				DataSchema: []OptionsFlowField{
+					{Name: "name"},
+					{Name: "heater"},
+					{Name: "target_sensor"},
+					{Name: "ac_mode"},
+				},
+			}, nil
+		},
+		submitConfigEntryFlowStepFunc: func(context.Context, string, map[string]any) (*ConfigEntryFlowResult, error) {
+			return &ConfigEntryFlowResult{FlowID: "flow202noPresets", Type: flowTypeCreateEntry}, nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	err := client.createHelperViaConfigFlow(context.Background(), HelperConfig{
+		Platform: "generic_thermostat",
+		Config: map[string]any{
+			"name":          "my_thermostat",
+			"heater":        "switch.heater",
+			"target_sensor": "sensor.temp",
+			"ac_mode":       false,
+			"away_temp":     16.0,
+		},
+	})
+
+	if err == nil || !strings.Contains(err.Error(), "away_temp") {
+		t.Fatalf("got error %v, want it to name the unaccepted field away_temp", err)
+	}
+	if !strings.Contains(err.Error(), "helper exists") || !strings.Contains(err.Error(), "do not retry create") {
+		t.Errorf("error should warn the helper already exists and must not be recreated, got: %v", err)
 	}
 }
 

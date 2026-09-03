@@ -41,12 +41,35 @@ func TestAddExtendedConfigEntryFields_ReadsPresetTemperaturesOnUpdate(t *testing
 	args := map[string]any{"away_temp": 15.0}
 	config := map[string]any{}
 
-	if err := addExtendedConfigEntryFields(config, args, configEntryUpdateContext{}); err != nil {
+	if err := addExtendedConfigEntryFields(config, args, configEntryUpdateContext{entityDomain: "climate"}); err != nil {
 		t.Fatalf("addExtendedConfigEntryFields() error = %v", err)
 	}
 
 	got, ok := config["away_temp"].(float64)
 	if !ok || got != 15.0 {
 		t.Errorf("config[away_temp] = %v, want 15.0", config["away_temp"])
+	}
+}
+
+// TestAddExtendedConfigEntryFields_PresetsGatedToThermostatDomain guards
+// the W3 fix: addExtendedConfigEntryFields is the one-size-fits-all update
+// builder shared by every config-entry helper type (template, threshold,
+// sensor-domain group, statistics, ...), none of which declare away_temp
+// in their own Options Flow schema. Reading it unconditionally would let a
+// caller updating an unrelated helper type silently populate a field HA's
+// own schema for that type never asked for, mirroring the min_max_type
+// leak this same builder already guards against via addMinMaxTypeField.
+func TestAddExtendedConfigEntryFields_PresetsGatedToThermostatDomain(t *testing.T) {
+	t.Parallel()
+
+	args := map[string]any{"away_temp": 15.0}
+	config := map[string]any{}
+
+	if err := addExtendedConfigEntryFields(config, args, configEntryUpdateContext{entityDomain: "sensor"}); err != nil {
+		t.Fatalf("addExtendedConfigEntryFields() error = %v", err)
+	}
+
+	if _, present := config["away_temp"]; present {
+		t.Errorf("config[away_temp] = %v, want field NOT read for a non-climate entity domain", config["away_temp"])
 	}
 }

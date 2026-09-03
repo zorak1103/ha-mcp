@@ -210,27 +210,27 @@ func buildExtendedHelperProperties() map[string]mcp.JSONSchema {
 		},
 		"away_temp": {
 			Type:        "number",
-			Description: "Away preset temperature (generic_thermostat)",
+			Description: "Away preset temperature (generic_thermostat). Not bounded by min_temp/max_temp - HA does not clamp presets to them. Once set, a preset can only be overwritten, not cleared (omitting it on update preserves the current value).",
 		},
 		"eco_temp": {
 			Type:        "number",
-			Description: "Eco preset temperature (generic_thermostat)",
+			Description: "Eco preset temperature (generic_thermostat). Not bounded by min_temp/max_temp - HA does not clamp presets to them. Once set, a preset can only be overwritten, not cleared (omitting it on update preserves the current value).",
 		},
 		"home_temp": {
 			Type:        "number",
-			Description: "Home preset temperature (generic_thermostat)",
+			Description: "Home preset temperature (generic_thermostat). Not bounded by min_temp/max_temp - HA does not clamp presets to them. Once set, a preset can only be overwritten, not cleared (omitting it on update preserves the current value).",
 		},
 		"comfort_temp": {
 			Type:        "number",
-			Description: "Comfort preset temperature (generic_thermostat)",
+			Description: "Comfort preset temperature (generic_thermostat). Not bounded by min_temp/max_temp - HA does not clamp presets to them. Once set, a preset can only be overwritten, not cleared (omitting it on update preserves the current value).",
 		},
 		"sleep_temp": {
 			Type:        "number",
-			Description: "Sleep preset temperature (generic_thermostat)",
+			Description: "Sleep preset temperature (generic_thermostat). Not bounded by min_temp/max_temp - HA does not clamp presets to them. Once set, a preset can only be overwritten, not cleared (omitting it on update preserves the current value).",
 		},
 		"activity_temp": {
 			Type:        "number",
-			Description: "Activity preset temperature (generic_thermostat)",
+			Description: "Activity preset temperature (generic_thermostat). Not bounded by min_temp/max_temp - HA does not clamp presets to them. Once set, a preset can only be overwritten, not cleared (omitting it on update preserves the current value).",
 		},
 
 		// switch_as_x specific fields

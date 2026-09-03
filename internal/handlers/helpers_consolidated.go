@@ -47,6 +47,7 @@ const (
 	serviceSetValue                = "set_value"
 	helperActionUpdate             = "update"
 	hygrostatEntityDomain          = "humidifier" // generic_hygrostat's validEntityDomains entry - an entity domain, not an integration platform name
+	thermostatEntityDomain         = "climate"    // generic_thermostat's validEntityDomains entry - gates addExtendedConfigEntryFields' preset-temperature fields to this platform only
 	// hygrostatDeviceClass is generic_hygrostat's required device_class
 	// config value - a different field than hygrostatEntityDomain above
 	// (that one identifies the entity's domain; this one is a value written
@@ -363,7 +364,7 @@ var helperTypes = map[string]helperTypeMetadata{
 		entityPrefix:       "climate",
 		supportedActions:   []string{},
 		requiredFields:     []string{"heater_entity_id", "target_sensor_entity_id"},
-		optionalFields:     append([]string{"icon", "ac_mode", "min_temp", "max_temp", "target_temp", "cold_tolerance", "hot_tolerance"}, genericThermostatPresetFields...),
+		optionalFields:     append([]string{"icon", "ac_mode", "min_temp", "max_temp", "target_temp", "cold_tolerance", "hot_tolerance"}, genericThermostatPresetFieldNames()...),
 		validEntityDomains: []string{"climate"},
 		sourceEntities: []sourceEntityConstraint{
 			{field: "heater_entity_id", domains: []string{"switch", "fan"}},
@@ -1030,7 +1031,33 @@ func (h *ConsolidatedHelperHandlers) handleUpdate(ctx context.Context, client ho
 		return errorResult(fmt.Sprintf("error updating helper: %v", err)), nil
 	}
 
-	return successResult(fmt.Sprintf("Helper '%s' updated successfully", entityID)), nil
+	return successResult(updateSuccessMessage(entityID, args)), nil
+}
+
+// updateSuccessMessage renders manage_helper update's success message,
+// echoing which caller-supplied fields were actually applied (N6 - a bare
+// "updated successfully" left a caller unable to tell full application
+// from a partial one). Safe to report as applied unconditionally: a
+// config-entry field no step's schema accepted already fails the call
+// before this point (see hybrid_client.go's unconsumedUserFields checks),
+// and the WS merge path (mergeCurrentHelperState) only fills in fields the
+// caller omitted - it never changes what the caller explicitly asked for.
+// dispatchOnlyUpdateArgNames are manage_helper's own dispatch/identifier
+// arguments, never a field applied to the helper itself.
+func updateSuccessMessage(entityID string, args map[string]any) string {
+	dispatchOnlyUpdateArgNames := map[string]bool{"action": true, "type": true, "id": true, attrEntityID: true}
+
+	fields := make([]string, 0, len(args))
+	for name := range args {
+		if !dispatchOnlyUpdateArgNames[name] {
+			fields = append(fields, name)
+		}
+	}
+	if len(fields) == 0 {
+		return fmt.Sprintf("Helper '%s' updated successfully", entityID)
+	}
+	slices.Sort(fields)
+	return fmt.Sprintf("Helper '%s' updated successfully (applied: %s)", entityID, strings.Join(fields, ", "))
 }
 
 // buildUnknownTypeUpdateConfig builds the update config for a helper whose

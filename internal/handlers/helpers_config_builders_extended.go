@@ -1,12 +1,15 @@
 // Package handlers provides MCP tool handlers for Home Assistant operations.
 package handlers
 
-// genericThermostatPresetFields are generic_thermostat's optional preset
-// temperature fields (HA's PRESETS_SCHEMA, CONF_PRESETS.values()) - the tool
-// arg name matches HA's own config key exactly, no renaming needed. Shared
-// by the create and update builders so the two field lists cannot drift.
-var genericThermostatPresetFields = []string{
-	"away_temp", "eco_temp", "home_temp", "comfort_temp", "sleep_temp", "activity_temp",
+// genericThermostatPresetFieldNames returns generic_thermostat's optional
+// preset temperature fields (HA's PRESETS_SCHEMA, CONF_PRESETS.values()) -
+// the tool arg name matches HA's own config key exactly, no renaming
+// needed. Shared by the create and update builders so the two field lists
+// cannot drift. Returns a fresh slice on every call so callers appending
+// to it (e.g. helperTypes' optionalFields) can never alias or mutate a
+// shared backing array.
+func genericThermostatPresetFieldNames() []string {
+	return []string{"away_temp", "eco_temp", "home_temp", "comfort_temp", "sleep_temp", "activity_temp"}
 }
 
 // buildUtilityMeterConfig builds configuration for utility_meter helper.
@@ -143,7 +146,7 @@ func buildGenericThermostatConfig(config, args map[string]any) error {
 	r.num("target_temp")
 	r.num("cold_tolerance")
 	r.num("hot_tolerance")
-	for _, field := range genericThermostatPresetFields {
+	for _, field := range genericThermostatPresetFieldNames() {
 		r.num(field)
 	}
 	return r.err()
@@ -251,9 +254,7 @@ func addExtendedConfigEntryFields(config, args map[string]any, entryCtx configEn
 	r.num("target_temp")
 	r.num("cold_tolerance")
 	r.num("hot_tolerance")
-	for _, field := range genericThermostatPresetFields {
-		r.num(field)
-	}
+	addGenericThermostatPresetFields(r, entryCtx.entityDomain)
 
 	// switch_as_x fields
 	r.str("target_domain")
@@ -293,4 +294,21 @@ func addMinMaxTypeField(r *argReader, minMaxPlatform string) {
 		return
 	}
 	r.strAs("min_max_type", "type")
+}
+
+// addGenericThermostatPresetFields reads generic_thermostat's optional
+// preset temperature fields only when the helper being updated is
+// actually a generic_thermostat (its entity domain is "climate") - mirrors
+// addMinMaxTypeField's gate above and the device_class gate below.
+// addExtendedConfigEntryFields is a one-size-fits-all update builder
+// shared by every config-entry helper type; an unconditional read here
+// would let away_temp/eco_temp/... leak into any of them even though no
+// other type's Options Flow schema declares those keys.
+func addGenericThermostatPresetFields(r *argReader, entityDomain string) {
+	if entityDomain != thermostatEntityDomain {
+		return
+	}
+	for _, field := range genericThermostatPresetFieldNames() {
+		r.num(field)
+	}
 }

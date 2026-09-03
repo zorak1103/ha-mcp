@@ -21,6 +21,58 @@ func TestGenericThermostatIntegration(t *testing.T) {
 // createThermostatSources creates template switch (heater) and template sensor (temp sensor).
 // generic_thermostat requires switch entity (not input_boolean) and sensor entity (not input_number).
 func (s *GenericThermostatIntegrationTestSuite) createThermostatSources(prefix string, initialTemp float64) (string, string, string, string) {
+	boolEntityID, heaterEntityID := s.createThermostatHeater(prefix)
+
+	// Create input_number for temperature base
+	inputName := GenerateTestID(prefix + "_input")
+	inputEntityID := BuildEntityID("input_number", inputName)
+
+	inputConfig := homeassistant.HelperConfig{
+		Platform: "input_number",
+		Config: map[string]any{
+			"name":    inputName,
+			"min":     0.0,
+			"max":     50.0,
+			"initial": initialTemp,
+		},
+	}
+
+	err := s.Client().CreateHelper(s.Context(), inputConfig)
+	s.Require().NoError(err, "Failed to create input_number")
+	s.RegisterCleanup(func() { _ = s.Client().DeleteHelper(s.Context(), inputEntityID) })
+
+	_, err = s.WaitForEntity(inputEntityID, 5*time.Second)
+	s.Require().NoError(err, "Input_number did not appear")
+
+	// Create template sensor that wraps the input_number
+	sensorName := GenerateTestID(prefix + "_sensor")
+	sensorEntityID := BuildEntityID("sensor", sensorName)
+
+	templateSensorConfig := homeassistant.HelperConfig{
+		Platform: "template",
+		Config: map[string]any{
+			"name":  sensorName,
+			"state": "{{ states('" + inputEntityID + "') | float }}",
+		},
+	}
+
+	err = s.Client().CreateHelper(s.Context(), templateSensorConfig)
+	s.Require().NoError(err, "Failed to create template sensor")
+	s.RegisterCleanup(func() { _ = s.Client().DeleteHelper(s.Context(), sensorEntityID) })
+
+	_, err = s.WaitForEntity(sensorEntityID, 5*time.Second)
+	s.Require().NoError(err, "Template sensor did not appear")
+
+	return boolEntityID, heaterEntityID, inputEntityID, sensorEntityID
+}
+
+// createThermostatHeater creates the input_boolean + template switch pair
+// generic_thermostat uses as its heater actuator. Split out of
+// createThermostatSources so a caller that only needs a heater (e.g.
+// TestGenericThermostatPresetsViaTool, which supplies its own
+// device_class-tagged sensor) doesn't have to create - and clean up - an
+// unused input_number/template sensor pair just to get one.
+func (s *GenericThermostatIntegrationTestSuite) createThermostatHeater(prefix string) (string, string) {
 	// Create input_boolean for heater base
 	boolName := GenerateTestID(prefix + "_bool")
 	boolEntityID := BuildEntityID("input_boolean", boolName)
@@ -35,6 +87,7 @@ func (s *GenericThermostatIntegrationTestSuite) createThermostatSources(prefix s
 
 	err := s.Client().CreateHelper(s.Context(), boolConfig)
 	s.Require().NoError(err, "Failed to create input_boolean")
+	s.RegisterCleanup(func() { _ = s.Client().DeleteHelper(s.Context(), boolEntityID) })
 
 	_, err = s.WaitForEntity(boolEntityID, 5*time.Second)
 	s.Require().NoError(err, "Input_boolean did not appear")
@@ -55,49 +108,12 @@ func (s *GenericThermostatIntegrationTestSuite) createThermostatSources(prefix s
 
 	err = s.Client().CreateHelper(s.Context(), switchConfig)
 	s.Require().NoError(err, "Failed to create template switch")
+	s.RegisterCleanup(func() { _ = s.Client().DeleteHelper(s.Context(), heaterEntityID) })
 
 	_, err = s.WaitForEntity(heaterEntityID, 5*time.Second)
 	s.Require().NoError(err, "Template switch did not appear")
 
-	// Create input_number for temperature base
-	inputName := GenerateTestID(prefix + "_input")
-	inputEntityID := BuildEntityID("input_number", inputName)
-
-	inputConfig := homeassistant.HelperConfig{
-		Platform: "input_number",
-		Config: map[string]any{
-			"name":    inputName,
-			"min":     0.0,
-			"max":     50.0,
-			"initial": initialTemp,
-		},
-	}
-
-	err = s.Client().CreateHelper(s.Context(), inputConfig)
-	s.Require().NoError(err, "Failed to create input_number")
-
-	_, err = s.WaitForEntity(inputEntityID, 5*time.Second)
-	s.Require().NoError(err, "Input_number did not appear")
-
-	// Create template sensor that wraps the input_number
-	sensorName := GenerateTestID(prefix + "_sensor")
-	sensorEntityID := BuildEntityID("sensor", sensorName)
-
-	templateSensorConfig := homeassistant.HelperConfig{
-		Platform: "template",
-		Config: map[string]any{
-			"name":  sensorName,
-			"state": "{{ states('" + inputEntityID + "') | float }}",
-		},
-	}
-
-	err = s.Client().CreateHelper(s.Context(), templateSensorConfig)
-	s.Require().NoError(err, "Failed to create template sensor")
-
-	_, err = s.WaitForEntity(sensorEntityID, 5*time.Second)
-	s.Require().NoError(err, "Template sensor did not appear")
-
-	return boolEntityID, heaterEntityID, inputEntityID, sensorEntityID
+	return boolEntityID, heaterEntityID
 }
 
 func (s *GenericThermostatIntegrationTestSuite) TestGenericThermostatLifecycle() {
@@ -248,11 +264,7 @@ func (s *GenericThermostatIntegrationTestSuite) TestGenericThermostatWithToleran
 // not that away_temp/eco_temp are actually exposed as manage_helper
 // arguments at all. This drives create and update through the real tool.
 func (s *GenericThermostatIntegrationTestSuite) TestGenericThermostatPresetsViaTool() {
-	// createThermostatSources' own input_number/template sensor pair
-	// (unclassedInputEntityID/unclassedSensorEntityID) isn't used as the
-	// target_sensor here - manage_helper's device_class preflight requires
-	// one below - but must still be cleaned up.
-	boolEntityID, heaterEntityID, unclassedInputEntityID, unclassedSensorEntityID := s.createThermostatSources("thermo_td", 20.0)
+	_, heaterEntityID := s.createThermostatHeater("thermo_td")
 
 	// generic_thermostat's target_sensor requires device_class=temperature
 	// (enforced by manage_helper's own preflight, checkSourceEntityDomain) -
@@ -266,6 +278,7 @@ func (s *GenericThermostatIntegrationTestSuite) TestGenericThermostatPresetsViaT
 		Config:   map[string]any{"name": inputName, "min": 0.0, "max": 50.0, "initial": 20.0},
 	})
 	s.Require().NoError(err, "Failed to create input_number")
+	s.RegisterCleanup(func() { _ = s.Client().DeleteHelper(s.Context(), inputEntityID) })
 	_, err = s.WaitForEntity(inputEntityID, 5*time.Second)
 	s.Require().NoError(err)
 
@@ -281,21 +294,13 @@ func (s *GenericThermostatIntegrationTestSuite) TestGenericThermostatPresetsViaT
 		},
 	})
 	s.Require().NoError(err, "Failed to create classed template sensor")
+	s.RegisterCleanup(func() { _ = s.Client().DeleteHelper(s.Context(), sensorEntityID) })
 	_, err = s.WaitForEntity(sensorEntityID, 5*time.Second)
 	s.Require().NoError(err)
 
 	thermoName := GenerateTestID("thermo_td")
 	thermoEntityID := BuildEntityID("climate", thermoName)
-
-	s.RegisterCleanup(func() {
-		_ = s.Client().DeleteHelper(s.Context(), thermoEntityID)
-		_ = s.Client().DeleteHelper(s.Context(), sensorEntityID)
-		_ = s.Client().DeleteHelper(s.Context(), inputEntityID)
-		_ = s.Client().DeleteHelper(s.Context(), unclassedSensorEntityID)
-		_ = s.Client().DeleteHelper(s.Context(), unclassedInputEntityID)
-		_ = s.Client().DeleteHelper(s.Context(), heaterEntityID)
-		_ = s.Client().DeleteHelper(s.Context(), boolEntityID)
-	})
+	s.RegisterCleanup(func() { _ = s.Client().DeleteHelper(s.Context(), thermoEntityID) })
 
 	result := s.CallTool("manage_helper", map[string]any{
 		"action":                  "create",
@@ -318,18 +323,11 @@ func (s *GenericThermostatIntegrationTestSuite) TestGenericThermostatPresetsViaT
 	})
 	s.Require().False(result.IsError, "manage_helper update should succeed, got: %s", resultText(result))
 
-	registry, err := s.Client().GetEntityRegistry(s.Context())
-	s.Require().NoError(err, "Failed to get entity registry")
-	var configEntryID string
-	for _, regEntry := range registry {
-		if regEntry.EntityID == thermoEntityID {
-			configEntryID = regEntry.ConfigEntryID
-			break
-		}
-	}
-	s.Require().NotEmpty(configEntryID, "Generic thermostat should have a config_entry_id")
+	regEntry, err := s.Client().GetEntityRegistryEntry(s.Context(), thermoEntityID)
+	s.Require().NoError(err, "Failed to get entity registry entry")
+	s.Require().NotEmpty(regEntry.ConfigEntryID, "Generic thermostat should have a config_entry_id")
 
-	options, err := s.Client().GetConfigEntryOptions(s.Context(), configEntryID)
+	options, err := s.Client().GetConfigEntryOptions(s.Context(), regEntry.ConfigEntryID)
 	s.Require().NoError(err, "Failed to get generic_thermostat config entry options")
 	s.InDelta(16.0, options["away_temp"], 0.001, "away_temp set via manage_helper create should be readable")
 	s.InDelta(18.0, options["eco_temp"], 0.001, "eco_temp set via manage_helper update should be readable")

@@ -1576,6 +1576,45 @@ func TestManageHelper_Update(t *testing.T) {
 	runHandlerTestCases(t, tests, h.handleManageHelper)
 }
 
+// TestManageHelper_Update_SuccessMessageEchoesAppliedFields is N6's
+// regression test: a bare "updated successfully" gave a caller no way to
+// tell a full application from a partial one (relevant here because a
+// config-entry field no step's schema accepted is rejected before this
+// point - see hybrid_client.go's unconsumedUserFields checks - but a
+// caller had no positive confirmation of what DID apply). The message
+// must name the caller-supplied fields, sorted, and exclude
+// manage_helper's own dispatch/identifier args.
+func TestManageHelper_Update_SuccessMessageEchoesAppliedFields(t *testing.T) {
+	t.Parallel()
+
+	client := &UniversalMockClient{}
+	client.UpdateHelperFn = func(context.Context, string, homeassistant.HelperConfig) error {
+		return nil
+	}
+
+	h := NewConsolidatedHelperHandlers()
+	result, err := h.handleManageHelper(context.Background(), client, map[string]any{
+		"action":    "update",
+		"entity_id": "counter.visitors",
+		"step":      float64(5),
+		"minimum":   float64(0),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+	}
+
+	text := result.Content[0].Text
+	if !strings.Contains(text, "applied: minimum, step") {
+		t.Errorf("success message = %q, want it to name the applied fields sorted (minimum, step)", text)
+	}
+	if strings.Contains(text, "entity_id") || strings.Contains(text, "action") {
+		t.Errorf("success message = %q, must not echo manage_helper's own dispatch args", text)
+	}
+}
+
 // TestManageHelper_Update_NameField verifies that the name passed to update is
 // forwarded to the API correctly, including unicode characters (umlauts etc.).
 func TestManageHelper_Update_NameField(t *testing.T) {
