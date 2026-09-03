@@ -85,6 +85,7 @@ func (s *HelperSourceDomainToolDispatchTestSuite) createTemplateFan(prefix strin
 		Platform: "template",
 		Config: map[string]any{
 			"name":     fanName,
+			"state":    "{{ states('" + boolEntityID + "') == 'on' }}",
 			"turn_on":  map[string]any{"service": "input_boolean.turn_on", "data": map[string]any{"entity_id": boolEntityID}},
 			"turn_off": map[string]any{"service": "input_boolean.turn_off", "data": map[string]any{"entity_id": boolEntityID}},
 			"type":     "fan",
