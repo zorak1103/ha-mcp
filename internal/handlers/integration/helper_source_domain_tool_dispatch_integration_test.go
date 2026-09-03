@@ -165,6 +165,9 @@ func (s *HelperSourceDomainToolDispatchTestSuite) TestStatisticsOverBinarySensor
 		"name":                 statName,
 		"entity_id":            sourceEntityID,
 		"state_characteristic": "count_on",
+		// HA's statistics config flow validate_options() raises
+		// missing_max_age_or_sampling_size unless one of sampling_size/max_age is set.
+		"sampling_size": 20,
 	})
 	s.Require().False(result.IsError, "statistics over a binary_sensor source should be accepted, got: %s", resultText(result))
 
