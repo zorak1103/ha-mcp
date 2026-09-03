@@ -129,149 +129,152 @@ func TestToDurationDict(t *testing.T) {
 	}
 }
 
-func TestTransformFieldValue_DurationFields(t *testing.T) {
+func TestCoerceForField_NameKeyedDurationFallback(t *testing.T) {
 	t.Parallel()
 
-	c := NewHybridClientWithInterfaces(&mockWSOperations{}, &mockRESTOperations{})
-
-	got := c.transformFieldValue("time_window", "00:05:00")
+	noSelector := OptionsFlowField{Name: "time_window"}
+	got := coerceForField(noSelector, "00:05:00", "time_window", "user")
 	want := map[string]int{"hours": 0, "minutes": 5, "seconds": 0}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("transformFieldValue(time_window, ...) = %v, want %v", got, want)
+		t.Errorf("coerceForField(time_window, ...) = %v, want %v", got, want)
 	}
 
-	// A bare number of seconds for delay_on now converts too (widened input
+	// A bare number of seconds for delay_on converts too (widened input
 	// forms), where before this fix only an exact "HH:MM:SS" string worked.
-	got = c.transformFieldValue("delay_on", 30.0)
+	delayOnField := OptionsFlowField{Name: "delay_on"}
+	got = coerceForField(delayOnField, 30.0, "delay_on", "user")
 	want = map[string]int{"hours": 0, "minutes": 0, "seconds": 30}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("transformFieldValue(delay_on, 30.0) = %v, want %v", got, want)
+		t.Errorf("coerceForField(delay_on, 30.0) = %v, want %v", got, want)
 	}
 
 	// A non-duration field is passed through untouched.
-	got = c.transformFieldValue("state", "some template")
+	stateField := OptionsFlowField{Name: "state"}
+	got = coerceForField(stateField, "some template", "state", "user")
 	if got != "some template" {
-		t.Errorf("transformFieldValue(state, ...) = %v, want passthrough", got)
+		t.Errorf("coerceForField(state, ...) = %v, want passthrough", got)
 	}
 }
 
-func TestBuildFilterStepConfig(t *testing.T) {
+// TestFilterFlowSteps_SchemaDriven covers, via the schema-driven engine,
+// the same six scenarios the deleted buildFilterStepConfig/filterStepFields
+// allow-list table used to cover directly. Each subtest supplies a fixture
+// schema shaped like HA's real per-step filter schema.
+func TestFilterFlowSteps_SchemaDriven(t *testing.T) {
 	t.Parallel()
-
-	c := NewHybridClientWithInterfaces(&mockWSOperations{}, &mockRESTOperations{})
 
 	t.Run("user step keeps name entity_id filter", func(t *testing.T) {
 		t.Parallel()
-		config := HelperConfig{
-			Platform: platformFilter,
-			Config: map[string]any{
-				"name": "My Filter", "entity_id": "sensor.x", "filter": "outlier",
-			},
-		}
-		got := c.buildFilterStepConfig(config, "user")
+		ix := indexStepSchema([]OptionsFlowField{{Name: "name"}, {Name: "entity_id"}, {Name: "filter"}})
+		userConfig := map[string]any{"name": "My Filter", "entity_id": "sensor.x", "filter": "outlier"}
+		got := buildStepSubmission(flowModeCreate, ix, userConfig, map[string]bool{}, "user")
 		want := map[string]any{"name": "My Filter", "entity_id": "sensor.x", "filter": "outlier"}
 		if !reflect.DeepEqual(got, want) {
-			t.Errorf("buildFilterStepConfig(user) = %v, want %v", got, want)
+			t.Errorf("buildStepSubmission(user) = %v, want %v", got, want)
 		}
 	})
 
 	t.Run("outlier step drops name, keeps read-only filter, converts nothing", func(t *testing.T) {
 		t.Parallel()
-		config := HelperConfig{
-			Platform: platformFilter,
-			Config: map[string]any{
-				"name": "My Filter", "entity_id": "sensor.x", "filter": "outlier",
-				"window_size": 5.0, "radius": 2.0,
-			},
+		ix := indexStepSchema([]OptionsFlowField{
+			{Name: "entity_id"}, {Name: "filter"}, {Name: "precision"}, {Name: "window_size"}, {Name: "radius"},
+		})
+		userConfig := map[string]any{
+			"name": "My Filter", "entity_id": "sensor.x", "filter": "outlier",
+			"window_size": 5.0, "radius": 2.0,
 		}
-		got := c.buildFilterStepConfig(config, "outlier")
+		got := buildStepSubmission(flowModeCreate, ix, userConfig, map[string]bool{}, "outlier")
 		want := map[string]any{"entity_id": "sensor.x", "filter": "outlier", "window_size": 5.0, "radius": 2.0}
 		if !reflect.DeepEqual(got, want) {
-			t.Errorf("buildFilterStepConfig(outlier) = %v, want %v", got, want)
+			t.Errorf("buildStepSubmission(outlier) = %v, want %v", got, want)
 		}
 	})
 
 	t.Run("time_simple_moving_average step converts window_size to duration dict", func(t *testing.T) {
 		t.Parallel()
-		config := HelperConfig{
-			Platform: platformFilter,
-			Config: map[string]any{
-				"name": "My Filter", "entity_id": "sensor.x", "filter": "time_simple_moving_average",
-				"window_size": "00:01:30",
-			},
+		ix := indexStepSchema([]OptionsFlowField{
+			{Name: "entity_id"}, {Name: "filter"}, {Name: "precision"}, {Name: "window_size"},
+		})
+		userConfig := map[string]any{
+			"name": "My Filter", "entity_id": "sensor.x", "filter": "time_simple_moving_average",
+			"window_size": "00:01:30",
 		}
-		got := c.buildFilterStepConfig(config, "time_simple_moving_average")
+		got := buildStepSubmission(flowModeCreate, ix, userConfig, map[string]bool{}, "time_simple_moving_average")
 		want := map[string]any{
 			"entity_id":   "sensor.x",
 			"filter":      "time_simple_moving_average",
 			"window_size": map[string]int{"hours": 0, "minutes": 1, "seconds": 30},
 		}
 		if !reflect.DeepEqual(got, want) {
-			t.Errorf("buildFilterStepConfig(time_simple_moving_average) = %v, want %v", got, want)
+			t.Errorf("buildStepSubmission(time_simple_moving_average) = %v, want %v", got, want)
 		}
 	})
 
 	t.Run("time_throttle step accepts bare-seconds window_size", func(t *testing.T) {
 		t.Parallel()
-		config := HelperConfig{
-			Platform: platformFilter,
-			Config: map[string]any{
-				"name": "My Filter", "entity_id": "sensor.x", "filter": "time_throttle",
-				"window_size": 90.0,
-			},
+		ix := indexStepSchema([]OptionsFlowField{
+			{Name: "entity_id"}, {Name: "filter"}, {Name: "precision"}, {Name: "window_size"},
+		})
+		userConfig := map[string]any{
+			"name": "My Filter", "entity_id": "sensor.x", "filter": "time_throttle",
+			"window_size": 90.0,
 		}
-		got := c.buildFilterStepConfig(config, "time_throttle")
+		got := buildStepSubmission(flowModeCreate, ix, userConfig, map[string]bool{}, "time_throttle")
 		want := map[string]any{
 			"entity_id":   "sensor.x",
 			"filter":      "time_throttle",
 			"window_size": map[string]int{"hours": 0, "minutes": 1, "seconds": 30},
 		}
 		if !reflect.DeepEqual(got, want) {
-			t.Errorf("buildFilterStepConfig(time_throttle) = %v, want %v", got, want)
+			t.Errorf("buildStepSubmission(time_throttle) = %v, want %v", got, want)
 		}
 	})
 
-	t.Run("stray filters key is dropped by the allow-list", func(t *testing.T) {
+	t.Run("stray filters key is dropped by the schema allow-list", func(t *testing.T) {
 		t.Parallel()
-		config := HelperConfig{
-			Platform: platformFilter,
-			Config: map[string]any{
-				"entity_id": "sensor.x", "filter": "outlier",
-				"filters": []any{map[string]any{"filter": "outlier"}},
-			},
+		ix := indexStepSchema([]OptionsFlowField{
+			{Name: "entity_id"}, {Name: "filter"}, {Name: "precision"}, {Name: "window_size"}, {Name: "radius"},
+		})
+		userConfig := map[string]any{
+			"entity_id": "sensor.x", "filter": "outlier",
+			"filters": []any{map[string]any{"filter": "outlier"}},
 		}
-		got := c.buildFilterStepConfig(config, "outlier")
+		got := buildStepSubmission(flowModeCreate, ix, userConfig, map[string]bool{}, "outlier")
 		if _, present := got["filters"]; present {
-			t.Errorf("buildFilterStepConfig(outlier) kept unexpected key \"filters\": %v", got)
+			t.Errorf("buildStepSubmission(outlier) kept unexpected key \"filters\": %v", got)
 		}
 	})
 
-	t.Run("unknown step id forwards full transformed config", func(t *testing.T) {
+	t.Run("a step whose schema could not be inspected forwards everything", func(t *testing.T) {
 		t.Parallel()
-		config := HelperConfig{
-			Platform: platformFilter,
-			Config:   map[string]any{"entity_id": "sensor.x", "filter": "outlier", "unexpected_future_field": "x"},
-		}
-		got := c.buildFilterStepConfig(config, "some_future_filter_type")
+		ix := indexStepSchema(nil)
+		userConfig := map[string]any{"entity_id": "sensor.x", "filter": "outlier", "unexpected_future_field": "x"}
+		got := buildStepSubmission(flowModeCreate, ix, userConfig, map[string]bool{}, "some_future_filter_type")
 		if _, present := got["unexpected_future_field"]; !present {
-			t.Errorf("buildFilterStepConfig with unknown step should forward the full config, got %v", got)
+			t.Errorf("buildStepSubmission with an uninspectable schema should forward everything, got %v", got)
 		}
 	})
 }
 
-func TestFilterToSchemaFields(t *testing.T) {
+// TestFilterFlowSteps_UnconsumedFieldsAreCollected is the placementOf-based
+// replacement for the deleted restrictToSchemaFields: a field the step's
+// schema doesn't declare is left out of the submission and reported via
+// unconsumedUserFields rather than silently dropped with no trace.
+func TestFilterFlowSteps_UnconsumedFieldsAreCollected(t *testing.T) {
 	t.Parallel()
 
-	schema := []OptionsFlowField{{Name: "radius"}, {Name: "precision"}}
+	ix := indexStepSchema([]OptionsFlowField{{Name: "radius"}, {Name: "precision"}})
 	userConfig := map[string]any{"radius": 3.0, "name": "should be dropped", "filters": "should be dropped too"}
+	consumed := map[string]bool{}
 
-	filtered, dropped := restrictToSchemaFields(userConfig, schema)
-
-	if len(filtered) != 1 || filtered["radius"] != 3.0 {
-		t.Errorf("restrictToSchemaFields filtered = %v, want only radius=3.0", filtered)
+	got := buildStepSubmission(flowModeCreate, ix, userConfig, consumed, "outlier")
+	if len(got) != 1 || got["radius"] != 3.0 {
+		t.Errorf("buildStepSubmission() = %v, want only radius=3.0", got)
 	}
+
+	dropped := unconsumedUserFields(userConfig, consumed)
 	wantDropped := []string{"filters", "name"}
 	if !reflect.DeepEqual(dropped, wantDropped) {
-		t.Errorf("restrictToSchemaFields dropped = %v, want %v", dropped, wantDropped)
+		t.Errorf("unconsumedUserFields() = %v, want %v", dropped, wantDropped)
 	}
 }
