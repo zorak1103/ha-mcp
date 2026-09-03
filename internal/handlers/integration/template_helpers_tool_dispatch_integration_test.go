@@ -3,12 +3,15 @@
 package integration
 
 import (
+	"regexp"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/suite"
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 )
+
+var createdEntityIDPattern = regexp.MustCompile(`as (\S+)$`)
 
 type TemplateHelperToolDispatchTestSuite struct {
 	HelperTestSuite
@@ -79,4 +82,67 @@ func (s *TemplateHelperToolDispatchTestSuite) TestTemplateSensorUpdateViaTool() 
 	entity, err := s.Client().GetState(s.Context(), templateEntityID)
 	s.Require().NoError(err)
 	s.Equal("100.0", entity.State, "Template sensor should show doubled value (source=50) after tool-driven update")
+}
+
+// TestTemplateBinarySensorCreateViaTool reproduces issue #211: determineTemplateSubtype
+// read a dead config key ("platformTemplate_type" instead of "template_type"),
+// so a manage_helper create of type=template_binary_sensor with no
+// binary-inferrable device_class fell through to device-class guessing,
+// which created a sensor while the tool reported a binary_sensor.* entity id
+// that never existed. This drives the create through the real manage_helper
+// tool (not s.Client().CreateHelper with an explicit "type" key, unlike the
+// createTemplateBinarySensor fixture elsewhere in this package, which
+// bypasses the router this bug lives in) and asserts the reported entity id
+// actually resolves to a live entity.
+func (s *TemplateHelperToolDispatchTestSuite) TestTemplateBinarySensorCreateViaTool() {
+	s.Run("without device_class", func() {
+		name := GenerateTestID("tmpl_td_bs_plain")
+
+		// Clean up both possible outcomes so a pre-fix run (which creates
+		// sensor.<name> while reporting binary_sensor.<name>) never leaks an
+		// orphan entity.
+		s.RegisterCleanup(func() { _ = s.Client().DeleteHelper(s.Context(), BuildEntityID("sensor", name)) })
+		s.RegisterCleanup(func() { _ = s.Client().DeleteHelper(s.Context(), BuildEntityID("binary_sensor", name)) })
+
+		result := s.CallTool("manage_helper", map[string]any{
+			"action": "create",
+			"type":   "template_binary_sensor",
+			"id":     name,
+			"name":   name,
+			"state":  "{{ true }}",
+		})
+		s.Require().False(result.IsError, "manage_helper create should succeed, got: %s", resultText(result))
+
+		match := createdEntityIDPattern.FindStringSubmatch(resultText(result))
+		s.Require().Len(match, 2, "could not parse reported entity id from: %s", resultText(result))
+		reportedEntityID := match[1]
+		s.Equal(BuildEntityID("binary_sensor", name), reportedEntityID, "tool should report a binary_sensor entity id")
+
+		_, err := s.WaitForEntity(reportedEntityID, 5*time.Second)
+		s.Require().NoError(err, "reported entity id %q did not resolve to a live entity", reportedEntityID)
+	})
+
+	s.Run("with binary device_class does not regress", func() {
+		name := GenerateTestID("tmpl_td_bs_dc")
+		s.RegisterCleanup(func() { _ = s.Client().DeleteHelper(s.Context(), BuildEntityID("sensor", name)) })
+		s.RegisterCleanup(func() { _ = s.Client().DeleteHelper(s.Context(), BuildEntityID("binary_sensor", name)) })
+
+		result := s.CallTool("manage_helper", map[string]any{
+			"action":       "create",
+			"type":         "template_binary_sensor",
+			"id":           name,
+			"name":         name,
+			"state":        "{{ true }}",
+			"device_class": "problem",
+		})
+		s.Require().False(result.IsError, "manage_helper create should succeed, got: %s", resultText(result))
+
+		match := createdEntityIDPattern.FindStringSubmatch(resultText(result))
+		s.Require().Len(match, 2, "could not parse reported entity id from: %s", resultText(result))
+		reportedEntityID := match[1]
+		s.Equal(BuildEntityID("binary_sensor", name), reportedEntityID, "tool should report a binary_sensor entity id")
+
+		_, err := s.WaitForEntity(reportedEntityID, 5*time.Second)
+		s.Require().NoError(err, "reported entity id %q did not resolve to a live entity", reportedEntityID)
+	})
 }
