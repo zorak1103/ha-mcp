@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ha-mcp is a Model Context Protocol (MCP) server that provides AI assistants with access to Home Assistant. It uses a hybrid architecture: WebSocket for most operations, REST API for automation/script/scene CRUD (create/update/delete). Translates MCP tool calls into Home Assistant API commands.
 
-**Requirements:** Go 1.26+, golangci-lint v2
+**Requirements:** Go 1.27+, golangci-lint v2
 
 ## Build and Development Commands
 
@@ -32,6 +32,7 @@ set -a && source .env.integration && set +a && task test:integration
 # Linting
 task lint                   # golangci-lint run --timeout=5m ./...
 task lint:integration       # golangci-lint run --timeout=5m --build-tags=integration ...
+task lint:install           # install/upgrade golangci-lint pinned to CI's version, built with your local Go toolchain
 task fmt                    # gofmt -l . (check)
 task fmt:fix                # gofmt -w . (auto-fix)
 
