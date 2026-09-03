@@ -207,6 +207,30 @@ func TestActionValue_AcceptsExactlyMaxStringLen(t *testing.T) {
 	}
 }
 
+func TestActionValue_AcceptsExactlyMaxKeyLen(t *testing.T) {
+	t.Parallel()
+
+	// Pins the boundary at "> maxScalarStringLen", not ">=", for the map-key
+	// length check specifically (distinct from the string-VALUE check
+	// TestActionValue_AcceptsExactlyMaxStringLen pins) - both live in the
+	// same boundedActionShape map[string]any case, on the same line, and a
+	// key-only test is the only way to isolate a mutant on the key check
+	// from one on the value check.
+	exactKey := make([]byte, maxScalarStringLen)
+	for i := range exactKey {
+		exactKey[i] = 'k'
+	}
+
+	config := map[string]any{}
+	args := map[string]any{"turn_on": map[string]any{string(exactKey): "x.y"}}
+
+	r := newArgReader(config, args)
+	r.actionValue("turn_on")
+	if err := r.err(); err != nil {
+		t.Fatalf("actionValue() error = %v, want nil at exactly maxScalarStringLen key length", err)
+	}
+}
+
 func TestActionValue_SkipsAbsentAndNull(t *testing.T) {
 	t.Parallel()
 
