@@ -110,4 +110,4 @@ tasks:
     cmds:
       - git config core.hooksPath .githooks
       - chmod +x .githooks/pre-commit .githooks/pre-push || true
-      - echo "Git hooks installed. pre-commit auto-fixes gofmt; pre-push runs go vet + golangci-lint."
+      - echo "Git hooks installed. pre-commit auto-fixes gofmt; pre-push runs go vet + golangci-lint + mutest (diff vs origin/main)."

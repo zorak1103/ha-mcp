@@ -2,6 +2,8 @@
 package handlers
 
 import (
+	"fmt"
+
 	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
 
@@ -10,7 +12,7 @@ import (
 //
 //nolint:funlen // Large schema definition with many properties for extended helper types
 func buildExtendedHelperProperties() map[string]mcp.JSONSchema {
-	return map[string]mcp.JSONSchema{
+	props := map[string]mcp.JSONSchema{
 		// utility_meter specific fields
 		"source": {
 			Type:        "string",
@@ -208,6 +210,9 @@ func buildExtendedHelperProperties() map[string]mcp.JSONSchema {
 			Type:        "number",
 			Description: "Hot tolerance in degrees (generic_thermostat)",
 		},
+		// away_temp/eco_temp/home_temp/comfort_temp/sleep_temp/activity_temp
+		// are generated below from genericThermostatPresets, not
+		// hand-duplicated here - see genericThermostatPresetSchemaProperties.
 
 		// switch_as_x specific fields
 		"target_domain": {
@@ -242,4 +247,31 @@ func buildExtendedHelperProperties() map[string]mcp.JSONSchema {
 			Description: "Wet tolerance in percentage points (generic_hygrostat)",
 		},
 	}
+
+	for name, prop := range genericThermostatPresetSchemaProperties() {
+		props[name] = prop
+	}
+
+	return props
+}
+
+// genericThermostatPresetSchemaProperties generates the six preset
+// temperature schema properties from genericThermostatPresets
+// (helpers_config_builders_extended.go) - the same list the create/update
+// config builders read, so a preset field can't be added to one side
+// without appearing on the other.
+func genericThermostatPresetSchemaProperties() map[string]mcp.JSONSchema {
+	props := make(map[string]mcp.JSONSchema, len(genericThermostatPresets))
+	for _, preset := range genericThermostatPresets {
+		props[preset.field] = mcp.JSONSchema{
+			Type: "number",
+			Description: fmt.Sprintf(
+				"%s preset temperature (generic_thermostat). Not bounded by min_temp/max_temp - HA does not "+
+					"clamp presets to them. Once set, a preset can only be overwritten, not cleared "+
+					"(omitting it on update preserves the current value).",
+				preset.label,
+			),
+		}
+	}
+	return props
 }

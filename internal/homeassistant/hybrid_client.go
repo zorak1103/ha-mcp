@@ -4,6 +4,7 @@ package homeassistant
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -459,6 +460,13 @@ func (c *HybridClient) updateHelperViaOptionsFlow(ctx context.Context, entityID,
 		return fmt.Errorf("unexpected options flow result type: %s", result.Type)
 	}
 
+	// Apply name/icon via Entity Registry BEFORE the unconsumed-field check
+	// below. Both are independent of the options flow schema - an update
+	// carrying icon/name plus a field no step accepted must not skip this
+	// registry write just because the check below has something to report
+	// too.
+	registryErr := c.applyNameIconViaRegistry(ctx, entityID, icon, hasIcon, name, hasName)
+
 	// Reject (not silently drop) any user-supplied field no step's schema
 	// declared. Home Assistant's Options Flow forms use PREVENT_EXTRA
 	// voluptuous schemas, so a stray key would fail the whole request with
@@ -467,23 +475,24 @@ func (c *HybridClient) updateHelperViaOptionsFlow(ctx context.Context, entityID,
 	// successful while quietly discarding a change the caller explicitly
 	// asked for. Checked only after every step has had a chance to claim
 	// it, so a field belonging to a later step (e.g. generic_thermostat's
-	// presets) is not mistaken for an unsupported one.
+	// presets) is not mistaken for an unsupported one. Returned as a
+	// *PartialApplyError, not a plain error: every field every step DID
+	// claim (plus name/icon above) has already been committed by this
+	// point, so internal/handlers must render this as a successful update
+	// carrying a warning, not report the whole call as failed.
 	if unconsumed := unconsumedUserFields(config.Config, consumed); len(unconsumed) > 0 {
-		return fmt.Errorf("helper %q does not support updating field(s): %s", entityID, strings.Join(unconsumed, ", "))
+		return errors.Join(registryErr, &PartialApplyError{Op: PartialApplyUpdate, Fields: unconsumed})
 	}
 
-	// Update name/icon via Entity Registry if provided - neither is part of
-	// any Options Flow schema.
-	return c.applyNameIconViaRegistry(ctx, entityID, icon, hasIcon, name, hasName)
+	return registryErr
 }
 
 // runOptionsFlowSteps submits successive Options Flow form steps, routing
 // caller fields via buildStepSubmission, until HA returns something other
 // than a form (create_entry, abort, or an unexpected type) or the step cap
-// is hit. Subsumes the former single-shot submission plus the
-// generic_thermostat-specific submitOptionsFlowPresetsStep special case:
-// a presets step is just another iteration where no user field matches and
-// the payload is the round-tripped current values.
+// is hit. A generic_thermostat "presets" step is just another iteration
+// where no user field matches and the payload is the round-tripped current
+// values - no special case needed.
 func (c *HybridClient) runOptionsFlowSteps(ctx context.Context, initFlowID string, first *OptionsFlowResult, userConfig map[string]any, consumed map[string]bool) (*OptionsFlowResult, error) {
 	const maxUpdateSteps = 8
 	result := first
@@ -510,49 +519,6 @@ func (c *HybridClient) runOptionsFlowSteps(ctx context.Context, initFlowID strin
 	return result, nil
 }
 
-// submitOptionsFlowPresetsStep completes generic_thermostat's Options Flow
-// when it advances to a trailing "presets" step. Split out of
-// updateHelperViaOptionsFlow to keep that function's length down (same
-// reason applyNameIconViaRegistry/normalizeOptionsFlowDurations were
-// already split out).
-//
-// generic_thermostat's OPTIONS_FLOW has the same "init" -> "presets" shape
-// as its CONFIG_FLOW (see buildGenericThermostatStepConfig) - the flow
-// always advances to "presets" after "init", whose schema is all-Optional
-// and rejects any of the core fields. An empty submission completes it.
-// Gated on the step id HA itself reports, not on config.Platform: on this
-// update path Platform is the entity *domain* ("climate"), not the helper
-// type ("generic_thermostat") - see CLAUDE.md's ParseHelperEntityID
-// gotcha - so it can't be used to recognize this platform here.
-//
-// result is returned unchanged for every other step/type so the caller's
-// existing create_entry check still applies.
-// normalizeOptionsFlowDurations converts each userConfig value that is
-// duration-shaped into Home Assistant's {"hours":.,"minutes":.,"seconds":.}
-// dict form in place. Split out of updateHelperViaOptionsFlow to keep that
-// function's cognitive complexity down.
-//
-// Home Assistant renders a DurationSelector field's current value as a
-// dict when the field already has a value - that's the primary way a
-// duration field is detected here, generically, without a hardcoded list
-// of field names - and rejects anything else on submission ("expected
-// dict"). A duration field with no current value (e.g.
-// template_binary_sensor's delay_on/delay_off, unset by default) never
-// appears in currentValues at all, so it also falls back to
-// isDurationField(key) - the same name list transformFieldValue uses on
-// create - to catch a first-time override the dict-shape heuristic alone
-// would miss. This is what buildFilterStepConfig already does for filter's
-// window_size on create; the options-flow update path had no equivalent
-// before.
-//
-// window_size is deliberately excluded from isDurationField (it's a
-// duration only for two of filter's seven subtypes, and that list is keyed
-// on field name alone), so the fallback above can't catch a first-time
-// window_size override either. stepID - the filter's actual subtype,
-// immutable after creation (CLAUDE.md's manage_helper update field docs) -
-// is what buildFilterStepConfig already keys off on create via
-// filterDurationWindowSteps; reused here as the update-path equivalent of
-// the isDurationField fallback.
 // applyNameIconViaRegistry sets name/icon via the Entity Registry after a
 // successful Options Flow submission - neither is part of any Options Flow
 // schema. Split out of updateHelperViaOptionsFlow to keep that function's
@@ -718,7 +684,14 @@ func (c *HybridClient) createHelperViaConfigFlow(ctx context.Context, config Hel
 		// a genuinely-unrecognized field the caller explicitly supplied.
 		consumed["name"] = true
 		if unconsumed := unconsumedUserFields(userConfig, consumed); len(unconsumed) > 0 {
-			return fmt.Errorf("helper created, but field(s) %s were not accepted by any step of the %s config flow", strings.Join(unconsumed, ", "), config.Platform)
+			// The config entry already exists at this point - this is a
+			// *PartialApplyError, not a plain error, so internal/handlers
+			// (which predicts the created entity id with more platform
+			// knowledge than this client has - group/random/switch_as_x's
+			// dynamic prefixes) renders a successful create result carrying
+			// a warning instead of reporting the whole create as failed and
+			// risking a caller retry that would duplicate the helper.
+			return &PartialApplyError{Op: PartialApplyCreate, Platform: config.Platform, Fields: unconsumed}
 		}
 		return nil
 	}
