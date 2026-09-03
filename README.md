@@ -56,12 +56,13 @@ sudo mv ha-mcp /usr/local/bin/
 
 ### From Source
 
-Requires Go 1.26 or later.
+Requires Go 1.27 or later.
 
 ```bash
 git clone https://github.com/zorak1103/ha-mcp.git
 cd ha-mcp
 task install-hooks  # install git pre-commit hook (auto-fixes gofmt on every commit)
+task lint:install   # install golangci-lint built with your local Go toolchain
 go build -o ha-mcp ./cmd/ha-mcp
 ```
 
@@ -189,13 +190,15 @@ See [docs/troubleshooting.md](docs/troubleshooting.md) for WebSocket connection 
 
 ## Development
 
-**Prerequisites:** Go 1.26+, golangci-lint v2, Docker (optional)
+**Prerequisites:** Go 1.27+, golangci-lint v2, Docker (optional)
 
 ```bash
 go build -o ha-mcp ./cmd/ha-mcp    # Build
 go test ./...                       # Unit tests
 golangci-lint run --timeout=5m ./...  # Lint
 ```
+
+> If `golangci-lint` panics with "file requires newer Go version", your locally installed binary was built with an older Go toolchain than the one on `PATH`. Run `task lint:install` to rebuild it against your current toolchain.
 
 See [docs/architecture.md](docs/architecture.md) for integration test setup and [docs/integration-tests.md](docs/integration-tests.md) for the full test suite documentation.
 

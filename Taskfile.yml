@@ -51,6 +51,12 @@ tasks:
     cmds:
       - golangci-lint run --timeout=5m --build-tags=integration ./internal/handlers/integration/...
 
+  lint:install:
+    desc: Install/upgrade golangci-lint to the pinned version CI uses (run after cloning or upgrading your local Go toolchain)
+    cmds:
+      # renovate: datasource=go depName=github.com/golangci/golangci-lint/v2
+      - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
+
   fmt:
     desc: Check Go formatting (report unformatted files)
     cmds:
