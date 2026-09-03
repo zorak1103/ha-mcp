@@ -49,17 +49,16 @@ const (
 	hygrostatEntityDomain          = "humidifier" // generic_hygrostat's validEntityDomains entry - an entity domain, not an integration platform name
 	// thermostatEntityDomain is generic_thermostat's validEntityDomains
 	// entry - gates addExtendedConfigEntryFields' preset-temperature fields
-	// to this platform only. N3: unlike the min_max_type gate, which
-	// resolves the real integration PLATFORM via the entity registry
-	// because a domain can host more than one platform, this gates on the
-	// entity DOMAIN directly - correct only because "climate" is used by
-	// exactly one helperTypes entry (generic_thermostat). If a second
-	// config-entry helper type is ever added under the "climate" domain,
-	// this gate would need the same registry-platform resolution
-	// min_max_type uses instead of a plain domain comparison.
-	// TestThermostatEntityDomain_IsUniqueAcrossHelperTypes pins the
-	// single-owner assumption so that addition fails a test rather than
-	// silently leaking preset fields into the new type's updates.
+	// to this platform only. Unlike the min_max_type gate, which resolves
+	// the real integration PLATFORM via the entity registry because a
+	// domain can host more than one platform, this gates on the entity
+	// DOMAIN directly - correct only because "climate" is used by exactly
+	// one helperTypes entry (generic_thermostat). If a second config-entry
+	// helper type is ever added under the "climate" domain, this gate would
+	// need the same registry-platform resolution min_max_type uses instead
+	// of a plain domain comparison. TestThermostatEntityDomain_IsUniqueAcrossHelperTypes
+	// pins the single-owner assumption so that addition fails a test rather
+	// than silently leaking preset fields into the new type's updates.
 	thermostatEntityDomain = "climate"
 	// hygrostatDeviceClass is generic_hygrostat's required device_class
 	// config value - a different field than hygrostatEntityDomain above
@@ -377,11 +376,9 @@ var helperTypes = map[string]helperTypeMetadata{
 		entityPrefix:     "climate",
 		supportedActions: []string{},
 		requiredFields:   []string{"heater_entity_id", "target_sensor_entity_id"},
-		// slices.Clip removes the spare capacity append() leaves behind (N2):
-		// append([]string{...}, extra...) on a full-literal slice
-		// reallocates with room to grow, making generic_thermostat the one
-		// helperTypes entry whose optionalFields backing array a future
-		// in-place append elsewhere could silently share/mutate.
+		// slices.Clip drops the spare capacity append() leaves on a
+		// full-literal slice, so a future in-place append elsewhere can't
+		// silently share/mutate this backing array.
 		optionalFields: slices.Clip(append(
 			[]string{"icon", "ac_mode", "min_temp", "max_temp", "target_temp", "cold_tolerance", "hot_tolerance"},
 			genericThermostatPresetFieldNames()...,
@@ -854,11 +851,25 @@ func (h *ConsolidatedHelperHandlers) handleCreate(ctx context.Context, client ho
 		entityID, err = h.createConfigEntryHelper(ctx, client, id, name, config, meta, helperType)
 	}
 
+	successMsg := fmt.Sprintf("%s '%s' created successfully as %s", formatHelperType(helperType), name, entityID)
+
+	var partial *homeassistant.PartialApplyError
+	if errors.As(err, &partial) {
+		// The config entry already exists on Home Assistant's side by the
+		// time createConfigEntryHelper returns a *PartialApplyError - this
+		// must be a SUCCESS result carrying a warning, not an error result.
+		// IsError:true here would read as "nothing happened" and risk a
+		// caller retrying create, which would duplicate the helper.
+		return successResult(fmt.Sprintf(
+			"%s\nWARNING: %s. The helper exists - do not retry create; use manage_helper update, or delete it.",
+			successMsg, renderPartialApplyWarning(partial),
+		)), nil
+	}
 	if err != nil {
 		return errorResult(err.Error()), nil
 	}
 
-	return successResult(fmt.Sprintf("%s '%s' created successfully as %s", formatHelperType(helperType), name, entityID)), nil
+	return successResult(successMsg), nil
 }
 
 // createWSHelper creates a WebSocket-based helper, using id to control entity slug.
@@ -931,8 +942,25 @@ func (h *ConsolidatedHelperHandlers) createConfigEntryHelper(
 		Config:   config,
 	}
 
-	if err := client.CreateHelper(ctx, helper); err != nil {
-		return "", fmt.Errorf("error creating %s: %w", helperType, err)
+	// A *homeassistant.PartialApplyError means the config entry already
+	// exists on Home Assistant's side - fall through to predict the
+	// entity id and apply the icon exactly as on a full success, instead
+	// of returning early as if creation never happened. Any other error is
+	// a genuine failure with no entity to report on.
+	//
+	// partialErr (the plain error we eventually return) is kept separate
+	// from the typed partial pointer: returning a nil *PartialApplyError
+	// directly as the error return would box a non-nil interface holding a
+	// nil pointer (the classic Go typed-nil-in-interface trap) - `err !=
+	// nil` upstream would then be true, and calling Error() on it would
+	// panic dereferencing the nil receiver's fields.
+	var partial *homeassistant.PartialApplyError
+	var partialErr error
+	if createErr := client.CreateHelper(ctx, helper); createErr != nil {
+		if !errors.As(createErr, &partial) {
+			return "", fmt.Errorf("error creating %s: %w", helperType, createErr)
+		}
+		partialErr = partial
 	}
 
 	predictedSlug := slugifyName(name)
@@ -966,11 +994,11 @@ func (h *ConsolidatedHelperHandlers) createConfigEntryHelper(
 		}
 		if _, err := client.UpdateEntityRegistryEntry(ctx, entityID, updateCfg); err != nil {
 			// Non-fatal: entity was created successfully, just couldn't set icon
-			return entityID, fmt.Errorf("%s created as %s, but failed to set icon: %w", formatHelperType(helperType), entityID, err)
+			return entityID, errors.Join(partialErr, fmt.Errorf("%s created as %s, but failed to set icon: %w", formatHelperType(helperType), entityID, err))
 		}
 	}
 
-	return entityID, nil
+	return entityID, partialErr
 }
 
 func (h *ConsolidatedHelperHandlers) handleUpdate(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
@@ -1059,27 +1087,62 @@ func (h *ConsolidatedHelperHandlers) handleUpdate(ctx context.Context, client ho
 	// matches, so the call silently falls through to the WS "<platform>/update"
 	// command, which config-entry domains (sensor, binary_sensor, ...) don't have
 	// and produces "unknown_command".
-	if err := client.UpdateHelper(ctx, entityID, updateConfig); err != nil {
-		return errorResult(fmt.Sprintf("error updating helper: %v", err)), nil
+	var partial *homeassistant.PartialApplyError
+	if updateErr := client.UpdateHelper(ctx, entityID, updateConfig); updateErr != nil {
+		if !errors.As(updateErr, &partial) {
+			return errorResult(fmt.Sprintf("error updating helper: %v", updateErr)), nil
+		}
 	}
 
-	applied, ignored := splitAppliedFields(args, appliedKeys)
-	return successResult(updateSuccessMessage(entityID, applied, ignored)), nil
+	return successResult(renderUpdateResultMessage(entityID, args, appliedKeys, partial)), nil
+}
+
+// renderUpdateResultMessage renders handleUpdate's success text, folding
+// in a *homeassistant.PartialApplyError as a WARNING rather than an error -
+// split out of handleUpdate to keep its cognitive complexity down. A
+// partial apply is still a successful result: the fields every options
+// flow step DID accept have already been committed to Home Assistant.
+func renderUpdateResultMessage(entityID string, args map[string]any, appliedKeys map[string]bool, partial *homeassistant.PartialApplyError) string {
+	applied, ignored, skipped := splitAppliedFields(args, appliedKeys)
+	if partial == nil {
+		return updateSuccessMessage(entityID, applied, ignored, skipped)
+	}
+
+	// Every field every options flow step DID accept has already been
+	// committed by this point - move the rejected ones OUT of "applied"
+	// (they reached the locally-built payload, which is all
+	// splitAppliedFields can see, but HA's options flow rejected them) and
+	// into the WARNING appended below.
+	rejectedConfigKeys := make(map[string]bool, len(partial.Fields))
+	for _, key := range partial.Fields {
+		rejectedConfigKeys[key] = true
+	}
+	var stillApplied []string
+	for _, argName := range applied {
+		key := argName
+		if alias, ok := updateConfigKeyAliases[argName]; ok {
+			key = alias
+		}
+		if !rejectedConfigKeys[key] {
+			stillApplied = append(stillApplied, argName)
+		}
+	}
+	msg := updateSuccessMessage(entityID, stillApplied, ignored, skipped)
+	return fmt.Sprintf("%s\nWARNING: %s.", msg, renderPartialApplyWarning(partial))
 }
 
 // updateSuccessMessage renders manage_helper update's success message,
 // echoing which caller-supplied fields actually reached the payload sent to
 // Home Assistant, and separately which ones the caller supplied but no
-// builder ever read (N6 - a bare "updated successfully" left a caller
-// unable to tell full application from a partial one; C1 - an earlier
-// version of this echoed every non-dispatch arg name as "applied"
-// unconditionally, which is wrong: manage_helper's own format/verbose
-// output args, a typo'd field name, or a field silently dropped by a
-// platform-specific gate like addGenericThermostatPresetFields would all be
-// reported as successfully applied when nothing was ever sent for them).
-// See splitAppliedFields for how the two lists are derived.
-func updateSuccessMessage(entityID string, applied, ignored []string) string {
-	if len(applied) == 0 && len(ignored) == 0 {
+// builder ever read - a bare "updated successfully" left a caller unable
+// to tell full application from a partial one, and echoing every
+// non-dispatch arg name as "applied" unconditionally is wrong: manage_helper's
+// own format/verbose output args, a typo'd field name, or a field silently
+// dropped by a platform-specific gate like addGenericThermostatPresetFields
+// would all be reported as successfully applied when nothing was ever sent
+// for them. See splitAppliedFields for how the two lists are derived.
+func updateSuccessMessage(entityID string, applied, ignored, skipped []string) string {
+	if len(applied) == 0 && len(ignored) == 0 && len(skipped) == 0 {
 		return fmt.Sprintf("Helper '%s' updated successfully", entityID)
 	}
 
@@ -1088,49 +1151,35 @@ func updateSuccessMessage(entityID string, applied, ignored []string) string {
 	if len(applied) > 0 {
 		sorted := append([]string{}, applied...)
 		slices.Sort(sorted)
-		fmt.Fprintf(&b, " (applied: %s)", boundedFieldList(sorted))
+		fmt.Fprintf(&b, " (applied: %s)", homeassistant.BoundedFieldList(sorted))
 	}
 	if len(ignored) > 0 {
 		sorted := append([]string{}, ignored...)
 		slices.Sort(sorted)
-		fmt.Fprintf(&b, " (ignored - not accepted by this helper type: %s)", boundedFieldList(sorted))
+		fmt.Fprintf(&b, " (ignored - not accepted by this helper type: %s)", homeassistant.BoundedFieldList(sorted))
+	}
+	if len(skipped) > 0 {
+		sorted := append([]string{}, skipped...)
+		slices.Sort(sorted)
+		fmt.Fprintf(&b, " (ignored - no value supplied (null/empty): %s)", homeassistant.BoundedFieldList(sorted))
 	}
 	return b.String()
 }
 
-// maxEchoedFieldNameLen and maxEchoedFieldCount bound updateSuccessMessage's
-// rendering of caller-supplied field names (W2): those names are arbitrary
-// JSON object keys nothing in the stack validates or length-limits before
-// they reach this LLM-facing text.
-const (
-	maxEchoedFieldNameLen = 60
-	maxEchoedFieldCount   = 20
-)
-
-// boundedFieldList renders a sorted field-name list for updateSuccessMessage,
-// truncating any single name over maxEchoedFieldNameLen and capping the
-// total count at maxEchoedFieldCount (with a "N more" marker) so neither an
-// oversized nor an excessively long caller-supplied key balloons the
-// message.
-func boundedFieldList(sorted []string) string {
-	shown := sorted
-	omitted := 0
-	if len(shown) > maxEchoedFieldCount {
-		omitted = len(shown) - maxEchoedFieldCount
-		shown = shown[:maxEchoedFieldCount]
+// renderPartialApplyWarning renders a *homeassistant.PartialApplyError's
+// rejected fields for a manage_helper WARNING line, translating HA's
+// config key names back to the caller's own arg names via
+// argNamesForConfigKeys - updateConfigKeyAliases lives in this package,
+// not internal/homeassistant, so the translation happens at this boundary
+// rather than inside PartialApplyError.Error() itself.
+func renderPartialApplyWarning(partial *homeassistant.PartialApplyError) string {
+	argNames := argNamesForConfigKeys(partial.Fields)
+	if partial.Op == homeassistant.PartialApplyUpdate {
+		return fmt.Sprintf("field(s) %s were not accepted by any step of its options flow and have NOT been applied",
+			homeassistant.BoundedFieldList(argNames))
 	}
-	rendered := make([]string, len(shown))
-	for i, name := range shown {
-		if len(name) > maxEchoedFieldNameLen {
-			name = name[:maxEchoedFieldNameLen] + "..."
-		}
-		rendered[i] = name
-	}
-	joined := strings.Join(rendered, ", ")
-	if omitted > 0 {
-		joined = fmt.Sprintf("%s, and %d more", joined, omitted)
-	}
-	return joined
+	return fmt.Sprintf("field(s) %s were not accepted by any step of the %s config flow and have NOT been applied",
+		homeassistant.BoundedFieldList(argNames), partial.Platform)
 }
 
 // splitAppliedFields separates a caller's update args into fields that
@@ -1141,31 +1190,46 @@ func boundedFieldList(sorted []string) string {
 // type - e.g. generic_thermostat's preset fields on a non-climate helper,
 // silently dropped by addGenericThermostatPresetFields' domain gate).
 //
-// C1: updateSuccessMessage previously echoed every non-dispatch arg name as
-// "applied" regardless of whether anything was actually sent for it -
-// reporting manage_helper's own format/verbose output args, typos, and
-// domain-gated fields as successfully applied. appliedKeys must be
-// snapshotted BEFORE client.UpdateHelper runs: for config-entry helpers,
-// updateHelperViaOptionsFlow deletes "icon"/"name" from the same config map
-// in place after using them, so reading config's keys after the call would
-// misreport icon/name as ignored even when they were applied via the entity
-// registry.
-func splitAppliedFields(args map[string]any, appliedKeys map[string]bool) (applied, ignored []string) {
-	updateDispatchOnlyArgNames := map[string]bool{
-		"action": true, "type": true, "id": true, attrEntityID: true,
-		"format": true, "verbose": true,
-	}
+// appliedKeys must be snapshotted BEFORE client.UpdateHelper runs: for
+// config-entry helpers, updateHelperViaOptionsFlow deletes "icon"/"name"
+// from the same config map in place after using them, so reading config's
+// keys after the call would misreport icon/name as ignored even when they
+// were applied via the entity registry.
+func splitAppliedFields(args map[string]any, appliedKeys map[string]bool) (applied, ignored, skipped []string) {
 	for name := range args {
 		if updateDispatchOnlyArgNames[name] {
 			continue
 		}
-		if appliedKeys[name] {
+		if isSkippable(args[name]) {
+			// A null or empty-string value never reaches argReader's writers
+			// (isSkippable short-circuits every str/num/strID/... method), so
+			// it belongs in neither "applied" (nothing was sent for it,
+			// even if a merged current value happens to share the config
+			// key) nor "ignored - not accepted" (the field IS accepted;
+			// the caller just supplied no value for it).
+			skipped = append(skipped, name)
+			continue
+		}
+		key := name
+		if alias, ok := updateConfigKeyAliases[name]; ok {
+			key = alias
+		}
+		if appliedKeys[key] {
 			applied = append(applied, name)
 		} else {
 			ignored = append(ignored, name)
 		}
 	}
-	return applied, ignored
+	return applied, ignored, skipped
+}
+
+// updateDispatchOnlyArgNames are manage_helper's own top-level dispatch/
+// output args - never a helper config field, so splitAppliedFields must
+// never classify them as applied or ignored regardless of which helper
+// type is being updated.
+var updateDispatchOnlyArgNames = map[string]bool{
+	"action": true, "type": true, "id": true, attrEntityID: true,
+	"format": true, "verbose": true,
 }
 
 // buildUnknownTypeUpdateConfig builds the update config for a helper whose
@@ -1222,9 +1286,9 @@ func buildKnownTypeUpdateConfig(ctx context.Context, client homeassistant.Client
 
 	if homeassistant.RequiresConfigEntryFlow(meta.platform) {
 		// Config Entry platform reached via the metadata branch: Options Flow
-		// submission (see mergeOptionsFlowConfig) already merges unchanged
-		// fields on the HA side, so no local merge is needed here - args
-		// alone is the correct payload.
+		// submission (see buildStepSubmission in internal/homeassistant/flow_steps.go)
+		// already merges unchanged fields on the HA side, so no local merge
+		// is needed here - args alone is the correct payload.
 		updateName, _ = args["name"].(string)
 	} else {
 		// Known WebSocket helper type - merge current state so an update that

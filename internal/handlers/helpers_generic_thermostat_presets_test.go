@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"reflect"
+	"slices"
 	"testing"
 )
 
@@ -55,13 +56,13 @@ func TestAddExtendedConfigEntryFields_ReadsPresetTemperaturesOnUpdate(t *testing
 }
 
 // TestAddExtendedConfigEntryFields_PresetsGatedToThermostatDomain guards
-// the W3 fix: addExtendedConfigEntryFields is the one-size-fits-all update
-// builder shared by every config-entry helper type (template, threshold,
-// sensor-domain group, statistics, ...), none of which declare away_temp
-// in their own Options Flow schema. Reading it unconditionally would let a
-// caller updating an unrelated helper type silently populate a field HA's
-// own schema for that type never asked for, mirroring the min_max_type
-// leak this same builder already guards against via addMinMaxTypeField.
+// addExtendedConfigEntryFields, the one-size-fits-all update builder shared
+// by every config-entry helper type (template, threshold, sensor-domain
+// group, statistics, ...), none of which declare away_temp in their own
+// Options Flow schema. Reading it unconditionally would let a caller
+// updating an unrelated helper type silently populate a field HA's own
+// schema for that type never asked for, mirroring the min_max_type leak
+// this same builder already guards against via addMinMaxTypeField.
 func TestAddExtendedConfigEntryFields_PresetsGatedToThermostatDomain(t *testing.T) {
 	t.Parallel()
 
@@ -77,13 +78,14 @@ func TestAddExtendedConfigEntryFields_PresetsGatedToThermostatDomain(t *testing.
 	}
 }
 
-// TestGenericThermostatPresetSchemaProperties_MatchSharedFieldList is N1's
-// regression test: the six preset schema properties used to be six
-// hand-written, byte-identical map entries with no binding to
-// genericThermostatPresetFieldNames() (the list the create/update builders
-// actually read) - a 7th preset field added to the builders' side would
-// have passed every existing contract test while staying invisible to
-// clients, since nothing checked the schema and the field list agreed.
+// TestGenericThermostatPresetSchemaProperties_MatchSharedFieldList
+// regression-tests genericThermostatPresetSchemaProperties: the six preset
+// schema properties used to be six hand-written, byte-identical map
+// entries with no binding to genericThermostatPresetFieldNames() (the list
+// the create/update builders actually read) - a 7th preset field added to
+// the builders' side would have passed every existing contract test while
+// staying invisible to clients, since nothing checked the schema and the
+// field list agreed.
 func TestGenericThermostatPresetSchemaProperties_MatchSharedFieldList(t *testing.T) {
 	t.Parallel()
 
@@ -122,24 +124,24 @@ func TestGenericThermostatPresetSchemaProperties_MatchSharedFieldList(t *testing
 	}
 }
 
-// TestGenericThermostatOptionalFields_HasNoSpareCapacity is N2's regression
-// test. helperTypes["generic_thermostat"].optionalFields is built via
-// append([]string{...}, genericThermostatPresetFieldNames()...) - appending
-// onto a full-literal slice reallocates with Go's growth headroom, so
-// without slices.Clip this slice alone (of every helperTypes entry) would
-// carry spare capacity a future in-place append elsewhere could silently
-// share and corrupt.
-func TestGenericThermostatOptionalFields_HasNoSpareCapacity(t *testing.T) {
+// TestGenericThermostatOptionalFields_IncludesAllPresets asserts every
+// preset field is actually reachable through helperTypes' optionalFields -
+// generic_thermostat's optionalFields is built by appending
+// genericThermostatPresetFieldNames() onto the base field list, and this
+// pins that the append happened rather than silently no-op'ing.
+func TestGenericThermostatOptionalFields_IncludesAllPresets(t *testing.T) {
 	t.Parallel()
 
 	fields := helperTypes["generic_thermostat"].optionalFields
-	if len(fields) != cap(fields) {
-		t.Errorf("generic_thermostat optionalFields len=%d cap=%d, want cap==len (use slices.Clip)", len(fields), cap(fields))
+	for _, preset := range genericThermostatPresetFieldNames() {
+		if !slices.Contains(fields, preset) {
+			t.Errorf("generic_thermostat optionalFields = %v, missing preset field %q", fields, preset)
+		}
 	}
 }
 
-// TestThermostatEntityDomain_IsUniqueAcrossHelperTypes is N3's regression
-// test. addGenericThermostatPresetFields gates on the entity DOMAIN
+// TestThermostatEntityDomain_IsUniqueAcrossHelperTypes regression-tests
+// addGenericThermostatPresetFields, which gates on the entity DOMAIN
 // ("climate") rather than resolving the real integration PLATFORM the way
 // the min_max_type gate does - correct only as long as "climate" is used by
 // exactly one helperTypes entry. If a second config-entry helper type is

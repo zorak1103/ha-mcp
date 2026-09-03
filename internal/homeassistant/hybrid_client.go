@@ -4,6 +4,7 @@ package homeassistant
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -459,6 +460,13 @@ func (c *HybridClient) updateHelperViaOptionsFlow(ctx context.Context, entityID,
 		return fmt.Errorf("unexpected options flow result type: %s", result.Type)
 	}
 
+	// Apply name/icon via Entity Registry BEFORE the unconsumed-field check
+	// below. Both are independent of the options flow schema - an update
+	// carrying icon/name plus a field no step accepted must not skip this
+	// registry write just because the check below has something to report
+	// too.
+	registryErr := c.applyNameIconViaRegistry(ctx, entityID, icon, hasIcon, name, hasName)
+
 	// Reject (not silently drop) any user-supplied field no step's schema
 	// declared. Home Assistant's Options Flow forms use PREVENT_EXTRA
 	// voluptuous schemas, so a stray key would fail the whole request with
@@ -467,23 +475,24 @@ func (c *HybridClient) updateHelperViaOptionsFlow(ctx context.Context, entityID,
 	// successful while quietly discarding a change the caller explicitly
 	// asked for. Checked only after every step has had a chance to claim
 	// it, so a field belonging to a later step (e.g. generic_thermostat's
-	// presets) is not mistaken for an unsupported one.
+	// presets) is not mistaken for an unsupported one. Returned as a
+	// *PartialApplyError, not a plain error: every field every step DID
+	// claim (plus name/icon above) has already been committed by this
+	// point, so internal/handlers must render this as a successful update
+	// carrying a warning, not report the whole call as failed.
 	if unconsumed := unconsumedUserFields(config.Config, consumed); len(unconsumed) > 0 {
-		return fmt.Errorf("helper %q was updated, but field(s) %s were not accepted by any step of its options flow and have NOT been applied", entityID, strings.Join(unconsumed, ", "))
+		return errors.Join(registryErr, &PartialApplyError{Op: PartialApplyUpdate, Fields: unconsumed})
 	}
 
-	// Update name/icon via Entity Registry if provided - neither is part of
-	// any Options Flow schema.
-	return c.applyNameIconViaRegistry(ctx, entityID, icon, hasIcon, name, hasName)
+	return registryErr
 }
 
 // runOptionsFlowSteps submits successive Options Flow form steps, routing
 // caller fields via buildStepSubmission, until HA returns something other
 // than a form (create_entry, abort, or an unexpected type) or the step cap
-// is hit. Subsumes the former single-shot submission plus the
-// generic_thermostat-specific submitOptionsFlowPresetsStep special case:
-// a presets step is just another iteration where no user field matches and
-// the payload is the round-tripped current values.
+// is hit. A generic_thermostat "presets" step is just another iteration
+// where no user field matches and the payload is the round-tripped current
+// values - no special case needed.
 func (c *HybridClient) runOptionsFlowSteps(ctx context.Context, initFlowID string, first *OptionsFlowResult, userConfig map[string]any, consumed map[string]bool) (*OptionsFlowResult, error) {
 	const maxUpdateSteps = 8
 	result := first
@@ -675,7 +684,14 @@ func (c *HybridClient) createHelperViaConfigFlow(ctx context.Context, config Hel
 		// a genuinely-unrecognized field the caller explicitly supplied.
 		consumed["name"] = true
 		if unconsumed := unconsumedUserFields(userConfig, consumed); len(unconsumed) > 0 {
-			return c.unacceptedCreateFieldsError(ctx, config, unconsumed)
+			// The config entry already exists at this point - this is a
+			// *PartialApplyError, not a plain error, so internal/handlers
+			// (which predicts the created entity id with more platform
+			// knowledge than this client has - group/random/switch_as_x's
+			// dynamic prefixes) renders a successful create result carrying
+			// a warning instead of reporting the whole create as failed and
+			// risking a caller retry that would duplicate the helper.
+			return &PartialApplyError{Op: PartialApplyCreate, Platform: config.Platform, Fields: unconsumed}
 		}
 		return nil
 	}
@@ -691,33 +707,6 @@ func (c *HybridClient) createHelperViaConfigFlow(ctx context.Context, config Hel
 	// it, same as every other exit path above.
 	_ = c.rest.AbortConfigEntryFlow(ctx, flowResult.FlowID)
 	return fmt.Errorf("unexpected config entry flow result type: %s", flowResult.Type)
-}
-
-// unacceptedCreateFieldsError reports caller-supplied fields no step of
-// the create flow ever claimed. The config entry already exists by the
-// time this is called (unconsumedUserFields is only checked inside the
-// flowTypeCreateEntry branch), so the message must not read like create
-// failed outright - a caller that treats this as "nothing happened" and
-// retries create would duplicate the helper. See CLAUDE.md's #202 entry
-// for why this is a report-only failure, not an automatic rollback: HA's
-// generic_thermostat added its "presets" step in a recent release, so an
-// older HA can leave a caller-supplied preset field unclaimed through no
-// fault of the caller.
-func (c *HybridClient) unacceptedCreateFieldsError(ctx context.Context, config HelperConfig, unconsumed []string) error {
-	const suffix = "the helper exists, do not retry create; use manage_helper update or delete it"
-	entityID, predictErr := c.predictEntityIDForConfigEntry(ctx, config)
-	if predictErr != nil {
-		return fmt.Errorf("helper created, but field(s) %s were not accepted by any step of the %s config flow and have NOT been applied - %s",
-			strings.Join(unconsumed, ", "), config.Platform, suffix)
-	}
-	// entityID is a slugify-based prediction (predictEntityIDForConfigEntry),
-	// not a verified fact - CLAUDE.md documents it as flatly wrong for
-	// switch_as_x. Presenting it as certain would let a caller act on a
-	// wrong id, get a 404 from the update/delete this message recommends,
-	// and conclude create failed - retrying and duplicating the helper,
-	// exactly what this message exists to prevent. "likely" hedges it.
-	return fmt.Errorf("helper created (likely %s, a predicted id - verify with manage_helper get_details/list), but field(s) %s were not accepted by any step of the %s config flow and have NOT been applied - %s",
-		entityID, strings.Join(unconsumed, ", "), config.Platform, suffix)
 }
 
 // applyClientLevelCreateDefaults fills in defaults HA's own schema doesn't

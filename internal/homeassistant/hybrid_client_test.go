@@ -2,10 +2,12 @@ package homeassistant
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -2975,7 +2977,7 @@ func TestUpdateHelperViaOptionsFlow_UnknownFieldStillFailsAfterPresetsStep(t *te
 }
 
 // TestUpdateHelperViaOptionsFlow_UnconsumedFieldErrorSaysUpdateWasApplied
-// pins W1's remediated wording: by the time the unconsumed-field check
+// guards the remediated wording: by the time the unconsumed-field check
 // runs, HA has already committed the fields every step DID claim (e.g.
 // heater below) - the error must say the update was applied and only the
 // named field(s) were not, not read like nothing happened at all (a
@@ -3009,21 +3011,81 @@ func TestUpdateHelperViaOptionsFlow_UnconsumedFieldErrorSaysUpdateWasApplied(t *
 	if err == nil {
 		t.Fatal("expected an error for an unsupported field, got nil")
 	}
-	if !strings.Contains(err.Error(), "nonsense_temp") {
-		t.Errorf("error should name the unaccepted field, got: %v", err)
+	// This must be a *PartialApplyError, not a plain error - it signals
+	// to internal/handlers that the fields every step DID claim (heater)
+	// have already been committed, so the caller must render a success
+	// result carrying a warning, not report the whole update as failed.
+	var partial *PartialApplyError
+	if !errors.As(err, &partial) {
+		t.Fatalf("error = %v (%T), want a *PartialApplyError", err, err)
 	}
-	if !strings.Contains(err.Error(), "was updated") {
-		t.Errorf("error should state the update was applied, not read as if nothing happened, got: %v", err)
+	if partial.Op != PartialApplyUpdate {
+		t.Errorf("partial.Op = %q, want %q", partial.Op, PartialApplyUpdate)
+	}
+	if !slices.Contains(partial.Fields, "nonsense_temp") {
+		t.Errorf("partial.Fields = %v, want it to contain \"nonsense_temp\"", partial.Fields)
 	}
 	if !strings.Contains(err.Error(), "NOT been applied") {
 		t.Errorf("error should clarify the unaccepted field specifically was NOT applied, got: %v", err)
 	}
 }
 
+// TestUpdateHelperViaOptionsFlow_AppliesNameIconEvenWithUnconsumedField
+// guards that icon/name are extracted from config.Config and applied via
+// the Entity Registry, entirely independent of the options flow schema -
+// the unconsumed-field check below it must not skip that registry write
+// just because it also has something to report.
+func TestUpdateHelperViaOptionsFlow_AppliesNameIconEvenWithUnconsumedField(t *testing.T) {
+	t.Parallel()
+
+	var registryUpdateCalled bool
+	var gotIcon *string
+	mockWS := &mockWSOperations{
+		getStateFunc: func(context.Context, string) (*Entity, error) {
+			return &Entity{EntityID: "climate.my_thermostat"}, nil
+		},
+		updateEntityRegistryEntryFunc: func(_ context.Context, entityID string, cfg EntityRegistryUpdateConfig) (*EntityRegistryEntry, error) {
+			registryUpdateCalled = true
+			gotIcon = cfg.Icon
+			return &EntityRegistryEntry{EntityID: entityID}, nil
+		},
+	}
+	mockREST := &mockRESTOperations{
+		initConfigEntryOptionsFlowFunc: func(context.Context, string) (*OptionsFlowResult, error) {
+			return &OptionsFlowResult{
+				FlowID:     "flowW2",
+				Type:       flowTypeForm,
+				StepID:     "init",
+				DataSchema: []OptionsFlowField{{Name: "heater"}},
+			}, nil
+		},
+		submitConfigEntryOptionsFlowStepFunc: func(context.Context, string, map[string]any) (*OptionsFlowResult, error) {
+			return &OptionsFlowResult{FlowID: "flowW2", Type: flowTypeCreateEntry}, nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	err := client.updateHelperViaOptionsFlow(context.Background(), "climate.my_thermostat", "configW2", HelperConfig{
+		Platform: "climate",
+		Config:   map[string]any{"heater": "switch.heater", "icon": "mdi:new-icon", "nonsense_temp": 1.0},
+	})
+
+	var partial *PartialApplyError
+	if !errors.As(err, &partial) {
+		t.Fatalf("error = %v (%T), want a *PartialApplyError", err, err)
+	}
+	if !registryUpdateCalled {
+		t.Error("UpdateEntityRegistryEntry was not called - icon must be applied even when an unrelated field is rejected")
+	}
+	if gotIcon == nil || *gotIcon != "mdi:new-icon" {
+		t.Errorf("icon sent to registry = %v, want \"mdi:new-icon\"", gotIcon)
+	}
+}
+
 // TestUpdateHelperViaOptionsFlow_GenericThermostatPresetsStepSubmitErrorAborts
-// guards submitOptionsFlowPresetsStep's own abort path, uncovered before this
-// test: if the presets-step submission itself fails, the flow must be
-// aborted with the flow id rather than leaked.
+// guards runOptionsFlowSteps' abort path when a presets-step submission
+// itself fails: the flow must be aborted with the flow id rather than
+// leaked.
 func TestUpdateHelperViaOptionsFlow_GenericThermostatPresetsStepSubmitErrorAborts(t *testing.T) {
 	t.Parallel()
 
@@ -3572,13 +3634,17 @@ func TestCreateHelperViaConfigFlow_PresetFieldReachesPresetsStep(t *testing.T) {
 	}
 }
 
-// TestCreateHelperViaConfigFlow_PresetsStepAbsentReportsUnaccepted pins
-// W1's current, pre-remediation observable behavior: on an HA version whose
-// generic_thermostat config flow has no trailing "presets" step, the flow
-// completes (create_entry) before away_temp is ever claimed by any step's
-// schema, and the resulting error must still name the field - the entry
-// already exists at that point (see CLAUDE.md's #202 entry for why this is
-// a report-only failure, not a rollback).
+// TestCreateHelperViaConfigFlow_PresetsStepAbsentReportsUnaccepted guards
+// this observable behavior: on an HA version whose generic_thermostat
+// config flow has no trailing "presets" step, the flow completes
+// (create_entry) before away_temp is ever claimed by any step's schema,
+// and the resulting error must still name the field - the entry
+// already exists at that point. It must be a *PartialApplyError, not a
+// plain error: internal/handlers (which predicts the created entity id
+// with more platform knowledge than this client has) is what turns this
+// into a "do not retry create" warning on a successful result - the client
+// layer's job is only to report which fields were rejected and by which
+// platform's flow.
 func TestCreateHelperViaConfigFlow_PresetsStepAbsentReportsUnaccepted(t *testing.T) {
 	t.Parallel()
 
@@ -3614,38 +3680,18 @@ func TestCreateHelperViaConfigFlow_PresetsStepAbsentReportsUnaccepted(t *testing
 		},
 	})
 
-	if err == nil || !strings.Contains(err.Error(), "away_temp") {
-		t.Fatalf("got error %v, want it to name the unaccepted field away_temp", err)
+	var partial *PartialApplyError
+	if !errors.As(err, &partial) {
+		t.Fatalf("error = %v (%T), want a *PartialApplyError", err, err)
 	}
-	if !strings.Contains(err.Error(), "helper exists") || !strings.Contains(err.Error(), "do not retry create") {
-		t.Errorf("error should warn the helper already exists and must not be recreated, got: %v", err)
+	if partial.Op != PartialApplyCreate {
+		t.Errorf("partial.Op = %q, want %q", partial.Op, PartialApplyCreate)
 	}
-	// W1: predictEntityIDForConfigEntry is a slugify guess (CLAUDE.md
-	// documents it as flatly wrong for switch_as_x) - the message must not
-	// present "climate.my_thermostat" as a verified fact the caller can act
-	// on directly, since a wrong id would make the suggested update/delete
-	// 404, leading a caller who trusts it to conclude create failed and
-	// retry, duplicating the helper.
-	if strings.Contains(err.Error(), "climate.my_thermostat") && !strings.Contains(err.Error(), "likely") {
-		t.Errorf("error names a predicted entity id as fact, want it hedged (e.g. \"likely\"): %v", err)
+	if partial.Platform != "generic_thermostat" {
+		t.Errorf("partial.Platform = %q, want %q", partial.Platform, "generic_thermostat")
 	}
-}
-
-// TestUnacceptedCreateFieldsError_PredictionFailureOmitsID covers the
-// branch where predictEntityIDForConfigEntry itself fails (no "name" in
-// config) - the message must still name the field and the "do not retry"
-// warning without fabricating an id.
-func TestUnacceptedCreateFieldsError_PredictionFailureOmitsID(t *testing.T) {
-	t.Parallel()
-
-	client := NewHybridClientWithInterfaces(&mockWSOperations{}, &mockRESTOperations{})
-	err := client.unacceptedCreateFieldsError(context.Background(), HelperConfig{Platform: "generic_thermostat", Config: map[string]any{}}, []string{"away_temp"})
-
-	if err == nil || !strings.Contains(err.Error(), "away_temp") {
-		t.Fatalf("got error %v, want it to name the unaccepted field away_temp", err)
-	}
-	if !strings.Contains(err.Error(), "helper exists") || !strings.Contains(err.Error(), "do not retry create") {
-		t.Errorf("error should warn the helper already exists and must not be recreated, got: %v", err)
+	if !slices.Contains(partial.Fields, "away_temp") {
+		t.Errorf("partial.Fields = %v, want it to contain \"away_temp\"", partial.Fields)
 	}
 }
 

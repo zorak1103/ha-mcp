@@ -214,18 +214,14 @@ func (s *GenericThermostatIntegrationTestSuite) TestGenericThermostatLifecycle()
 }
 
 func (s *GenericThermostatIntegrationTestSuite) TestGenericThermostatWithTolerances() {
-	// Create source entities (input_boolean + template switch, input_number + template sensor)
-	boolEntityID, heaterEntityID, inputEntityID, sensorEntityID := s.createThermostatSources("thermo_tol", 22.0)
+	// Create source entities (input_boolean + template switch, input_number + template sensor).
+	// createThermostatSources already registers cleanup for all four source
+	// entities - only the thermostat itself needs registering here.
+	_, heaterEntityID, _, sensorEntityID := s.createThermostatSources("thermo_tol", 22.0)
 	thermoName := GenerateTestID("thermo_tolerance")
 	thermoEntityID := BuildEntityID("climate", thermoName)
 
-	s.RegisterCleanup(func() {
-		_ = s.Client().DeleteHelper(s.Context(), thermoEntityID)
-		_ = s.Client().DeleteHelper(s.Context(), sensorEntityID)
-		_ = s.Client().DeleteHelper(s.Context(), inputEntityID)
-		_ = s.Client().DeleteHelper(s.Context(), heaterEntityID)
-		_ = s.Client().DeleteHelper(s.Context(), boolEntityID)
-	})
+	s.RegisterCleanup(func() { _ = s.Client().DeleteHelper(s.Context(), thermoEntityID) })
 
 	// Create generic thermostat with tolerances (using API field names)
 	thermoConfig := homeassistant.HelperConfig{

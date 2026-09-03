@@ -339,3 +339,51 @@ func addGenericThermostatPresetFields(r *argReader, entityDomain string) {
 		r.num(field)
 	}
 }
+
+// updateConfigKeyAliases maps a manage_helper arg name to the config map
+// key it lands under once the update builder runs, for the handful of
+// fields Home Assistant's API renames on write (see CLAUDE.md's "Config
+// Entry API Field Mapping" gotcha). splitAppliedFields
+// (helpers_consolidated.go) uses this to report a renamed field as applied
+// under the caller's own arg name rather than mistaking the rename for the
+// field never having been read at all - the two contract tests
+// (TestUpdatableFields_AreActuallyReadByUpdatePath,
+// TestCreatableFields_AreActuallyReadByCreatePath) already depend on this
+// exact table to look up the right config key.
+var updateConfigKeyAliases = map[string]string{
+	"heater_entity_id":        "heater",
+	"target_sensor_entity_id": "target_sensor",
+	"humidifier_entity_id":    "humidifier",
+	"min_max_type":            "type",
+}
+
+// configKeyToArgName is the reverse of updateConfigKeyAliases: HA's
+// options/config flow reports rejected fields by their CONFIG key (e.g.
+// "heater"), but a PartialApplyError warning reads better naming the
+// caller's own arg name (e.g. "heater_entity_id") - the name actually used
+// in the manage_helper call that produced it.
+var configKeyToArgName = reverseAliasMap(updateConfigKeyAliases)
+
+func reverseAliasMap(aliases map[string]string) map[string]string {
+	reversed := make(map[string]string, len(aliases))
+	for argName, configKey := range aliases {
+		reversed[configKey] = argName
+	}
+	return reversed
+}
+
+// argNamesForConfigKeys translates a *homeassistant.PartialApplyError's
+// Fields (HA's config key names) back to the caller's manage_helper arg
+// names via configKeyToArgName, passing through any field with no known
+// alias unchanged.
+func argNamesForConfigKeys(configKeys []string) []string {
+	argNames := make([]string, len(configKeys))
+	for i, key := range configKeys {
+		if argName, ok := configKeyToArgName[key]; ok {
+			argNames[i] = argName
+		} else {
+			argNames[i] = key
+		}
+	}
+	return argNames
+}

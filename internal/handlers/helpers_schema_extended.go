@@ -211,11 +211,8 @@ func buildExtendedHelperProperties() map[string]mcp.JSONSchema {
 			Description: "Hot tolerance in degrees (generic_thermostat)",
 		},
 		// away_temp/eco_temp/home_temp/comfort_temp/sleep_temp/activity_temp
-		// are generated below from genericThermostatPresets (N1: six
-		// byte-identical property blocks here previously had no binding to
-		// genericThermostatPresetFieldNames() - a 7th preset field added to
-		// the builders' side would have passed every existing contract test
-		// while staying invisible to callers).
+		// are generated below from genericThermostatPresets, not
+		// hand-duplicated here - see genericThermostatPresetSchemaProperties.
 
 		// switch_as_x specific fields
 		"target_domain": {
@@ -262,7 +259,7 @@ func buildExtendedHelperProperties() map[string]mcp.JSONSchema {
 // temperature schema properties from genericThermostatPresets
 // (helpers_config_builders_extended.go) - the same list the create/update
 // config builders read, so a preset field can't be added to one side
-// without appearing on the other (N1).
+// without appearing on the other.
 func genericThermostatPresetSchemaProperties() map[string]mcp.JSONSchema {
 	props := make(map[string]mcp.JSONSchema, len(genericThermostatPresets))
 	for _, preset := range genericThermostatPresets {
