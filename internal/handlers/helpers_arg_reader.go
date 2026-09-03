@@ -558,8 +558,16 @@ func (r *argReader) raw(key string) {
 // dicts, an action's shape (target/data) is arbitrary by nature and can't
 // be validated as flat, so it's bounded by nesting depth and total node
 // count instead.
+//
+// maxActionDepth=16 leaves headroom for a routine, non-adversarial `choose`
+// action: list -> option map -> conditions/sequence lists -> action map ->
+// target map -> entity_id list -> string is already depth 9 with the
+// leaf at depth 1 counted as the outermost list; nested `if`/`repeat`
+// blocks or a `choose` two levels deep push that further. A tighter bound
+// (8, this constant's original value) rejected that shape outright - see
+// TestActionValue_AcceptsRealisticChooseAction.
 const (
-	maxActionDepth = 8
+	maxActionDepth = 16
 	maxActionNodes = 2000
 )
 

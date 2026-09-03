@@ -71,6 +71,19 @@ on its part. If a deployment needs to freeze what a whitelisted tool can do, use
 entries instead of the bare tool name, e.g. `"manage_config_entry:list"` and
 `"manage_config_entry:get"` rather than `"manage_config_entry"`.
 
+**Blocking `manage_script`/`manage_automation` alone does not block script execution once
+`manage_helper` is allowed.** The 15 `template_*` helper subtypes (`template_button`,
+`template_switch`, `template_lock`, ...) accept HA action-sequence fields (`press`, `turn_on`,
+`lock`/`unlock`, `install`, `trigger`, ...) — the same shape as an automation's `action:` block —
+directly in `manage_helper:create`/`manage_helper:update`. `access_control.go` classifies both
+as plain writes with no awareness of the embedded action, so a policy like
+`blacklist: ["manage_script:*", "manage_automation:*"]` (or a whitelist including `manage_helper`
+but not those tools) still allows: create a `template_button` with
+`press={"action":"shell_command.dangerous"}`, then `call_service button.press` to run it. A
+deployment that intends to prevent arbitrary service-call execution must also filter
+`manage_helper:create` and `manage_helper:update` explicitly. `read_only` mode is unaffected —
+it already blocks all writes, including these.
+
 ### Blacklist Mode
 
 When whitelist is empty, use blacklist to block specific tools/actions:

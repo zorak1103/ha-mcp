@@ -231,6 +231,46 @@ func TestActionValue_AcceptsExactlyMaxKeyLen(t *testing.T) {
 	}
 }
 
+func TestActionValue_AcceptsRealisticChooseAction(t *testing.T) {
+	t.Parallel()
+
+	// A routine HA action sequence: a top-level list containing a choose
+	// block, whose option nests a conditions list and a sequence list, whose
+	// action has a target with a list-valued entity_id. This shape (~depth 9
+	// counting the outermost list as depth 1) was rejected outright by the
+	// original maxActionDepth=8 bound - W1 in the adversarial review of
+	// issue #206's template subtypes.
+	action := []any{
+		map[string]any{
+			"choose": []any{
+				map[string]any{
+					"conditions": []any{
+						map[string]any{"condition": "state", "entity_id": "input_boolean.x", "state": "on"},
+					},
+					"sequence": []any{
+						map[string]any{
+							"action": "light.turn_on",
+							"target": map[string]any{"entity_id": []any{"light.a", "light.b"}},
+						},
+					},
+				},
+			},
+			"default": []any{
+				map[string]any{"action": "light.turn_off", "target": map[string]any{"entity_id": []any{"light.a"}}},
+			},
+		},
+	}
+
+	config := map[string]any{}
+	args := map[string]any{"turn_on": action}
+
+	r := newArgReader(config, args)
+	r.actionValue("turn_on")
+	if err := r.err(); err != nil {
+		t.Fatalf("actionValue() error = %v, want nil for a realistic choose action", err)
+	}
+}
+
 func TestActionValue_SkipsAbsentAndNull(t *testing.T) {
 	t.Parallel()
 

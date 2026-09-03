@@ -284,3 +284,29 @@ func TestParseHelperEntityID(t *testing.T) {
 		})
 	}
 }
+
+// TestHelperPlatforms_CoversEveryHelperTypeValidEntityDomain pins that
+// HelperPlatforms (this file) lists every entity domain any helperTypes
+// entry declares in validEntityDomains (helpers_consolidated.go). A domain
+// missing from HelperPlatforms breaks ParseHelperEntityID for that type's
+// entities outright (issue #211's regression class); a domain present here
+// but never checked against buildNewlyWidenedHelperDomains'
+// preExistingHelperOnlyDomains would silently widen checkHelperOnlyDomain's
+// gated set too - this test is the trip wire for the first half of that,
+// so a future helper type addition can't forget HelperPlatforms the way
+// this branch had to add 16 domains for by hand.
+func TestHelperPlatforms_CoversEveryHelperTypeValidEntityDomain(t *testing.T) {
+	t.Parallel()
+
+	platforms := make(map[string]bool, len(HelperPlatforms))
+	for _, p := range HelperPlatforms {
+		platforms[p] = true
+	}
+	for typeName, meta := range helperTypes {
+		for _, domain := range meta.validEntityDomains {
+			if !platforms[domain] {
+				t.Errorf("helper type %q declares validEntityDomains domain %q, missing from HelperPlatforms", typeName, domain)
+			}
+		}
+	}
+}

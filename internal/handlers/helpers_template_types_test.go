@@ -82,6 +82,81 @@ func TestTemplateSubtypeTable_SharedArgNamesAgree(t *testing.T) {
 	}
 }
 
+// TestTemplateSubtypeTable_InclusivePairsReferenceDeclaredFields pins that
+// every inclusivePairs entry names an arg the same subtype actually
+// declares in its fields list - subtypeConfigKey silently falls back to the
+// arg name itself for an unknown field, which would make a typo in
+// inclusivePairs fail to compile but also fail to ever be checked.
+func TestTemplateSubtypeTable_InclusivePairsReferenceDeclaredFields(t *testing.T) {
+	t.Parallel()
+
+	for typeName, subtype := range templateSubtypes {
+		declared := make(map[string]bool, len(subtype.fields))
+		for _, f := range subtype.fields {
+			declared[f.arg] = true
+		}
+		for _, pair := range subtype.inclusivePairs {
+			for _, arg := range pair {
+				if !declared[arg] {
+					t.Errorf("%s: inclusivePairs references undeclared field %q", typeName, arg)
+				}
+			}
+		}
+	}
+}
+
+// TestBuildTemplateHelperConfig_CoverOpenCloseInclusivePair pins the C1 fix:
+// checkInclusivePairs must resolve "open"/"close" to their renamed HA
+// config keys ("open_cover"/"close_cover") before checking presence - an
+// earlier version checked the caller-facing arg names directly against the
+// post-rename config map and could never find them, silently accepting an
+// open-without-close config that HA's own vol.Inclusive schema rejects.
+func TestBuildTemplateHelperConfig_CoverOpenCloseInclusivePair(t *testing.T) {
+	t.Parallel()
+
+	build := buildTemplateHelperConfig("template_cover")
+	openAction := map[string]any{"action": "switch.turn_on"}
+	closeAction := map[string]any{"action": "switch.turn_off"}
+
+	tests := []struct {
+		name    string
+		args    map[string]any
+		wantErr bool
+	}{
+		{
+			name:    "open without close fails",
+			args:    map[string]any{"state": "{{ 1 }}", "open": openAction},
+			wantErr: true,
+		},
+		{
+			name:    "close without open fails",
+			args:    map[string]any{"state": "{{ 1 }}", "close": closeAction},
+			wantErr: true,
+		},
+		{
+			name:    "both supplied succeeds",
+			args:    map[string]any{"state": "{{ 1 }}", "open": openAction, "close": closeAction},
+			wantErr: false,
+		},
+		{
+			name:    "neither supplied succeeds",
+			args:    map[string]any{"state": "{{ 1 }}"},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			config := map[string]any{}
+			err := build(config, tt.args)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("buildTemplateHelperConfig(%q)(...) error = %v, wantErr %v", "template_cover", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 // TestResolveTemplateFieldsForDomain_IncludesUnambiguousFieldNotOwnedByAnySubtypeDomain
 // pins the non-ambiguous branch of resolveTemplateFieldsForDomain's
 // len(configKeysByArg[arg]) > 1 check: "fan_speed_list" is declared by
@@ -106,10 +181,11 @@ func TestResolveTemplateFieldsForDomain_IncludesUnambiguousFieldNotOwnedByAnySub
 // TestResolveTemplateFieldsForDomain_ReturnsFieldsSortedByArgName pins the
 // determinism fix for resolveTemplateFieldsForDomain's result order:
 // firstByArg/matchedByArg are maps, so without an explicit sort the
-// returned slice's order (and, for two arg names sharing one HA config
-// key - "code_format"/"lock_code_format" both write "code_format" for
-// template_lock - which one is processed, and therefore wins, last) would
-// vary from one call to the next.
+// returned slice's order - and, for two arg names that are both single-owner
+// but resolve to the same HA config key for a domain that owns neither
+// (dropped by the collision check either way, but which one gets processed
+// first still matters if a future change relaxes that check) - would vary
+// from one call to the next.
 func TestResolveTemplateFieldsForDomain_ReturnsFieldsSortedByArgName(t *testing.T) {
 	t.Parallel()
 
@@ -143,40 +219,58 @@ func TestResolveTemplateFieldsForDomain_DeterministicAcrossCalls(t *testing.T) {
 	}
 }
 
-// TestResolveTemplateFieldsForDomain_LockCodeFormatRenameWins pins the
-// specific collision the sort fix resolves: template_lock's own
-// "lock_code_format" (haKey "code_format") and template_alarm_control_panel's
-// unrelated, unambiguous "code_format" (no haKey) both resolve to the same
-// HA config key "code_format" once matched/included for domain "lock".
-// Sorting by arg name makes "code_format" (alarm's, alphabetically first)
-// process before "lock_code_format" (lock's own field) - so lock's own
-// field deterministically wins as the last write, which is what
-// addTemplateConfigEntryUpdateFields relies on for a template_lock update.
-func TestResolveTemplateFieldsForDomain_LockCodeFormatRenameWins(t *testing.T) {
+// TestResolveTemplateFieldsForDomain_DropsCollidingUnmatchedField pins the
+// W5 fix (issue #206 adversarial review): template_alarm_control_panel's
+// bare "code_format" (single-owner, so it would otherwise pass the
+// ambiguity check) resolves to the same HA config key ("code_format") as
+// template_lock's own "lock_code_format" (haKey "code_format") for domain
+// "lock". An earlier version kept both and relied on sorted-processing
+// order ("code_format" < "lock_code_format") for lock's own field to win as
+// the last write - which meant a caller updating a lock via the plain
+// "code_format" arg name got it written straight through instead of being
+// reported as unresolved, defeating the very rename template_lock exists
+// for. resolveTemplateFieldsForDomain must now drop the colliding
+// non-matched field entirely rather than merely order it first.
+func TestResolveTemplateFieldsForDomain_DropsCollidingUnmatchedField(t *testing.T) {
 	t.Parallel()
 
 	fields := resolveTemplateFieldsForDomain("lock")
 	var sawCodeFormat, sawLockCodeFormat bool
-	var codeFormatIdx, lockCodeFormatIdx int
-	for i, f := range fields {
+	for _, f := range fields {
 		switch f.arg {
 		case "code_format":
 			sawCodeFormat = true
-			codeFormatIdx = i
 		case "lock_code_format":
 			sawLockCodeFormat = true
-			lockCodeFormatIdx = i
 			if f.configKey() != "code_format" {
 				t.Errorf("lock_code_format.configKey() = %q, want %q", f.configKey(), "code_format")
 			}
 		}
 	}
-	if !sawCodeFormat || !sawLockCodeFormat {
-		t.Fatalf("resolveTemplateFieldsForDomain(%q) = %+v, want both code_format and lock_code_format present", "lock", fields)
+	if sawCodeFormat {
+		t.Errorf("resolveTemplateFieldsForDomain(%q) includes colliding unmatched field %q; fields = %+v", "lock", "code_format", fields)
 	}
-	if lockCodeFormatIdx < codeFormatIdx {
-		t.Errorf("lock_code_format at index %d, code_format at index %d - lock's own field must be processed last to win", lockCodeFormatIdx, codeFormatIdx)
+	if !sawLockCodeFormat {
+		t.Fatalf("resolveTemplateFieldsForDomain(%q) is missing the domain's own field %q; fields = %+v", "lock", "lock_code_format", fields)
 	}
+}
+
+// TestResolveTemplateFieldsForDomain_AlarmControlPanelKeepsItsOwnCodeFormat
+// pins the other side of the W5 fix: for the domain that actually owns the
+// bare "code_format" arg, it must still be resolved, not dropped by the
+// collision check (matchedConfigKeys is built from THIS domain's matched
+// fields, so alarm's own "code_format" naturally collides with itself and
+// must not be treated as a foreign collision).
+func TestResolveTemplateFieldsForDomain_AlarmControlPanelKeepsItsOwnCodeFormat(t *testing.T) {
+	t.Parallel()
+
+	fields := resolveTemplateFieldsForDomain("alarm_control_panel")
+	for _, f := range fields {
+		if f.arg == "code_format" {
+			return
+		}
+	}
+	t.Fatalf("resolveTemplateFieldsForDomain(%q) dropped its own field %q; fields = %+v", "alarm_control_panel", "code_format", fields)
 }
 
 // TestTemplateHelperProperties_DeterministicAcrossCalls guards against

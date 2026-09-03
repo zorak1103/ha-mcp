@@ -1,6 +1,6 @@
 # Helper Selection
 
-26 helper types are available via `manage_helper action=create`. Choosing the right type and knowing how entity IDs are derived prevents the most common helper mistakes.
+41 helper types are available via `manage_helper action=create`. Choosing the right type and knowing how entity IDs are derived prevents the most common helper mistakes.
 
 ## Entity ID rules (critical)
 
@@ -9,7 +9,7 @@ The parameter that controls the entity ID differs by helper group:
 | Helper types                                                                                                                                                               | Entity ID controlled by         | Example                                               |
 | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- | ----------------------------------------------------- |
 | `input_boolean`, `input_number`, `input_text`, `input_select`, `input_datetime`, `input_button`, `counter`, `timer`, `schedule`                                            | `id` parameter                  | `id: my_switch` → `input_boolean.my_switch`           |
-| `threshold`, `derivative`, `integral`, `group`, `template_sensor`, `template_binary_sensor`, `utility_meter`, `min_max`, `statistics`, `trend`, `random_sensor`, `random_binary_sensor`, `filter`, `tod`, `generic_thermostat`, `generic_hygrostat`, `switch_as_x` | `name` parameter (HA slugifies) | `name: "My Sensor"` → `sensor.my_sensor` (ASCII only) |
+| `threshold`, `derivative`, `integral`, `group`, `template_sensor`, `template_binary_sensor`, `utility_meter`, `min_max`, `statistics`, `trend`, `random_sensor`, `random_binary_sensor`, `filter`, `tod`, `generic_thermostat`, `generic_hygrostat`, `switch_as_x`, and the 15 `template_*` subtypes (`template_alarm_control_panel`, `template_button`, `template_cover`, `template_device_tracker`, `template_event`, `template_fan`, `template_image`, `template_light`, `template_lock`, `template_number`, `template_select`, `template_switch`, `template_update`, `template_vacuum`, `template_weather`) | `name` parameter (HA slugifies) | `name: "My Sensor"` → `sensor.my_sensor` (ASCII only) |
 
 Non-ASCII characters in `name` are stripped during slugification. Use ASCII names for predictable entity IDs with Config Entry helpers.
 
@@ -43,6 +43,15 @@ Non-ASCII characters in `name` are stripped during slugification. Use ASCII name
 | Thermostat from switch + sensor                | `generic_thermostat`     | Switch must be `switch.*`, sensor `sensor.*`   |
 | Humidistat from switch + sensor                | `generic_hygrostat`      | Switch must be `switch.*`, sensor `sensor.*`   |
 | Expose a switch as a cover/fan/light/etc.      | `switch_as_x`            | Switch must be `switch.*`                      |
+| Templated switch with turn_on/turn_off actions | `template_switch`        | `turn_on`/`turn_off` action fields, both optional |
+| Templated light with brightness/color control  | `template_light`         | `turn_on`/`turn_off` required; optional `level`, `hs`, `temperature` |
+| Templated button that runs an action on press  | `template_button`        | `press` action field                           |
+| Templated number input with a set_value action | `template_number`        | `set_value` action required; `min`/`max`/`step` |
+| Templated dropdown with a select_option action | `template_select`        | `options_template` (Jinja list) required       |
+| Templated cover with open/close/stop actions   | `template_cover`         | `open`/`close` must be supplied together or not at all |
+| Templated lock with lock/unlock actions        | `template_lock`          | `lock`/`unlock` required; code format via `lock_code_format` |
+| Templated vacuum with start/stop/pause actions | `template_vacuum`        | `start` required                               |
+| Templated fan with turn_on/turn_off/speed      | `template_fan`           | `state`, `turn_on`, `turn_off` required        |
 
 ## Source entity domain requirements
 
@@ -55,6 +64,14 @@ Workaround: wrap `input_number.my_value` in a `template_sensor` that reads its s
 Config Entry helpers that need a switch (`generic_thermostat`, `generic_hygrostat`, `switch_as_x`) require a `switch.*` entity — not `input_boolean.*`.
 
 Workaround: wrap `input_boolean.my_flag` in a `template_binary_sensor` with `turn_on`/`turn_off` service actions.
+
+## Template subtype action fields
+
+The 15 `template_*` subtypes accept HA action sequences directly (e.g. `press`, `turn_on`,
+`lock`/`unlock`, `set_value`) - the same shape as an automation's `action:` block, either a
+single action object or a list of them. These fields are not evaluated as Jinja and are not
+routed through `helper_action` (every subtype has an empty `supportedActions` list); use
+`call_service` for runtime control of the resulting entity.
 
 ## WebSocket helper updates require ALL mandatory fields
 

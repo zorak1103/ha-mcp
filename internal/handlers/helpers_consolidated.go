@@ -204,9 +204,6 @@ func updatableFieldsDescription() string {
 // helperTypes contains metadata for all supported helper types.
 var helperTypes = buildHelperTypesRegistry()
 
-// buildHelperTypesRegistry returns the base helperTypeMetadata registry for
-// all non-template-subtype helpers, merged with metadata for the
-// template_* subtypes (see helpers_template_types.go).
 // buildInputHelperTypesGroup returns metadata for the basic WS-backed input_* helpers.
 func buildInputHelperTypesGroup() map[string]helperTypeMetadata {
 	return map[string]helperTypeMetadata{
@@ -471,6 +468,9 @@ func buildClimateHelperTypesGroup() map[string]helperTypeMetadata {
 	}
 }
 
+// buildHelperTypesRegistry returns the base helperTypeMetadata registry for
+// all non-template-subtype helpers, merged with metadata for the
+// template_* subtypes (see helpers_template_types.go).
 func buildHelperTypesRegistry() map[string]helperTypeMetadata {
 	m := map[string]helperTypeMetadata{}
 	for _, group := range []map[string]helperTypeMetadata{
@@ -1504,6 +1504,17 @@ func (h *ConsolidatedHelperHandlers) handleDelete(ctx context.Context, client ho
 	}
 
 	if err := ValidateEntityID(entityID); err != nil {
+		return errorResult(err.Error()), nil
+	}
+
+	// Reject a same-domain entity that isn't actually a helper before doing
+	// anything else - same gap checkHelperOnlyDomain closed for update
+	// (issue #206 review, W4): without this, DeleteHelper routes any entity
+	// carrying a config_entry_id to DeleteConfigEntry, which for a real
+	// integration entity (light.hue_office, a Zigbee switch.*, ...) deletes
+	// the whole integration, not just that entity.
+	entityDomain, _ := ParseHelperEntityID(entityID)
+	if err := checkHelperOnlyDomain(ctx, client, entityID, entityDomain); err != nil {
 		return errorResult(err.Error()), nil
 	}
 
@@ -2751,41 +2762,47 @@ func hasAnyUpdatableSourceEntityField(args map[string]any) bool {
 	return false
 }
 
-// checkUpdateSourceEntityDomain re-validates domain-constrained source
-// fields on update (create-time validation alone left helpers with domain-
-// constrained source fields updatable into a mismatched source with no
-// preflight, since update never reused checkSourceEntityDomain). A registry lookup failure degrades to an
-// unchecked update rather than blocking a legitimate edit, mirroring
-// configWriteGuardError's "checked=false, proceed anyway" convention
-// (yaml_defined.go:19-20) - unlike mergeCurrentHelperState's merge-fetch
-// failure, skipping this check only skips a validation, not a data-loss risk.
-//
-// This fetch and HybridClient.UpdateHelper's own registry fetch immediately
-// afterward are not deduplicated: UpdateHelper's fetch goes through its
-// internal c.ws.GetEntityRegistry (bypassing CachedClient by construction,
-// the same way DeleteHelper's routing fetch does), so even routing this
-// call through a caching client would not save the second WS round-trip.
-// Sharing one fetch across the handlers/homeassistant package boundary
-// would mean threading entity-registry entries through the Client
-// interface's UpdateHelper signature - a bigger interface change than the
-// second registry fetch's cost justifies today; hasAnyUpdatableSourceEntityField
-// already skips this fetch entirely for the common case where the update
-// touches no source-constrained field.
+// preExistingHelperOnlyDomains are the entity domains helperTypes already
+// legitimately owned before issue #206's 15 template_* subtypes (sensor,
+// binary_sensor, climate, humidifier, select) plus the original WS-helper
+// domains (input_*, counter, timer, schedule, group) - domains
+// checkHelperOnlyDomain deliberately does NOT gate. They have the same
+// real-integration-collision ambiguity in principle (sensor/binary_sensor
+// already had it before this branch), but are partially covered by
+// checkUpdateSourceEntityDomain/resolveConfigEntryPlatformForMinMaxType
+// already; conflating the two would grow this fix well beyond the
+// regression it's closing. This is the one hand-maintained literal in this
+// group - newlyWidenedHelperDomains below is derived from it plus
+// helperTypes so it can't drift out of sync with a newly added helper type.
+var preExistingHelperOnlyDomains = map[string]bool{
+	"sensor": true, "binary_sensor": true, "climate": true, "humidifier": true, "select": true,
+	"input_boolean": true, "input_number": true, "input_text": true, "input_select": true,
+	"input_datetime": true, "input_button": true, "counter": true, "timer": true,
+	"schedule": true, "group": true,
+}
+
 // newlyWidenedHelperDomains is the set of entity domains HelperPlatforms
 // (helper_common.go) gained for the 15 new template_* subtypes (issue
 // #206) plus switch_as_x's siren/valve targets - domains a real,
 // non-helper integration can also create entities in (a Hue light is
-// domain "light" too, a Zigbee plug is domain "switch"). Domains that
-// predate this branch (sensor, binary_sensor, climate, humidifier, select)
-// have the same ambiguity in principle, but are deliberately left alone
-// here: they're pre-existing and partially covered by
-// checkUpdateSourceEntityDomain/resolveConfigEntryPlatformForMinMaxType
-// already; conflating the two would grow this fix well beyond the
-// regression it's closing.
-var newlyWidenedHelperDomains = map[string]bool{
-	"alarm_control_panel": true, "button": true, "cover": true, "device_tracker": true,
-	"event": true, "fan": true, "image": true, "light": true, "lock": true, "number": true,
-	"switch": true, "update": true, "vacuum": true, "weather": true, "siren": true, "valve": true,
+// domain "light" too, a Zigbee plug is domain "switch"). Derived from
+// helperTypes' validEntityDomains minus preExistingHelperOnlyDomains, so a
+// future helper type touching a new domain is automatically covered by
+// checkHelperOnlyDomain without anyone having to remember to update this
+// set by hand - the exact drift risk a hand-maintained list here would
+// otherwise reopen.
+var newlyWidenedHelperDomains = buildNewlyWidenedHelperDomains()
+
+func buildNewlyWidenedHelperDomains() map[string]bool {
+	m := map[string]bool{}
+	for _, meta := range helperTypes {
+		for _, domain := range meta.validEntityDomains {
+			if !preExistingHelperOnlyDomains[domain] {
+				m[domain] = true
+			}
+		}
+	}
+	return m
 }
 
 // widenedHelperOnlyDomains maps each of newlyWidenedHelperDomains to the
@@ -2848,6 +2865,29 @@ func checkHelperOnlyDomain(ctx context.Context, client homeassistant.Client, ent
 	return fmt.Errorf("cannot verify %s is a helper entity: entity not found in entity registry", entityID)
 }
 
+// checkUpdateSourceEntityDomain re-validates domain-constrained source
+// fields on update (create-time validation alone left helpers with domain-
+// constrained source fields updatable into a mismatched source with no
+// preflight, since update never reused checkSourceEntityDomain). A registry lookup failure degrades to an
+// unchecked update rather than blocking a legitimate edit, mirroring
+// configWriteGuardError's "checked=false, proceed anyway" convention
+// (yaml_defined.go:19-20) - unlike mergeCurrentHelperState's merge-fetch
+// failure, skipping this check only skips a validation, not a data-loss risk.
+//
+// This fetch, checkHelperOnlyDomain's own fetch, and
+// HybridClient.UpdateHelper's routing fetch immediately afterward are not
+// deduplicated - up to three GetEntityRegistry round-trips per update.
+// UpdateHelper's fetch goes through its internal c.ws.GetEntityRegistry
+// (bypassing CachedClient by construction, the same way DeleteHelper's
+// routing fetch does), so even routing this call through a caching client
+// would not save that round-trip; checkHelperOnlyDomain's fetch only fires
+// for the 16 domains gated in widenedHelperOnlyDomains. Sharing one fetch
+// across the handlers/homeassistant package boundary would mean threading
+// entity-registry entries through the Client interface's UpdateHelper
+// signature - a bigger interface change than the fetch cost justifies
+// today; hasAnyUpdatableSourceEntityField already skips this particular
+// fetch entirely for the common case where the update touches no
+// source-constrained field.
 func checkUpdateSourceEntityDomain(ctx context.Context, client homeassistant.Client, entityID string, args map[string]any) error {
 	if !hasAnyUpdatableSourceEntityField(args) {
 		return nil

@@ -1219,6 +1219,79 @@ func TestManageHelper_Update_WidenedDomainHardFailsWhenEntityNotInRegistry(t *te
 	}
 }
 
+// TestManageHelper_Delete_RejectsNonHelperEntityInWidenedDomain is
+// handleDelete's mirror of TestManageHelper_Update_RejectsNonHelperEntityInWidenedDomain
+// (W4 of the issue #206 review): handleDelete had no checkHelperOnlyDomain
+// call at all, so DeleteHelper - which routes any entity carrying a
+// config_entry_id to DeleteConfigEntry - would delete a real integration's
+// whole config entry (not just the one entity) for a same-domain, non-helper
+// target like light.hue_office.
+func TestManageHelper_Delete_RejectsNonHelperEntityInWidenedDomain(t *testing.T) {
+	t.Parallel()
+
+	entityID := "light.hue_office"
+	client := &UniversalMockClient{
+		GetEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+			return []homeassistant.EntityRegistryEntry{
+				{EntityID: entityID, Platform: "hue", ConfigEntryID: "real_config_entry"},
+			}, nil
+		},
+		DeleteHelperFn: func(context.Context, string) error {
+			t.Fatal("DeleteHelper should not be called for an entity that isn't a helper")
+			return nil
+		},
+	}
+
+	h := NewConsolidatedHelperHandlers()
+	result, err := h.handleManageHelper(context.Background(), client, map[string]any{
+		"action":    "delete",
+		"entity_id": entityID,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected delete on %s (platform \"hue\") to be rejected", entityID)
+	}
+	if !strings.Contains(result.Content[0].Text, "hue") {
+		t.Errorf("error message = %q, want it to name the owning platform %q", result.Content[0].Text, "hue")
+	}
+}
+
+// TestManageHelper_Delete_AllowsHelperEntityInWidenedDomain is the
+// positive-path complement: a genuine template_* subtype helper entity in
+// a newly widened domain must still delete successfully.
+func TestManageHelper_Delete_AllowsHelperEntityInWidenedDomain(t *testing.T) {
+	t.Parallel()
+
+	entityID := "light.my_template"
+	client := &UniversalMockClient{
+		GetEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+			return []homeassistant.EntityRegistryEntry{
+				{EntityID: entityID, Platform: platformTemplate, ConfigEntryID: "helper_config_entry"},
+			}, nil
+		},
+		DeleteHelperFn: func(context.Context, string) error {
+			return nil
+		},
+		GetStateFn: func(context.Context, string) (*homeassistant.Entity, error) {
+			return nil, fmt.Errorf("not found")
+		},
+	}
+
+	h := NewConsolidatedHelperHandlers()
+	result, err := h.handleManageHelper(context.Background(), client, map[string]any{
+		"action":    "delete",
+		"entity_id": entityID,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected delete on genuine helper %s to succeed, got: %s", entityID, result.Content[0].Text)
+	}
+}
+
 // =============================================================================
 // manage_helper - ID vs Name Entity Slug Tests
 // =============================================================================

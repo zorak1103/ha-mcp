@@ -3,6 +3,7 @@ package handlers
 import (
 	"fmt"
 	"slices"
+	"sync"
 
 	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
@@ -132,7 +133,7 @@ var templateSubtypes = map[string]templateSubtype{
 		domain: "image",
 		fields: []templateField{
 			{arg: "url", kind: tplTemplate, required: true, desc: "Image URL template (template_image, required)"},
-			{arg: "verify_ssl", kind: tplBool, desc: "Verify SSL certificates (template_image, HA default true)"},
+			{arg: "verify_ssl", kind: tplBool, desc: "Verify SSL certificates (template_image, HA default true) - setting false disables TLS verification for HA's server-side fetch of the caller-controlled url template; only disable for a known, trusted, non-HTTPS/self-signed source"},
 		},
 	},
 	"template_light": {
@@ -239,10 +240,6 @@ var templateUniversalFields = []templateField{
 	{arg: "device_id", kind: tplString, desc: "Device to attach this entity to (any template_* helper)"},
 }
 
-// perTypeDeviceClassSupport lists template subtypes whose CONFIG_FLOW (not
-// OPTIONS_FLOW) schema declares device_class - config-time only, per HA's
-// generate_schema. Reuses the existing shared "device_class" property;
-// update exclusion for these four is wired via perTypeUpdateExcludedFields.
 // perTypeDeviceClassSupport lists template subtypes whose CONFIG_FLOW
 // schema declares device_class, per HA's generate_schema
 // (homeassistant/components/template/config_flow.py). Read on create by
@@ -328,16 +325,44 @@ func buildTemplateHelperConfig(typeName string) configBuilderFunc {
 		if err := r.err(); err != nil {
 			return err
 		}
-		for _, pair := range subtype.inclusivePairs {
-			_, hasA := config[pair[0]]
-			_, hasB := config[pair[1]]
-			if hasA != hasB {
-				return fmt.Errorf("%s and %s must be supplied together or not at all", pair[0], pair[1])
-			}
+		if err := checkInclusivePairs(subtype, config); err != nil {
+			return err
 		}
 		config["template_type"] = subtype.domain
 		return nil
 	}
+}
+
+// checkInclusivePairs enforces subtype's vol.Inclusive field pairs against
+// config (post-argReader, keyed by each field's real HA configKey), not
+// against the caller-facing arg names the pairs are declared in:
+// readTemplateField renames each field to its configKey (e.g. "open" ->
+// "open_cover") before this runs, so checking config[pair[0]]/config[pair[1]]
+// directly - the caller-facing arg names - as an earlier version did, always
+// misses. subtypeConfigKey resolves each pair element's arg name to the
+// configKey actually present in config.
+func checkInclusivePairs(subtype templateSubtype, config map[string]any) error {
+	for _, pair := range subtype.inclusivePairs {
+		_, hasA := config[subtypeConfigKey(subtype, pair[0])]
+		_, hasB := config[subtypeConfigKey(subtype, pair[1])]
+		if hasA != hasB {
+			return fmt.Errorf("%s and %s must be supplied together or not at all", pair[0], pair[1])
+		}
+	}
+	return nil
+}
+
+// subtypeConfigKey resolves arg to the configKey subtype's own field
+// declaration uses, falling back to arg itself if subtype declares no field
+// by that name (shouldn't happen for a well-formed inclusivePairs entry -
+// see TestTemplateSubtypeTable_InclusivePairsReferenceDeclaredFields).
+func subtypeConfigKey(subtype templateSubtype, arg string) string {
+	for _, f := range subtype.fields {
+		if f.arg == arg {
+			return f.configKey()
+		}
+	}
+	return arg
 }
 
 func readTemplateField(r *argReader, f templateField) {
@@ -385,6 +410,18 @@ func addTemplateConfigEntryUpdateFields(r *argReader, entityDomain string) {
 	// device_class comment for why no template subtype domain accepts it on update.
 }
 
+// templateFieldsForDomainCache memoizes computeTemplateFieldsForDomain by
+// entityDomain: templateSubtypes is immutable after package init, so the
+// same domain always produces the same result - see
+// computeTemplateFieldsForDomain's doc comment for why memoizing matters.
+// Guarded by a mutex rather than sync.Map since the value (a slice) needs
+// a plain read-if-present-else-compute-and-store sequence, and contention
+// here is negligible (one lock per distinct domain, ever).
+var (
+	templateFieldsForDomainCache   = map[string][]templateField{}
+	templateFieldsForDomainCacheMu sync.Mutex
+)
+
 // resolveTemplateFieldsForDomain returns one templateField per distinct
 // arg name declared by any template subtype, resolving the small number of
 // names two subtypes declare with DIFFERENT HA keys - "state" (bare for
@@ -402,6 +439,24 @@ func addTemplateConfigEntryUpdateFields(r *argReader, entityDomain string) {
 // or by only one) resolves the same way regardless of entityDomain - the
 // sorted type-name iteration just makes that fallback deterministic.
 func resolveTemplateFieldsForDomain(entityDomain string) []templateField {
+	templateFieldsForDomainCacheMu.Lock()
+	defer templateFieldsForDomainCacheMu.Unlock()
+	if cached, ok := templateFieldsForDomainCache[entityDomain]; ok {
+		return cached
+	}
+	result := computeTemplateFieldsForDomain(entityDomain)
+	templateFieldsForDomainCache[entityDomain] = result
+	return result
+}
+
+// computeTemplateFieldsForDomain does the actual work resolveTemplateFieldsForDomain
+// memoizes: templateSubtypes is immutable after package init, and this
+// function was previously being rebuilt (three maps, two sorts over ~90
+// fields) on every single call - once per arg inside splitAppliedFields'
+// loop via resolveUpdateConfigKey, plus once more from
+// addTemplateConfigEntryUpdateFields, for every manage_helper update on a
+// template subtype entity.
+func computeTemplateFieldsForDomain(entityDomain string) []templateField {
 	typeNames := make([]string, 0, len(templateSubtypes))
 	for typeName := range templateSubtypes {
 		typeNames = append(typeNames, typeName)
@@ -427,6 +482,14 @@ func resolveTemplateFieldsForDomain(entityDomain string) []templateField {
 		}
 	}
 
+	// matchedConfigKeys collects the HA config keys the domain's OWN matched
+	// fields resolve to, so a same-key fallback field (see the loop below)
+	// can be dropped instead of colliding with it.
+	matchedConfigKeys := make(map[string]bool, len(matchedByArg))
+	for _, f := range matchedByArg {
+		matchedConfigKeys[f.configKey()] = true
+	}
+
 	args := make([]string, 0, len(firstByArg))
 	for arg := range firstByArg {
 		args = append(args, arg)
@@ -450,7 +513,20 @@ func resolveTemplateFieldsForDomain(entityDomain string) []templateField {
 		if len(configKeysByArg[arg]) > 1 {
 			continue
 		}
-		result = append(result, firstByArg[arg])
+		// Unambiguous (single owner) but its config key COLLIDES with a key
+		// one of the domain's own matched fields already writes - e.g.
+		// template_alarm_control_panel's bare "code_format" is single-owner,
+		// but for domain "lock" it would collide with template_lock's own
+		// "lock_code_format" (haKey "code_format"). Without this check, W5
+		// of the issue #206 review: a caller updating a lock via the plain
+		// "code_format" arg name would silently write straight through
+		// instead of being reported as unresolved/ignored, defeating the
+		// rename template_lock exists to disambiguate.
+		field := firstByArg[arg]
+		if matchedConfigKeys[field.configKey()] {
+			continue
+		}
+		result = append(result, field)
 	}
 	return result
 }
@@ -531,7 +607,8 @@ func templateHelperProperties() map[string]mcp.JSONSchema {
 		if _, exists := props[f.arg]; exists {
 			return
 		}
-		prop := mcp.JSONSchema{Description: f.desc}
+		desc := f.desc
+		prop := mcp.JSONSchema{}
 		switch f.kind {
 		case tplNumber:
 			prop.Type = "number"
@@ -544,8 +621,12 @@ func templateHelperProperties() map[string]mcp.JSONSchema {
 			prop.Type = "string"
 		case tplAction:
 			// Type intentionally omitted: an HA action value is a JSON
-			// object or array of objects, not a scalar.
+			// object or array of objects, not a scalar - spelled out in the
+			// description instead, since mcp.JSONSchema has no oneOf/anyOf
+			// to express that shape structurally.
+			desc += " - a single action object (e.g. {\"action\": \"switch.turn_on\", \"target\": {...}}) or a list of action objects, the same shape as an automation's action: block"
 		}
+		prop.Description = desc
 		props[f.arg] = prop
 	}
 	// Sorted type-name iteration: templateSubtypes is a map, and a shared
