@@ -1187,7 +1187,7 @@ func (h *ConsolidatedHelperHandlers) handleUpdate(ctx context.Context, client ho
 		}
 	}
 
-	return successResult(renderUpdateResultMessage(entityID, args, appliedKeys, partial)), nil
+	return successResult(renderUpdateResultMessage(entityID, entityDomain, args, appliedKeys, partial)), nil
 }
 
 // renderUpdateResultMessage renders handleUpdate's success text, folding
@@ -1195,8 +1195,8 @@ func (h *ConsolidatedHelperHandlers) handleUpdate(ctx context.Context, client ho
 // split out of handleUpdate to keep its cognitive complexity down. A
 // partial apply is still a successful result: the fields every options
 // flow step DID accept have already been committed to Home Assistant.
-func renderUpdateResultMessage(entityID string, args map[string]any, appliedKeys map[string]bool, partial *homeassistant.PartialApplyError) string {
-	applied, ignored, skipped := splitAppliedFields(args, appliedKeys)
+func renderUpdateResultMessage(entityID, entityDomain string, args map[string]any, appliedKeys map[string]bool, partial *homeassistant.PartialApplyError) string {
+	applied, ignored, skipped := splitAppliedFields(entityDomain, args, appliedKeys)
 	if partial == nil {
 		return updateSuccessMessage(entityID, applied, ignored, skipped)
 	}
@@ -1212,10 +1212,7 @@ func renderUpdateResultMessage(entityID string, args map[string]any, appliedKeys
 	}
 	var stillApplied []string
 	for _, argName := range applied {
-		key := argName
-		if alias, ok := updateConfigKeyAliases[argName]; ok {
-			key = alias
-		}
+		key := resolveUpdateConfigKey(entityDomain, argName)
 		if !rejectedConfigKeys[key] {
 			stillApplied = append(stillApplied, argName)
 		}
@@ -1288,7 +1285,7 @@ func renderPartialApplyWarning(partial *homeassistant.PartialApplyError) string 
 // from the same config map in place after using them, so reading config's
 // keys after the call would misreport icon/name as ignored even when they
 // were applied via the entity registry.
-func splitAppliedFields(args map[string]any, appliedKeys map[string]bool) (applied, ignored, skipped []string) {
+func splitAppliedFields(entityDomain string, args map[string]any, appliedKeys map[string]bool) (applied, ignored, skipped []string) {
 	for name := range args {
 		if updateDispatchOnlyArgNames[name] {
 			continue
@@ -1303,10 +1300,7 @@ func splitAppliedFields(args map[string]any, appliedKeys map[string]bool) (appli
 			skipped = append(skipped, name)
 			continue
 		}
-		key := name
-		if alias, ok := updateConfigKeyAliases[name]; ok {
-			key = alias
-		}
+		key := resolveUpdateConfigKey(entityDomain, name)
 		if appliedKeys[key] {
 			applied = append(applied, name)
 		} else {
@@ -1532,6 +1526,13 @@ func (h *ConsolidatedHelperHandlers) handleGetDetails(ctx context.Context, clien
 		"climate", "humidifier", "select":
 		return h.handleGetDetailsGeneric(ctx, client, args, platform)
 	default:
+		// Entity domains created by the 15 new template_* subtypes (issue
+		// #206) are plain state-backed entities, same as climate/humidifier/
+		// select above - reuse templateSubtypeDomains rather than listing
+		// all 15 domains again here.
+		if templateSubtypeDomains[platform] {
+			return h.handleGetDetailsGeneric(ctx, client, args, platform)
+		}
 		return errorResult(fmt.Sprintf("get_details is not supported for helper type: %s", platform)), nil
 	}
 }
@@ -2300,7 +2301,16 @@ func buildConfigEntryUpdateConfig(entryCtx configEntryUpdateContext, args map[st
 	r.str("state")
 	r.strID("source")
 	r.str("unit_of_measurement")
-	r.str("device_class")
+	// device_class is skipped here for the 15 new template subtype domains
+	// (issue #206): none of them accept it via OPTIONS_FLOW on update - the
+	// 4 in perTypeDeviceClassSupport only declare it in CONFIG_FLOW (create),
+	// the other 11 never declare it at all (see perTypeUpdateExcludedFields'
+	// doc comment). Reading it here unconditionally, as before, made
+	// splitAppliedFields report a caller-supplied device_class as "applied"
+	// even though no options flow step ever accepted it.
+	if !templateSubtypeDomains[entryCtx.entityDomain] {
+		r.str("device_class")
+	}
 	r.str("state_class")
 
 	// Threshold helper fields

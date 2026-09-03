@@ -250,6 +250,21 @@ var perTypeDeviceClassSupport = map[string]bool{
 	"template_update": true,
 }
 
+// templateSubtypeDomains is the set of entity domains any of the 15
+// template_* subtypes create (issue #206), derived from templateSubtypes so
+// it can't drift. Used to gate reads in buildConfigEntryUpdateConfig that
+// pre-date these subtypes and were designed only for the sensor/binary_sensor
+// domains it was originally shared with.
+var templateSubtypeDomains = buildTemplateSubtypeDomains()
+
+func buildTemplateSubtypeDomains() map[string]bool {
+	m := make(map[string]bool, len(templateSubtypes))
+	for _, subtype := range templateSubtypes {
+		m[subtype.domain] = true
+	}
+	return m
+}
+
 // buildTemplateHelperConfig returns a configBuilderFunc for the given
 // template_* type name, shared by every subtype: read each declared field
 // with the reader its kind selects, apply device_class if this subtype's
@@ -326,7 +341,8 @@ func addTemplateConfigEntryUpdateFields(r *argReader, entityDomain string) {
 	for _, f := range templateUniversalFields {
 		readTemplateField(r, f)
 	}
-	r.str("device_class")
+	// device_class is deliberately not read here - see buildConfigEntryUpdateConfig's
+	// device_class comment for why no template subtype domain accepts it on update.
 }
 
 // resolveTemplateFieldsForDomain returns one templateField per distinct
@@ -371,8 +387,14 @@ func resolveTemplateFieldsForDomain(entityDomain string) []templateField {
 		}
 	}
 
+	args := make([]string, 0, len(firstByArg))
+	for arg := range firstByArg {
+		args = append(args, arg)
+	}
+	slices.Sort(args)
+
 	result := make([]templateField, 0, len(firstByArg))
-	for arg, first := range firstByArg {
+	for _, arg := range args {
 		if matched, ok := matchedByArg[arg]; ok {
 			result = append(result, matched)
 			continue
@@ -388,9 +410,33 @@ func resolveTemplateFieldsForDomain(entityDomain string) []templateField {
 		if len(configKeysByArg[arg]) > 1 {
 			continue
 		}
-		result = append(result, first)
+		result = append(result, firstByArg[arg])
 	}
 	return result
+}
+
+// resolveUpdateConfigKey resolves the HA config key a caller-facing
+// manage_helper update arg name is renamed to for entityDomain, so
+// splitAppliedFields/renderUpdateResultMessage report which fields actually
+// reached Home Assistant using the same rename table the update builder
+// itself used. Template subtype renames are domain-dependent - "open"
+// renames to "open_cover" only for template_cover but stays bare for
+// template_lock, "state" renames to "value_template" only for
+// template_alarm_control_panel/template_switch - so a single static map
+// (updateConfigKeyAliases) cannot express them; resolveTemplateFieldsForDomain
+// already resolves that ambiguity per-domain, so it is consulted first.
+// Falls back to the static updateConfigKeyAliases map, then to argName
+// itself, for every rename that isn't a template subtype field.
+func resolveUpdateConfigKey(entityDomain, argName string) string {
+	for _, f := range resolveTemplateFieldsForDomain(entityDomain) {
+		if f.arg == argName {
+			return f.configKey()
+		}
+	}
+	if alias, ok := updateConfigKeyAliases[argName]; ok {
+		return alias
+	}
+	return argName
 }
 
 // templateHelperTypes derives helperTypes metadata for every template
@@ -429,6 +475,7 @@ func templateSubtypeNames() []string {
 	for typeName := range templateSubtypes {
 		names = append(names, typeName)
 	}
+	slices.Sort(names)
 	return names
 }
 
@@ -461,8 +508,13 @@ func templateHelperProperties() map[string]mcp.JSONSchema {
 		}
 		props[f.arg] = prop
 	}
-	for _, subtype := range templateSubtypes {
-		for _, f := range subtype.fields {
+	// Sorted type-name iteration: templateSubtypes is a map, and a shared
+	// arg name (e.g. "turn_on", "open", "temperature") is declared by more
+	// than one subtype with a different desc - without a deterministic
+	// order, addField's "first one wins" pick (and thus the emitted
+	// manage_helper schema text) would vary between process starts.
+	for _, typeName := range templateSubtypeNames() {
+		for _, f := range templateSubtypes[typeName].fields {
 			addField(f)
 		}
 	}

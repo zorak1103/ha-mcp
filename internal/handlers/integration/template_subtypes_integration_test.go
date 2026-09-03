@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -30,6 +31,17 @@ type templateSubtypeCase struct {
 	// harmless input_boolean.toggle action against a single shared
 	// fixture entity created once for the whole suite.
 	extraArgs func(actionTargetEntityID string) map[string]any
+	// updateArg is one real config field (name, value) exercised on update,
+	// beyond the universal "icon" field the sweep already covers. Icon is
+	// applied via the Entity Registry, bypassing the Options Flow config
+	// builder entirely (addTemplateConfigEntryUpdateFields,
+	// resolveTemplateFieldsForDomain, and every haKey rename), so without
+	// this the update path's actual field handling had zero coverage.
+	// Several cases deliberately pick a renamed field (haKey != arg) -
+	// exactly what CLAUDE.md's "manage_helper update field docs" gotcha and
+	// this suite's regression target (splitAppliedFields reporting an
+	// applied rename as ignored) are about.
+	updateArg func(actionTargetEntityID string) (name string, value any)
 }
 
 func toggleAction(entityID string) map[string]any {
@@ -46,6 +58,7 @@ var templateSubtypeCases = []templateSubtypeCase{
 		extraArgs: func(string) map[string]any {
 			return map[string]any{"state": "{{ 'disarmed' }}"}
 		},
+		updateArg: func(actionTargetEntityID string) (string, any) { return "code_arm_required", false },
 	},
 	{
 		helperType: "template_button",
@@ -53,6 +66,7 @@ var templateSubtypeCases = []templateSubtypeCase{
 		extraArgs: func(actionTargetEntityID string) map[string]any {
 			return map[string]any{"press": toggleAction(actionTargetEntityID)}
 		},
+		updateArg: func(actionTargetEntityID string) (string, any) { return "availability", "{{ true }}" },
 	},
 	{
 		helperType: "template_cover",
@@ -64,6 +78,12 @@ var templateSubtypeCases = []templateSubtypeCase{
 				"close": toggleAction(actionTargetEntityID),
 			}
 		},
+		// "set_position" renames to "set_cover_position" - regression target
+		// for the update-path haKey rename gap (CLAUDE.md's "manage_helper
+		// update field docs" gotcha).
+		updateArg: func(actionTargetEntityID string) (string, any) {
+			return "set_position", toggleAction(actionTargetEntityID)
+		},
 	},
 	{
 		helperType: "template_device_tracker",
@@ -71,6 +91,7 @@ var templateSubtypeCases = []templateSubtypeCase{
 		extraArgs: func(string) map[string]any {
 			return map[string]any{"in_zones": "{{ 'home' }}"}
 		},
+		updateArg: func(actionTargetEntityID string) (string, any) { return "latitude", "{{ 48.0 }}" },
 	},
 	{
 		helperType: "template_event",
@@ -81,6 +102,7 @@ var templateSubtypeCases = []templateSubtypeCase{
 				"event_types": "{{ ['my_event'] }}",
 			}
 		},
+		updateArg: func(actionTargetEntityID string) (string, any) { return "event_type", "{{ 'updated_event' }}" },
 	},
 	{
 		helperType: "template_fan",
@@ -92,6 +114,7 @@ var templateSubtypeCases = []templateSubtypeCase{
 				"turn_off": toggleAction(actionTargetEntityID),
 			}
 		},
+		updateArg: func(actionTargetEntityID string) (string, any) { return "speed_count", 5 },
 	},
 	{
 		helperType: "template_image",
@@ -99,6 +122,7 @@ var templateSubtypeCases = []templateSubtypeCase{
 		extraArgs: func(string) map[string]any {
 			return map[string]any{"url": "{{ 'https://example.com/image.png' }}"}
 		},
+		updateArg: func(actionTargetEntityID string) (string, any) { return "verify_ssl", false },
 	},
 	{
 		helperType: "template_light",
@@ -110,6 +134,7 @@ var templateSubtypeCases = []templateSubtypeCase{
 				"turn_off": toggleAction(actionTargetEntityID),
 			}
 		},
+		updateArg: func(actionTargetEntityID string) (string, any) { return "level", "{{ 100 }}" },
 	},
 	{
 		helperType: "template_lock",
@@ -121,6 +146,9 @@ var templateSubtypeCases = []templateSubtypeCase{
 				"unlock": toggleAction(actionTargetEntityID),
 			}
 		},
+		// "lock_code_format" renames to "code_format" - regression target,
+		// same reason as template_cover's "set_position" above.
+		updateArg: func(actionTargetEntityID string) (string, any) { return "lock_code_format", "{{ 'number' }}" },
 	},
 	{
 		helperType: "template_number",
@@ -131,6 +159,7 @@ var templateSubtypeCases = []templateSubtypeCase{
 				"set_value": toggleAction(actionTargetEntityID),
 			}
 		},
+		updateArg: func(actionTargetEntityID string) (string, any) { return "step", 2 },
 	},
 	{
 		helperType: "template_select",
@@ -141,6 +170,9 @@ var templateSubtypeCases = []templateSubtypeCase{
 				"options_template": "{{ ['a', 'b'] }}",
 			}
 		},
+		// "options_template" renames to "options" - regression target, same
+		// reason as template_cover's "set_position" above.
+		updateArg: func(actionTargetEntityID string) (string, any) { return "options_template", "{{ ['a', 'b', 'c'] }}" },
 	},
 	{
 		helperType: "template_switch",
@@ -148,6 +180,10 @@ var templateSubtypeCases = []templateSubtypeCase{
 		extraArgs: func(string) map[string]any {
 			return map[string]any{"state": "{{ 'off' }}"}
 		},
+		// "state" renames to "value_template" for this subtype only -
+		// regression target, same reason as template_cover's "set_position"
+		// above.
+		updateArg: func(actionTargetEntityID string) (string, any) { return "state", "{{ 'on' }}" },
 	},
 	{
 		helperType: "template_update",
@@ -158,6 +194,7 @@ var templateSubtypeCases = []templateSubtypeCase{
 				"latest_version":    "{{ '1.0' }}",
 			}
 		},
+		updateArg: func(actionTargetEntityID string) (string, any) { return "title", "{{ 'v2' }}" },
 	},
 	{
 		helperType: "template_vacuum",
@@ -168,6 +205,9 @@ var templateSubtypeCases = []templateSubtypeCase{
 				"start": toggleAction(actionTargetEntityID),
 			}
 		},
+		// "fan_speed_list" renames to "fan_speeds" - regression target,
+		// same reason as template_cover's "set_position" above.
+		updateArg: func(actionTargetEntityID string) (string, any) { return "fan_speed_list", []any{"low", "high"} },
 	},
 	{
 		helperType: "template_weather",
@@ -229,12 +269,24 @@ func (s *TemplateSubtypesIntegrationTestSuite) TestAllTemplateSubtypesLifecycle(
 			_, err := s.WaitForEntity(reportedEntityID, 5*time.Second)
 			s.Require().NoError(err, "%s: reported entity id %q did not resolve to a live entity", tc.helperType, reportedEntityID)
 
-			updateResult := s.CallTool("manage_helper", map[string]any{
+			updateFieldName, updateFieldValue := tc.updateArg(actionTargetEntityID)
+			updateArgs := map[string]any{
 				"action":    "update",
 				"entity_id": reportedEntityID,
 				"icon":      "mdi:test",
-			})
-			s.Require().False(updateResult.IsError, "manage_helper update(%s) should succeed, got: %s", tc.helperType, resultText(updateResult))
+			}
+			updateArgs[updateFieldName] = updateFieldValue
+			updateResult := s.CallTool("manage_helper", updateArgs)
+			updateText := resultText(updateResult)
+			s.Require().False(updateResult.IsError, "manage_helper update(%s) should succeed, got: %s", tc.helperType, updateText)
+			// Assert the update field actually reached Home Assistant - not
+			// just "icon", which is applied via the Entity Registry and
+			// bypasses the Options Flow config builder entirely (see
+			// updateArg's doc comment above).
+			applied := parenListAfter(updateText, "(applied: ")
+			ignored := parenListAfter(updateText, "(ignored - not accepted by this helper type: ")
+			s.Contains(applied, updateFieldName, "manage_helper update(%s) should report %q as applied, got: %s", tc.helperType, updateFieldName, updateText)
+			s.NotContains(ignored, updateFieldName, "manage_helper update(%s) should not report %q as ignored, got: %s", tc.helperType, updateFieldName, updateText)
 
 			deleteResult := s.CallTool("manage_helper", map[string]any{
 				"action":    "delete",
@@ -246,4 +298,21 @@ func (s *TemplateSubtypesIntegrationTestSuite) TestAllTemplateSubtypesLifecycle(
 			s.Require().NoError(err, "%s: entity %q should be deleted", tc.helperType, reportedEntityID)
 		})
 	}
+}
+
+// parenListAfter extracts the comma-separated field list manage_helper's
+// update success message renders after prefix (e.g. "(applied: "), up to
+// the closing ")". Returns nil if prefix isn't present - the message omits
+// a section entirely when its list would be empty.
+func parenListAfter(msg, prefix string) []string {
+	start := strings.Index(msg, prefix)
+	if start == -1 {
+		return nil
+	}
+	start += len(prefix)
+	end := strings.Index(msg[start:], ")")
+	if end == -1 {
+		return nil
+	}
+	return strings.Split(msg[start:start+end], ", ")
 }

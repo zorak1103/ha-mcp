@@ -1709,6 +1709,134 @@ func TestManageHelper_Update_SuccessMessageHandlesAPIFieldRenames(t *testing.T) 
 	}
 }
 
+// TestManageHelper_Update_SuccessMessageHandlesTemplateSubtypeRenames pins
+// the update-path equivalent of CLAUDE.md's "manage_helper update field
+// docs" gotcha for the 15 new template_* subtypes (issue #206): each of
+// these renames a caller-facing arg name to a different HA config key only
+// for some subtypes ("set_position"->"set_cover_position" for
+// template_cover, "lock_code_format"->"code_format" for template_lock,
+// "options_template"->"options" for template_select, "state"->
+// "value_template" for template_switch) - a static updateConfigKeyAliases
+// entry can't express this since the same arg name renames differently (or
+// not at all) on a different subtype's domain. Before resolveUpdateConfigKey
+// existed, a successful update reported every one of these as "ignored -
+// not accepted by this helper type" despite Home Assistant actually
+// accepting it.
+func TestManageHelper_Update_SuccessMessageHandlesTemplateSubtypeRenames(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		entityID string
+		args     map[string]any
+		wantArg  string
+	}{
+		{
+			name:     "template_cover set_position",
+			entityID: "cover.my_cover",
+			args:     map[string]any{"set_position": map[string]any{"action": "input_boolean.toggle"}},
+			wantArg:  "set_position",
+		},
+		{
+			name:     "template_lock lock_code_format",
+			entityID: "lock.my_lock",
+			args:     map[string]any{"lock_code_format": "{{ 'number' }}"},
+			wantArg:  "lock_code_format",
+		},
+		{
+			name:     "template_select options_template",
+			entityID: "select.my_select",
+			args:     map[string]any{"options_template": "{{ ['a', 'b'] }}"},
+			wantArg:  "options_template",
+		},
+		{
+			name:     "template_switch state",
+			entityID: "switch.my_switch",
+			args:     map[string]any{"state": "{{ 'on' }}"},
+			wantArg:  "state",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			client := &UniversalMockClient{}
+			client.UpdateHelperFn = func(context.Context, string, homeassistant.HelperConfig) error {
+				return nil
+			}
+
+			h := NewConsolidatedHelperHandlers()
+			args := map[string]any{"action": "update", "entity_id": tt.entityID}
+			for k, v := range tt.args {
+				args[k] = v
+			}
+			result, err := h.handleManageHelper(context.Background(), client, args)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result.IsError {
+				t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+			}
+
+			text := result.Content[0].Text
+			if strings.Contains(text, fmt.Sprintf("ignored - not accepted by this helper type: %q", tt.wantArg)) {
+				t.Errorf("success message = %q, want %q reported as applied, not ignored", text, tt.wantArg)
+			}
+			if !strings.Contains(text, fmt.Sprintf("applied: %q", tt.wantArg)) {
+				t.Errorf("success message = %q, want %q reported as applied", text, tt.wantArg)
+			}
+		})
+	}
+}
+
+// TestManageHelper_Update_TemplateSubtypeDeviceClassNeverApplied pins the
+// fix for device_class being read unconditionally into a template subtype's
+// update config (both by buildConfigEntryUpdateConfig's own generic
+// "Template helper fields" block and by addTemplateConfigEntryUpdateFields)
+// regardless of whether that subtype's OPTIONS_FLOW schema declares it.
+// perTypeUpdateExcludedFields already documents device_class as excluded on
+// update for every one of the 15 new subtypes (the 4 in
+// perTypeDeviceClassSupport support it on CONFIG_FLOW/create only; the
+// other 11 never declare it at all) - the success message must agree with
+// that document, not just the docs helper (updatableFieldNames) that reads
+// it.
+func TestManageHelper_Update_TemplateSubtypeDeviceClassNeverApplied(t *testing.T) {
+	t.Parallel()
+
+	for _, entityID := range []string{"cover.my_cover", "switch.my_switch"} {
+		t.Run(entityID, func(t *testing.T) {
+			t.Parallel()
+
+			client := &UniversalMockClient{}
+			client.UpdateHelperFn = func(context.Context, string, homeassistant.HelperConfig) error {
+				return nil
+			}
+
+			h := NewConsolidatedHelperHandlers()
+			result, err := h.handleManageHelper(context.Background(), client, map[string]any{
+				"action":       "update",
+				"entity_id":    entityID,
+				"device_class": "some_class",
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result.IsError {
+				t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+			}
+
+			text := result.Content[0].Text
+			if strings.Contains(text, `applied: "device_class"`) {
+				t.Errorf("success message = %q, want device_class reported as ignored, not applied", text)
+			}
+			if !strings.Contains(text, `ignored - not accepted by this helper type: "device_class"`) {
+				t.Errorf("success message = %q, want device_class reported as ignored", text)
+			}
+		})
+	}
+}
+
 // TestManageHelper_Update_SuccessMessageHandlesMinMaxTypeAlias covers the
 // second renamed field updateConfigKeyAliases handles - min_max_type
 // writes config["type"], not config["min_max_type"].
@@ -3540,6 +3668,68 @@ func TestManageHelper_GetDetails(t *testing.T) {
 			wantError:       false,
 			wantContains:    []string{"Sensor: Config Error", "77"},
 			wantNotContains: []string{"Template Configuration"},
+		},
+	}
+
+	h := NewConsolidatedHelperHandlers()
+	runHandlerTestCases(t, tests, h.handleManageHelper)
+}
+
+// TestManageHelper_GetDetails_TemplateSubtypeDomains pins the fix routing
+// the 15 new template_* subtype domains (issue #206) to the same generic
+// get_details path already used for climate/humidifier/select, instead of
+// hitting "get_details is not supported for helper type: %s". JSON format
+// works immediately (JSONHelperFormatter.FormatHelperDetail ignores
+// helperType entirely); natural format still returns the SAME
+// "unsupported helper type" error climate/humidifier/select already
+// return today (NaturalHelperFormatter.FormatHelperDetail has no case for
+// any of them) - a pre-existing gap this fix does not create or hide.
+func TestManageHelper_GetDetails_TemplateSubtypeDomains(t *testing.T) {
+	t.Parallel()
+
+	tests := []handlerTestCase{
+		{
+			name: "get_details for template_cover entity with json format",
+			args: map[string]any{
+				"action":    "get_details",
+				"entity_id": "cover.my_cover",
+				"format":    "json",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetStateFn = func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+					return &homeassistant.Entity{
+						EntityID: entityID,
+						State:    "closed",
+						Attributes: map[string]any{
+							"friendly_name": "My Cover",
+						},
+					}, nil
+				}
+			},
+			wantError:    false,
+			wantContains: []string{"cover.my_cover", "\"state\"", "\"closed\""},
+		},
+		{
+			name: "get_details for template_light entity with natural format matches climate's pre-existing gap",
+			args: map[string]any{
+				"action":    "get_details",
+				"entity_id": "light.my_light",
+				"format":    "natural",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetStateFn = func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+					return &homeassistant.Entity{
+						EntityID: entityID,
+						State:    "on",
+						Attributes: map[string]any{
+							"friendly_name": "My Light",
+						},
+					}, nil
+				}
+			},
+			wantError:       true,
+			wantContains:    []string{"unsupported helper type: light"},
+			wantNotContains: []string{"get_details is not supported for helper type"},
 		},
 	}
 

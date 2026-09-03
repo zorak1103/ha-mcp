@@ -1,6 +1,10 @@
 package handlers
 
-import "testing"
+import (
+	"reflect"
+	"slices"
+	"testing"
+)
 
 // TestTemplateSubtypeTable_CoversHATemplateTypes pins the templateSubtypes
 // table's shape: exactly the 15 domains HA's TEMPLATE_TYPES declares
@@ -97,4 +101,99 @@ func TestResolveTemplateFieldsForDomain_IncludesUnambiguousFieldNotOwnedByAnySub
 		}
 	}
 	t.Fatalf("resolveTemplateFieldsForDomain(%q) dropped unambiguous field %q; fields = %+v", "sensor", "fan_speed_list", fields)
+}
+
+// TestResolveTemplateFieldsForDomain_ReturnsFieldsSortedByArgName pins the
+// determinism fix for resolveTemplateFieldsForDomain's result order:
+// firstByArg/matchedByArg are maps, so without an explicit sort the
+// returned slice's order (and, for two arg names sharing one HA config
+// key - "code_format"/"lock_code_format" both write "code_format" for
+// template_lock - which one is processed, and therefore wins, last) would
+// vary from one call to the next.
+func TestResolveTemplateFieldsForDomain_ReturnsFieldsSortedByArgName(t *testing.T) {
+	t.Parallel()
+
+	for _, domain := range append(templateSubtypeNames(), "sensor", "climate") {
+		fields := resolveTemplateFieldsForDomain(domain)
+		args := make([]string, len(fields))
+		for i, f := range fields {
+			args[i] = f.arg
+		}
+		if !slices.IsSorted(args) {
+			t.Errorf("resolveTemplateFieldsForDomain(%q) args = %v, want sorted by arg name", domain, args)
+		}
+	}
+}
+
+// TestResolveTemplateFieldsForDomain_DeterministicAcrossCalls guards
+// against exactly the class of bug TestResolveTemplateFieldsForDomain_ReturnsFieldsSortedByArgName
+// pins from the other direction: Go's map iteration order is randomized
+// per range statement, not just per process, so a flake here would only
+// have shown up intermittently before the sort fix - repeat the call many
+// times in one test run rather than relying on a single comparison.
+func TestResolveTemplateFieldsForDomain_DeterministicAcrossCalls(t *testing.T) {
+	t.Parallel()
+
+	want := resolveTemplateFieldsForDomain("lock")
+	for i := range 50 {
+		got := resolveTemplateFieldsForDomain("lock")
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("resolveTemplateFieldsForDomain(%q) call %d = %+v, want %+v", "lock", i, got, want)
+		}
+	}
+}
+
+// TestResolveTemplateFieldsForDomain_LockCodeFormatRenameWins pins the
+// specific collision the sort fix resolves: template_lock's own
+// "lock_code_format" (haKey "code_format") and template_alarm_control_panel's
+// unrelated, unambiguous "code_format" (no haKey) both resolve to the same
+// HA config key "code_format" once matched/included for domain "lock".
+// Sorting by arg name makes "code_format" (alarm's, alphabetically first)
+// process before "lock_code_format" (lock's own field) - so lock's own
+// field deterministically wins as the last write, which is what
+// addTemplateConfigEntryUpdateFields relies on for a template_lock update.
+func TestResolveTemplateFieldsForDomain_LockCodeFormatRenameWins(t *testing.T) {
+	t.Parallel()
+
+	fields := resolveTemplateFieldsForDomain("lock")
+	var sawCodeFormat, sawLockCodeFormat bool
+	var codeFormatIdx, lockCodeFormatIdx int
+	for i, f := range fields {
+		switch f.arg {
+		case "code_format":
+			sawCodeFormat = true
+			codeFormatIdx = i
+		case "lock_code_format":
+			sawLockCodeFormat = true
+			lockCodeFormatIdx = i
+			if f.configKey() != "code_format" {
+				t.Errorf("lock_code_format.configKey() = %q, want %q", f.configKey(), "code_format")
+			}
+		}
+	}
+	if !sawCodeFormat || !sawLockCodeFormat {
+		t.Fatalf("resolveTemplateFieldsForDomain(%q) = %+v, want both code_format and lock_code_format present", "lock", fields)
+	}
+	if lockCodeFormatIdx < codeFormatIdx {
+		t.Errorf("lock_code_format at index %d, code_format at index %d - lock's own field must be processed last to win", lockCodeFormatIdx, codeFormatIdx)
+	}
+}
+
+// TestTemplateHelperProperties_DeterministicAcrossCalls guards against
+// templateHelperProperties' addField "first description wins" dedup
+// depending on map iteration order (templateSubtypes is a map) - several
+// arg names ("turn_on", "turn_off", "open", "stop", "temperature") are
+// declared by more than one subtype with a different desc, so an
+// unsorted iteration would make the emitted manage_helper schema text
+// vary from one call to the next.
+func TestTemplateHelperProperties_DeterministicAcrossCalls(t *testing.T) {
+	t.Parallel()
+
+	want := templateHelperProperties()
+	for i := range 50 {
+		got := templateHelperProperties()
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("templateHelperProperties() call %d differs from first call", i)
+		}
+	}
 }
