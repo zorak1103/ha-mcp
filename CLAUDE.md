@@ -425,6 +425,12 @@ set -a && source .env.integration && set +a && go test -tags=integration -v ./in
 
 **File Editing Tool Priority**: Always use the dedicated file tools (Write, Edit) to create or modify files. Never use Bash with Python or shell commands to manipulate file content — the Write tool rewrites a complete file cleanly, the Edit tool makes surgical replacements. Python byte-level manipulation is error-prone, harder to read, and the wrong tool for the job.
 
+**Prefer Subagents for Test Execution and Boilerplate**: Delegate to subagents wherever the task allows it, to keep the main conversation's context free for planning, design, and judgment calls. Two categories are delegated by default, not just when convenient:
+- **Test execution** (unit test runs, `go test`, integration sweeps against live HA, coverage checks, lint runs) always goes through a subagent. A test-running subagent's job is strictly to run the specified commands and report results (pass/fail, exact failure output, coverage numbers) — it must never modify code, fix a failure it finds, or otherwise take independent action. A weaker/cheaper model is sufficient for this role, since it is executing a fixed command list and transcribing output, not making decisions. If a test run reveals something that needs fixing, that decision and the fix itself happen in the main conversation (or a fresh subagent explicitly briefed to implement a fix), never inside the test-running subagent.
+- **Boilerplate changes** (mechanical, well-specified edits: wrapping an existing var literal in a function, renaming a symbol project-wide, adding N near-identical entries to a table following an established pattern, updating a doc count across several files) go through a subagent once the exact change is fully specified. The main conversation still designs the change and decides what the mechanical edit should be; the subagent executes it and reports back what it touched.
+
+Planning, architecture decisions, and judgment calls about *what* to change stay with the main agent — subagents execute a task the main agent has already fully specified, they don't decide the task's shape.
+
 ### Extending Consolidated Tools (Modes/Actions)
 
 When adding new modes/actions to consolidated tools (`manage_*`, `query_entities`, `get_logbook`):
