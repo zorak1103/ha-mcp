@@ -36,7 +36,17 @@ func buildStatisticsConfig(config, args map[string]any) error {
 	r.str("max_age")
 	r.num("percentile")
 	r.integer("precision")
-	return r.err()
+	if err := r.err(); err != nil {
+		return err
+	}
+	// HA's state_characteristic step schema is vol.Required with no HA-side
+	// default; this was previously injected by buildConfigForFlowStep's
+	// hardcoded statistics step handling. Moved here so it applies
+	// regardless of how the flow-step submission is built.
+	if _, ok := config["state_characteristic"]; !ok {
+		config["state_characteristic"] = "mean"
+	}
+	return nil
 }
 
 // buildTrendConfig builds configuration for trend helper.

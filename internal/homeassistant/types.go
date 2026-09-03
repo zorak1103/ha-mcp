@@ -660,6 +660,7 @@ type ConfigEntryFlowResult struct {
 	Errors      map[string]string  `json:"errors,omitempty"`
 	Result      *ConfigEntry       `json:"result,omitempty"`
 	Description string             `json:"description,omitempty"`
+	LastStep    *bool              `json:"last_step,omitempty"`
 }
 
 // ConfigEntry represents a created config entry from the Config Entry Flow.
@@ -697,6 +698,7 @@ type OptionsFlowResult struct {
 	DataSchema  []OptionsFlowField `json:"data_schema,omitempty"`
 	Errors      map[string]string  `json:"errors,omitempty"`
 	MenuOptions []string           `json:"menu_options,omitempty"` // For "menu" type
+	LastStep    *bool              `json:"last_step,omitempty"`
 }
 
 // CalendarEntry represents a Home Assistant calendar entity.
@@ -725,9 +727,14 @@ type CalendarDateTime struct {
 
 // OptionsFlowField represents a field in an options flow data schema.
 type OptionsFlowField struct {
-	Name        string         `json:"name"`
-	Type        string         `json:"type,omitempty"`
-	Description map[string]any `json:"description,omitempty"` // Contains "suggested_value"
+	Name        string             `json:"name"`
+	Type        string             `json:"type,omitempty"` // "expandable" for sections
+	Required    bool               `json:"required,omitempty"`
+	Optional    bool               `json:"optional,omitempty"`
+	Default     any                `json:"default,omitempty"`
+	Selector    map[string]any     `json:"selector,omitempty"`    // e.g. {"duration":{...}}, {"entity":{"read_only":true}}
+	Schema      []OptionsFlowField `json:"schema,omitempty"`      // section children (HA nests sections one level deep)
+	Description map[string]any     `json:"description,omitempty"` // Contains "suggested_value"
 }
 
 // DashboardEntry represents a Home Assistant Lovelace dashboard entry.

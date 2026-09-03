@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -42,12 +41,6 @@ const (
 	flowTypeMenu        = "menu"
 	flowTypeForm        = "form"
 	flowTypeCreateEntry = "create_entry"
-
-	// flowStepPresets is generic_thermostat's trailing config/options flow
-	// step id (HA's own PRESETS_SCHEMA step name), shared by
-	// buildGenericThermostatStepConfig (create) and
-	// submitOptionsFlowPresetsStep (update).
-	flowStepPresets = "presets"
 )
 
 // binaryDeviceClasses maps device classes that indicate a binary sensor.
@@ -440,78 +433,81 @@ func (c *HybridClient) updateHelperViaOptionsFlow(ctx context.Context, entityID,
 		delete(config.Config, "name")
 	}
 
-	// Init Options Flow
 	result, err := c.rest.InitConfigEntryOptionsFlow(ctx, configEntryID)
 	if err != nil {
 		return fmt.Errorf("init options flow: %w", err)
 	}
+	initFlowID := result.FlowID
 
 	// Navigate menu if needed (e.g., template helpers have sensor/binary_sensor menu)
 	if result.Type == flowTypeMenu {
 		result, err = c.navigateOptionsFlowMenu(ctx, configEntryID, result)
 		if err != nil {
-			// Abort flow on error
-			_ = c.rest.AbortConfigEntryOptionsFlow(ctx, result.FlowID)
+			_ = c.rest.AbortConfigEntryOptionsFlow(ctx, initFlowID)
 			return fmt.Errorf("navigate options flow menu: %w", err)
 		}
 	}
 
-	// Extract current values from schema
-	currentValues := extractOptionsFromSchema(result.DataSchema)
-
-	// Reject (not silently drop) any user-supplied field this step's schema
-	// doesn't declare. Home Assistant's Options Flow forms use PREVENT_EXTRA
-	// voluptuous schemas, so submitting a stray key fails the whole request
-	// with an opaque "extra keys not allowed" error - but silently dropping
-	// it here instead would report the update as successful while quietly
-	// discarding a change the caller explicitly asked for. A failed
-	// menu-navigation match (navigateOptionsFlowMenu returning the original,
-	// unresolved menu result) makes this the only signal the caller gets, so
-	// this must fail loudly rather than log-and-continue.
-	userConfig, dropped := restrictToSchemaFields(config.Config, result.DataSchema)
-	if len(dropped) > 0 {
-		_ = c.rest.AbortConfigEntryOptionsFlow(ctx, result.FlowID)
-		return fmt.Errorf("helper %q does not support updating field(s): %s", entityID, strings.Join(dropped, ", "))
-	}
-
-	normalizeOptionsFlowDurations(userConfig, currentValues, result.StepID)
-
-	// Merge user-provided values with current values
-	mergedConfig := mergeOptionsFlowConfig(currentValues, userConfig)
-
-	// Submit merged config
-	submitResult, err := c.rest.SubmitConfigEntryOptionsFlowStep(ctx, result.FlowID, mergedConfig)
-	if err != nil {
-		_ = c.rest.AbortConfigEntryOptionsFlow(ctx, result.FlowID)
-		return fmt.Errorf("submit options flow: %w", err)
-	}
-
-	submitResult, err = c.submitOptionsFlowPresetsStep(ctx, submitResult)
+	consumed := seedConsumedRoutingKeys(config)
+	result, err = c.runOptionsFlowSteps(ctx, initFlowID, result, config.Config, consumed)
 	if err != nil {
 		return err
 	}
 
-	// Surface HA's validation reason instead of the opaque "unexpected
-	// result type" below - the create path already does this
-	// (createHelperViaConfigFlow's "config entry flow validation errors").
-	if submitResult.Type == flowTypeForm && len(submitResult.Errors) > 0 {
-		_ = c.rest.AbortConfigEntryOptionsFlow(ctx, result.FlowID)
-		return fmt.Errorf("options flow validation errors: %v", submitResult.Errors)
+	if result.Type != flowTypeCreateEntry {
+		_ = c.rest.AbortConfigEntryOptionsFlow(ctx, initFlowID)
+		return fmt.Errorf("unexpected options flow result type: %s", result.Type)
 	}
 
-	// Validate result. Aborts against result.FlowID (captured before
-	// submission, and stable across every step of this flow), not
-	// submitResult.FlowID: submitResult is whatever HA's last response
-	// was, and a response that omits flow_id would abort with an empty
-	// id and leak the flow server-side.
-	if submitResult.Type != flowTypeCreateEntry {
-		_ = c.rest.AbortConfigEntryOptionsFlow(ctx, result.FlowID)
-		return fmt.Errorf("unexpected options flow result type: %s", submitResult.Type)
+	// Reject (not silently drop) any user-supplied field no step's schema
+	// declared. Home Assistant's Options Flow forms use PREVENT_EXTRA
+	// voluptuous schemas, so a stray key would fail the whole request with
+	// an opaque "extra keys not allowed" error if it ever reached HA - but
+	// silently dropping it here instead would report the update as
+	// successful while quietly discarding a change the caller explicitly
+	// asked for. Checked only after every step has had a chance to claim
+	// it, so a field belonging to a later step (e.g. generic_thermostat's
+	// presets) is not mistaken for an unsupported one.
+	if unconsumed := unconsumedUserFields(config.Config, consumed); len(unconsumed) > 0 {
+		return fmt.Errorf("helper %q does not support updating field(s): %s", entityID, strings.Join(unconsumed, ", "))
 	}
 
 	// Update name/icon via Entity Registry if provided - neither is part of
 	// any Options Flow schema.
 	return c.applyNameIconViaRegistry(ctx, entityID, icon, hasIcon, name, hasName)
+}
+
+// runOptionsFlowSteps submits successive Options Flow form steps, routing
+// caller fields via buildStepSubmission, until HA returns something other
+// than a form (create_entry, abort, or an unexpected type) or the step cap
+// is hit. Subsumes the former single-shot submission plus the
+// generic_thermostat-specific submitOptionsFlowPresetsStep special case:
+// a presets step is just another iteration where no user field matches and
+// the payload is the round-tripped current values.
+func (c *HybridClient) runOptionsFlowSteps(ctx context.Context, initFlowID string, first *OptionsFlowResult, userConfig map[string]any, consumed map[string]bool) (*OptionsFlowResult, error) {
+	const maxUpdateSteps = 8
+	result := first
+	for i := 0; i < maxUpdateSteps && result.Type == flowTypeForm; i++ {
+		submission := buildStepSubmission(flowModeUpdate, indexStepSchema(result.DataSchema), userConfig, consumed, result.StepID)
+
+		submitResult, err := c.rest.SubmitConfigEntryOptionsFlowStep(ctx, result.FlowID, submission)
+		if err != nil {
+			_ = c.rest.AbortConfigEntryOptionsFlow(ctx, initFlowID)
+			return nil, fmt.Errorf("submit options flow: %w", err)
+		}
+		result = submitResult
+
+		if result.Type == flowTypeCreateEntry {
+			break
+		}
+		// Surface HA's validation reason instead of the opaque "unexpected
+		// result type" the caller would otherwise report.
+		if result.Type == flowTypeForm && len(result.Errors) > 0 {
+			_ = c.rest.AbortConfigEntryOptionsFlow(ctx, initFlowID)
+			return nil, fmt.Errorf("options flow validation errors: %v", result.Errors)
+		}
+	}
+	return result, nil
 }
 
 // submitOptionsFlowPresetsStep completes generic_thermostat's Options Flow
@@ -531,29 +527,6 @@ func (c *HybridClient) updateHelperViaOptionsFlow(ctx context.Context, entityID,
 //
 // result is returned unchanged for every other step/type so the caller's
 // existing create_entry check still applies.
-func (c *HybridClient) submitOptionsFlowPresetsStep(ctx context.Context, result *OptionsFlowResult) (*OptionsFlowResult, error) {
-	if result.Type != flowTypeForm || result.StepID != flowStepPresets {
-		return result, nil
-	}
-	// Unlike the create-path equivalent (buildGenericThermostatStepConfig),
-	// an empty map is NOT safe here: HA's
-	// _update_and_remove_omitted_optional_keys deletes every vol.Optional
-	// key of the step's schema that is absent from the submitted payload -
-	// on an options flow those keys are the entry's *existing* stored
-	// values (its own preset temperatures), not blank slots like on
-	// create. Round-tripping the step's current suggested_value fields
-	// keeps them intact; extractOptionsFromSchema already omits a
-	// genuinely-unset preset (nil suggested_value) the same way create
-	// leaves it unset.
-	presetsConfig := extractOptionsFromSchema(result.DataSchema)
-	submitResult, err := c.rest.SubmitConfigEntryOptionsFlowStep(ctx, result.FlowID, presetsConfig)
-	if err != nil {
-		_ = c.rest.AbortConfigEntryOptionsFlow(ctx, result.FlowID)
-		return nil, fmt.Errorf("submit options flow presets step: %w", err)
-	}
-	return submitResult, nil
-}
-
 // normalizeOptionsFlowDurations converts each userConfig value that is
 // duration-shaped into Home Assistant's {"hours":.,"minutes":.,"seconds":.}
 // dict form in place. Split out of updateHelperViaOptionsFlow to keep that
@@ -580,24 +553,6 @@ func (c *HybridClient) submitOptionsFlowPresetsStep(ctx context.Context, result 
 // is what buildFilterStepConfig already keys off on create via
 // filterDurationWindowSteps; reused here as the update-path equivalent of
 // the isDurationField fallback.
-func normalizeOptionsFlowDurations(userConfig, currentValues map[string]any, stepID string) {
-	for key, userVal := range userConfig {
-		if _, alreadyDict := userVal.(map[string]any); alreadyDict {
-			continue
-		}
-		current, hasCurrent := currentValues[key]
-		_, currentIsDict := current.(map[string]any)
-		shouldConvert := currentIsDict || (!hasCurrent && isDurationField(key)) ||
-			(key == "window_size" && filterDurationWindowSteps[stepID])
-		if !shouldConvert {
-			continue
-		}
-		if d, ok := toDurationDict(userVal); ok {
-			userConfig[key] = d
-		}
-	}
-}
-
 // applyNameIconViaRegistry sets name/icon via the Entity Registry after a
 // successful Options Flow submission - neither is part of any Options Flow
 // schema. Split out of updateHelperViaOptionsFlow to keep that function's
@@ -618,48 +573,6 @@ func (c *HybridClient) applyNameIconViaRegistry(ctx context.Context, entityID, i
 		return fmt.Errorf("helper updated, but failed to set name/icon: %w", err)
 	}
 	return nil
-}
-
-// restrictToSchemaFields separates userConfig into keys dataSchema declares
-// and keys it doesn't, returning the filtered map and the sorted list of
-// unsupported keys - the caller decides what to do with the latter (see
-// updateHelperViaOptionsFlow, which hard-fails rather than silently
-// dropping them).
-func restrictToSchemaFields(userConfig map[string]any, dataSchema []OptionsFlowField) (map[string]any, []string) {
-	allowed := make(map[string]bool, len(dataSchema))
-	for _, field := range dataSchema {
-		allowed[field.Name] = true
-	}
-
-	filtered := make(map[string]any, len(userConfig))
-	var dropped []string
-	for k, v := range userConfig {
-		if allowed[k] {
-			filtered[k] = v
-			continue
-		}
-		dropped = append(dropped, k)
-	}
-	slices.Sort(dropped)
-	return filtered, dropped
-}
-
-// mergeOptionsFlowConfig merges user-provided config values with current schema values.
-// Only fields present in userConfig override the current values.
-func mergeOptionsFlowConfig(currentValues, userConfig map[string]any) map[string]any {
-	merged := make(map[string]any)
-
-	// Start with current values
-	for k, v := range currentValues {
-		merged[k] = v
-	}
-
-	// Override with user-provided values
-	for k, v := range userConfig {
-		merged[k] = v
-	}
-
-	return merged
 }
 
 // SetHelperValue sets the value of an input helper.
@@ -751,43 +664,32 @@ func slugifyEntityName(name string) string {
 // createHelperViaConfigFlow creates a helper using the HTTP Config Entry Flow.
 // This handles multi-step flows: init -> (menu) -> form(s) -> verify creation.
 func (c *HybridClient) createHelperViaConfigFlow(ctx context.Context, config HelperConfig) error {
-	// Step 1: Initialize the config entry flow
 	flowResult, err := c.rest.InitConfigEntryFlow(ctx, config.Platform)
 	if err != nil {
 		return fmt.Errorf("init config entry flow: %w", err)
 	}
 
-	// Step 2: Handle menu step if present (for helpers requiring subtype selection)
-	if flowResult.Type == "menu" {
-		subtype := c.determineHelperSubtype(config)
-		if subtype == "" {
-			_ = c.rest.AbortConfigEntryFlow(ctx, flowResult.FlowID)
-			return fmt.Errorf("config entry flow requires subtype selection but none provided")
-		}
-		// Captured before the call: on error the new flowResult may be nil,
-		// so it can't be relied on to abort the flow it was just about to
-		// replace - the same reason the loop below tracks currentFlowID.
-		menuFlowID := flowResult.FlowID
-		flowResult, err = c.rest.SubmitConfigEntryFlowStep(ctx, menuFlowID, map[string]any{
-			"next_step_id": subtype,
-		})
-		if err != nil {
-			_ = c.rest.AbortConfigEntryFlow(ctx, menuFlowID)
-			return fmt.Errorf("submit config entry flow menu step: %w", err)
-		}
-	}
+	consumed := seedConsumedRoutingKeys(config)
+	userConfig := config.Config
+	c.applyClientLevelCreateDefaults(config, userConfig)
 
-	// Step 3: Handle intermediate form steps
-	// Some platforms (statistics, trend, filter) require multiple form submissions
-	maxSteps := 5 // Safety limit to prevent infinite loops
-	for i := 0; i < maxSteps && flowResult.Type == flowTypeForm; i++ {
-		// Save step ID and flow ID before submission (in case of error, the
-		// new flowResult might be nil).
+	const maxSteps = 8 // Safety limit; also bounds a single menu hop handled inside the loop.
+	for i := 0; i < maxSteps; i++ {
+		if flowResult.Type == flowTypeMenu {
+			flowResult, err = c.submitConfigFlowMenuChoice(ctx, config, flowResult)
+			if err != nil {
+				return err
+			}
+			continue
+		}
+
+		if flowResult.Type != flowTypeForm {
+			break
+		}
+
 		currentStepID := flowResult.StepID
 		currentFlowID := flowResult.FlowID
-
-		// Transform config for the current step
-		stepConfig := c.buildConfigForFlowStep(config, currentStepID)
+		stepConfig := buildStepSubmission(flowModeCreate, indexStepSchema(flowResult.DataSchema), userConfig, consumed, currentStepID)
 
 		flowResult, err = c.rest.SubmitConfigEntryFlowStep(ctx, currentFlowID, stepConfig)
 		if err != nil {
@@ -795,20 +697,30 @@ func (c *HybridClient) createHelperViaConfigFlow(ctx context.Context, config Hel
 			return fmt.Errorf("submit config entry flow step %s: %w", currentStepID, err)
 		}
 
-		// Check if we're done
-		if flowResult.Type == "create_entry" {
-			return nil // Success
+		if flowResult.Type == flowTypeCreateEntry {
+			break
 		}
-
 		if flowResult.Type == "abort" {
 			return fmt.Errorf("config entry flow aborted: %s", flowResult.Description)
 		}
-
-		// Check for validation errors
 		if flowResult.Type == flowTypeForm && len(flowResult.Errors) > 0 {
 			_ = c.rest.AbortConfigEntryFlow(ctx, currentFlowID)
 			return fmt.Errorf("config entry flow validation errors: %v", flowResult.Errors)
 		}
+	}
+
+	if flowResult.Type == flowTypeCreateEntry {
+		// "name" is unconditionally injected by buildHelperConfig for every
+		// config-entry helper type, regardless of whether that platform's
+		// flow schema actually wants it (switch_as_x's has no "name" field
+		// at all - it derives the wrapped entity's name from the source
+		// entity). A platform not claiming it is not a caller error, unlike
+		// a genuinely-unrecognized field the caller explicitly supplied.
+		consumed["name"] = true
+		if unconsumed := unconsumedUserFields(userConfig, consumed); len(unconsumed) > 0 {
+			return fmt.Errorf("helper created, but field(s) %s were not accepted by any step of the %s config flow", strings.Join(unconsumed, ", "), config.Platform)
+		}
+		return nil
 	}
 
 	// Still in form state after max steps
@@ -824,62 +736,50 @@ func (c *HybridClient) createHelperViaConfigFlow(ctx context.Context, config Hel
 	return fmt.Errorf("unexpected config entry flow result type: %s", flowResult.Type)
 }
 
-// buildConfigForFlowStep builds configuration data for a specific flow step.
-// Different platforms have different step IDs that require specific subsets of config.
-func (c *HybridClient) buildConfigForFlowStep(config HelperConfig, stepID string) map[string]any {
-	// Platform-specific step handling
-	switch config.Platform {
-	case platformStatistics:
-		// Statistics "state_characteristic" step needs ONLY state_characteristic field
-		if stepID == "state_characteristic" {
-			result := make(map[string]any)
-			if characteristic, ok := config.Config["state_characteristic"].(string); ok {
-				result["state_characteristic"] = characteristic
-			} else {
-				result["state_characteristic"] = "mean" // Default
-			}
-			return result
+// applyClientLevelCreateDefaults fills in defaults HA's own schema doesn't
+// provide but callers of this client have always been able to rely on -
+// statistics' "state_characteristic" step is vol.Required with no HA-side
+// default, and a sensor-domain group's aggregation "type" defaults to "sum"
+// (addSensorGroupDefaults). Both used to be applied unconditionally by the
+// deleted transformConfigForFlow on every create. Kept as small, explicit
+// exceptions rather than reintroduced into the generic engine: they are
+// genuine convenience defaults for a caller who supplied nothing, not
+// step-shape knowledge.
+func (c *HybridClient) applyClientLevelCreateDefaults(config HelperConfig, userConfig map[string]any) {
+	if config.Platform == platformStatistics {
+		if _, ok := userConfig["state_characteristic"]; !ok {
+			userConfig["state_characteristic"] = "mean"
 		}
-		// Statistics "options" step wants entity_id and sampling_size/max_age (NO name)
-		if stepID == "options" {
-			result := c.transformConfigForFlow(config)
-			delete(result, "name")                 // name goes in next step
-			delete(result, "state_characteristic") // Already set in previous step
-			return result
-		}
-		// Statistics "user" step wants entity_id (and possibly name)
-		if stepID == "user" {
-			result := c.transformConfigForFlow(config)
-			delete(result, "sampling_size")        // Already set in options step
-			delete(result, "max_age")              // Already set in options step
-			delete(result, "state_characteristic") // Already set in first step
-			return result
-		}
-		// Other steps get full config
-		return c.transformConfigForFlow(config)
-
-	case platformTrend:
-		// Trend "settings" step does NOT want "name" field
-		if stepID == "settings" {
-			result := c.transformConfigForFlow(config)
-			delete(result, "name") // Remove name from settings step
-			return result
-		}
-		// Other steps get full config
-		return c.transformConfigForFlow(config)
-
-	case platformFilter:
-		return c.buildFilterStepConfig(config, stepID)
-
-	case platformGenericThermostat:
-		return c.buildGenericThermostatStepConfig(config, stepID)
-
-	default:
-		// Default: return full transformed config
-		return c.transformConfigForFlow(config)
 	}
+	c.addSensorGroupDefaults(config, userConfig)
 }
 
+// submitConfigFlowMenuChoice submits the subtype selection for a config
+// entry flow menu step. Handled inside createHelperViaConfigFlow's loop
+// (rather than once before it) so a flow with more than one menu hop is
+// not structurally impossible - none of today's platforms need it, but
+// nothing prevents a future one from doing so.
+func (c *HybridClient) submitConfigFlowMenuChoice(ctx context.Context, config HelperConfig, flowResult *ConfigEntryFlowResult) (*ConfigEntryFlowResult, error) {
+	subtype := c.determineHelperSubtype(config)
+	if subtype == "" {
+		_ = c.rest.AbortConfigEntryFlow(ctx, flowResult.FlowID)
+		return nil, fmt.Errorf("config entry flow requires subtype selection but none provided")
+	}
+	// Captured before the call: on error the new flowResult may be nil, so
+	// it can't be relied on to abort the flow it was just about to replace.
+	menuFlowID := flowResult.FlowID
+	next, err := c.rest.SubmitConfigEntryFlowStep(ctx, menuFlowID, map[string]any{
+		"next_step_id": subtype,
+	})
+	if err != nil {
+		_ = c.rest.AbortConfigEntryFlow(ctx, menuFlowID)
+		return nil, fmt.Errorf("submit config entry flow menu step: %w", err)
+	}
+	return next, nil
+}
+
+// buildConfigForFlowStep builds configuration data for a specific flow step.
+// Different platforms have different step IDs that require specific subsets of config.
 // buildGenericThermostatStepConfig builds config for generic_thermostat's
 // flow steps. Split out of buildConfigForFlowStep to keep that function's
 // length down (same reason platformFilter delegates to
@@ -891,13 +791,6 @@ func (c *HybridClient) buildConfigForFlowStep(config HelperConfig, stepID string
 // PREVENT_EXTRA, so resubmitting the full config there fails with "extra
 // keys not allowed @ data['ac_mode']" etc. (see CLAUDE.md, issue #194). An
 // empty submission is the only valid payload for this step.
-func (c *HybridClient) buildGenericThermostatStepConfig(config HelperConfig, stepID string) map[string]any {
-	if stepID == flowStepPresets {
-		return map[string]any{}
-	}
-	return c.transformConfigForFlow(config)
-}
-
 // filterStepFields is the exact key set Home Assistant's filter config-entry
 // flow accepts at each step. Step "user" is DATA_SCHEMA_SETUP; every other
 // step id IS the filter type name itself (HA's get_next_step returns
@@ -906,16 +799,6 @@ func (c *HybridClient) buildGenericThermostatStepConfig(config HelperConfig, ste
 // stray key surviving from the "user" step (like the removed "filters"
 // parameter) reaches HA's PREVENT_EXTRA voluptuous schema and produces
 // "extra keys not allowed" instead of a working create.
-var filterStepFields = map[string]map[string]bool{
-	"user":                       {"name": true, "entity_id": true, "filter": true},
-	"outlier":                    {"entity_id": true, "filter": true, "precision": true, "window_size": true, "radius": true},
-	"lowpass":                    {"entity_id": true, "filter": true, "precision": true, "window_size": true, "time_constant": true},
-	"range":                      {"entity_id": true, "filter": true, "precision": true, "lower_bound": true, "upper_bound": true},
-	"throttle":                   {"entity_id": true, "filter": true, "precision": true, "window_size": true},
-	"time_simple_moving_average": {"entity_id": true, "filter": true, "precision": true, "window_size": true},
-	"time_throttle":              {"entity_id": true, "filter": true, "precision": true, "window_size": true},
-}
-
 // filterDurationWindowSteps are the filter steps whose window_size is a
 // DurationSelector (HA's cv.positive_time_period_dict) rather than a plain
 // sample-count NumberSelector. This is the create-path, filter-specific
@@ -944,29 +827,6 @@ var filterDurationWindowSteps = map[string]bool{
 // HA's opaque error rather than argReader's own clearer one - argReader.raw
 // only bounds window_size's size and top-level shape at read time, it
 // doesn't know here which filter subtype makes it duration-shaped.
-func (c *HybridClient) buildFilterStepConfig(config HelperConfig, stepID string) map[string]any {
-	full := c.transformConfigForFlow(config)
-	allowed, known := filterStepFields[stepID]
-	if !known {
-		return full
-	}
-
-	result := make(map[string]any, len(allowed))
-	for k, v := range full {
-		if !allowed[k] {
-			continue
-		}
-		if k == "window_size" && filterDurationWindowSteps[stepID] {
-			if d, ok := toDurationDict(v); ok {
-				result[k] = d
-				continue
-			}
-		}
-		result[k] = v
-	}
-	return result
-}
-
 // determineHelperSubtype extracts the subtype for multi-step flows.
 func (c *HybridClient) determineHelperSubtype(config HelperConfig) string {
 	// Check for explicit "group_type" field for menu selection
@@ -1069,63 +929,28 @@ func extractEntityDomain(entityID string) string {
 }
 
 // transformConfigForFlow transforms helper config to match Config Entry Flow schema.
-func (c *HybridClient) transformConfigForFlow(config HelperConfig) map[string]any {
-	result := make(map[string]any)
-
-	for k, v := range config.Config {
-		if c.shouldSkipConfigField(k, config.Platform) {
-			continue
-		}
-		result[k] = c.transformFieldValue(k, v)
-	}
-
-	c.addSensorGroupDefaults(config, result)
-	return result
-}
-
-// platformSkipFields maps platforms to fields that should be skipped during transformation.
+// platformSkipFields maps platforms to fields that are routing-only markers
+// - never a real submission value for any step of that platform's flow, so
+// they must never reach seedConsumedRoutingKeys' companion buildStepSubmission
+// loop as an unmatched (and therefore falsely "unsupported") field. Do NOT
+// add a key here just because the OLD per-platform step builders used to
+// strip it to keep it out of the WRONG step - under the schema-driven
+// engine (flow_steps.go), a step's own DataSchema already limits it to the
+// step(s) that actually declare it. Two entries used to conflate these two
+// concerns and broke real creates as a result: target_domain IS switch_as_x's
+// real (and only) "user" step field (HA has no menu for switch_as_x at all),
+// and state_characteristic IS statistics' dedicated step's real field -
+// pre-consuming both meant the one step that legitimately wants them could
+// never claim them, and HA rejected the submission with "required key not
+// provided".
 var platformSkipFields = map[string]map[string]bool{
 	platformTemplate:          {"type": true, "template_type": true},
 	platformRandom:            {"type": true},
-	platformSwitchAsX:         {"target_domain": true},
-	platformStatistics:        {"state_characteristic": true},
 	platformGenericThermostat: {"heater_entity_id": true, "target_sensor_entity_id": true},
 	platformGenericHygrostat:  {"humidifier_entity_id": true, "target_sensor_entity_id": true},
 }
 
-// shouldSkipConfigField checks if a config field should be skipped during transformation.
-func (c *HybridClient) shouldSkipConfigField(key, platform string) bool {
-	// Always skip group_type (internal routing field)
-	if key == "group_type" {
-		return true
-	}
-
-	// Check platform-specific skip fields
-	if skipFields, ok := platformSkipFields[platform]; ok {
-		if skipFields[key] {
-			return true
-		}
-	}
-
-	// Skip icon for Config Entry Flow platforms (not supported in create flow)
-	// Icons should be set via entity registry after creation
-	if key == "icon" && RequiresConfigEntryFlow(platform) {
-		return true
-	}
-
-	return false
-}
-
 // transformFieldValue transforms a config field value if needed.
-func (c *HybridClient) transformFieldValue(key string, value any) any {
-	if isDurationField(key) {
-		if duration, ok := toDurationDict(value); ok {
-			return duration
-		}
-	}
-	return value
-}
-
 // addSensorGroupDefaults adds default aggregation type for sensor groups.
 func (c *HybridClient) addSensorGroupDefaults(config HelperConfig, result map[string]any) {
 	if config.Platform != "group" {
@@ -1706,15 +1531,49 @@ func (c *HybridClient) GetConfigEntryOptions(ctx context.Context, entryID string
 
 	// If the response is a menu (e.g., template helpers show sensor/binary_sensor menu),
 	// we need to navigate to the actual form step
-	if result.Type == "menu" {
+	if result.Type == flowTypeMenu {
 		result, err = c.navigateOptionsFlowMenu(ctx, entryID, result)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	// Extract option values from data_schema suggested_value fields
-	return extractOptionsFromSchema(result.DataSchema), nil
+	return c.readAllOptionsFlowSteps(ctx, result), nil
+}
+
+// readAllOptionsFlowSteps walks forward through every remaining form step
+// of an options flow, merging each step's current values into a single
+// flat result (section values nested under their section key, the same
+// shape a single step's own submission would have). It never sends real
+// user input - buildStepSubmission in update mode round-trips each step's
+// own suggested_value fields, so submitting the result back to HA (done
+// only to discover what step comes next) is a no-op.
+//
+// When a step's own response reports last_step:true, its values are read
+// directly from that response without submitting it - submitting the
+// flow's actual last step would commit it (create_entry), which a pure
+// read should avoid. Without that signal (older HA, or a step that omits
+// it), the walk falls back to submitting anyway to find out whether
+// there's a successor; the resulting no-op commit is harmless since only
+// round-tripped values are ever sent.
+func (c *HybridClient) readAllOptionsFlowSteps(ctx context.Context, result *OptionsFlowResult) map[string]any {
+	merged := make(map[string]any)
+	const maxReadSteps = 8
+	for i := 0; i < maxReadSteps && result.Type == flowTypeForm; i++ {
+		stepValues := buildStepSubmission(flowModeUpdate, indexStepSchema(result.DataSchema), map[string]any{}, map[string]bool{}, result.StepID)
+		for k, v := range stepValues {
+			merged[k] = v
+		}
+		if result.LastStep != nil && *result.LastStep {
+			break
+		}
+		next, err := c.rest.SubmitConfigEntryOptionsFlowStep(ctx, result.FlowID, stepValues)
+		if err != nil {
+			break
+		}
+		result = next
+	}
+	return merged
 }
 
 // DeleteConfigEntry deletes a config entry and all its associated devices/entities.
@@ -1778,6 +1637,16 @@ func (c *HybridClient) findEntityDomainForConfigEntry(ctx context.Context, entry
 func findMatchingMenuOption(menuOptions []string, entityDomain string) string {
 	if entityDomain == "" || len(menuOptions) == 0 {
 		return ""
+	}
+
+	// Exact match first: entity domain "sensor" is a substring of the menu
+	// option "binary_sensor", so a substring-only search can pick the
+	// wrong option whenever both are present (HA sorts its menus, so
+	// "binary_sensor" often precedes "sensor").
+	for _, option := range menuOptions {
+		if option == entityDomain {
+			return option
+		}
 	}
 
 	for _, option := range menuOptions {

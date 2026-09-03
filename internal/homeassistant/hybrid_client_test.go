@@ -1554,7 +1554,7 @@ func TestHybridClient_UpdateHelper_ConfigEntryRouting(t *testing.T) {
 					restCalled = true
 					return &OptionsFlowResult{
 						FlowID: "flow123",
-						Type:   "create_entry",
+						Type:   flowTypeForm,
 						DataSchema: []OptionsFlowField{
 							{Name: "state", Description: map[string]any{"suggested_value": "{{ old }}"}},
 						},
@@ -2484,6 +2484,123 @@ func TestAddSensorGroupDefaults(t *testing.T) {
 // rejected as a type error. A field must be omitted from the result exactly
 // like a genuinely-absent field would be - but a real zero value (e.g. 0.0)
 // must NOT be treated the same as nil and must still be included.
+// TestGetConfigEntryOptions_WalksAllStepsAndAborts is a regression test for
+// #202's underlying visibility gap: reading only the first form step's
+// schema made every value living on a later step (e.g. generic_thermostat's
+// presets) invisible to manage_helper get_details, even though update could
+// (after this fix) write them. This asserts every step's values are merged
+// into the result. Neither mock response sets LastStep (simulating an HA
+// version, or a step, that doesn't report it), so the walk must submit the
+// final step to discover there is nothing more - which does commit it
+// (create_entry), a harmless no-op since only round-tripped current values
+// are ever sent. The flow is aborted afterward regardless.
+func TestGetConfigEntryOptions_WalksAllStepsAndAborts(t *testing.T) {
+	t.Parallel()
+
+	var abortedFlowID string
+	step := 0
+	mockWS := &mockWSOperations{}
+	mockREST := &mockRESTOperations{
+		initConfigEntryOptionsFlowFunc: func(context.Context, string) (*OptionsFlowResult, error) {
+			return &OptionsFlowResult{
+				FlowID: "flow-read",
+				Type:   flowTypeForm,
+				StepID: "init",
+				DataSchema: []OptionsFlowField{
+					{Name: "heater", Description: map[string]any{"suggested_value": "switch.heater"}},
+				},
+			}, nil
+		},
+		submitConfigEntryOptionsFlowStepFunc: func(context.Context, string, map[string]any) (*OptionsFlowResult, error) {
+			step++
+			if step == 1 {
+				return &OptionsFlowResult{
+					FlowID: "flow-read",
+					Type:   flowTypeForm,
+					StepID: "presets",
+					DataSchema: []OptionsFlowField{
+						{Name: "away_temp", Description: map[string]any{"suggested_value": 16.0}},
+					},
+				}, nil
+			}
+			return &OptionsFlowResult{FlowID: "flow-read", Type: flowTypeCreateEntry}, nil
+		},
+		abortConfigEntryOptionsFlowFunc: func(_ context.Context, flowID string) error {
+			abortedFlowID = flowID
+			return nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	options, err := client.GetConfigEntryOptions(context.Background(), "config-read")
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := map[string]any{"heater": "switch.heater", "away_temp": 16.0}
+	if !reflect.DeepEqual(options, want) {
+		t.Errorf("GetConfigEntryOptions() = %v, want %v (values from both steps merged)", options, want)
+	}
+	if step != 2 {
+		t.Fatalf("got %d submissions, want 2 (submitting the last step is how its absence of a successor is discovered)", step)
+	}
+	if abortedFlowID != "flow-read" {
+		t.Errorf("aborted flow id = %q, want %q", abortedFlowID, "flow-read")
+	}
+}
+
+// TestGetConfigEntryOptions_StopsAtLastStepWithoutSubmittingIt is the
+// side-effect-free counterpart: when HA reports last_step:true on a step's
+// own response, that step's values can be read directly from its schema
+// without ever submitting it - avoiding the harmless-but-unnecessary
+// create_entry commit the fallback path above accepts.
+func TestGetConfigEntryOptions_StopsAtLastStepWithoutSubmittingIt(t *testing.T) {
+	t.Parallel()
+
+	trueVal := true
+	submitCount := 0
+	mockWS := &mockWSOperations{}
+	mockREST := &mockRESTOperations{
+		initConfigEntryOptionsFlowFunc: func(context.Context, string) (*OptionsFlowResult, error) {
+			return &OptionsFlowResult{
+				FlowID: "flow-last",
+				Type:   flowTypeForm,
+				StepID: "init",
+				DataSchema: []OptionsFlowField{
+					{Name: "heater", Description: map[string]any{"suggested_value": "switch.heater"}},
+				},
+			}, nil
+		},
+		submitConfigEntryOptionsFlowStepFunc: func(context.Context, string, map[string]any) (*OptionsFlowResult, error) {
+			submitCount++
+			return &OptionsFlowResult{
+				FlowID:   "flow-last",
+				Type:     flowTypeForm,
+				StepID:   "presets",
+				LastStep: &trueVal,
+				DataSchema: []OptionsFlowField{
+					{Name: "away_temp", Description: map[string]any{"suggested_value": 16.0}},
+				},
+			}, nil
+		},
+		abortConfigEntryOptionsFlowFunc: func(context.Context, string) error { return nil },
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	options, err := client.GetConfigEntryOptions(context.Background(), "config-last")
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := map[string]any{"heater": "switch.heater", "away_temp": 16.0}
+	if !reflect.DeepEqual(options, want) {
+		t.Errorf("GetConfigEntryOptions() = %v, want %v", options, want)
+	}
+	if submitCount != 1 {
+		t.Errorf("submit called %d times, want 1 (the last step's values are read from its own response, never submitted)", submitCount)
+	}
+}
+
 func TestExtractOptionsFromSchema_SkipsNilSuggestedValue(t *testing.T) {
 	t.Parallel()
 
@@ -2572,29 +2689,29 @@ func TestUpdateHelperViaOptionsFlow_NameAppliedViaRegistry(t *testing.T) {
 // test for a bug where a field this helper's Options Flow schema doesn't
 // declare was silently dropped and the update still reported success -
 // discarding a change the caller explicitly asked for without any
-// indication in the response.
+// indication in the response. The unconsumed-field check now runs after
+// every step has had a chance to claim the field (so a later step's field
+// isn't mistaken for unsupported - see the sibling test below), which means
+// a single-step flow's one submission does go out to HA before the error is
+// returned; the check still fails loudly rather than reporting success.
 func TestUpdateHelperViaOptionsFlow_UnsupportedFieldFailsLoudly(t *testing.T) {
 	t.Parallel()
 
-	aborted := false
+	submitCount := 0
 	mockWS := &mockWSOperations{}
 	mockREST := &mockRESTOperations{
 		initConfigEntryOptionsFlowFunc: func(context.Context, string) (*OptionsFlowResult, error) {
 			return &OptionsFlowResult{
 				FlowID: "flow123",
-				Type:   "form",
+				Type:   flowTypeForm,
 				DataSchema: []OptionsFlowField{
 					{Name: "round_digits", Description: map[string]any{"suggested_value": 2.0}},
 				},
 			}, nil
 		},
 		submitConfigEntryOptionsFlowStepFunc: func(context.Context, string, map[string]any) (*OptionsFlowResult, error) {
-			t.Fatal("submit should not be reached when a field is unsupported")
-			return nil, nil
-		},
-		abortConfigEntryOptionsFlowFunc: func(context.Context, string) error {
-			aborted = true
-			return nil
+			submitCount++
+			return &OptionsFlowResult{Type: flowTypeCreateEntry}, nil
 		},
 	}
 
@@ -2609,8 +2726,56 @@ func TestUpdateHelperViaOptionsFlow_UnsupportedFieldFailsLoudly(t *testing.T) {
 	if !strings.Contains(err.Error(), "min_max_type") {
 		t.Errorf("error should name the unsupported field, got: %v", err)
 	}
-	if !aborted {
-		t.Error("options flow should be aborted when a field is unsupported")
+	if submitCount > 1 {
+		t.Errorf("submit called %d times, want at most 1 (the flow's only step)", submitCount)
+	}
+}
+
+// TestUpdateHelperViaOptionsFlow_UnsupportedFieldFailsAfterAllStepsTried
+// proves the other side of the same fix (issue #202's underlying cause): a
+// field that belongs to the flow's SECOND step must not be reported as
+// unsupported just because the FIRST step's schema doesn't declare it.
+func TestUpdateHelperViaOptionsFlow_UnsupportedFieldFailsAfterAllStepsTried(t *testing.T) {
+	t.Parallel()
+
+	step := 0
+	mockWS := &mockWSOperations{}
+	mockREST := &mockRESTOperations{
+		initConfigEntryOptionsFlowFunc: func(context.Context, string) (*OptionsFlowResult, error) {
+			return &OptionsFlowResult{
+				FlowID:     "flow200",
+				Type:       flowTypeForm,
+				StepID:     "init",
+				DataSchema: []OptionsFlowField{{Name: "entity_id"}},
+			}, nil
+		},
+		submitConfigEntryOptionsFlowStepFunc: func(_ context.Context, _ string, data map[string]any) (*OptionsFlowResult, error) {
+			step++
+			if step == 1 {
+				return &OptionsFlowResult{
+					FlowID:     "flow200",
+					Type:       flowTypeForm,
+					StepID:     "second",
+					DataSchema: []OptionsFlowField{{Name: "second_field"}},
+				}, nil
+			}
+			if _, present := data["second_field"]; !present {
+				t.Errorf("second step payload = %#v, want second_field routed there", data)
+			}
+			return &OptionsFlowResult{Type: flowTypeCreateEntry}, nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	err := client.updateHelperViaOptionsFlow(context.Background(), "sensor.my_helper", "config200", HelperConfig{
+		Config: map[string]any{"second_field": "value"},
+	})
+
+	if err != nil {
+		t.Fatalf("second_field belongs to the flow's second step and must not be reported unsupported: %v", err)
+	}
+	if step != 2 {
+		t.Fatalf("got %d submissions, want 2", step)
 	}
 }
 
@@ -2932,34 +3097,42 @@ func TestCreateHelperViaConfigFlow_MaxStepsExceededAbortsFlow(t *testing.T) {
 	}
 }
 
-// TestBuildConfigForFlowStep_GenericThermostatPresetsStepIsEmpty guards
-// issue #194: generic_thermostat's config flow has a trailing "presets"
-// step whose PRESETS_SCHEMA is PREVENT_EXTRA and declares none of the
-// core fields (name/heater/target_sensor/ac_mode/...) - resubmitting the
+// TestCreateStepSubmission_PresetsStepIsEmptyWhenNoPresetFieldsSupplied
+// guards issue #194: generic_thermostat's config flow has a trailing
+// "presets" step whose PRESETS_SCHEMA is PREVENT_EXTRA and declares none of
+// the core fields (name/heater/target_sensor/ac_mode/...) - resubmitting the
 // full config there fails with "extra keys not allowed". An empty
 // submission is the only valid payload for that step.
-func TestBuildConfigForFlowStep_GenericThermostatPresetsStepIsEmpty(t *testing.T) {
+func TestCreateStepSubmission_PresetsStepIsEmptyWhenNoPresetFieldsSupplied(t *testing.T) {
 	t.Parallel()
 
-	client := NewHybridClientWithInterfaces(&mockWSOperations{}, &mockRESTOperations{})
-	config := HelperConfig{
-		Platform: "generic_thermostat",
-		Config: map[string]any{
-			"name":          "my_thermostat",
-			"heater":        "switch.heater",
-			"target_sensor": "sensor.temp",
-			"ac_mode":       false,
-		},
+	userConfig := map[string]any{
+		"name":          "my_thermostat",
+		"heater":        "switch.heater",
+		"target_sensor": "sensor.temp",
+		"ac_mode":       false,
 	}
+	consumed := map[string]bool{}
 
-	presetsStep := client.buildConfigForFlowStep(config, "presets")
-	if len(presetsStep) != 0 {
-		t.Errorf("presets step config = %#v, want empty map", presetsStep)
-	}
-
-	userStep := client.buildConfigForFlowStep(config, "user")
+	// Simulates HA's real "user" step schema for generic_thermostat.
+	userStepSchema := indexStepSchema([]OptionsFlowField{
+		{Name: "name"}, {Name: "heater"}, {Name: "target_sensor"}, {Name: "ac_mode"},
+	})
+	userStep := buildStepSubmission(flowModeCreate, userStepSchema, userConfig, consumed, "user")
 	if userStep["heater"] != "switch.heater" {
 		t.Errorf("user step config = %#v, want full config with heater field", userStep)
+	}
+
+	// Simulates HA's real "presets" step schema (PRESETS_SCHEMA): none of
+	// its fields were supplied, and every field the user did supply was
+	// already consumed by the "user" step above.
+	presetsStepSchema := indexStepSchema([]OptionsFlowField{
+		{Name: "away_temp"}, {Name: "eco_temp"}, {Name: "home_temp"},
+		{Name: "comfort_temp"}, {Name: "sleep_temp"}, {Name: "activity_temp"},
+	})
+	presetsStep := buildStepSubmission(flowModeCreate, presetsStepSchema, userConfig, consumed, "presets")
+	if len(presetsStep) != 0 {
+		t.Errorf("presets step config = %#v, want empty map", presetsStep)
 	}
 }
 
@@ -2967,6 +3140,162 @@ func TestBuildConfigForFlowStep_GenericThermostatPresetsStepIsEmpty(t *testing.T
 // simulates HA's real two-step generic_thermostat CONFIG_FLOW ("user" then
 // "presets") and asserts the second submission's payload is empty rather
 // than the full config.
+// TestCreateHelperViaConfigFlow_StatisticsDefaultsStateCharacteristicToMean
+// is a regression test: HA's statistics "state_characteristic" step is
+// vol.Required with no HA-side default, but callers of the HybridClient API
+// directly (bypassing manage_helper's handler-level default in
+// buildStatisticsConfig - integration tests call client.CreateHelper()
+// directly, and any external caller of the Client interface can too) have
+// always been able to omit it. The default used to live in the deleted
+// buildConfigForFlowStep's statistics branch; it must still apply at this
+// layer, not only in the handler.
+// TestCreateHelperViaConfigFlow_UnclaimedNameIsNotReportedAsUnsupported is a
+// regression test: buildHelperConfig unconditionally injects "name" into
+// every config-entry helper's config map, but not every platform's flow
+// schema wants it (switch_as_x has none - it derives the wrapped entity's
+// name from the source entity, not a submitted field). An unclaimed "name"
+// must not be reported as an unsupported field the caller explicitly
+// requested - unlike a genuinely-unrecognized field, which still must be.
+func TestCreateHelperViaConfigFlow_UnclaimedNameIsNotReportedAsUnsupported(t *testing.T) {
+	t.Parallel()
+
+	mockWS := &mockWSOperations{}
+	mockREST := &mockRESTOperations{
+		initConfigEntryFlowFunc: func(context.Context, string) (*ConfigEntryFlowResult, error) {
+			return &ConfigEntryFlowResult{
+				FlowID: "flowsax", Type: flowTypeForm, StepID: "user",
+				// HA's real switch_as_x "user" step schema has no "name" field.
+				DataSchema: []OptionsFlowField{{Name: "entity_id"}, {Name: "target_domain"}},
+			}, nil
+		},
+		submitConfigEntryFlowStepFunc: func(context.Context, string, map[string]any) (*ConfigEntryFlowResult, error) {
+			return &ConfigEntryFlowResult{FlowID: "flowsax", Type: flowTypeCreateEntry}, nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	err := client.createHelperViaConfigFlow(context.Background(), HelperConfig{
+		Platform: platformSwitchAsX,
+		Config:   map[string]any{"name": "my_switch_as_x", "entity_id": "switch.x", "target_domain": "light"},
+	})
+
+	if err != nil {
+		t.Errorf("unclaimed \"name\" should not fail the create: %v", err)
+	}
+}
+
+// TestCreateHelperViaConfigFlow_UnrecognizedFieldStillFailsAfterCreation
+// guards the other side: a genuinely-unrecognized field (not "name") that
+// no step claims must still be reported, even though the entry was already
+// created by the time the check runs.
+func TestCreateHelperViaConfigFlow_UnrecognizedFieldStillFailsAfterCreation(t *testing.T) {
+	t.Parallel()
+
+	mockWS := &mockWSOperations{}
+	mockREST := &mockRESTOperations{
+		initConfigEntryFlowFunc: func(context.Context, string) (*ConfigEntryFlowResult, error) {
+			return &ConfigEntryFlowResult{
+				FlowID: "flowunrec", Type: flowTypeForm, StepID: "user",
+				DataSchema: []OptionsFlowField{{Name: "name"}, {Name: "entity_id"}},
+			}, nil
+		},
+		submitConfigEntryFlowStepFunc: func(context.Context, string, map[string]any) (*ConfigEntryFlowResult, error) {
+			return &ConfigEntryFlowResult{FlowID: "flowunrec", Type: flowTypeCreateEntry}, nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	err := client.createHelperViaConfigFlow(context.Background(), HelperConfig{
+		Platform: "threshold",
+		Config:   map[string]any{"name": "my_helper", "entity_id": "sensor.x", "bogus_field": "x"},
+	})
+
+	if err == nil || !strings.Contains(err.Error(), "bogus_field") {
+		t.Errorf("got error %v, want it to name the unrecognized field bogus_field", err)
+	}
+}
+
+// TestCreateHelperViaConfigFlow_SensorGroupDefaultsTypeToSum is a regression
+// test: addSensorGroupDefaults (group's sensor-domain aggregation default)
+// used to be invoked by the deleted transformConfigForFlow on every create.
+// Its own unit test (TestAddSensorGroupDefaults below) kept it referenced
+// even after that call site was removed, so `go vet`/the unused linter
+// never caught that production code stopped calling it at all.
+func TestCreateHelperViaConfigFlow_SensorGroupDefaultsTypeToSum(t *testing.T) {
+	t.Parallel()
+
+	var submittedData map[string]any
+	mockWS := &mockWSOperations{}
+	mockREST := &mockRESTOperations{
+		initConfigEntryFlowFunc: func(context.Context, string) (*ConfigEntryFlowResult, error) {
+			return &ConfigEntryFlowResult{
+				FlowID: "flowgroup", Type: flowTypeForm, StepID: "sensor",
+				DataSchema: []OptionsFlowField{{Name: "name"}, {Name: "entities"}, {Name: "type"}},
+			}, nil
+		},
+		submitConfigEntryFlowStepFunc: func(_ context.Context, _ string, data map[string]any) (*ConfigEntryFlowResult, error) {
+			submittedData = data
+			return &ConfigEntryFlowResult{FlowID: "flowgroup", Type: flowTypeCreateEntry}, nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	err := client.createHelperViaConfigFlow(context.Background(), HelperConfig{
+		Platform: "group",
+		Config:   map[string]any{"name": "my_group", "entities": []string{"sensor.temp"}},
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if submittedData["type"] != "sum" {
+		t.Errorf("submitted type = %v, want \"sum\" default for a sensor-domain group", submittedData["type"])
+	}
+}
+
+func TestCreateHelperViaConfigFlow_StatisticsDefaultsStateCharacteristicToMean(t *testing.T) {
+	t.Parallel()
+
+	var submittedPayloads []map[string]any
+	step := 0
+	mockWS := &mockWSOperations{}
+	mockREST := &mockRESTOperations{
+		initConfigEntryFlowFunc: func(context.Context, string) (*ConfigEntryFlowResult, error) {
+			return &ConfigEntryFlowResult{
+				FlowID: "flowstats", Type: flowTypeForm, StepID: "user",
+				DataSchema: []OptionsFlowField{{Name: "name"}, {Name: "entity_id"}},
+			}, nil
+		},
+		submitConfigEntryFlowStepFunc: func(_ context.Context, _ string, data map[string]any) (*ConfigEntryFlowResult, error) {
+			submittedPayloads = append(submittedPayloads, data)
+			step++
+			if step == 1 {
+				return &ConfigEntryFlowResult{
+					FlowID: "flowstats", Type: flowTypeForm, StepID: "state_characteristic",
+					DataSchema: []OptionsFlowField{{Name: "state_characteristic"}},
+				}, nil
+			}
+			return &ConfigEntryFlowResult{FlowID: "flowstats", Type: flowTypeCreateEntry}, nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	err := client.createHelperViaConfigFlow(context.Background(), HelperConfig{
+		Platform: platformStatistics,
+		Config:   map[string]any{"name": "my_stats", "entity_id": "sensor.x"},
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(submittedPayloads) != 2 {
+		t.Fatalf("got %d submissions, want 2", len(submittedPayloads))
+	}
+	if submittedPayloads[1]["state_characteristic"] != "mean" {
+		t.Errorf("state_characteristic step payload = %#v, want state_characteristic=mean when omitted", submittedPayloads[1])
+	}
+}
+
 func TestCreateHelperViaConfigFlow_GenericThermostatPresetsStepSubmitsEmptyConfig(t *testing.T) {
 	t.Parallel()
 
