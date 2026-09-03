@@ -52,10 +52,7 @@ func TestCreatableFields_AreActuallyReadByCreatePath(t *testing.T) {
 				if isCreateExcludedField(name, field) {
 					continue
 				}
-				key := field
-				if alias, ok := updateConfigKeyAliases[field]; ok {
-					key = alias
-				}
+				key := configKeyFor(name, field)
 				if _, present := config[key]; !present {
 					t.Errorf("field %q (config key %q) is declared for %q but was not read by the create builder - add it to perTypeCreateExcludedFields or fix the builder", field, key, name)
 				}

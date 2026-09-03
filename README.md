@@ -137,7 +137,7 @@ Seven guidance topics are also available as MCP resources under `skill://ha-mcp/
 | Entity            | 5     | `query_entities` (history/stats/health), `get_state`, `analyze_entity`      |
 | Registry          | 10    | `get_registry`, `manage_area/label/floor/zone/person/tag/entity/device`     |
 | Automation        | 1     | `manage_automation` (CRUD, toggle, coverage, JSON Patch + semantic patch)   |
-| Helpers           | 2     | `manage_helper` (26 types), `helper_action`                                 |
+| Helpers           | 2     | `manage_helper` (41 types), `helper_action`                                 |
 | Scripts & Scenes  | 2     | `manage_script`, `manage_scene` (CRUD + execute/activate + JSON Patch + semantic patch) |
 | Analysis          | 4     | `analyze_entity`, `get_entity_dependencies`, `analyze_target`, `find_references` |
 | Services          | 2     | `call_service`, `list_services`                                             |

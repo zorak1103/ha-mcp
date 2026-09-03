@@ -32,6 +32,27 @@ var HelperPlatforms = []string{
 	"climate",
 	"humidifier",
 	"select",
+	// Entity platforms created by the 15 new template_* subtypes (issue #206)
+	"alarm_control_panel",
+	"button",
+	"cover",
+	"device_tracker",
+	"event",
+	"fan",
+	"image",
+	"light",
+	"lock",
+	"number",
+	"switch",
+	"update",
+	"vacuum",
+	"weather",
+	// cover/fan/light/lock above are also switch_as_x target domains
+	// (helperTypes["switch_as_x"].validEntityDomains); siren/valve complete
+	// that set - switch_as_x's manage_helper update/delete on a helper
+	// targeting either was broken by this same gap before this fix.
+	"siren",
+	"valve",
 }
 
 // ParseHelperEntityID extracts platform and ID from an entity_id like "input_boolean.my_switch".

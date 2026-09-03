@@ -86,8 +86,22 @@ type helperTypeMetadata struct {
 // CLAUDE.md's "manage_helper update field docs" gotcha) - not a
 // storage-config gap, since GetHelperConfig's "<platform>/list" does return
 // it; the update builder just never forwards it.
-var perTypeUpdateExcludedFields = map[string]map[string]bool{
-	"filter": {"filter": true},
+var perTypeUpdateExcludedFields = buildPerTypeUpdateExcludedFields()
+
+// buildPerTypeUpdateExcludedFields returns the base per-type update-excluded
+// field map, merged with device_class exclusions for template subtypes whose
+// device_class is config-flow-only (not present in their OPTIONS_FLOW schema).
+func buildPerTypeUpdateExcludedFields() map[string]map[string]bool {
+	m := map[string]map[string]bool{
+		"filter": {"filter": true},
+	}
+	for typeName := range perTypeDeviceClassSupport {
+		if m[typeName] == nil {
+			m[typeName] = map[string]bool{}
+		}
+		m[typeName]["device_class"] = true
+	}
+	return m
 }
 
 // isUpdateIdentifierField reports whether field is the tool's own "which
@@ -169,228 +183,286 @@ func updatableFieldsDescription() string {
 }
 
 // helperTypes contains metadata for all supported helper types.
-var helperTypes = map[string]helperTypeMetadata{
-	"input_boolean": {
-		platform:           "input_boolean",
-		entityPrefix:       "input_boolean",
-		supportedActions:   []string{"toggle"},
-		requiredFields:     []string{},
-		optionalFields:     []string{"icon", "initial"},
-		validEntityDomains: []string{"input_boolean"},
-	},
-	"input_number": {
-		platform:           "input_number",
-		entityPrefix:       "input_number",
-		supportedActions:   []string{"set"},
-		requiredFields:     []string{"min", "max"},
-		optionalFields:     []string{"icon", "step", "initial", "mode", "unit_of_measurement"},
-		validEntityDomains: []string{"input_number"},
-	},
-	"input_text": {
-		platform:           "input_text",
-		entityPrefix:       "input_text",
-		supportedActions:   []string{"set"},
-		requiredFields:     []string{},
-		optionalFields:     []string{"icon", "min", "max", "mode", "pattern", "initial"},
-		validEntityDomains: []string{"input_text"},
-	},
-	"input_select": {
-		platform:           "input_select",
-		entityPrefix:       "input_select",
-		supportedActions:   []string{"select", "set_options"},
-		requiredFields:     []string{"options"},
-		optionalFields:     []string{"icon", "initial"},
-		validEntityDomains: []string{"input_select"},
-	},
-	"input_datetime": {
-		platform:           "input_datetime",
-		entityPrefix:       "input_datetime",
-		supportedActions:   []string{"set"},
-		requiredFields:     []string{},
-		optionalFields:     []string{"icon", "has_date", "has_time", "initial"},
-		validEntityDomains: []string{"input_datetime"},
-	},
-	"input_button": {
-		platform:           "input_button",
-		entityPrefix:       "input_button",
-		supportedActions:   []string{"press"},
-		requiredFields:     []string{},
-		optionalFields:     []string{"icon"},
-		validEntityDomains: []string{"input_button"},
-	},
-	"counter": {
-		platform:           "counter",
-		entityPrefix:       "counter",
-		supportedActions:   []string{"increment", "decrement", "reset", "set"},
-		requiredFields:     []string{},
-		optionalFields:     []string{"icon", "initial", "step", "minimum", "maximum", "restore"},
-		validEntityDomains: []string{"counter"},
-	},
-	"timer": {
-		platform:           "timer",
-		entityPrefix:       "timer",
-		supportedActions:   []string{"start", "pause", "cancel", "finish", "change"},
-		requiredFields:     []string{},
-		optionalFields:     []string{"icon", "duration", "restore"},
-		validEntityDomains: []string{"timer"},
-	},
-	"schedule": {
-		platform:           "schedule",
-		entityPrefix:       "schedule",
-		supportedActions:   []string{"reload"},
-		requiredFields:     []string{},
-		optionalFields:     []string{"icon", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"},
-		validEntityDomains: []string{"schedule"},
-	},
-	"group": {
-		platform:           "group",
-		entityPrefix:       "group",
-		supportedActions:   []string{"add_entities", "remove_entities", "reload"},
-		requiredFields:     []string{"entities"},
-		optionalFields:     []string{"icon", "all", "group_type"},
-		validEntityDomains: []string{"group"},
-	},
-	"template_sensor": {
-		platform:           platformTemplate,
-		entityPrefix:       "sensor",
-		supportedActions:   []string{},
-		requiredFields:     []string{"state"},
-		optionalFields:     []string{"icon", "unit_of_measurement", "device_class", "state_class"},
-		validEntityDomains: []string{"sensor"},
-	},
-	"template_binary_sensor": {
-		platform:           platformTemplate,
-		entityPrefix:       "binary_sensor",
-		supportedActions:   []string{},
-		requiredFields:     []string{"state"},
-		optionalFields:     []string{"icon", "device_class", "delay_on", "delay_off"},
-		validEntityDomains: []string{"binary_sensor"},
-	},
-	"threshold": {
-		platform:           "threshold",
-		entityPrefix:       "binary_sensor",
-		supportedActions:   []string{},
-		requiredFields:     []string{"entity_id"},
-		optionalFields:     []string{"icon", "lower", "upper", "hysteresis", "device_class"},
-		validEntityDomains: []string{"binary_sensor"},
-	},
-	"derivative": {
-		platform:           "derivative",
-		entityPrefix:       "sensor",
-		supportedActions:   []string{},
-		requiredFields:     []string{"source"},
-		optionalFields:     []string{"icon", "round", "time_window", "unit_time", "unit_prefix"},
-		validEntityDomains: []string{"sensor"},
-	},
-	"integral": {
-		platform:           "integration",
-		entityPrefix:       "sensor",
-		supportedActions:   []string{"reset"},
-		requiredFields:     []string{"source"},
-		optionalFields:     []string{"icon", "method", "round", "unit_time", "unit_prefix"},
-		validEntityDomains: []string{"sensor"},
-	},
-	"utility_meter": {
-		platform:           platformUtilityMeter,
-		entityPrefix:       "sensor",
-		supportedActions:   []string{"calibrate"},
-		requiredFields:     []string{"source"},
-		optionalFields:     []string{"icon", "cycle", "offset", "delta_values", "net_consumption", "periodically_resetting", "tariffs"},
-		validEntityDomains: []string{"sensor", "select"},
-		sourceEntities:     []sourceEntityConstraint{{field: "source", domains: []string{"sensor"}}},
-	},
-	"min_max": {
-		platform:           platformMinMax,
-		entityPrefix:       "sensor",
-		supportedActions:   []string{},
-		requiredFields:     []string{"entity_ids", "min_max_type"},
-		optionalFields:     []string{"icon", "round_digits"},
-		validEntityDomains: []string{"sensor"},
-	},
-	"statistics": {
-		platform:           platformStatistics,
-		entityPrefix:       "sensor",
-		supportedActions:   []string{},
-		requiredFields:     []string{"entity_id"},
-		optionalFields:     []string{"icon", "state_characteristic", "sampling_size", "max_age", "percentile", "precision"},
-		validEntityDomains: []string{"sensor"},
-		sourceEntities:     []sourceEntityConstraint{{field: attrEntityID, domains: []string{"sensor", "binary_sensor"}}},
-	},
-	"trend": {
-		platform:           platformTrend,
-		entityPrefix:       "binary_sensor",
-		supportedActions:   []string{},
-		requiredFields:     []string{"entity_id"},
-		optionalFields:     []string{"icon", "min_gradient", "min_samples", "sample_duration", "max_samples", "invert"},
-		validEntityDomains: []string{"binary_sensor"},
-		sourceEntities:     []sourceEntityConstraint{{field: attrEntityID, domains: []string{"sensor", "counter"}}},
-	},
-	"random_sensor": {
-		platform:           platformRandom,
-		entityPrefix:       "sensor",
-		supportedActions:   []string{},
-		requiredFields:     []string{},
-		optionalFields:     []string{"icon", "minimum", "maximum"},
-		validEntityDomains: []string{"sensor"},
-	},
-	"random_binary_sensor": {
-		platform:           platformRandom,
-		entityPrefix:       "binary_sensor",
-		supportedActions:   []string{},
-		requiredFields:     []string{},
-		optionalFields:     []string{"icon"},
-		validEntityDomains: []string{"binary_sensor"},
-	},
-	"filter": {
-		platform:           platformFilter,
-		entityPrefix:       "sensor",
-		supportedActions:   []string{},
-		requiredFields:     []string{"entity_id", "filter"},
-		optionalFields:     []string{"icon", "window_size", "radius", "time_constant", "lower_bound", "upper_bound", "precision"},
-		validEntityDomains: []string{"sensor"},
-		sourceEntities:     []sourceEntityConstraint{{field: attrEntityID, domains: []string{"sensor"}}},
-	},
-	"tod": {
-		platform:           platformTod,
-		entityPrefix:       "binary_sensor",
-		supportedActions:   []string{},
-		requiredFields:     []string{"after_time", "before_time"},
-		optionalFields:     []string{"icon", "after_offset", "before_offset"},
-		validEntityDomains: []string{"binary_sensor"},
-	},
-	"generic_thermostat": {
-		platform:           platformGenericThermostat,
-		entityPrefix:       "climate",
-		supportedActions:   []string{},
-		requiredFields:     []string{"heater_entity_id", "target_sensor_entity_id"},
-		optionalFields:     []string{"icon", "ac_mode", "min_temp", "max_temp", "target_temp", "cold_tolerance", "hot_tolerance"},
-		validEntityDomains: []string{"climate"},
-		sourceEntities: []sourceEntityConstraint{
-			{field: "heater_entity_id", domains: []string{"switch", "fan"}},
-			{field: "target_sensor_entity_id", domains: []string{"sensor"}, deviceClasses: []string{"temperature"}},
+var helperTypes = buildHelperTypesRegistry()
+
+// buildHelperTypesRegistry returns the base helperTypeMetadata registry for
+// all non-template-subtype helpers, merged with metadata for the
+// template_* subtypes (see helpers_template_types.go).
+// buildInputHelperTypesGroup returns metadata for the basic WS-backed input_* helpers.
+func buildInputHelperTypesGroup() map[string]helperTypeMetadata {
+	return map[string]helperTypeMetadata{
+		"input_boolean": {
+			platform:           "input_boolean",
+			entityPrefix:       "input_boolean",
+			supportedActions:   []string{"toggle"},
+			requiredFields:     []string{},
+			optionalFields:     []string{"icon", "initial"},
+			validEntityDomains: []string{"input_boolean"},
 		},
-	},
-	"switch_as_x": {
-		platform:           platformSwitchAsX,
-		entityPrefix:       "light",
-		supportedActions:   []string{},
-		requiredFields:     []string{"entity_id", "target_domain"},
-		optionalFields:     []string{"icon", "invert"},
-		validEntityDomains: []string{"cover", "fan", "light", "lock", "siren", "valve"},
-		sourceEntities:     []sourceEntityConstraint{{field: attrEntityID, domains: []string{"switch"}}},
-	},
-	"generic_hygrostat": {
-		platform:           platformGenericHygrostat,
-		entityPrefix:       "humidifier",
-		supportedActions:   []string{},
-		requiredFields:     []string{"humidifier_entity_id", "target_sensor_entity_id"},
-		optionalFields:     []string{"icon", "min_humidity", "max_humidity", "target_humidity", "dry_tolerance", "wet_tolerance"},
-		validEntityDomains: []string{"humidifier"},
-		sourceEntities: []sourceEntityConstraint{
-			{field: "humidifier_entity_id", domains: []string{"switch", "fan"}},
-			{field: "target_sensor_entity_id", domains: []string{"sensor"}, deviceClasses: []string{"humidity"}},
+		"input_number": {
+			platform:           "input_number",
+			entityPrefix:       "input_number",
+			supportedActions:   []string{"set"},
+			requiredFields:     []string{"min", "max"},
+			optionalFields:     []string{"icon", "step", "initial", "mode", "unit_of_measurement"},
+			validEntityDomains: []string{"input_number"},
 		},
-	},
+		"input_text": {
+			platform:           "input_text",
+			entityPrefix:       "input_text",
+			supportedActions:   []string{"set"},
+			requiredFields:     []string{},
+			optionalFields:     []string{"icon", "min", "max", "mode", "pattern", "initial"},
+			validEntityDomains: []string{"input_text"},
+		},
+		"input_select": {
+			platform:           "input_select",
+			entityPrefix:       "input_select",
+			supportedActions:   []string{"select", "set_options"},
+			requiredFields:     []string{"options"},
+			optionalFields:     []string{"icon", "initial"},
+			validEntityDomains: []string{"input_select"},
+		},
+		"input_datetime": {
+			platform:           "input_datetime",
+			entityPrefix:       "input_datetime",
+			supportedActions:   []string{"set"},
+			requiredFields:     []string{},
+			optionalFields:     []string{"icon", "has_date", "has_time", "initial"},
+			validEntityDomains: []string{"input_datetime"},
+		},
+		"input_button": {
+			platform:           "input_button",
+			entityPrefix:       "input_button",
+			supportedActions:   []string{"press"},
+			requiredFields:     []string{},
+			optionalFields:     []string{"icon"},
+			validEntityDomains: []string{"input_button"},
+		},
+	}
+}
+
+// buildStateHelperTypesGroup returns metadata for the remaining WS-backed
+// state helpers (counter/timer/schedule/group) plus the two base template_*
+// helper types (template_sensor/template_binary_sensor - not to be confused
+// with the newer template_* subtypes merged in via templateHelperTypes()).
+func buildStateHelperTypesGroup() map[string]helperTypeMetadata {
+	return map[string]helperTypeMetadata{
+		"counter": {
+			platform:           "counter",
+			entityPrefix:       "counter",
+			supportedActions:   []string{"increment", "decrement", "reset", "set"},
+			requiredFields:     []string{},
+			optionalFields:     []string{"icon", "initial", "step", "minimum", "maximum", "restore"},
+			validEntityDomains: []string{"counter"},
+		},
+		"timer": {
+			platform:           "timer",
+			entityPrefix:       "timer",
+			supportedActions:   []string{"start", "pause", "cancel", "finish", "change"},
+			requiredFields:     []string{},
+			optionalFields:     []string{"icon", "duration", "restore"},
+			validEntityDomains: []string{"timer"},
+		},
+		"schedule": {
+			platform:           "schedule",
+			entityPrefix:       "schedule",
+			supportedActions:   []string{"reload"},
+			requiredFields:     []string{},
+			optionalFields:     []string{"icon", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"},
+			validEntityDomains: []string{"schedule"},
+		},
+		"group": {
+			platform:           "group",
+			entityPrefix:       "group",
+			supportedActions:   []string{"add_entities", "remove_entities", "reload"},
+			requiredFields:     []string{"entities"},
+			optionalFields:     []string{"icon", "all", "group_type"},
+			validEntityDomains: []string{"group"},
+		},
+		"template_sensor": {
+			platform:           platformTemplate,
+			entityPrefix:       "sensor",
+			supportedActions:   []string{},
+			requiredFields:     []string{"state"},
+			optionalFields:     []string{"icon", "unit_of_measurement", "device_class", "state_class"},
+			validEntityDomains: []string{"sensor"},
+		},
+		"template_binary_sensor": {
+			platform:           platformTemplate,
+			entityPrefix:       "binary_sensor",
+			supportedActions:   []string{},
+			requiredFields:     []string{"state"},
+			optionalFields:     []string{"icon", "device_class", "delay_on", "delay_off"},
+			validEntityDomains: []string{"binary_sensor"},
+		},
+	}
+}
+
+// buildSensorCalcHelperTypesGroup returns metadata for the Config Entry
+// helpers that derive a sensor/binary_sensor from a single source entity.
+func buildSensorCalcHelperTypesGroup() map[string]helperTypeMetadata {
+	return map[string]helperTypeMetadata{
+		"threshold": {
+			platform:           "threshold",
+			entityPrefix:       "binary_sensor",
+			supportedActions:   []string{},
+			requiredFields:     []string{"entity_id"},
+			optionalFields:     []string{"icon", "lower", "upper", "hysteresis", "device_class"},
+			validEntityDomains: []string{"binary_sensor"},
+		},
+		"derivative": {
+			platform:           "derivative",
+			entityPrefix:       "sensor",
+			supportedActions:   []string{},
+			requiredFields:     []string{"source"},
+			optionalFields:     []string{"icon", "round", "time_window", "unit_time", "unit_prefix"},
+			validEntityDomains: []string{"sensor"},
+		},
+		"integral": {
+			platform:           "integration",
+			entityPrefix:       "sensor",
+			supportedActions:   []string{"reset"},
+			requiredFields:     []string{"source"},
+			optionalFields:     []string{"icon", "method", "round", "unit_time", "unit_prefix"},
+			validEntityDomains: []string{"sensor"},
+		},
+		"utility_meter": {
+			platform:           platformUtilityMeter,
+			entityPrefix:       "sensor",
+			supportedActions:   []string{"calibrate"},
+			requiredFields:     []string{"source"},
+			optionalFields:     []string{"icon", "cycle", "offset", "delta_values", "net_consumption", "periodically_resetting", "tariffs"},
+			validEntityDomains: []string{"sensor", "select"},
+			sourceEntities:     []sourceEntityConstraint{{field: "source", domains: []string{"sensor"}}},
+		},
+		"min_max": {
+			platform:           platformMinMax,
+			entityPrefix:       "sensor",
+			supportedActions:   []string{},
+			requiredFields:     []string{"entity_ids", "min_max_type"},
+			optionalFields:     []string{"icon", "round_digits"},
+			validEntityDomains: []string{"sensor"},
+		},
+	}
+}
+
+// buildSensorAggregateHelperTypesGroup returns metadata for the remaining
+// Config Entry sensor/binary_sensor helpers (statistics, trend, random,
+// filter, time-of-day).
+func buildSensorAggregateHelperTypesGroup() map[string]helperTypeMetadata {
+	return map[string]helperTypeMetadata{
+		"statistics": {
+			platform:           platformStatistics,
+			entityPrefix:       "sensor",
+			supportedActions:   []string{},
+			requiredFields:     []string{"entity_id"},
+			optionalFields:     []string{"icon", "state_characteristic", "sampling_size", "max_age", "percentile", "precision"},
+			validEntityDomains: []string{"sensor"},
+			sourceEntities:     []sourceEntityConstraint{{field: attrEntityID, domains: []string{"sensor", "binary_sensor"}}},
+		},
+		"trend": {
+			platform:           platformTrend,
+			entityPrefix:       "binary_sensor",
+			supportedActions:   []string{},
+			requiredFields:     []string{"entity_id"},
+			optionalFields:     []string{"icon", "min_gradient", "min_samples", "sample_duration", "max_samples", "invert"},
+			validEntityDomains: []string{"binary_sensor"},
+			sourceEntities:     []sourceEntityConstraint{{field: attrEntityID, domains: []string{"sensor", "counter"}}},
+		},
+		"random_sensor": {
+			platform:           platformRandom,
+			entityPrefix:       "sensor",
+			supportedActions:   []string{},
+			requiredFields:     []string{},
+			optionalFields:     []string{"icon", "minimum", "maximum"},
+			validEntityDomains: []string{"sensor"},
+		},
+		"random_binary_sensor": {
+			platform:           platformRandom,
+			entityPrefix:       "binary_sensor",
+			supportedActions:   []string{},
+			requiredFields:     []string{},
+			optionalFields:     []string{"icon"},
+			validEntityDomains: []string{"binary_sensor"},
+		},
+		"filter": {
+			platform:           platformFilter,
+			entityPrefix:       "sensor",
+			supportedActions:   []string{},
+			requiredFields:     []string{"entity_id", "filter"},
+			optionalFields:     []string{"icon", "window_size", "radius", "time_constant", "lower_bound", "upper_bound", "precision"},
+			validEntityDomains: []string{"sensor"},
+			sourceEntities:     []sourceEntityConstraint{{field: attrEntityID, domains: []string{"sensor"}}},
+		},
+		"tod": {
+			platform:           platformTod,
+			entityPrefix:       "binary_sensor",
+			supportedActions:   []string{},
+			requiredFields:     []string{"after_time", "before_time"},
+			optionalFields:     []string{"icon", "after_offset", "before_offset"},
+			validEntityDomains: []string{"binary_sensor"},
+		},
+	}
+}
+
+// buildClimateHelperTypesGroup returns metadata for the climate/humidifier/
+// switch_as_x Config Entry helpers.
+func buildClimateHelperTypesGroup() map[string]helperTypeMetadata {
+	return map[string]helperTypeMetadata{
+		"generic_thermostat": {
+			platform:           platformGenericThermostat,
+			entityPrefix:       "climate",
+			supportedActions:   []string{},
+			requiredFields:     []string{"heater_entity_id", "target_sensor_entity_id"},
+			optionalFields:     []string{"icon", "ac_mode", "min_temp", "max_temp", "target_temp", "cold_tolerance", "hot_tolerance"},
+			validEntityDomains: []string{"climate"},
+			sourceEntities: []sourceEntityConstraint{
+				{field: "heater_entity_id", domains: []string{"switch", "fan"}},
+				{field: "target_sensor_entity_id", domains: []string{"sensor"}, deviceClasses: []string{"temperature"}},
+			},
+		},
+		"switch_as_x": {
+			platform:           platformSwitchAsX,
+			entityPrefix:       "light",
+			supportedActions:   []string{},
+			requiredFields:     []string{"entity_id", "target_domain"},
+			optionalFields:     []string{"icon", "invert"},
+			validEntityDomains: []string{"cover", "fan", "light", "lock", "siren", "valve"},
+			sourceEntities:     []sourceEntityConstraint{{field: attrEntityID, domains: []string{"switch"}}},
+		},
+		"generic_hygrostat": {
+			platform:           platformGenericHygrostat,
+			entityPrefix:       "humidifier",
+			supportedActions:   []string{},
+			requiredFields:     []string{"humidifier_entity_id", "target_sensor_entity_id"},
+			optionalFields:     []string{"icon", "min_humidity", "max_humidity", "target_humidity", "dry_tolerance", "wet_tolerance"},
+			validEntityDomains: []string{"humidifier"},
+			sourceEntities: []sourceEntityConstraint{
+				{field: "humidifier_entity_id", domains: []string{"switch", "fan"}},
+				{field: "target_sensor_entity_id", domains: []string{"sensor"}, deviceClasses: []string{"humidity"}},
+			},
+		},
+	}
+}
+
+func buildHelperTypesRegistry() map[string]helperTypeMetadata {
+	m := map[string]helperTypeMetadata{}
+	for _, group := range []map[string]helperTypeMetadata{
+		buildInputHelperTypesGroup(),
+		buildStateHelperTypesGroup(),
+		buildSensorCalcHelperTypesGroup(),
+		buildSensorAggregateHelperTypesGroup(),
+		buildClimateHelperTypesGroup(),
+	} {
+		for typeName, meta := range group {
+			m[typeName] = meta
+		}
+	}
+	for typeName, meta := range templateHelperTypes() {
+		m[typeName] = meta
+	}
+	return m
 }
 
 // allSupportedActions lists all valid actions for the helper_action tool.
@@ -402,12 +474,21 @@ var allSupportedActions = []string{
 }
 
 // allHelperTypeNames lists all valid helper types for the manage_helper create action (sorted).
-var allHelperTypeNames = []string{
-	"counter", "derivative", "filter", "generic_hygrostat", "generic_thermostat",
-	"group", "input_boolean", "input_button", "input_datetime", "input_number",
-	"input_select", "input_text", "integral", "min_max", "random_binary_sensor",
-	"random_sensor", "schedule", "statistics", "switch_as_x", "template_binary_sensor",
-	"template_sensor", "threshold", "timer", "tod", "trend", "utility_meter",
+var allHelperTypeNames = sortedHelperTypeNames()
+
+// sortedHelperTypeNames returns the full, sorted list of helper type names -
+// the base set plus the template_* subtype names (see helpers_template_types.go).
+func sortedHelperTypeNames() []string {
+	names := []string{
+		"counter", "derivative", "filter", "generic_hygrostat", "generic_thermostat",
+		"group", "input_boolean", "input_button", "input_datetime", "input_number",
+		"input_select", "input_text", "integral", "min_max", "random_binary_sensor",
+		"random_sensor", "schedule", "statistics", "switch_as_x", "template_binary_sensor",
+		"template_sensor", "threshold", "timer", "tod", "trend", "utility_meter",
+	}
+	names = append(names, templateSubtypeNames()...)
+	slices.Sort(names)
+	return names
 }
 
 // ConsolidatedHelperHandlers provides unified MCP tool handlers for all helper types.
@@ -453,7 +534,7 @@ func (h *ConsolidatedHelperHandlers) manageHelperTool() mcp.Tool {
 		},
 		"type": {
 			Type:        "string",
-			Description: "Helper type (required for create): input_boolean, input_number, input_text, input_select, input_datetime, input_button, counter, timer, schedule, group, template_sensor, template_binary_sensor, threshold, derivative, integral, utility_meter, min_max, statistics, trend, random_sensor, random_binary_sensor, filter, tod, generic_thermostat, switch_as_x, generic_hygrostat",
+			Description: "Helper type (required for create): input_boolean, input_number, input_text, input_select, input_datetime, input_button, counter, timer, schedule, group, template_sensor, template_binary_sensor, template_alarm_control_panel, template_button, template_cover, template_device_tracker, template_event, template_fan, template_image, template_light, template_lock, template_number, template_select, template_switch, template_update, template_vacuum, template_weather, threshold, derivative, integral, utility_meter, min_max, statistics, trend, random_sensor, random_binary_sensor, filter, tod, generic_thermostat, switch_as_x, generic_hygrostat",
 			Enum:        typeNames,
 		},
 		"entity_id": {
@@ -645,6 +726,17 @@ func (h *ConsolidatedHelperHandlers) manageHelperTool() mcp.Tool {
 		props[k] = v
 	}
 
+	// Merge template subtype properties (button/cover/device_tracker/event/
+	// fan/image/light/lock/number/select/switch/update/vacuum/weather/
+	// alarm_control_panel) - skip any name already declared above (state,
+	// min, max, step, device_class, unit_of_measurement, icon, ...) so a
+	// shared field name keeps its existing single definition.
+	for k, v := range templateHelperProperties() {
+		if _, exists := props[k]; !exists {
+			props[k] = v
+		}
+	}
+
 	return mcp.Tool{
 		Name: "manage_helper",
 		Description: `Manage Home Assistant helpers - list, create, update, delete, or get details.
@@ -654,6 +746,7 @@ Helper Types:
 - Stateful helpers: counter, timer, schedule
 - Entity grouping: group
 - Advanced helpers: template_sensor, template_binary_sensor, threshold, derivative, integral
+- Template subtypes: template_alarm_control_panel, template_button, template_cover, template_device_tracker, template_event, template_fan, template_image, template_light, template_lock, template_number, template_select, template_switch, template_update, template_vacuum, template_weather
 - Utility helpers: utility_meter, min_max, statistics, trend, filter
 - Random generators: random_sensor, random_binary_sensor
 - Time-based: tod (Time of Day)
@@ -2054,33 +2147,44 @@ func buildConfigEntryUpdateConfig(entryCtx configEntryUpdateContext, args map[st
 type configBuilderFunc func(config, args map[string]any) error
 
 // helperConfigBuilders maps helper types to their configuration builders.
-var helperConfigBuilders = map[string]configBuilderFunc{
-	platformInputBoolean:           buildInputBooleanConfig,
-	platformInputButton:            buildInputButtonConfig,
-	platformInputNumber:            buildInputNumberConfig,
-	platformInputText:              buildInputTextConfig,
-	platformInputSelect:            buildInputSelectConfig,
-	platformInputDatetime:          buildInputDatetimeConfig,
-	platformCounter:                buildCounterConfig,
-	platformTimer:                  buildTimerConfig,
-	platformSchedule:               buildScheduleConfig,
-	platformGroup:                  buildGroupConfig,
-	helperTypeTemplateSensor:       buildTemplateSensorConfig,
-	helperTypeTemplateBinarySensor: buildTemplateBinarySensorConfig,
-	"threshold":                    buildThresholdConfig,
-	"derivative":                   buildDerivativeConfig,
-	"integral":                     buildIntegralConfig,
-	platformUtilityMeter:           buildUtilityMeterConfig,
-	platformMinMax:                 buildMinMaxConfig,
-	platformStatistics:             buildStatisticsConfig,
-	platformTrend:                  buildTrendConfig,
-	helperTypeRandomSensor:         buildRandomSensorConfig,
-	helperTypeRandomBinarySensor:   buildRandomBinarySensorConfig,
-	platformFilter:                 buildFilterConfig,
-	platformTod:                    buildTodConfig,
-	platformGenericThermostat:      buildGenericThermostatConfig,
-	platformSwitchAsX:              buildSwitchAsXConfig,
-	platformGenericHygrostat:       buildGenericHygrostatConfig,
+var helperConfigBuilders = buildHelperConfigBuildersRegistry()
+
+// buildHelperConfigBuildersRegistry returns the base configBuilderFunc
+// registry, merged with per-subtype builders for the template_* subtypes
+// (see helpers_template_types.go).
+func buildHelperConfigBuildersRegistry() map[string]configBuilderFunc {
+	m := map[string]configBuilderFunc{
+		platformInputBoolean:           buildInputBooleanConfig,
+		platformInputButton:            buildInputButtonConfig,
+		platformInputNumber:            buildInputNumberConfig,
+		platformInputText:              buildInputTextConfig,
+		platformInputSelect:            buildInputSelectConfig,
+		platformInputDatetime:          buildInputDatetimeConfig,
+		platformCounter:                buildCounterConfig,
+		platformTimer:                  buildTimerConfig,
+		platformSchedule:               buildScheduleConfig,
+		platformGroup:                  buildGroupConfig,
+		helperTypeTemplateSensor:       buildTemplateSensorConfig,
+		helperTypeTemplateBinarySensor: buildTemplateBinarySensorConfig,
+		"threshold":                    buildThresholdConfig,
+		"derivative":                   buildDerivativeConfig,
+		"integral":                     buildIntegralConfig,
+		platformUtilityMeter:           buildUtilityMeterConfig,
+		platformMinMax:                 buildMinMaxConfig,
+		platformStatistics:             buildStatisticsConfig,
+		platformTrend:                  buildTrendConfig,
+		helperTypeRandomSensor:         buildRandomSensorConfig,
+		helperTypeRandomBinarySensor:   buildRandomBinarySensorConfig,
+		platformFilter:                 buildFilterConfig,
+		platformTod:                    buildTodConfig,
+		platformGenericThermostat:      buildGenericThermostatConfig,
+		platformSwitchAsX:              buildSwitchAsXConfig,
+		platformGenericHygrostat:       buildGenericHygrostatConfig,
+	}
+	for typeName := range templateSubtypes {
+		m[typeName] = buildTemplateHelperConfig(typeName)
+	}
+	return m
 }
 
 func buildHelperConfig(helperType, name string, args map[string]any) (map[string]any, error) {

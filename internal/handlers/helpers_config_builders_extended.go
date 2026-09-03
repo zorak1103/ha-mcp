@@ -261,6 +261,10 @@ func addExtendedConfigEntryFields(config, args map[string]any, entryCtx configEn
 	r.num("dry_tolerance")
 	r.num("wet_tolerance")
 
+	// template subtype fields (button/cover/device_tracker/event/fan/image/
+	// light/lock/number/select/switch/update/vacuum/weather/alarm_control_panel)
+	addTemplateConfigEntryUpdateFields(r, entryCtx.entityDomain)
+
 	return r.err()
 }
 

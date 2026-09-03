@@ -552,3 +552,62 @@ func (r *argReader) raw(key string) {
 	}
 	r.config[key] = v
 }
+
+// maxActionDepth and maxActionNodes bound an HA action sequence
+// (ActionSelector) value read by actionValue. Unlike raw()'s duration
+// dicts, an action's shape (target/data) is arbitrary by nature and can't
+// be validated as flat, so it's bounded by nesting depth and total node
+// count instead.
+const (
+	maxActionDepth = 8
+	maxActionNodes = 2000
+)
+
+// actionValue reads an HA action sequence (ActionSelector): a single
+// action object (e.g. {"action": "switch.turn_on", "target": {...}}) or a
+// list of them. Bounded by depth/node count rather than checked for a
+// specific shape, since HA validates the actual action semantics itself -
+// this only guards against an unbounded payload being forwarded verbatim
+// into the HTTP body sent to Home Assistant.
+func (r *argReader) actionValue(key string) {
+	v, ok := r.args[key]
+	if !ok || isSkippable(v) {
+		return
+	}
+	switch v.(type) {
+	case map[string]any, []any:
+	default:
+		r.fail(key, "an action object or a list of action objects", v)
+		return
+	}
+	nodes := 0
+	if !boundedActionShape(v, 1, &nodes) {
+		r.fail(key, fmt.Sprintf("an action value within depth %d and %d total values", maxActionDepth, maxActionNodes), v)
+		return
+	}
+	r.config[key] = v
+}
+
+// boundedActionShape reports whether v's nesting depth and total node
+// count both stay within actionValue's limits.
+func boundedActionShape(v any, depth int, nodes *int) bool {
+	*nodes++
+	if *nodes > maxActionNodes || depth > maxActionDepth {
+		return false
+	}
+	switch val := v.(type) {
+	case map[string]any:
+		for _, elem := range val {
+			if !boundedActionShape(elem, depth+1, nodes) {
+				return false
+			}
+		}
+	case []any:
+		for _, elem := range val {
+			if !boundedActionShape(elem, depth+1, nodes) {
+				return false
+			}
+		}
+	}
+	return true
+}

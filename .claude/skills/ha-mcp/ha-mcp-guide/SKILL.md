@@ -51,7 +51,7 @@ Whenever the user mentions HA entities, automations, scripts, scenes, helpers, d
 - `manage_scene` — list/get/create/update/delete/activate/patch
 
 **Helpers**
-- `manage_helper` — lifecycle for all 26 helper types (list/create/update/delete/get_details)
+- `manage_helper` — lifecycle for all 41 helper types (list/create/update/delete/get_details)
 - `helper_action` — runtime operations (toggle, set, increment, start, pause, cancel, …)
 
 **Services**

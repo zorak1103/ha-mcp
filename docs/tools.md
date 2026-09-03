@@ -83,7 +83,7 @@ affected paths (not the full config).
 
 ### Helper Tools
 
-ha-mcp provides comprehensive support for all 26 Home Assistant helper types through two consolidated tools.
+ha-mcp provides comprehensive support for all 41 Home Assistant helper types through two consolidated tools.
 
 | Tool            | Description                                                                                                                |
 | --------------- | -------------------------------------------------------------------------------------------------------------------------- |
@@ -102,11 +102,12 @@ Universal tool for helper lifecycle management:
 | `delete`      | Delete an existing helper (requires `entity_id`)                                                     |
 | `get_details` | Get detailed configuration for any helper type (requires `entity_id`; format: natural/json)          |
 
-**Supported helper types (26 total):**
+**Supported helper types (41 total):**
 - **Input helpers:** `input_boolean`, `input_number`, `input_text`, `input_select`, `input_datetime`, `input_button`
 - **Stateful helpers:** `counter`, `timer`, `schedule`
 - **Entity grouping:** `group`
-- **Advanced helpers:** `template_sensor`, `template_binary_sensor`, `threshold`, `derivative`, `integral`
+- **Template helpers (17 subtypes):** `template_sensor`, `template_binary_sensor`, `template_alarm_control_panel`, `template_button`, `template_cover`, `template_device_tracker`, `template_event`, `template_fan`, `template_image`, `template_light`, `template_lock`, `template_number`, `template_select`, `template_switch`, `template_update`, `template_vacuum`, `template_weather`
+- **Advanced helpers:** `threshold`, `derivative`, `integral`
 - **Utility helpers:** `utility_meter`, `min_max`, `statistics`, `trend`, `filter`
 - **Random generators:** `random_sensor`, `random_binary_sensor`
 - **Time-based:** `tod` (Time of Day)
@@ -300,7 +301,7 @@ Tool-only clients (claude.ai web) can use `get_skill` instead.
 | `skill://ha-mcp/format-selection`      | Format Selection     | When to use natural vs. json format                         |
 | `skill://ha-mcp/automation-patterns`   | Automation Patterns  | Modes, trigger IDs, motion+timer, conditions vs. templates  |
 | `skill://ha-mcp/template-resilience`   | Template Resilience  | has_value() guards, unavailable handling, render_template   |
-| `skill://ha-mcp/helper-selection`      | Helper Selection     | 26-type decision matrix; id vs. name rules                  |
+| `skill://ha-mcp/helper-selection`      | Helper Selection     | 41-type decision matrix; id vs. name rules                  |
 | `skill://ha-mcp/dashboard-safety`      | Dashboard Safety     | Backup-first, truncation risk, patch workflow               |
 | `skill://ha-mcp/entity-renaming`       | Entity Renaming      | Safe rename workflow, slugify traps, area/label modes       |
 | `skill://ha-mcp/debugging-workflow`    | Debugging Workflow   | Logbook correlation, trace inspection, system log triage    |

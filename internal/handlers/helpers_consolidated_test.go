@@ -4070,10 +4070,12 @@ func updatableFieldSentinel(name, field string) any {
 
 	switch field {
 	case "options", "entities", "tariffs", "entity_ids",
-		"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday":
+		"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+		"fan_speed_list":
 		return []any{"probe"}
 	case "has_date", "has_time", "restore", "all", "delta_values", "net_consumption",
-		"periodically_resetting", "invert", "ac_mode":
+		"periodically_resetting", "invert", "ac_mode",
+		"code_arm_required", "verify_ssl", "backup", "specific_version":
 		return true
 	case "lower", "upper", "hysteresis", "min", "max", "step", "offset", "percentile",
 		"min_gradient", "sample_duration", "min_temp", "max_temp", "target_temp",
@@ -4081,17 +4083,33 @@ func updatableFieldSentinel(name, field string) any {
 		"target_humidity", "dry_tolerance", "wet_tolerance", "minimum", "maximum",
 		"round", "time_window", "round_digits", "sampling_size", "precision",
 		"min_samples", "max_samples", "delay_on", "delay_off",
-		"radius", "time_constant", "lower_bound", "upper_bound":
+		"radius", "time_constant", "lower_bound", "upper_bound",
+		"speed_count":
 		// argReader's num/integer/str readers all accept a float64 (str
 		// coerces it to a decimal string), so one numeric sentinel exercises
 		// every numeric-or-numeric-string field uniformly.
 		return float64(1)
+	case "disarm", "arm_away", "arm_custom_bypass", "arm_home", "arm_night", "arm_vacation",
+		"trigger", "press", "open", "close", "stop", "set_position", "turn_on", "turn_off",
+		"set_percentage", "install", "select_option", "lock", "unlock", "set_value",
+		"set_level", "set_hs", "set_temperature", "start", "set_fan_speed", "pause",
+		"return_to_base", "clean_spot", "locate":
+		// An HA ActionSelector value: a single action object is enough to
+		// exercise argReader.actionValue uniformly across every action field.
+		return map[string]any{"action": "input_boolean.toggle"}
 	default:
 		// icon, state, source, unit_of_measurement, device_class, state_class,
 		// unit_time, unit_prefix, method, group_type, mode, pattern, duration,
 		// cycle, max_age, after_time, before_time, after_offset, before_offset,
 		// heater_entity_id, target_sensor_entity_id, humidifier_entity_id,
-		// target_domain, window_size (raw - accepts a string): every
+		// target_domain, window_size (raw - accepts a string), and every
+		// template subtype's plain-string/template field (position, level,
+		// hs, temperature, code_format, lock_code_format, options_template,
+		// event_type, event_types, percentage, url, in_zones, latitude,
+		// longitude, location_accuracy, fan_speed, condition, humidity,
+		// temperature_unit, forecast_daily, forecast_hourly, availability,
+		// device_id, installed_version, latest_version, in_progress,
+		// release_summary, release_url, title, update_percentage): every
 		// remaining name is read as a plain string.
 		return "test-value"
 	}
@@ -4105,6 +4123,38 @@ var updateConfigKeyAliases = map[string]string{
 	"target_sensor_entity_id": "target_sensor",
 	"humidifier_entity_id":    "humidifier",
 	"min_max_type":            "type",
+	"fan_speed_list":          "fan_speeds",
+	"lock_code_format":        "code_format",
+	"options_template":        "options",
+}
+
+// updateConfigKeyAliasesByType overrides updateConfigKeyAliases for field
+// names whose HA config key genuinely differs by helper type - three
+// template subtype fields share a name with a field that has no rename
+// elsewhere: "state" is value_template only for
+// template_alarm_control_panel/template_switch (every other template
+// subtype's state field is bare "state", matching HA's own CONF_STATE);
+// "open"/"stop" are open_cover/stop_cover only for template_cover
+// (template_lock's "open" and template_vacuum's "stop" are bare,
+// matching CONF_OPEN/SERVICE_STOP).
+var updateConfigKeyAliasesByType = map[string]map[string]string{
+	"template_alarm_control_panel": {"state": "value_template"},
+	"template_switch":              {"state": "value_template"},
+	"template_cover":               {"open": "open_cover", "close": "close_cover", "stop": "stop_cover", "set_position": "set_cover_position"},
+}
+
+// configKeyFor resolves the config key a field lands under for helper type
+// name, checking the per-type override table before the global one.
+func configKeyFor(name, field string) string {
+	if byType, ok := updateConfigKeyAliasesByType[name]; ok {
+		if alias, ok := byType[field]; ok {
+			return alias
+		}
+	}
+	if alias, ok := updateConfigKeyAliases[field]; ok {
+		return alias
+	}
+	return field
 }
 
 // TestUpdatableFields_AreActuallyReadByUpdatePath asserts every field name
@@ -4150,10 +4200,7 @@ func TestUpdatableFields_AreActuallyReadByUpdatePath(t *testing.T) {
 			}
 
 			for _, field := range fields {
-				key := field
-				if alias, ok := updateConfigKeyAliases[field]; ok {
-					key = alias
-				}
+				key := configKeyFor(name, field)
 				if _, present := config[key]; !present {
 					t.Errorf("field %q (config key %q) is listed as updatable for %q but was not read by the update builder - add it to perTypeUpdateExcludedFields or fix the builder", field, key, name)
 				}

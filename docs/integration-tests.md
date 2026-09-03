@@ -96,6 +96,7 @@ go test -tags=integration -v ./internal/handlers/integration/... 2>&1 | tee test
 | `TestIntegralIntegration` | create, reset, delete |
 | `TestDerivativeIntegration` | create, delete |
 | `TestTemplateHelperIntegration` | create_sensor, create_binary_sensor, delete |
+| `TestTemplateSubtypesIntegration` | table-driven create/update/delete lifecycle and entity id resolution across all 17 template subtypes (template_sensor, template_binary_sensor, template_alarm_control_panel, template_button, template_cover, template_device_tracker, template_event, template_fan, template_image, template_light, template_lock, template_number, template_select, template_switch, template_update, template_vacuum, template_weather) |
 | `TestAutomationIntegration` | create, update, toggle, trigger, delete |
 | `TestScriptIntegration` | create, update, execute, delete |
 | `TestSceneIntegration` | create, update, activate, delete |

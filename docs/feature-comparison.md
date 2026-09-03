@@ -116,9 +116,9 @@ Three MCP server projects expose Home Assistant functionality to AI assistants:
 | Function         | ha-mcp                                                                      | Community ha-mcp                                                                     | Official HA MCP                      |
 | ---------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------ |
 | List helpers     | `manage_helper` action=list                                                 | `ha_config_list_helpers`                                                             | ---                                  |
-| Create helper    | `manage_helper` action=create (26 types)                                    | `ha_config_set_helper` (subset of types)                                             | ---                                  |
+| Create helper    | `manage_helper` action=create (41 types)                                    | `ha_config_set_helper` (subset of types)                                             | ---                                  |
 | Delete helper    | `manage_helper` action=delete                                               | `ha_config_remove_helper`                                                            | ---                                  |
-| Helper details   | `manage_helper` action=get_details (all 26 helper types; natural/json)      | ---                                                                                  | ---                                  |
+| Helper details   | `manage_helper` action=get_details (all 41 helper types; natural/json)      | ---                                                                                  | ---                                  |
 | Helper actions   | `helper_action` (toggle, set, increment, etc.)                              | via `ha_call_service`                                                                | via `call_service` Intents (limited) |
 | Timer management | `helper_action` (start/pause/cancel/finish)                                 | via `ha_call_service`                                                                | Timer Intents (HassStartTimer, etc.) |
 

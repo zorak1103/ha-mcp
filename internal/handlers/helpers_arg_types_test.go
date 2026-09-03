@@ -26,6 +26,12 @@ const (
 	// table can't see (filter's window_size - see hybrid_client.go's
 	// toDurationDict). Its schema Type MUST be omitted.
 	kindPolymorphic
+	// kindAction marks an HA ActionSelector value (a JSON object or array
+	// of objects, read via argReader.actionValue) - a template subtype
+	// field like "turn_on"/"press"/"disarm". Its schema Type MUST be
+	// omitted, same as kindPolymorphic, but named separately since the
+	// reason is "inherently object/array-shaped", not "varies by type".
+	kindAction
 )
 
 // helperArgKinds is the kind for every manage_helper schema property that
@@ -120,6 +126,75 @@ var helperArgKinds = map[string]helperArgKind{
 	"target_humidity":         kindNumber,
 	"dry_tolerance":           kindNumber,
 	"wet_tolerance":           kindNumber,
+
+	// template subtype fields (button/cover/device_tracker/event/fan/
+	// image/light/lock/number/select/switch/update/vacuum/weather/
+	// alarm_control_panel - issue #206)
+	"disarm":            kindAction,
+	"arm_away":          kindAction,
+	"arm_custom_bypass": kindAction,
+	"arm_home":          kindAction,
+	"arm_night":         kindAction,
+	"arm_vacation":      kindAction,
+	"trigger":           kindAction,
+	"code_arm_required": kindBool,
+	"code_format":       kindString,
+	"press":             kindAction,
+	"open":              kindAction,
+	"close":             kindAction,
+	"stop":              kindAction,
+	"position":          kindString,
+	"set_position":      kindAction,
+	"in_zones":          kindString,
+	"latitude":          kindString,
+	"longitude":         kindString,
+	"location_accuracy": kindString,
+	"event_type":        kindString,
+	"event_types":       kindString,
+	"turn_on":           kindAction,
+	"turn_off":          kindAction,
+	"percentage":        kindString,
+	"set_percentage":    kindAction,
+	"speed_count":       kindNumber,
+	"url":               kindString,
+	"verify_ssl":        kindBool,
+	"level":             kindString,
+	"set_level":         kindAction,
+	"hs":                kindString,
+	"set_hs":            kindAction,
+	"temperature":       kindString,
+	"set_temperature":   kindAction,
+	"lock":              kindAction,
+	"unlock":            kindAction,
+	"lock_code_format":  kindString,
+	"set_value":         kindAction,
+	"options_template":  kindString,
+	"select_option":     kindAction,
+	"install":           kindAction,
+	"installed_version": kindString,
+	"latest_version":    kindString,
+	"in_progress":       kindString,
+	"release_summary":   kindString,
+	"release_url":       kindString,
+	"title":             kindString,
+	"update_percentage": kindString,
+	"backup":            kindBool,
+	"specific_version":  kindBool,
+	"start":             kindAction,
+	"fan_speed":         kindString,
+	"fan_speed_list":    kindStringArray,
+	"set_fan_speed":     kindAction,
+	"pause":             kindAction,
+	"return_to_base":    kindAction,
+	"clean_spot":        kindAction,
+	"locate":            kindAction,
+	"condition":         kindString,
+	"humidity":          kindString,
+	"temperature_unit":  kindString,
+	"forecast_daily":    kindString,
+	"forecast_hourly":   kindString,
+	"availability":      kindString,
+	"device_id":         kindString,
 }
 
 // nonBuilderSchemaFields are manage_helper schema properties consumed by
@@ -144,7 +219,7 @@ func schemaTypeFor(kind helperArgKind) string {
 		return "boolean"
 	case kindStringArray, kindObjectArray:
 		return "array"
-	case kindPolymorphic:
+	case kindPolymorphic, kindAction:
 		return ""
 	default:
 		return ""
