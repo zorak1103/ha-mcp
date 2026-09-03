@@ -704,11 +704,20 @@ func (c *HybridClient) createHelperViaConfigFlow(ctx context.Context, config Hel
 // older HA can leave a caller-supplied preset field unclaimed through no
 // fault of the caller.
 func (c *HybridClient) unacceptedCreateFieldsError(ctx context.Context, config HelperConfig, unconsumed []string) error {
+	const suffix = "the helper exists, do not retry create; use manage_helper update or delete it"
 	entityID, predictErr := c.predictEntityIDForConfigEntry(ctx, config)
 	if predictErr != nil {
-		return fmt.Errorf("helper created, but field(s) %s were not accepted by any step of the %s config flow and have NOT been applied - the helper exists, do not retry create; use manage_helper update or delete it", strings.Join(unconsumed, ", "), config.Platform)
+		return fmt.Errorf("helper created, but field(s) %s were not accepted by any step of the %s config flow and have NOT been applied - %s",
+			strings.Join(unconsumed, ", "), config.Platform, suffix)
 	}
-	return fmt.Errorf("helper created (%s), but field(s) %s were not accepted by any step of the %s config flow and have NOT been applied - the helper exists, do not retry create; use manage_helper update or delete it", entityID, strings.Join(unconsumed, ", "), config.Platform)
+	// entityID is a slugify-based prediction (predictEntityIDForConfigEntry),
+	// not a verified fact - CLAUDE.md documents it as flatly wrong for
+	// switch_as_x. Presenting it as certain would let a caller act on a
+	// wrong id, get a 404 from the update/delete this message recommends,
+	// and conclude create failed - retrying and duplicating the helper,
+	// exactly what this message exists to prevent. "likely" hedges it.
+	return fmt.Errorf("helper created (likely %s, a predicted id - verify with manage_helper get_details/list), but field(s) %s were not accepted by any step of the %s config flow and have NOT been applied - %s",
+		entityID, strings.Join(unconsumed, ", "), config.Platform, suffix)
 }
 
 // applyClientLevelCreateDefaults fills in defaults HA's own schema doesn't

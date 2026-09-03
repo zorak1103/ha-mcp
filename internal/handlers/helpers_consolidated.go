@@ -47,7 +47,20 @@ const (
 	serviceSetValue                = "set_value"
 	helperActionUpdate             = "update"
 	hygrostatEntityDomain          = "humidifier" // generic_hygrostat's validEntityDomains entry - an entity domain, not an integration platform name
-	thermostatEntityDomain         = "climate"    // generic_thermostat's validEntityDomains entry - gates addExtendedConfigEntryFields' preset-temperature fields to this platform only
+	// thermostatEntityDomain is generic_thermostat's validEntityDomains
+	// entry - gates addExtendedConfigEntryFields' preset-temperature fields
+	// to this platform only. N3: unlike the min_max_type gate, which
+	// resolves the real integration PLATFORM via the entity registry
+	// because a domain can host more than one platform, this gates on the
+	// entity DOMAIN directly - correct only because "climate" is used by
+	// exactly one helperTypes entry (generic_thermostat). If a second
+	// config-entry helper type is ever added under the "climate" domain,
+	// this gate would need the same registry-platform resolution
+	// min_max_type uses instead of a plain domain comparison.
+	// TestThermostatEntityDomain_IsUniqueAcrossHelperTypes pins the
+	// single-owner assumption so that addition fails a test rather than
+	// silently leaking preset fields into the new type's updates.
+	thermostatEntityDomain = "climate"
 	// hygrostatDeviceClass is generic_hygrostat's required device_class
 	// config value - a different field than hygrostatEntityDomain above
 	// (that one identifies the entity's domain; this one is a value written
@@ -360,11 +373,19 @@ var helperTypes = map[string]helperTypeMetadata{
 		validEntityDomains: []string{"binary_sensor"},
 	},
 	"generic_thermostat": {
-		platform:           platformGenericThermostat,
-		entityPrefix:       "climate",
-		supportedActions:   []string{},
-		requiredFields:     []string{"heater_entity_id", "target_sensor_entity_id"},
-		optionalFields:     append([]string{"icon", "ac_mode", "min_temp", "max_temp", "target_temp", "cold_tolerance", "hot_tolerance"}, genericThermostatPresetFieldNames()...),
+		platform:         platformGenericThermostat,
+		entityPrefix:     "climate",
+		supportedActions: []string{},
+		requiredFields:   []string{"heater_entity_id", "target_sensor_entity_id"},
+		// slices.Clip removes the spare capacity append() leaves behind (N2):
+		// append([]string{...}, extra...) on a full-literal slice
+		// reallocates with room to grow, making generic_thermostat the one
+		// helperTypes entry whose optionalFields backing array a future
+		// in-place append elsewhere could silently share/mutate.
+		optionalFields: slices.Clip(append(
+			[]string{"icon", "ac_mode", "min_temp", "max_temp", "target_temp", "cold_tolerance", "hot_tolerance"},
+			genericThermostatPresetFieldNames()...,
+		)),
 		validEntityDomains: []string{"climate"},
 		sourceEntities: []sourceEntityConstraint{
 			{field: "heater_entity_id", domains: []string{"switch", "fan"}},
@@ -1015,6 +1036,17 @@ func (h *ConsolidatedHelperHandlers) handleUpdate(ctx context.Context, client ho
 		return errorResult(err.Error()), nil
 	}
 
+	// Snapshot which keys actually made it into the built config BEFORE
+	// calling UpdateHelper - client.UpdateHelper's config-entry path
+	// (updateHelperViaOptionsFlow) deletes "icon"/"name" from this same map
+	// in place after consuming them, so reading it afterwards would
+	// misreport icon/name as never-applied even when they were (see
+	// splitAppliedFields).
+	appliedKeys := make(map[string]bool, len(config))
+	for k := range config {
+		appliedKeys[k] = true
+	}
+
 	// Create UpdateHelper request
 	updateConfig := homeassistant.HelperConfig{
 		Platform: entityDomain,
@@ -1031,33 +1063,109 @@ func (h *ConsolidatedHelperHandlers) handleUpdate(ctx context.Context, client ho
 		return errorResult(fmt.Sprintf("error updating helper: %v", err)), nil
 	}
 
-	return successResult(updateSuccessMessage(entityID, args)), nil
+	applied, ignored := splitAppliedFields(args, appliedKeys)
+	return successResult(updateSuccessMessage(entityID, applied, ignored)), nil
 }
 
 // updateSuccessMessage renders manage_helper update's success message,
-// echoing which caller-supplied fields were actually applied (N6 - a bare
-// "updated successfully" left a caller unable to tell full application
-// from a partial one). Safe to report as applied unconditionally: a
-// config-entry field no step's schema accepted already fails the call
-// before this point (see hybrid_client.go's unconsumedUserFields checks),
-// and the WS merge path (mergeCurrentHelperState) only fills in fields the
-// caller omitted - it never changes what the caller explicitly asked for.
-// dispatchOnlyUpdateArgNames are manage_helper's own dispatch/identifier
-// arguments, never a field applied to the helper itself.
-func updateSuccessMessage(entityID string, args map[string]any) string {
-	dispatchOnlyUpdateArgNames := map[string]bool{"action": true, "type": true, "id": true, attrEntityID: true}
-
-	fields := make([]string, 0, len(args))
-	for name := range args {
-		if !dispatchOnlyUpdateArgNames[name] {
-			fields = append(fields, name)
-		}
-	}
-	if len(fields) == 0 {
+// echoing which caller-supplied fields actually reached the payload sent to
+// Home Assistant, and separately which ones the caller supplied but no
+// builder ever read (N6 - a bare "updated successfully" left a caller
+// unable to tell full application from a partial one; C1 - an earlier
+// version of this echoed every non-dispatch arg name as "applied"
+// unconditionally, which is wrong: manage_helper's own format/verbose
+// output args, a typo'd field name, or a field silently dropped by a
+// platform-specific gate like addGenericThermostatPresetFields would all be
+// reported as successfully applied when nothing was ever sent for them).
+// See splitAppliedFields for how the two lists are derived.
+func updateSuccessMessage(entityID string, applied, ignored []string) string {
+	if len(applied) == 0 && len(ignored) == 0 {
 		return fmt.Sprintf("Helper '%s' updated successfully", entityID)
 	}
-	slices.Sort(fields)
-	return fmt.Sprintf("Helper '%s' updated successfully (applied: %s)", entityID, strings.Join(fields, ", "))
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "Helper '%s' updated successfully", entityID)
+	if len(applied) > 0 {
+		sorted := append([]string{}, applied...)
+		slices.Sort(sorted)
+		fmt.Fprintf(&b, " (applied: %s)", boundedFieldList(sorted))
+	}
+	if len(ignored) > 0 {
+		sorted := append([]string{}, ignored...)
+		slices.Sort(sorted)
+		fmt.Fprintf(&b, " (ignored - not accepted by this helper type: %s)", boundedFieldList(sorted))
+	}
+	return b.String()
+}
+
+// maxEchoedFieldNameLen and maxEchoedFieldCount bound updateSuccessMessage's
+// rendering of caller-supplied field names (W2): those names are arbitrary
+// JSON object keys nothing in the stack validates or length-limits before
+// they reach this LLM-facing text.
+const (
+	maxEchoedFieldNameLen = 60
+	maxEchoedFieldCount   = 20
+)
+
+// boundedFieldList renders a sorted field-name list for updateSuccessMessage,
+// truncating any single name over maxEchoedFieldNameLen and capping the
+// total count at maxEchoedFieldCount (with a "N more" marker) so neither an
+// oversized nor an excessively long caller-supplied key balloons the
+// message.
+func boundedFieldList(sorted []string) string {
+	shown := sorted
+	omitted := 0
+	if len(shown) > maxEchoedFieldCount {
+		omitted = len(shown) - maxEchoedFieldCount
+		shown = shown[:maxEchoedFieldCount]
+	}
+	rendered := make([]string, len(shown))
+	for i, name := range shown {
+		if len(name) > maxEchoedFieldNameLen {
+			name = name[:maxEchoedFieldNameLen] + "..."
+		}
+		rendered[i] = name
+	}
+	joined := strings.Join(rendered, ", ")
+	if omitted > 0 {
+		joined = fmt.Sprintf("%s, and %d more", joined, omitted)
+	}
+	return joined
+}
+
+// splitAppliedFields separates a caller's update args into fields that
+// actually reached the payload sent to Home Assistant (present as a key in
+// appliedKeys, a snapshot of the built config map taken before
+// client.UpdateHelper runs) versus fields the caller supplied that no
+// builder ever read (a typo, or a field belonging to a different helper
+// type - e.g. generic_thermostat's preset fields on a non-climate helper,
+// silently dropped by addGenericThermostatPresetFields' domain gate).
+//
+// C1: updateSuccessMessage previously echoed every non-dispatch arg name as
+// "applied" regardless of whether anything was actually sent for it -
+// reporting manage_helper's own format/verbose output args, typos, and
+// domain-gated fields as successfully applied. appliedKeys must be
+// snapshotted BEFORE client.UpdateHelper runs: for config-entry helpers,
+// updateHelperViaOptionsFlow deletes "icon"/"name" from the same config map
+// in place after using them, so reading config's keys after the call would
+// misreport icon/name as ignored even when they were applied via the entity
+// registry.
+func splitAppliedFields(args map[string]any, appliedKeys map[string]bool) (applied, ignored []string) {
+	updateDispatchOnlyArgNames := map[string]bool{
+		"action": true, "type": true, "id": true, attrEntityID: true,
+		"format": true, "verbose": true,
+	}
+	for name := range args {
+		if updateDispatchOnlyArgNames[name] {
+			continue
+		}
+		if appliedKeys[name] {
+			applied = append(applied, name)
+		} else {
+			ignored = append(ignored, name)
+		}
+	}
+	return applied, ignored
 }
 
 // buildUnknownTypeUpdateConfig builds the update config for a helper whose

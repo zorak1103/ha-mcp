@@ -1615,6 +1615,86 @@ func TestManageHelper_Update_SuccessMessageEchoesAppliedFields(t *testing.T) {
 	}
 }
 
+// TestManageHelper_Update_SuccessMessageOmitsFieldsThatNeverReachedThePayload
+// is C1's regression test. updateSuccessMessage originally derived its
+// "applied" list from the caller's raw args, so two classes of field were
+// reported as applied while nothing was ever sent for them:
+//
+//  1. manage_helper's own output args (format, verbose) - declared top-level
+//     schema properties, so a schema-conformant caller can always pass them.
+//  2. Any field the resolved helper type's config builder never reads (a
+//     typo, or a field belonging to a different helper type). No arg
+//     validation exists anywhere in the stack, and the flow engine's
+//     unconsumedUserFields guard inspects the BUILT config, not args, so it
+//     is structurally unable to catch these.
+//
+// The message must name only what actually reached the payload, and report
+// the rest as ignored rather than applied.
+func TestManageHelper_Update_SuccessMessageOmitsFieldsThatNeverReachedThePayload(t *testing.T) {
+	t.Parallel()
+
+	client := &UniversalMockClient{}
+	client.UpdateHelperFn = func(context.Context, string, homeassistant.HelperConfig) error {
+		return nil
+	}
+
+	h := NewConsolidatedHelperHandlers()
+	result, err := h.handleManageHelper(context.Background(), client, map[string]any{
+		"action":    "update",
+		"entity_id": "counter.visitors",
+		"format":    "json",
+		"verbose":   true,
+		"step":      float64(5),
+		"away_temp": float64(16), // generic_thermostat's field - no counter builder reads it
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+	}
+
+	text := result.Content[0].Text
+	// Exact-match the applied list: had away_temp been counted as applied,
+	// the rendered list would read "away_temp, step" and this would fail.
+	if !strings.Contains(text, "(applied: step)") {
+		t.Errorf("success message = %q, want the applied list to be exactly \"step\"", text)
+	}
+	if strings.Contains(text, "format") || strings.Contains(text, "verbose") {
+		t.Errorf("success message = %q, must not report manage_helper's own output args as helper fields", text)
+	}
+	if !strings.Contains(text, "away_temp") {
+		t.Errorf("success message = %q, want a field no builder read to be reported as ignored", text)
+	}
+}
+
+// TestUpdateSuccessMessage_BoundsTheEchoedFieldList pins W2: the field names
+// echoed back into LLM-facing text come straight from caller-supplied JSON
+// keys, which nothing in the stack validates or bounds (internal/mcp does no
+// InputSchema/additionalProperties enforcement). An over-long name is
+// truncated and an over-long list is capped.
+func TestUpdateSuccessMessage_BoundsTheEchoedFieldList(t *testing.T) {
+	t.Parallel()
+
+	longName := strings.Repeat("x", 500)
+	applied := []string{longName}
+	for i := range 40 {
+		applied = append(applied, fmt.Sprintf("field%02d", i))
+	}
+
+	msg := updateSuccessMessage("counter.visitors", applied, nil)
+
+	if strings.Contains(msg, longName) {
+		t.Errorf("message echoes a 500-char field name verbatim: %q", msg)
+	}
+	if len(msg) > 1000 {
+		t.Errorf("message length = %d, want it bounded well below the 41 supplied names", len(msg))
+	}
+	if !strings.Contains(msg, "more") {
+		t.Errorf("message = %q, want a truncation marker naming how many were omitted", msg)
+	}
+}
+
 // TestManageHelper_Update_NameField verifies that the name passed to update is
 // forwarded to the API correctly, including unicode characters (umlauts etc.).
 func TestManageHelper_Update_NameField(t *testing.T) {

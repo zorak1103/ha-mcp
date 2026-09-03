@@ -3620,6 +3620,33 @@ func TestCreateHelperViaConfigFlow_PresetsStepAbsentReportsUnaccepted(t *testing
 	if !strings.Contains(err.Error(), "helper exists") || !strings.Contains(err.Error(), "do not retry create") {
 		t.Errorf("error should warn the helper already exists and must not be recreated, got: %v", err)
 	}
+	// W1: predictEntityIDForConfigEntry is a slugify guess (CLAUDE.md
+	// documents it as flatly wrong for switch_as_x) - the message must not
+	// present "climate.my_thermostat" as a verified fact the caller can act
+	// on directly, since a wrong id would make the suggested update/delete
+	// 404, leading a caller who trusts it to conclude create failed and
+	// retry, duplicating the helper.
+	if strings.Contains(err.Error(), "climate.my_thermostat") && !strings.Contains(err.Error(), "likely") {
+		t.Errorf("error names a predicted entity id as fact, want it hedged (e.g. \"likely\"): %v", err)
+	}
+}
+
+// TestUnacceptedCreateFieldsError_PredictionFailureOmitsID covers the
+// branch where predictEntityIDForConfigEntry itself fails (no "name" in
+// config) - the message must still name the field and the "do not retry"
+// warning without fabricating an id.
+func TestUnacceptedCreateFieldsError_PredictionFailureOmitsID(t *testing.T) {
+	t.Parallel()
+
+	client := NewHybridClientWithInterfaces(&mockWSOperations{}, &mockRESTOperations{})
+	err := client.unacceptedCreateFieldsError(context.Background(), HelperConfig{Platform: "generic_thermostat", Config: map[string]any{}}, []string{"away_temp"})
+
+	if err == nil || !strings.Contains(err.Error(), "away_temp") {
+		t.Fatalf("got error %v, want it to name the unaccepted field away_temp", err)
+	}
+	if !strings.Contains(err.Error(), "helper exists") || !strings.Contains(err.Error(), "do not retry create") {
+		t.Errorf("error should warn the helper already exists and must not be recreated, got: %v", err)
+	}
 }
 
 // TestUpdateHelperViaOptionsFlow_ConvertsUnsetDurationFieldOnFirstSet is a

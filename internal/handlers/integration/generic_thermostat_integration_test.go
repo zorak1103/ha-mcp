@@ -246,13 +246,6 @@ func (s *GenericThermostatIntegrationTestSuite) TestGenericThermostatWithToleran
 	entity, err := s.WaitForEntity(thermoEntityID, 5*time.Second)
 	s.Require().NoError(err, "Generic thermostat did not appear")
 	s.NotEmpty(entity.State, "Thermostat should have a state")
-
-	// Cleanup
-	_ = s.Client().DeleteHelper(s.Context(), thermoEntityID)
-	_ = s.Client().DeleteHelper(s.Context(), sensorEntityID)
-	_ = s.Client().DeleteHelper(s.Context(), inputEntityID)
-	_ = s.Client().DeleteHelper(s.Context(), heaterEntityID)
-	_ = s.Client().DeleteHelper(s.Context(), boolEntityID)
 }
 
 // TestGenericThermostatPresetsViaTool is issue #202's tool-dispatch

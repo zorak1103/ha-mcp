@@ -9,7 +9,34 @@ package handlers
 // to it (e.g. helperTypes' optionalFields) can never alias or mutate a
 // shared backing array.
 func genericThermostatPresetFieldNames() []string {
-	return []string{"away_temp", "eco_temp", "home_temp", "comfort_temp", "sleep_temp", "activity_temp"}
+	names := make([]string, len(genericThermostatPresets))
+	for i, p := range genericThermostatPresets {
+		names[i] = p.field
+	}
+	return names
+}
+
+// genericThermostatPreset pairs a preset config field with the label used
+// in its generated schema description.
+type genericThermostatPreset struct {
+	field string
+	label string
+}
+
+// genericThermostatPresets is the single source of truth for
+// generic_thermostat's six optional preset temperature fields (HA's
+// CONF_PRESETS.values()) - genericThermostatPresetFieldNames() (read by the
+// create/update config builders) and buildGenericThermostatPresetSchema()
+// (the manage_helper JSON schema, helpers_schema_extended.go) both derive
+// from this one list, so a field can't be added to the builders' side
+// without also appearing in the schema, or vice versa.
+var genericThermostatPresets = []genericThermostatPreset{
+	{field: "away_temp", label: "Away"},
+	{field: "eco_temp", label: "Eco"},
+	{field: "home_temp", label: "Home"},
+	{field: "comfort_temp", label: "Comfort"},
+	{field: "sleep_temp", label: "Sleep"},
+	{field: "activity_temp", label: "Activity"},
 }
 
 // buildUtilityMeterConfig builds configuration for utility_meter helper.
