@@ -999,8 +999,12 @@ func (c *HybridClient) determineTemplateSubtype(config HelperConfig) string {
 	if t, ok := config.Config["type"].(string); ok {
 		return t
 	}
-	// Check platformTemplate_type field (set by buildTemplateConfig)
-	if tt, ok := config.Config["platformTemplate_type"].(string); ok {
+	// Check template_type field, written by buildTemplateSensorConfig /
+	// buildTemplateBinarySensorConfig (internal/handlers/helpers_consolidated.go).
+	// This is also HA's own config key (validate_user_input injects it into
+	// stored options) and is stripped from the submitted payload before it
+	// reaches HA by platformSkipFields[platformTemplate].
+	if tt, ok := config.Config["template_type"].(string); ok {
 		return tt
 	}
 	// Infer from device_class
