@@ -69,7 +69,7 @@ func TestActionValue_RejectsExcessiveDepth(t *testing.T) {
 
 	// Build a chain of nested maps deeper than maxActionDepth.
 	var deep any = "leaf"
-	for i := 0; i < maxActionDepth+5; i++ {
+	for range maxActionDepth + 5 {
 		deep = map[string]any{"nested": deep}
 	}
 
@@ -99,6 +99,51 @@ func TestActionValue_RejectsExcessiveNodeCount(t *testing.T) {
 	r.actionValue("turn_on")
 	if err := r.err(); err == nil {
 		t.Fatal("expected an error for excessive node count, got nil")
+	}
+}
+
+func TestActionValue_AcceptsExactlyMaxNodeCount(t *testing.T) {
+	t.Parallel()
+
+	// A flat list of leaf strings has depth 2 throughout (well under
+	// maxActionDepth), so this isolates the node-count boundary: the list
+	// itself is 1 node, plus one node per element - sized so the total is
+	// exactly maxActionNodes. This must be ACCEPTED: pins the boundary at
+	// "> maxActionNodes", not ">= maxActionNodes".
+	elems := make([]any, maxActionNodes-1)
+	for i := range elems {
+		elems[i] = "leaf"
+	}
+
+	config := map[string]any{}
+	args := map[string]any{"turn_on": elems}
+
+	r := newArgReader(config, args)
+	r.actionValue("turn_on")
+	if err := r.err(); err != nil {
+		t.Fatalf("actionValue() error = %v, want nil at exactly maxActionNodes total nodes", err)
+	}
+}
+
+func TestActionValue_AcceptsExactlyMaxDepth(t *testing.T) {
+	t.Parallel()
+
+	// Nesting maxActionDepth-1 single-key maps around a leaf puts the
+	// leaf's call at depth == maxActionDepth exactly (root map is depth 1).
+	// This must be ACCEPTED: pins the boundary at "> maxActionDepth", not
+	// ">= maxActionDepth".
+	var deep any = "leaf"
+	for range maxActionDepth - 1 {
+		deep = map[string]any{"nested": deep}
+	}
+
+	config := map[string]any{}
+	args := map[string]any{"turn_on": deep}
+
+	r := newArgReader(config, args)
+	r.actionValue("turn_on")
+	if err := r.err(); err != nil {
+		t.Fatalf("actionValue() error = %v, want nil at exactly maxActionDepth nesting", err)
 	}
 }
 

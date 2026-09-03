@@ -77,3 +77,24 @@ func TestTemplateSubtypeTable_SharedArgNamesAgree(t *testing.T) {
 		}
 	}
 }
+
+// TestResolveTemplateFieldsForDomain_IncludesUnambiguousFieldNotOwnedByAnySubtypeDomain
+// pins the non-ambiguous branch of resolveTemplateFieldsForDomain's
+// len(configKeysByArg[arg]) > 1 check: "fan_speed_list" is declared by
+// exactly one subtype (template_vacuum), so it has exactly one config key
+// regardless of which subtype "first" comes from - it must still be
+// resolved (not skipped) for a domain that owns none of the 15 subtypes,
+// same as a real template_sensor/template_binary_sensor update. A ">="
+// mutant here would wrongly treat "exactly one config key" as ambiguous
+// and drop every single-owner field whenever the domain doesn't match.
+func TestResolveTemplateFieldsForDomain_IncludesUnambiguousFieldNotOwnedByAnySubtypeDomain(t *testing.T) {
+	t.Parallel()
+
+	fields := resolveTemplateFieldsForDomain("sensor")
+	for _, f := range fields {
+		if f.arg == "fan_speed_list" {
+			return
+		}
+	}
+	t.Fatalf("resolveTemplateFieldsForDomain(%q) dropped unambiguous field %q; fields = %+v", "sensor", "fan_speed_list", fields)
+}
