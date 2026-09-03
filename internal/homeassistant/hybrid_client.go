@@ -37,10 +37,17 @@ const (
 	platformTrend             = "trend"
 	platformFilter            = "filter"
 	platformGenericThermostat = "generic_thermostat"
+	platformGenericHygrostat  = "generic_hygrostat"
 
 	flowTypeMenu        = "menu"
 	flowTypeForm        = "form"
 	flowTypeCreateEntry = "create_entry"
+
+	// flowStepPresets is generic_thermostat's trailing config/options flow
+	// step id (HA's own PRESETS_SCHEMA step name), shared by
+	// buildGenericThermostatStepConfig (create) and
+	// submitOptionsFlowPresetsStep (update).
+	flowStepPresets = "presets"
 )
 
 // binaryDeviceClasses maps device classes that indicate a binary sensor.
@@ -484,9 +491,21 @@ func (c *HybridClient) updateHelperViaOptionsFlow(ctx context.Context, entityID,
 		return err
 	}
 
-	// Validate result
+	// Surface HA's validation reason instead of the opaque "unexpected
+	// result type" below - the create path already does this
+	// (createHelperViaConfigFlow's "config entry flow validation errors").
+	if submitResult.Type == flowTypeForm && len(submitResult.Errors) > 0 {
+		_ = c.rest.AbortConfigEntryOptionsFlow(ctx, result.FlowID)
+		return fmt.Errorf("options flow validation errors: %v", submitResult.Errors)
+	}
+
+	// Validate result. Aborts against result.FlowID (captured before
+	// submission, and stable across every step of this flow), not
+	// submitResult.FlowID: submitResult is whatever HA's last response
+	// was, and a response that omits flow_id would abort with an empty
+	// id and leak the flow server-side.
 	if submitResult.Type != flowTypeCreateEntry {
-		_ = c.rest.AbortConfigEntryOptionsFlow(ctx, submitResult.FlowID)
+		_ = c.rest.AbortConfigEntryOptionsFlow(ctx, result.FlowID)
 		return fmt.Errorf("unexpected options flow result type: %s", submitResult.Type)
 	}
 
@@ -513,10 +532,21 @@ func (c *HybridClient) updateHelperViaOptionsFlow(ctx context.Context, entityID,
 // result is returned unchanged for every other step/type so the caller's
 // existing create_entry check still applies.
 func (c *HybridClient) submitOptionsFlowPresetsStep(ctx context.Context, result *OptionsFlowResult) (*OptionsFlowResult, error) {
-	if result.Type != flowTypeForm || result.StepID != "presets" {
+	if result.Type != flowTypeForm || result.StepID != flowStepPresets {
 		return result, nil
 	}
-	submitResult, err := c.rest.SubmitConfigEntryOptionsFlowStep(ctx, result.FlowID, map[string]any{})
+	// Unlike the create-path equivalent (buildGenericThermostatStepConfig),
+	// an empty map is NOT safe here: HA's
+	// _update_and_remove_omitted_optional_keys deletes every vol.Optional
+	// key of the step's schema that is absent from the submitted payload -
+	// on an options flow those keys are the entry's *existing* stored
+	// values (its own preset temperatures), not blank slots like on
+	// create. Round-tripping the step's current suggested_value fields
+	// keeps them intact; extractOptionsFromSchema already omits a
+	// genuinely-unset preset (nil suggested_value) the same way create
+	// leaves it unset.
+	presetsConfig := extractOptionsFromSchema(result.DataSchema)
+	submitResult, err := c.rest.SubmitConfigEntryOptionsFlowStep(ctx, result.FlowID, presetsConfig)
 	if err != nil {
 		_ = c.rest.AbortConfigEntryOptionsFlow(ctx, result.FlowID)
 		return nil, fmt.Errorf("submit options flow presets step: %w", err)
@@ -862,7 +892,7 @@ func (c *HybridClient) buildConfigForFlowStep(config HelperConfig, stepID string
 // keys not allowed @ data['ac_mode']" etc. (see CLAUDE.md, issue #194). An
 // empty submission is the only valid payload for this step.
 func (c *HybridClient) buildGenericThermostatStepConfig(config HelperConfig, stepID string) map[string]any {
-	if stepID == "presets" {
+	if stepID == flowStepPresets {
 		return map[string]any{}
 	}
 	return c.transformConfigForFlow(config)
@@ -1056,7 +1086,7 @@ var platformSkipFields = map[string]map[string]bool{
 	platformSwitchAsX:         {"target_domain": true},
 	platformStatistics:        {"state_characteristic": true},
 	platformGenericThermostat: {"heater_entity_id": true, "target_sensor_entity_id": true},
-	"generic_hygrostat":       {"humidifier_entity_id": true, "target_sensor_entity_id": true},
+	platformGenericHygrostat:  {"humidifier_entity_id": true, "target_sensor_entity_id": true},
 }
 
 // shouldSkipConfigField checks if a config field should be skipped during transformation.
