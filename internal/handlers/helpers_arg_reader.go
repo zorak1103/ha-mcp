@@ -565,10 +565,14 @@ const (
 
 // actionValue reads an HA action sequence (ActionSelector): a single
 // action object (e.g. {"action": "switch.turn_on", "target": {...}}) or a
-// list of them. Bounded by depth/node count rather than checked for a
+// list of them. Bounded by depth, node count, AND per-string/key byte
+// length (boundedActionShape checks all three) rather than checked for a
 // specific shape, since HA validates the actual action semantics itself -
 // this only guards against an unbounded payload being forwarded verbatim
-// into the HTTP body sent to Home Assistant.
+// into the HTTP body sent to Home Assistant. The byte-length bound matters
+// as much as the other two: depth/node count alone would still let a
+// single {"action": "<huge string>"} value through, since that shape is
+// only 2 nodes at depth 2.
 func (r *argReader) actionValue(key string) {
 	v, ok := r.args[key]
 	if !ok || isSkippable(v) {
@@ -582,7 +586,9 @@ func (r *argReader) actionValue(key string) {
 	}
 	nodes := 0
 	if !boundedActionShape(v, 1, &nodes) {
-		r.fail(key, fmt.Sprintf("an action value within depth %d and %d total values", maxActionDepth, maxActionNodes), v)
+		r.fail(key, fmt.Sprintf(
+			"an action value within depth %d, %d total values, and %d bytes per string/key", maxActionDepth, maxActionNodes, maxScalarStringLen,
+		), v)
 		return
 	}
 	r.config[key] = v
@@ -597,8 +603,8 @@ func boundedActionShape(v any, depth int, nodes *int) bool {
 	}
 	switch val := v.(type) {
 	case map[string]any:
-		for _, elem := range val {
-			if !boundedActionShape(elem, depth+1, nodes) {
+		for key, elem := range val {
+			if len(key) > maxScalarStringLen || !boundedActionShape(elem, depth+1, nodes) {
 				return false
 			}
 		}
@@ -608,6 +614,8 @@ func boundedActionShape(v any, depth int, nodes *int) bool {
 				return false
 			}
 		}
+	case string:
+		return len(val) <= maxScalarStringLen
 	}
 	return true
 }

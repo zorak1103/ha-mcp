@@ -93,9 +93,9 @@ var templateSubtypes = map[string]templateSubtype{
 		domain: "cover",
 		fields: []templateField{
 			{arg: "state", kind: tplTemplate, required: true, desc: "Cover state template (template_cover, required)"},
-			{arg: "open", haKey: "open_cover", kind: tplAction, desc: "Action to open (template_cover; must be supplied together with close, or neither)"},
+			{arg: "open", haKey: "open_cover", kind: tplAction, desc: "Action to open (template_cover; must be supplied together with close, or neither) or to open a lock, e.g. a door strike (template_lock)"},
 			{arg: "close", haKey: "close_cover", kind: tplAction, desc: "Action to close (template_cover; must be supplied together with open, or neither)"},
-			{arg: "stop", haKey: "stop_cover", kind: tplAction, desc: "Action to stop (template_cover)"},
+			{arg: "stop", haKey: "stop_cover", kind: tplAction, desc: "Action to stop (template_cover) or to stop a vacuum (template_vacuum)"},
 			{arg: "position", kind: tplTemplate, desc: "Current position template, 0-100 (template_cover)"},
 			{arg: "set_position", haKey: "set_cover_position", kind: tplAction, desc: "Action to set position (template_cover)"},
 		},
@@ -121,8 +121,8 @@ var templateSubtypes = map[string]templateSubtype{
 		domain: "fan",
 		fields: []templateField{
 			{arg: "state", kind: tplTemplate, required: true, desc: "Fan state template (template_fan, required)"},
-			{arg: "turn_on", kind: tplAction, required: true, desc: "Action to turn on (template_fan, required)"},
-			{arg: "turn_off", kind: tplAction, required: true, desc: "Action to turn off (template_fan, required)"},
+			{arg: "turn_on", kind: tplAction, required: true, desc: "Action to turn on (required for template_fan/template_light, optional for template_switch)"},
+			{arg: "turn_off", kind: tplAction, required: true, desc: "Action to turn off (required for template_fan/template_light, optional for template_switch)"},
 			{arg: "percentage", kind: tplTemplate, desc: "Speed percentage template (template_fan)"},
 			{arg: "set_percentage", kind: tplAction, desc: "Action to set speed percentage (template_fan)"},
 			{arg: "speed_count", kind: tplNumber, desc: "Number of discrete speeds, 1-100 (template_fan)"},
@@ -243,11 +243,33 @@ var templateUniversalFields = []templateField{
 // OPTIONS_FLOW) schema declares device_class - config-time only, per HA's
 // generate_schema. Reuses the existing shared "device_class" property;
 // update exclusion for these four is wired via perTypeUpdateExcludedFields.
+// perTypeDeviceClassSupport lists template subtypes whose CONFIG_FLOW
+// schema declares device_class, per HA's generate_schema
+// (homeassistant/components/template/config_flow.py). Read on create by
+// buildTemplateHelperConfig regardless of whether the type also supports
+// device_class on update (see perTypeDeviceClassUpdateSupport for that,
+// separate, question) - button/cover/event/update declare device_class
+// only inside generate_schema's `if flow_type == "config":` guard
+// (config-flow only), while number declares it unconditionally (both
+// flows) and is also in perTypeDeviceClassUpdateSupport.
 var perTypeDeviceClassSupport = map[string]bool{
 	"template_button": true,
 	"template_cover":  true,
 	"template_event":  true,
+	"template_number": true,
 	"template_update": true,
+}
+
+// perTypeDeviceClassUpdateSupport lists template subtypes whose
+// OPTIONS_FLOW schema, not just CONFIG_FLOW, declares device_class -
+// number is the only one: its generate_schema block has no `if
+// flow_type == "config":` guard around device_class, unlike
+// button/cover/event/update. Consulted by buildPerTypeUpdateExcludedFields
+// (whether device_class is excluded from update at all) and
+// buildConfigEntryUpdateConfig's device_class read gate (whether it's
+// actually forwarded for a given entity domain).
+var perTypeDeviceClassUpdateSupport = map[string]bool{
+	"template_number": true,
 }
 
 // templateSubtypeDomains is the set of entity domains any of the 15
@@ -263,6 +285,24 @@ func buildTemplateSubtypeDomains() map[string]bool {
 		m[subtype.domain] = true
 	}
 	return m
+}
+
+// deviceClassSupportedOnTemplateUpdate reports whether device_class should
+// be forwarded on a Config Entry helper update for entityDomain. For a
+// domain none of the 15 template subtypes own, it defers entirely (true -
+// device_class handling for sensor/binary_sensor/etc. is unrelated to this
+// package). For a domain a template subtype DOES own (including one also
+// shared with switch_as_x, e.g. "light"/"cover" - see
+// checkHelperOnlyDomain's doc comment in helpers_consolidated.go for why
+// that sharing is safe), it defers to that subtype's own
+// perTypeDeviceClassUpdateSupport entry via the domain<->type-name
+// convention TestTemplateSubtypeTable_CoversHATemplateTypes pins
+// ("template_" + domain).
+func deviceClassSupportedOnTemplateUpdate(entityDomain string) bool {
+	if !templateSubtypeDomains[entityDomain] {
+		return true
+	}
+	return perTypeDeviceClassUpdateSupport["template_"+entityDomain]
 }
 
 // buildTemplateHelperConfig returns a configBuilderFunc for the given

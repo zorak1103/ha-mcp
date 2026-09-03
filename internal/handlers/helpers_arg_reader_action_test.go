@@ -147,6 +147,66 @@ func TestActionValue_AcceptsExactlyMaxDepth(t *testing.T) {
 	}
 }
 
+func TestActionValue_RejectsOversizedNestedString(t *testing.T) {
+	t.Parallel()
+
+	// A single, shallow action object - well under both the depth and node
+	// bounds - but with one string value past maxScalarStringLen. Pins that
+	// boundedActionShape bounds string byte length independently of
+	// depth/node count: {"action": "<huge>"} is only 2 nodes at depth 2, so
+	// neither of the other two bounds would ever catch this.
+	huge := make([]byte, maxScalarStringLen+1)
+	for i := range huge {
+		huge[i] = 'x'
+	}
+
+	config := map[string]any{}
+	args := map[string]any{"turn_on": map[string]any{"action": string(huge)}}
+
+	r := newArgReader(config, args)
+	r.actionValue("turn_on")
+	if err := r.err(); err == nil {
+		t.Fatal("expected an error for an oversized string inside an action value, got nil")
+	}
+}
+
+func TestActionValue_RejectsOversizedNestedKey(t *testing.T) {
+	t.Parallel()
+
+	huge := make([]byte, maxScalarStringLen+1)
+	for i := range huge {
+		huge[i] = 'k'
+	}
+
+	config := map[string]any{}
+	args := map[string]any{"turn_on": map[string]any{string(huge): "x.y"}}
+
+	r := newArgReader(config, args)
+	r.actionValue("turn_on")
+	if err := r.err(); err == nil {
+		t.Fatal("expected an error for an oversized map key inside an action value, got nil")
+	}
+}
+
+func TestActionValue_AcceptsExactlyMaxStringLen(t *testing.T) {
+	t.Parallel()
+
+	// Pins the boundary at "> maxScalarStringLen", not ">=".
+	exact := make([]byte, maxScalarStringLen)
+	for i := range exact {
+		exact[i] = 'x'
+	}
+
+	config := map[string]any{}
+	args := map[string]any{"turn_on": map[string]any{"action": string(exact)}}
+
+	r := newArgReader(config, args)
+	r.actionValue("turn_on")
+	if err := r.err(); err != nil {
+		t.Fatalf("actionValue() error = %v, want nil at exactly maxScalarStringLen", err)
+	}
+}
+
 func TestActionValue_SkipsAbsentAndNull(t *testing.T) {
 	t.Parallel()
 

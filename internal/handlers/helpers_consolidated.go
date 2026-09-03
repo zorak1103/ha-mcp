@@ -109,6 +109,11 @@ func buildPerTypeUpdateExcludedFields() map[string]map[string]bool {
 		"filter": {"filter": true},
 	}
 	for typeName := range perTypeDeviceClassSupport {
+		if perTypeDeviceClassUpdateSupport[typeName] {
+			// Also declared in this type's OPTIONS_FLOW schema (currently
+			// only template_number) - not excluded from update.
+			continue
+		}
 		if m[typeName] == nil {
 			m[typeName] = map[string]bool{}
 		}
@@ -164,11 +169,12 @@ func updatableFieldNames(typeName string) []string {
 // accepts" reference, generated from helperTypes so it can never drift
 // from the code — same intent as manage_entity/manage_device's generated
 // "Safe fields" lists. "icon" is omitted from every per-type line (it's
-// accepted on all 26 types, so listing it 26 times would triple this
+// accepted on all 41 types, so listing it 41 times would triple this
 // block's size for zero information) - the caller documents it once instead.
 //
-// Renders to roughly 1-2KB, added to manage_helper's tool description on
-// every tools/list call. Only one group of types
+// Renders to roughly 3.3KB across the 41 types (issue #206's 15 template_*
+// subtypes account for more than half of that), added to manage_helper's
+// tool description on every tools/list call. Only one group of types
 // (input_boolean/input_button/random_binary_sensor) shares an identical
 // remaining field set (icon-only, i.e. empty after the icon hoist) - not
 // enough duplication across the other types to justify grouping
@@ -553,7 +559,7 @@ func (h *ConsolidatedHelperHandlers) manageHelperTool() mcp.Tool {
 		},
 		"type": {
 			Type:        "string",
-			Description: "Helper type (required for create): input_boolean, input_number, input_text, input_select, input_datetime, input_button, counter, timer, schedule, group, template_sensor, template_binary_sensor, template_alarm_control_panel, template_button, template_cover, template_device_tracker, template_event, template_fan, template_image, template_light, template_lock, template_number, template_select, template_switch, template_update, template_vacuum, template_weather, threshold, derivative, integral, utility_meter, min_max, statistics, trend, random_sensor, random_binary_sensor, filter, tod, generic_thermostat, switch_as_x, generic_hygrostat",
+			Description: fmt.Sprintf("Helper type (required for create) - see Enum for the full list of %d supported types", len(typeNames)),
 			Enum:        typeNames,
 		},
 		"entity_id": {
@@ -684,7 +690,7 @@ func (h *ConsolidatedHelperHandlers) manageHelperTool() mcp.Tool {
 		},
 		"state": {
 			Type:        "string",
-			Description: "Jinja2 template for state (template_sensor, template_binary_sensor, required)",
+			Description: "Jinja2 template for state (template_sensor and most template_* subtypes - required for template_sensor and for most template_* subtypes, optional for template_binary_sensor/template_alarm_control_panel/template_switch)",
 		},
 		"device_class": {
 			Type:        "string",
@@ -1113,6 +1119,12 @@ func (h *ConsolidatedHelperHandlers) handleUpdate(ctx context.Context, client ho
 	entityDomain, helperID := ParseHelperEntityID(entityID)
 	if entityDomain == "" || helperID == "" {
 		return errorResult(fmt.Sprintf("invalid entity_id format: %s (expected format: 'domain.object_id')", entityID)), nil
+	}
+
+	// Reject a same-domain entity that isn't actually a helper before doing
+	// anything else - see checkHelperOnlyDomain's doc comment.
+	if err := checkHelperOnlyDomain(ctx, client, entityID, entityDomain); err != nil {
+		return errorResult(err.Error()), nil
 	}
 
 	// Determine helper type from entity domain
@@ -2301,14 +2313,16 @@ func buildConfigEntryUpdateConfig(entryCtx configEntryUpdateContext, args map[st
 	r.str("state")
 	r.strID("source")
 	r.str("unit_of_measurement")
-	// device_class is skipped here for the 15 new template subtype domains
-	// (issue #206): none of them accept it via OPTIONS_FLOW on update - the
-	// 4 in perTypeDeviceClassSupport only declare it in CONFIG_FLOW (create),
-	// the other 11 never declare it at all (see perTypeUpdateExcludedFields'
-	// doc comment). Reading it here unconditionally, as before, made
-	// splitAppliedFields report a caller-supplied device_class as "applied"
-	// even though no options flow step ever accepted it.
-	if !templateSubtypeDomains[entryCtx.entityDomain] {
+	// device_class is skipped here for template subtype domains whose
+	// OPTIONS_FLOW schema doesn't declare it (issue #206) - most of the 15
+	// don't (see perTypeUpdateExcludedFields' doc comment); template_number
+	// is the one exception, and deviceClassSupportedOnTemplateUpdate is what
+	// lets it through while still excluding the other 14. Reading it here
+	// unconditionally for every template domain, as an earlier version of
+	// this fix did, made splitAppliedFields report a caller-supplied
+	// device_class as "applied" for those 14 even though no options flow
+	// step ever accepted it.
+	if deviceClassSupportedOnTemplateUpdate(entryCtx.entityDomain) {
 		r.str("device_class")
 	}
 	r.str("state_class")
@@ -2757,6 +2771,83 @@ func hasAnyUpdatableSourceEntityField(args map[string]any) bool {
 // second registry fetch's cost justifies today; hasAnyUpdatableSourceEntityField
 // already skips this fetch entirely for the common case where the update
 // touches no source-constrained field.
+// newlyWidenedHelperDomains is the set of entity domains HelperPlatforms
+// (helper_common.go) gained for the 15 new template_* subtypes (issue
+// #206) plus switch_as_x's siren/valve targets - domains a real,
+// non-helper integration can also create entities in (a Hue light is
+// domain "light" too, a Zigbee plug is domain "switch"). Domains that
+// predate this branch (sensor, binary_sensor, climate, humidifier, select)
+// have the same ambiguity in principle, but are deliberately left alone
+// here: they're pre-existing and partially covered by
+// checkUpdateSourceEntityDomain/resolveConfigEntryPlatformForMinMaxType
+// already; conflating the two would grow this fix well beyond the
+// regression it's closing.
+var newlyWidenedHelperDomains = map[string]bool{
+	"alarm_control_panel": true, "button": true, "cover": true, "device_tracker": true,
+	"event": true, "fan": true, "image": true, "light": true, "lock": true, "number": true,
+	"switch": true, "update": true, "vacuum": true, "weather": true, "siren": true, "valve": true,
+}
+
+// widenedHelperOnlyDomains maps each of newlyWidenedHelperDomains to the
+// set of real HA integration platforms allowed to own an entity there,
+// derived from helperTypes' validEntityDomains so it can't drift (e.g.
+// switch_as_x legitimately owns light.*/cover.*/.../valve.*, the 15
+// template_* subtypes each legitimately own exactly their own domain).
+var widenedHelperOnlyDomains = buildWidenedHelperOnlyDomains()
+
+func buildWidenedHelperOnlyDomains() map[string]map[string]bool {
+	m := make(map[string]map[string]bool, len(newlyWidenedHelperDomains))
+	for _, meta := range helperTypes {
+		for _, domain := range meta.validEntityDomains {
+			if !newlyWidenedHelperDomains[domain] {
+				continue
+			}
+			if m[domain] == nil {
+				m[domain] = map[string]bool{}
+			}
+			m[domain][meta.platform] = true
+		}
+	}
+	return m
+}
+
+// checkHelperOnlyDomain rejects handleUpdate's target entity when its
+// domain is one of newlyWidenedHelperDomains and the entity registry's
+// actual platform isn't one of the platforms widenedHelperOnlyDomains
+// allows for that domain. Before this check, ParseHelperEntityID's
+// domain-only match was handleUpdate's only gate: a real, non-helper
+// entity sharing one of these domains (light.hue_office, a Zigbee
+// switch.*, ...) would reach client.UpdateHelper, which routes any entity
+// with a config_entry_id to an Options Flow submission against THAT
+// entity's real config entry - silently editing/reloading a real
+// integration instead of a helper. Unlike checkUpdateSourceEntityDomain, a
+// registry fetch failure or a not-found entity hard-fails rather than
+// degrading to an unchecked update: proceeding unchecked is exactly the
+// gap this closes, so there is nothing safe to degrade to.
+func checkHelperOnlyDomain(ctx context.Context, client homeassistant.Client, entityID, entityDomain string) error {
+	allowed, gated := widenedHelperOnlyDomains[entityDomain]
+	if !gated {
+		return nil
+	}
+	entries, err := client.GetEntityRegistry(ctx)
+	if err != nil {
+		return fmt.Errorf("cannot verify %s is a helper entity: entity registry fetch failed: %w", entityID, err)
+	}
+	for _, entry := range entries {
+		if entry.EntityID != entityID {
+			continue
+		}
+		if allowed[entry.Platform] {
+			return nil
+		}
+		return fmt.Errorf(
+			"%s is not a helper entity - it belongs to the %q integration; manage_helper only manages helper-created entities",
+			entityID, entry.Platform,
+		)
+	}
+	return fmt.Errorf("cannot verify %s is a helper entity: entity not found in entity registry", entityID)
+}
+
 func checkUpdateSourceEntityDomain(ctx context.Context, client homeassistant.Client, entityID string, args map[string]any) error {
 	if !hasAnyUpdatableSourceEntityField(args) {
 		return nil
