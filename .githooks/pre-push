@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
-# Mirrors CI lint job: go vet + golangci-lint on the whole module.
+# Mirrors CI lint job: go vet + golangci-lint on the whole module, plus a
+# mutation-testing pass (mutest, github.com/fchimpan/mutest) scoped to lines
+# changed vs origin/main. A survived mutant fails the push, same as vet/lint -
+# annotate genuine equivalent mutants with //mutest:skip rather than treating
+# a survivor as noise (see internal/homeassistant/field_list.go for the
+# pattern and its reasoning).
 # Bypass with: git push --no-verify
 set -e
 
@@ -8,3 +13,12 @@ go vet ./...
 
 echo "→ golangci-lint ./..."
 golangci-lint run --timeout=5m ./...
+
+echo "→ mutest -diff origin/main ./..."
+if ! command -v mutest >/dev/null 2>&1; then
+  echo "  (skipped: mutest not installed - go install github.com/fchimpan/mutest@latest)"
+elif ! git rev-parse --verify origin/main >/dev/null 2>&1; then
+  echo "  (skipped: origin/main not resolvable locally - run 'git fetch origin main' to enable)"
+else
+  mutest -diff origin/main ./...
+fi
