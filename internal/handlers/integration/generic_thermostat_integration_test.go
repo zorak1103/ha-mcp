@@ -114,7 +114,9 @@ func (s *GenericThermostatIntegrationTestSuite) TestGenericThermostatLifecycle()
 		_ = s.Client().DeleteHelper(s.Context(), boolEntityID)
 	})
 
-	// Create generic thermostat (using API field names)
+	// Create generic thermostat (using API field names). min_temp is a
+	// vol.Optional field on generic_thermostat's OPTIONS_SCHEMA - set here
+	// so the update step below can prove it survives untouched.
 	thermoConfig := homeassistant.HelperConfig{
 		Platform: "generic_thermostat",
 		Config: map[string]any{
@@ -122,6 +124,7 @@ func (s *GenericThermostatIntegrationTestSuite) TestGenericThermostatLifecycle()
 			"heater":        heaterEntityID, // API field name
 			"target_sensor": sensorEntityID, // API field name
 			"ac_mode":       false,          // Required field
+			"min_temp":      10.0,
 		},
 	}
 
@@ -131,6 +134,43 @@ func (s *GenericThermostatIntegrationTestSuite) TestGenericThermostatLifecycle()
 	entity, err := s.WaitForEntity(thermoEntityID, 5*time.Second)
 	s.Require().NoError(err, "Generic thermostat did not appear")
 	s.NotEmpty(entity.State, "Thermostat should have a state")
+
+	// Test update - regression coverage for issue #194: generic_thermostat's
+	// OPTIONS_FLOW advances through an "init" -> "presets" sequence just
+	// like its CONFIG_FLOW, so every update used to fail with "unexpected
+	// options flow result type: form" before updateHelperViaOptionsFlow
+	// learned to complete the trailing presets step.
+	//
+	// The presets step's own schema is all-Optional, and Home Assistant
+	// deletes any vol.Optional key of a step's schema that its submission
+	// omits - so completing that step with an empty map (safe on create,
+	// nothing to delete yet) would silently wipe every stored preset
+	// temperature on every single update instead of merely failing loudly.
+	// Read back min_temp - a *different* step's optional field - after the
+	// update to confirm nothing outside the changed field was touched.
+	err = s.Client().UpdateHelper(s.Context(), thermoEntityID, homeassistant.HelperConfig{
+		Config: map[string]any{
+			"cold_tolerance": 0.8,
+		},
+	})
+	s.Require().NoError(err, "Failed to update generic_thermostat")
+
+	registry, err := s.Client().GetEntityRegistry(s.Context())
+	s.Require().NoError(err, "Failed to get entity registry")
+
+	var configEntryID string
+	for _, regEntry := range registry {
+		if regEntry.EntityID == thermoEntityID {
+			configEntryID = regEntry.ConfigEntryID
+			break
+		}
+	}
+	s.Require().NotEmpty(configEntryID, "Generic thermostat should have a config_entry_id")
+
+	options, err := s.Client().GetConfigEntryOptions(s.Context(), configEntryID)
+	s.Require().NoError(err, "Failed to get generic_thermostat config entry options")
+	s.InDelta(0.8, options["cold_tolerance"], 0.001, "cold_tolerance should reflect the update")
+	s.InDelta(10.0, options["min_temp"], 0.001, "min_temp should survive the update untouched")
 
 	// Test delete
 	err = s.Client().DeleteHelper(s.Context(), thermoEntityID)

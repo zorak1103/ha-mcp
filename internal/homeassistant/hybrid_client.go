@@ -29,17 +29,25 @@ const (
 	domainSiren        = "siren"
 	domainValve        = "valve"
 
-	platformTemplate   = "template"
-	platformGroup      = "group"
-	platformRandom     = "random"
-	platformSwitchAsX  = "switch_as_x"
-	platformStatistics = "statistics"
-	platformTrend      = "trend"
-	platformFilter     = "filter"
+	platformTemplate          = "template"
+	platformGroup             = "group"
+	platformRandom            = "random"
+	platformSwitchAsX         = "switch_as_x"
+	platformStatistics        = "statistics"
+	platformTrend             = "trend"
+	platformFilter            = "filter"
+	platformGenericThermostat = "generic_thermostat"
+	platformGenericHygrostat  = "generic_hygrostat"
 
 	flowTypeMenu        = "menu"
 	flowTypeForm        = "form"
 	flowTypeCreateEntry = "create_entry"
+
+	// flowStepPresets is generic_thermostat's trailing config/options flow
+	// step id (HA's own PRESETS_SCHEMA step name), shared by
+	// buildGenericThermostatStepConfig (create) and
+	// submitOptionsFlowPresetsStep (update).
+	flowStepPresets = "presets"
 )
 
 // binaryDeviceClasses maps device classes that indicate a binary sensor.
@@ -478,7 +486,24 @@ func (c *HybridClient) updateHelperViaOptionsFlow(ctx context.Context, entityID,
 		return fmt.Errorf("submit options flow: %w", err)
 	}
 
-	// Validate result
+	submitResult, err = c.submitOptionsFlowPresetsStep(ctx, submitResult)
+	if err != nil {
+		return err
+	}
+
+	// Surface HA's validation reason instead of the opaque "unexpected
+	// result type" below - the create path already does this
+	// (createHelperViaConfigFlow's "config entry flow validation errors").
+	if submitResult.Type == flowTypeForm && len(submitResult.Errors) > 0 {
+		_ = c.rest.AbortConfigEntryOptionsFlow(ctx, result.FlowID)
+		return fmt.Errorf("options flow validation errors: %v", submitResult.Errors)
+	}
+
+	// Validate result. Aborts against result.FlowID (captured before
+	// submission, and stable across every step of this flow), not
+	// submitResult.FlowID: submitResult is whatever HA's last response
+	// was, and a response that omits flow_id would abort with an empty
+	// id and leak the flow server-side.
 	if submitResult.Type != flowTypeCreateEntry {
 		_ = c.rest.AbortConfigEntryOptionsFlow(ctx, result.FlowID)
 		return fmt.Errorf("unexpected options flow result type: %s", submitResult.Type)
@@ -487,6 +512,46 @@ func (c *HybridClient) updateHelperViaOptionsFlow(ctx context.Context, entityID,
 	// Update name/icon via Entity Registry if provided - neither is part of
 	// any Options Flow schema.
 	return c.applyNameIconViaRegistry(ctx, entityID, icon, hasIcon, name, hasName)
+}
+
+// submitOptionsFlowPresetsStep completes generic_thermostat's Options Flow
+// when it advances to a trailing "presets" step. Split out of
+// updateHelperViaOptionsFlow to keep that function's length down (same
+// reason applyNameIconViaRegistry/normalizeOptionsFlowDurations were
+// already split out).
+//
+// generic_thermostat's OPTIONS_FLOW has the same "init" -> "presets" shape
+// as its CONFIG_FLOW (see buildGenericThermostatStepConfig) - the flow
+// always advances to "presets" after "init", whose schema is all-Optional
+// and rejects any of the core fields. An empty submission completes it.
+// Gated on the step id HA itself reports, not on config.Platform: on this
+// update path Platform is the entity *domain* ("climate"), not the helper
+// type ("generic_thermostat") - see CLAUDE.md's ParseHelperEntityID
+// gotcha - so it can't be used to recognize this platform here.
+//
+// result is returned unchanged for every other step/type so the caller's
+// existing create_entry check still applies.
+func (c *HybridClient) submitOptionsFlowPresetsStep(ctx context.Context, result *OptionsFlowResult) (*OptionsFlowResult, error) {
+	if result.Type != flowTypeForm || result.StepID != flowStepPresets {
+		return result, nil
+	}
+	// Unlike the create-path equivalent (buildGenericThermostatStepConfig),
+	// an empty map is NOT safe here: HA's
+	// _update_and_remove_omitted_optional_keys deletes every vol.Optional
+	// key of the step's schema that is absent from the submitted payload -
+	// on an options flow those keys are the entry's *existing* stored
+	// values (its own preset temperatures), not blank slots like on
+	// create. Round-tripping the step's current suggested_value fields
+	// keeps them intact; extractOptionsFromSchema already omits a
+	// genuinely-unset preset (nil suggested_value) the same way create
+	// leaves it unset.
+	presetsConfig := extractOptionsFromSchema(result.DataSchema)
+	submitResult, err := c.rest.SubmitConfigEntryOptionsFlowStep(ctx, result.FlowID, presetsConfig)
+	if err != nil {
+		_ = c.rest.AbortConfigEntryOptionsFlow(ctx, result.FlowID)
+		return nil, fmt.Errorf("submit options flow presets step: %w", err)
+	}
+	return submitResult, nil
 }
 
 // normalizeOptionsFlowDurations converts each userConfig value that is
@@ -806,10 +871,31 @@ func (c *HybridClient) buildConfigForFlowStep(config HelperConfig, stepID string
 	case platformFilter:
 		return c.buildFilterStepConfig(config, stepID)
 
+	case platformGenericThermostat:
+		return c.buildGenericThermostatStepConfig(config, stepID)
+
 	default:
 		// Default: return full transformed config
 		return c.transformConfigForFlow(config)
 	}
+}
+
+// buildGenericThermostatStepConfig builds config for generic_thermostat's
+// flow steps. Split out of buildConfigForFlowStep to keep that function's
+// length down (same reason platformFilter delegates to
+// buildFilterStepConfig).
+//
+// generic_thermostat's CONFIG_FLOW has a trailing "presets" step whose
+// PRESETS_SCHEMA is all-Optional preset-temperature fields (away/eco/...)
+// we don't currently expose as tool parameters. Its schema is
+// PREVENT_EXTRA, so resubmitting the full config there fails with "extra
+// keys not allowed @ data['ac_mode']" etc. (see CLAUDE.md, issue #194). An
+// empty submission is the only valid payload for this step.
+func (c *HybridClient) buildGenericThermostatStepConfig(config HelperConfig, stepID string) map[string]any {
+	if stepID == flowStepPresets {
+		return map[string]any{}
+	}
+	return c.transformConfigForFlow(config)
 }
 
 // filterStepFields is the exact key set Home Assistant's filter config-entry
@@ -995,12 +1081,12 @@ func (c *HybridClient) transformConfigForFlow(config HelperConfig) map[string]an
 
 // platformSkipFields maps platforms to fields that should be skipped during transformation.
 var platformSkipFields = map[string]map[string]bool{
-	platformTemplate:     {"type": true, "template_type": true},
-	platformRandom:       {"type": true},
-	platformSwitchAsX:    {"target_domain": true},
-	platformStatistics:   {"state_characteristic": true},
-	"generic_thermostat": {"heater_entity_id": true, "target_sensor_entity_id": true},
-	"generic_hygrostat":  {"humidifier_entity_id": true, "target_sensor_entity_id": true},
+	platformTemplate:          {"type": true, "template_type": true},
+	platformRandom:            {"type": true},
+	platformSwitchAsX:         {"target_domain": true},
+	platformStatistics:        {"state_characteristic": true},
+	platformGenericThermostat: {"heater_entity_id": true, "target_sensor_entity_id": true},
+	platformGenericHygrostat:  {"humidifier_entity_id": true, "target_sensor_entity_id": true},
 }
 
 // shouldSkipConfigField checks if a config field should be skipped during transformation.

@@ -2614,6 +2614,215 @@ func TestUpdateHelperViaOptionsFlow_UnsupportedFieldFailsLoudly(t *testing.T) {
 	}
 }
 
+// TestUpdateHelperViaOptionsFlow_GenericThermostatPresetsStepSubmitsEmptyConfig
+// guards issue #194's "related, unverified risk": generic_thermostat's
+// OPTIONS_FLOW has the same "init" -> "presets" shape as its CONFIG_FLOW.
+// Before this fix, updateHelperViaOptionsFlow submitted once and hard-failed
+// on any non-create_entry result ("unexpected options flow result type:
+// form") - every generic_thermostat update hit this, since the flow always
+// advances to "presets" after "init".
+// TestUpdateHelperViaOptionsFlow_GenericThermostatPresetsStepPreservesExistingValues
+// guards issue #194's related critical bug found in adversarial review:
+// generic_thermostat's OPTIONS_FLOW has the same "init" -> "presets" shape as
+// its CONFIG_FLOW, and HA's SchemaCommonFlowHandler deletes any vol.Optional
+// key of a step's schema that is absent from that step's submission
+// (_update_and_remove_omitted_optional_keys). Submitting an empty map to the
+// presets step - safe on create, where there is nothing to delete - would
+// silently erase every stored preset temperature (away/eco/home/...) on
+// every single update. This asserts the presets step is resubmitted with its
+// own current suggested_value fields instead of an empty map, and that a
+// genuinely-unset preset (nil suggested_value) is correctly omitted rather
+// than fabricated.
+func TestUpdateHelperViaOptionsFlow_GenericThermostatPresetsStepPreservesExistingValues(t *testing.T) {
+	t.Parallel()
+
+	var submittedPayloads []map[string]any
+	step := 0
+	mockWS := &mockWSOperations{}
+	mockREST := &mockRESTOperations{
+		initConfigEntryOptionsFlowFunc: func(context.Context, string) (*OptionsFlowResult, error) {
+			return &OptionsFlowResult{
+				FlowID: "flow194",
+				Type:   flowTypeForm,
+				StepID: "init",
+				DataSchema: []OptionsFlowField{
+					{Name: "heater", Description: map[string]any{"suggested_value": "switch.heater"}},
+					{Name: "target_sensor", Description: map[string]any{"suggested_value": "sensor.temp"}},
+					{Name: "ac_mode", Description: map[string]any{"suggested_value": false}},
+				},
+			}, nil
+		},
+		submitConfigEntryOptionsFlowStepFunc: func(_ context.Context, _ string, data map[string]any) (*OptionsFlowResult, error) {
+			submittedPayloads = append(submittedPayloads, data)
+			step++
+			if step == 1 {
+				return &OptionsFlowResult{
+					FlowID: "flow194",
+					Type:   flowTypeForm,
+					StepID: "presets",
+					DataSchema: []OptionsFlowField{
+						{Name: "away_temp", Description: map[string]any{"suggested_value": 16.0}},
+						{Name: "comfort_temp", Description: map[string]any{"suggested_value": nil}},
+					},
+				}, nil
+			}
+			return &OptionsFlowResult{FlowID: "flow194", Type: flowTypeCreateEntry}, nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	err := client.updateHelperViaOptionsFlow(context.Background(), "climate.my_thermostat", "config194", HelperConfig{
+		Platform: "climate", // update path's Platform is the entity domain, not the helper type
+		Config: map[string]any{
+			"ac_mode": true,
+		},
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(submittedPayloads) != 2 {
+		t.Fatalf("got %d submissions, want 2", len(submittedPayloads))
+	}
+	presetsPayload := submittedPayloads[1]
+	if presetsPayload["away_temp"] != 16.0 {
+		t.Errorf("presets step payload = %#v, want away_temp preserved as 16.0", presetsPayload)
+	}
+	if _, present := presetsPayload["comfort_temp"]; present {
+		t.Errorf("presets step payload = %#v, want unset comfort_temp omitted, not fabricated", presetsPayload)
+	}
+	if len(presetsPayload) != 1 {
+		t.Errorf("presets step payload = %#v, want exactly 1 field (away_temp)", presetsPayload)
+	}
+}
+
+// TestUpdateHelperViaOptionsFlow_GenericThermostatPresetsStepSubmitErrorAborts
+// guards submitOptionsFlowPresetsStep's own abort path, uncovered before this
+// test: if the presets-step submission itself fails, the flow must be
+// aborted with the flow id rather than leaked.
+func TestUpdateHelperViaOptionsFlow_GenericThermostatPresetsStepSubmitErrorAborts(t *testing.T) {
+	t.Parallel()
+
+	step := 0
+	var abortedFlowID string
+	mockWS := &mockWSOperations{}
+	mockREST := &mockRESTOperations{
+		initConfigEntryOptionsFlowFunc: func(context.Context, string) (*OptionsFlowResult, error) {
+			return &OptionsFlowResult{FlowID: "flow194", Type: flowTypeForm, StepID: "init"}, nil
+		},
+		submitConfigEntryOptionsFlowStepFunc: func(context.Context, string, map[string]any) (*OptionsFlowResult, error) {
+			step++
+			if step == 1 {
+				return &OptionsFlowResult{FlowID: "flow194", Type: flowTypeForm, StepID: "presets"}, nil
+			}
+			return nil, fmt.Errorf("simulated HA error")
+		},
+		abortConfigEntryOptionsFlowFunc: func(_ context.Context, flowID string) error {
+			abortedFlowID = flowID
+			return nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	err := client.updateHelperViaOptionsFlow(context.Background(), "climate.my_thermostat", "config194", HelperConfig{
+		Platform: "climate",
+		Config:   map[string]any{},
+	})
+
+	if err == nil {
+		t.Fatal("expected an error when the presets step submission fails")
+	}
+	if abortedFlowID != "flow194" {
+		t.Errorf("aborted flow id = %q, want \"flow194\"", abortedFlowID)
+	}
+}
+
+// TestUpdateHelperViaOptionsFlow_UnexpectedResultTypeAbortsInitFlowID is a
+// regression test for an adversarial-review finding: the abort call on an
+// unexpected terminal result type used submitResult.FlowID (whatever HA's
+// last response happened to contain) instead of the flow id captured at
+// init/menu-navigation time, which is guaranteed non-empty and stable across
+// every step of the flow.
+func TestUpdateHelperViaOptionsFlow_UnexpectedResultTypeAbortsInitFlowID(t *testing.T) {
+	t.Parallel()
+
+	var abortedFlowID string
+	mockWS := &mockWSOperations{}
+	mockREST := &mockRESTOperations{
+		initConfigEntryOptionsFlowFunc: func(context.Context, string) (*OptionsFlowResult, error) {
+			return &OptionsFlowResult{FlowID: "flow-init", Type: flowTypeForm, StepID: "init"}, nil
+		},
+		submitConfigEntryOptionsFlowStepFunc: func(context.Context, string, map[string]any) (*OptionsFlowResult, error) {
+			// A second, unrelated form step (not "presets") - the result
+			// type stays "form", so the caller's create_entry check must
+			// fail, and the abort must use the stable init flow id, not
+			// this response's own (possibly empty) flow id.
+			return &OptionsFlowResult{FlowID: "", Type: flowTypeForm, StepID: "unexpected_step"}, nil
+		},
+		abortConfigEntryOptionsFlowFunc: func(_ context.Context, flowID string) error {
+			abortedFlowID = flowID
+			return nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	err := client.updateHelperViaOptionsFlow(context.Background(), "climate.my_thermostat", "config194", HelperConfig{
+		Platform: "climate",
+		Config:   map[string]any{},
+	})
+
+	if err == nil || !strings.Contains(err.Error(), "unexpected options flow result type") {
+		t.Fatalf("got error %v, want \"unexpected options flow result type\"", err)
+	}
+	if abortedFlowID != "flow-init" {
+		t.Errorf("aborted flow id = %q, want \"flow-init\" (the stable init flow id, not the last response's)", abortedFlowID)
+	}
+}
+
+// TestUpdateHelperViaOptionsFlow_ValidationErrorsSurfaceHAReason is a
+// regression test for an adversarial-review finding: unlike
+// createHelperViaConfigFlow (which surfaces HA's validation errors
+// verbatim), updateHelperViaOptionsFlow discarded submitResult.Errors on a
+// validation failure, reporting only the opaque "unexpected options flow
+// result type: form" instead of HA's actual reason (e.g.
+// generic_thermostat's "min_max_runtime" check).
+func TestUpdateHelperViaOptionsFlow_ValidationErrorsSurfaceHAReason(t *testing.T) {
+	t.Parallel()
+
+	var abortedFlowID string
+	mockWS := &mockWSOperations{}
+	mockREST := &mockRESTOperations{
+		initConfigEntryOptionsFlowFunc: func(context.Context, string) (*OptionsFlowResult, error) {
+			return &OptionsFlowResult{FlowID: "flow-init", Type: flowTypeForm, StepID: "init"}, nil
+		},
+		submitConfigEntryOptionsFlowStepFunc: func(context.Context, string, map[string]any) (*OptionsFlowResult, error) {
+			return &OptionsFlowResult{
+				FlowID: "flow-init",
+				Type:   flowTypeForm,
+				StepID: "init",
+				Errors: map[string]string{"base": "min_max_runtime"},
+			}, nil
+		},
+		abortConfigEntryOptionsFlowFunc: func(_ context.Context, flowID string) error {
+			abortedFlowID = flowID
+			return nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	err := client.updateHelperViaOptionsFlow(context.Background(), "climate.my_thermostat", "config194", HelperConfig{
+		Platform: "climate",
+		Config:   map[string]any{},
+	})
+
+	if err == nil || !strings.Contains(err.Error(), "min_max_runtime") {
+		t.Fatalf("got error %v, want it to name HA's validation reason (min_max_runtime)", err)
+	}
+	if abortedFlowID != "flow-init" {
+		t.Errorf("aborted flow id = %q, want \"flow-init\"", abortedFlowID)
+	}
+}
+
 // TestCreateHelperViaConfigFlow_StepSubmitErrorAbortsFlow is a regression
 // test for the asymmetry an adversarial review found between this function
 // and updateHelperViaOptionsFlow: every error return inside the multi-step
@@ -2720,6 +2929,83 @@ func TestCreateHelperViaConfigFlow_MaxStepsExceededAbortsFlow(t *testing.T) {
 	}
 	if abortedFlowID != "flow789" {
 		t.Errorf("abortedFlowID = %q, want %q - the flow must be aborted, not leaked", abortedFlowID, "flow789")
+	}
+}
+
+// TestBuildConfigForFlowStep_GenericThermostatPresetsStepIsEmpty guards
+// issue #194: generic_thermostat's config flow has a trailing "presets"
+// step whose PRESETS_SCHEMA is PREVENT_EXTRA and declares none of the
+// core fields (name/heater/target_sensor/ac_mode/...) - resubmitting the
+// full config there fails with "extra keys not allowed". An empty
+// submission is the only valid payload for that step.
+func TestBuildConfigForFlowStep_GenericThermostatPresetsStepIsEmpty(t *testing.T) {
+	t.Parallel()
+
+	client := NewHybridClientWithInterfaces(&mockWSOperations{}, &mockRESTOperations{})
+	config := HelperConfig{
+		Platform: "generic_thermostat",
+		Config: map[string]any{
+			"name":          "my_thermostat",
+			"heater":        "switch.heater",
+			"target_sensor": "sensor.temp",
+			"ac_mode":       false,
+		},
+	}
+
+	presetsStep := client.buildConfigForFlowStep(config, "presets")
+	if len(presetsStep) != 0 {
+		t.Errorf("presets step config = %#v, want empty map", presetsStep)
+	}
+
+	userStep := client.buildConfigForFlowStep(config, "user")
+	if userStep["heater"] != "switch.heater" {
+		t.Errorf("user step config = %#v, want full config with heater field", userStep)
+	}
+}
+
+// TestCreateHelperViaConfigFlow_GenericThermostatPresetsStepSubmitsEmptyConfig
+// simulates HA's real two-step generic_thermostat CONFIG_FLOW ("user" then
+// "presets") and asserts the second submission's payload is empty rather
+// than the full config.
+func TestCreateHelperViaConfigFlow_GenericThermostatPresetsStepSubmitsEmptyConfig(t *testing.T) {
+	t.Parallel()
+
+	var submittedPayloads []map[string]any
+	step := 0
+	mockWS := &mockWSOperations{}
+	mockREST := &mockRESTOperations{
+		initConfigEntryFlowFunc: func(context.Context, string) (*ConfigEntryFlowResult, error) {
+			return &ConfigEntryFlowResult{FlowID: "flow194", Type: flowTypeForm, StepID: "user"}, nil
+		},
+		submitConfigEntryFlowStepFunc: func(_ context.Context, _ string, data map[string]any) (*ConfigEntryFlowResult, error) {
+			submittedPayloads = append(submittedPayloads, data)
+			step++
+			if step == 1 {
+				return &ConfigEntryFlowResult{FlowID: "flow194", Type: flowTypeForm, StepID: "presets"}, nil
+			}
+			return &ConfigEntryFlowResult{FlowID: "flow194", Type: "create_entry"}, nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	err := client.createHelperViaConfigFlow(context.Background(), HelperConfig{
+		Platform: "generic_thermostat",
+		Config: map[string]any{
+			"name":          "my_thermostat",
+			"heater":        "switch.heater",
+			"target_sensor": "sensor.temp",
+			"ac_mode":       false,
+		},
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(submittedPayloads) != 2 {
+		t.Fatalf("got %d submissions, want 2", len(submittedPayloads))
+	}
+	if len(submittedPayloads[1]) != 0 {
+		t.Errorf("presets step payload = %#v, want empty map", submittedPayloads[1])
 	}
 }
 
