@@ -30,7 +30,13 @@ const (
 func BoundedFieldList(names []string) string {
 	shown := names
 	omitted := 0
-	if len(shown) > maxEchoedFieldCount {
+	// `>` vs `>=` here is a proven-equivalent mutant (verified by hand): at
+	// len(shown) == maxEchoedFieldCount exactly, shown[:maxEchoedFieldCount]
+	// is a no-op slice of an already-that-length slice and omitted computes
+	// to 0 either way, so which branch runs makes no observable difference.
+	// No test can kill it - both forms produce byte-identical output for
+	// every input.
+	if len(shown) > maxEchoedFieldCount { //mutest:skip
 		omitted = len(shown) - maxEchoedFieldCount
 		shown = shown[:maxEchoedFieldCount]
 	}

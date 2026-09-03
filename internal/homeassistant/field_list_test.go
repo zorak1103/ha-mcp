@@ -56,3 +56,31 @@ func TestBoundedFieldList_CapsCountWithMoreMarker(t *testing.T) {
 		t.Errorf("BoundedFieldList with 41 names = %q, want a truncation marker", got)
 	}
 }
+
+// TestBoundedFieldList_NoTruncationMarkerWhenNothingOmitted guards the
+// `omitted > 0` check: with a single short name, nothing is truncated and
+// nothing is omitted, so the rendered output must not carry a stray
+// "and 0 more" marker.
+func TestBoundedFieldList_NoTruncationMarkerWhenNothingOmitted(t *testing.T) {
+	t.Parallel()
+
+	got := BoundedFieldList([]string{"step"})
+
+	if strings.Contains(got, "more") {
+		t.Errorf(`BoundedFieldList([]string{"step"}) = %q, want no truncation marker when nothing was omitted`, got)
+	}
+}
+
+// TestBoundedFieldList_ExactlyMaxLengthNameIsNotTruncated guards
+// truncateRunes' boundary: a name of EXACTLY maxEchoedFieldNameLen runes
+// must be returned unchanged, with no "..." suffix appended.
+func TestBoundedFieldList_ExactlyMaxLengthNameIsNotTruncated(t *testing.T) {
+	t.Parallel()
+
+	name := strings.Repeat("a", maxEchoedFieldNameLen)
+	got := BoundedFieldList([]string{name})
+
+	if strings.Contains(got, "...") {
+		t.Errorf("BoundedFieldList with an exactly-%d-rune name = %q, want no truncation ellipsis", maxEchoedFieldNameLen, got)
+	}
+}

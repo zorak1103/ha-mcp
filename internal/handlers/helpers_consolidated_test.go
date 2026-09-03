@@ -1915,6 +1915,86 @@ func TestUpdateSuccessMessage_BoundsTheEchoedFieldList(t *testing.T) {
 	}
 }
 
+// TestUpdateSuccessMessage_IgnoredOnlyStillShowsIgnoredClause guards the
+// early bare-message guard: `len(applied) == 0 && len(ignored) == 0 &&
+// len(skipped) == 0` must require ALL three empty, not just applied. With
+// only ignored non-empty, the message must still carry the ignored clause
+// rather than short-circuiting to the bare "updated successfully".
+func TestUpdateSuccessMessage_IgnoredOnlyStillShowsIgnoredClause(t *testing.T) {
+	t.Parallel()
+
+	msg := updateSuccessMessage("counter.visitors", nil, []string{"away_temp"}, nil)
+
+	if !strings.Contains(msg, "ignored - not accepted by this helper type") {
+		t.Errorf("message = %q, want the ignored clause present even though applied/skipped are empty", msg)
+	}
+	if !strings.Contains(msg, "away_temp") {
+		t.Errorf("message = %q, want it to name away_temp", msg)
+	}
+}
+
+// TestUpdateSuccessMessage_SkippedOnlyStillShowsSkippedClause is the
+// skipped-side mirror of the ignored-only test above: with only skipped
+// non-empty, the bare-message guard must not short-circuit past the
+// skipped clause either.
+func TestUpdateSuccessMessage_SkippedOnlyStillShowsSkippedClause(t *testing.T) {
+	t.Parallel()
+
+	msg := updateSuccessMessage("counter.visitors", nil, nil, []string{"icon"})
+
+	if !strings.Contains(msg, "no value supplied") {
+		t.Errorf("message = %q, want the skipped clause present even though applied/ignored are empty", msg)
+	}
+	if !strings.Contains(msg, "icon") {
+		t.Errorf("message = %q, want it to name icon", msg)
+	}
+}
+
+// TestRenderPartialApplyWarning_CreateNamesConfigFlowAndPlatform pins the
+// Op-based wording branch in renderPartialApplyWarning: PartialApplyCreate
+// must produce the "config flow"/platform-naming wording, never the
+// update-side "options flow" wording (which would silently drop the
+// platform name a create-side warning needs).
+func TestRenderPartialApplyWarning_CreateNamesConfigFlowAndPlatform(t *testing.T) {
+	t.Parallel()
+
+	partial := &homeassistant.PartialApplyError{
+		Op:       homeassistant.PartialApplyCreate,
+		Platform: "generic_thermostat",
+		Fields:   []string{"away_temp"},
+	}
+	msg := renderPartialApplyWarning(partial)
+
+	if !strings.Contains(msg, "generic_thermostat config flow") {
+		t.Errorf("renderPartialApplyWarning(create) = %q, want it to name the config flow and platform", msg)
+	}
+	if strings.Contains(msg, "options flow") {
+		t.Errorf("renderPartialApplyWarning(create) = %q, must not use the update-side wording", msg)
+	}
+}
+
+// TestRenderPartialApplyWarning_UpdateNamesOptionsFlow is the update-side
+// mirror: PartialApplyUpdate must produce the "options flow" wording,
+// never the create-side "config flow" wording (Platform is the entity
+// DOMAIN on update, not the real integration platform - naming it would
+// be misleading, see PartialApplyOp's doc comment).
+func TestRenderPartialApplyWarning_UpdateNamesOptionsFlow(t *testing.T) {
+	t.Parallel()
+
+	partial := &homeassistant.PartialApplyError{
+		Op:     homeassistant.PartialApplyUpdate,
+		Fields: []string{"away_temp"},
+	}
+	msg := renderPartialApplyWarning(partial)
+
+	if !strings.Contains(msg, "options flow") {
+		t.Errorf("renderPartialApplyWarning(update) = %q, want it to name the options flow", msg)
+	}
+	if strings.Contains(msg, "config flow") {
+		t.Errorf("renderPartialApplyWarning(update) = %q, must not use the create-side wording", msg)
+	}
+}
+
 // TestManageHelper_Update_NameField verifies that the name passed to update is
 // forwarded to the API correctly, including unicode characters (umlauts etc.).
 func TestManageHelper_Update_NameField(t *testing.T) {
