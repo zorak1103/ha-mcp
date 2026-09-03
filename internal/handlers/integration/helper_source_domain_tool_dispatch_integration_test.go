@@ -98,6 +98,13 @@ func (s *HelperSourceDomainToolDispatchTestSuite) createTemplateFan(prefix strin
 	return boolEntityID, fanEntityID
 }
 
+// deviceClassUnits maps a sensor device_class to a unit Home Assistant accepts
+// for it. HA's template config_flow _validate_unit() rejects a template sensor
+// that sets device_class without a matching unit_of_measurement.
+var deviceClassUnits = map[string]string{
+	"temperature": "°C",
+}
+
 // createTemplateSensor wraps an input_number as a sensor via the template
 // platform, optionally carrying deviceClass, for use as a generic_thermostat
 // target_sensor_entity_id.
@@ -122,6 +129,9 @@ func (s *HelperSourceDomainToolDispatchTestSuite) createTemplateSensor(prefix st
 	}
 	if deviceClass != "" {
 		config["device_class"] = deviceClass
+		unit, ok := deviceClassUnits[deviceClass]
+		s.Require().True(ok, "no unit_of_measurement mapped for device_class %q", deviceClass)
+		config["unit_of_measurement"] = unit
 	}
 
 	err = s.Client().CreateHelper(s.Context(), homeassistant.HelperConfig{Platform: "template", Config: config})
