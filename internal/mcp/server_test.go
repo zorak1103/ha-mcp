@@ -79,6 +79,10 @@ func (m *mockHAClient) CreateHelper(_ context.Context, _ homeassistant.HelperCon
 	return nil
 }
 
+func (m *mockHAClient) CreateHelperEntity(context.Context, homeassistant.HelperConfig) (string, error) {
+	return "", nil
+}
+
 func (m *mockHAClient) UpdateHelper(_ context.Context, _ string, _ homeassistant.HelperConfig) error {
 	return nil
 }

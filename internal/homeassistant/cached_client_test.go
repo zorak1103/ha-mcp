@@ -185,10 +185,15 @@ func (m *mockClient) UpdateDeviceRegistryEntry(_ context.Context, _ string, _ De
 }
 
 func (m *mockClient) CreateHelper(ctx context.Context, helper HelperConfig) error {
+	_, err := m.CreateHelperEntity(ctx, helper)
+	return err
+}
+
+func (m *mockClient) CreateHelperEntity(context.Context, HelperConfig) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.createHelperCallCount++
-	return nil
+	return "", nil
 }
 
 func (m *mockClient) DeleteHelper(ctx context.Context, helperID string) error {

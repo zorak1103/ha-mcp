@@ -320,44 +320,90 @@ func (c *HybridClient) ListHelpers(ctx context.Context) ([]Entity, error) {
 // this uses the HTTP Config Entry Flow mechanism with icon support via Entity Registry.
 // For standard helpers (input_*, counter, timer, schedule), this uses WebSocket.
 func (c *HybridClient) CreateHelper(ctx context.Context, config HelperConfig) error {
-	if RequiresConfigEntryFlow(config.Platform) {
-		// Extract icon before creating helper (Config Entry Flow doesn't support icons in create)
-		icon, hasIcon := config.Config["icon"].(string)
-		if hasIcon && icon != "" {
-			// Remove icon from config to prevent API error
-			delete(config.Config, "icon")
-		}
+	_, err := c.CreateHelperEntity(ctx, config)
+	return err
+}
 
-		// Create helper via Config Entry Flow
-		if err := c.createHelperViaConfigFlow(ctx, config); err != nil {
-			return err
-		}
-
-		// Set icon via Entity Registry if provided
-		if hasIcon && icon != "" {
-			// Predict entity ID based on name and platform
-			entityID, err := c.predictEntityIDForConfigEntry(ctx, config)
-			if err != nil {
-				// Non-fatal: helper was created successfully
-				return fmt.Errorf("helper created but failed to predict entity ID for icon update: %w", err)
-			}
-
-			// Wait for entity to appear in registry before setting icon
-			WaitForEntityAppear(ctx, c.ws.GetState, entityID, DefaultEntityPollerConfig())
-
-			// Update icon via Entity Registry
-			updateCfg := EntityRegistryUpdateConfig{
-				Icon: &icon,
-			}
-			if _, err := c.ws.UpdateEntityRegistryEntry(ctx, entityID, updateCfg); err != nil {
-				// Non-fatal: helper was created successfully
-				return fmt.Errorf("helper created as %s but failed to set icon: %w", entityID, err)
-			}
-		}
-
-		return nil
+// CreateHelperEntity creates a new input helper and returns the entity_id
+// Home Assistant actually assigned it.
+//
+// For Config Entry platforms the id is resolved via the entity registry
+// (matching the created config entry's entry_id), not predicted from name -
+// name-based prediction cannot work for switch_as_x, whose flow has no
+// "name" field at all (see #224: HA derives that wrapper's name from the
+// wrapped source entity, not from any submitted field). Returns "" when
+// resolution can't confirm an id in time; callers fall back to their own
+// name-based prediction in that case, exactly as before this method existed.
+//
+// For standard WS helpers this returns "" and delegates entirely to the
+// WebSocket client: createWSHelper already controls the slug via its
+// create-then-update pattern, making the caller's own id authoritative.
+func (c *HybridClient) CreateHelperEntity(ctx context.Context, config HelperConfig) (string, error) {
+	if !RequiresConfigEntryFlow(config.Platform) {
+		return "", c.ws.CreateHelper(ctx, config)
 	}
-	return c.ws.CreateHelper(ctx, config)
+
+	// Extract icon before creating helper (Config Entry Flow doesn't support icons in create)
+	icon, hasIcon := config.Config["icon"].(string)
+	if hasIcon && icon != "" {
+		// Remove icon from config to prevent API error
+		delete(config.Config, "icon")
+	}
+
+	entryID, err := c.createHelperViaConfigFlow(ctx, config)
+	entityID := c.resolveConfigEntryEntityID(ctx, entryID, DefaultEntityPollerConfig())
+	if err != nil {
+		// The config entry may already exist at this point (a
+		// *PartialApplyError) - the resolved entityID (possibly "") is
+		// still returned alongside the error so that path can report the
+		// real id too, mirroring createHelperViaConfigFlow's own contract.
+		return entityID, err
+	}
+
+	// Set icon via Entity Registry if provided
+	if hasIcon && icon != "" {
+		iconEntityID := entityID
+		if iconEntityID == "" {
+			// Fall back to the client's own (weaker) name-based prediction -
+			// only relevant here for the icon update, independent of the
+			// entityID this method returns to its caller.
+			predicted, predictErr := c.predictEntityIDForConfigEntry(ctx, config)
+			if predictErr != nil {
+				// Non-fatal: helper was created successfully
+				return entityID, fmt.Errorf("helper created but failed to predict entity ID for icon update: %w", predictErr)
+			}
+			iconEntityID = predicted
+		}
+
+		// Wait for entity to appear before setting icon.
+		WaitForEntityAppear(ctx, c.ws.GetState, iconEntityID, DefaultEntityPollerConfig())
+
+		// Update icon via Entity Registry
+		updateCfg := EntityRegistryUpdateConfig{
+			Icon: &icon,
+		}
+		if _, updateErr := c.ws.UpdateEntityRegistryEntry(ctx, iconEntityID, updateCfg); updateErr != nil {
+			// Non-fatal: helper was created successfully
+			return entityID, fmt.Errorf("helper created as %s but failed to set icon: %w", iconEntityID, updateErr)
+		}
+	}
+
+	return entityID, nil
+}
+
+// resolveConfigEntryEntityID looks up the real entity_id HA assigned to a
+// newly created config entry by polling the entity registry for entryID.
+// Returns "" if entryID is empty (e.g. an HA version whose create_entry
+// response omits Result) or the poll times out - never an error.
+func (c *HybridClient) resolveConfigEntryEntityID(ctx context.Context, entryID string, cfg EntityPollerConfig) string {
+	if entryID == "" {
+		return ""
+	}
+	resolved, ok := WaitForConfigEntryEntity(ctx, c.ws.GetEntityRegistry, entryID, cfg)
+	if !ok {
+		return ""
+	}
+	return resolved
 }
 
 // UpdateHelper updates an existing input helper.
@@ -629,22 +675,39 @@ func slugifyEntityName(name string) string {
 
 // createHelperViaConfigFlow creates a helper using the HTTP Config Entry Flow.
 // This handles multi-step flows: init -> (menu) -> form(s) -> verify creation.
-func (c *HybridClient) createHelperViaConfigFlow(ctx context.Context, config HelperConfig) error {
+func (c *HybridClient) createHelperViaConfigFlow(ctx context.Context, config HelperConfig) (string, error) {
 	flowResult, err := c.rest.InitConfigEntryFlow(ctx, config.Platform)
 	if err != nil {
-		return fmt.Errorf("init config entry flow: %w", err)
+		return "", fmt.Errorf("init config entry flow: %w", err)
 	}
 
 	consumed := seedConsumedRoutingKeys(config)
 	userConfig := config.Config
 	c.applyClientLevelCreateDefaults(config, userConfig)
 
+	flowResult, err = c.runConfigEntryFlowSteps(ctx, config, flowResult, userConfig, consumed)
+	if err != nil {
+		return "", err
+	}
+
+	return c.finishConfigEntryFlow(ctx, config, flowResult, userConfig, consumed)
+}
+
+// runConfigEntryFlowSteps drives the flow through menu and form steps until
+// it reaches a terminal type (create_entry, abort, or an exhausted form),
+// or a step itself fails. Terminal-type interpretation is left to the
+// caller (finishConfigEntryFlow) - this only executes steps.
+func (c *HybridClient) runConfigEntryFlowSteps(
+	ctx context.Context, config HelperConfig, flowResult *ConfigEntryFlowResult,
+	userConfig map[string]any, consumed map[string]bool,
+) (*ConfigEntryFlowResult, error) {
+	var err error
 	const maxSteps = 8 // Safety limit; also bounds a single menu hop handled inside the loop.
 	for i := 0; i < maxSteps; i++ {
 		if flowResult.Type == flowTypeMenu {
 			flowResult, err = c.submitConfigFlowMenuChoice(ctx, config, flowResult)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			continue
 		}
@@ -660,22 +723,36 @@ func (c *HybridClient) createHelperViaConfigFlow(ctx context.Context, config Hel
 		flowResult, err = c.rest.SubmitConfigEntryFlowStep(ctx, currentFlowID, stepConfig)
 		if err != nil {
 			_ = c.rest.AbortConfigEntryFlow(ctx, currentFlowID)
-			return fmt.Errorf("submit config entry flow step %s: %w", currentStepID, err)
+			return nil, fmt.Errorf("submit config entry flow step %s: %w", currentStepID, err)
 		}
 
 		if flowResult.Type == flowTypeCreateEntry {
 			break
 		}
 		if flowResult.Type == "abort" {
-			return fmt.Errorf("config entry flow aborted: %s", flowResult.Description)
+			return nil, fmt.Errorf("config entry flow aborted: %s", flowResult.Description)
 		}
 		if flowResult.Type == flowTypeForm && len(flowResult.Errors) > 0 {
 			_ = c.rest.AbortConfigEntryFlow(ctx, currentFlowID)
-			return fmt.Errorf("config entry flow validation errors: %v", flowResult.Errors)
+			return nil, fmt.Errorf("config entry flow validation errors: %v", flowResult.Errors)
 		}
 	}
+	return flowResult, nil
+}
 
+// finishConfigEntryFlow interprets the terminal flowResult from
+// runConfigEntryFlowSteps and returns the created entry's entry_id, or an
+// error (aborting the flow first for any non-create_entry terminal type).
+func (c *HybridClient) finishConfigEntryFlow(
+	ctx context.Context, config HelperConfig, flowResult *ConfigEntryFlowResult,
+	userConfig map[string]any, consumed map[string]bool,
+) (string, error) {
 	if flowResult.Type == flowTypeCreateEntry {
+		var entryID string
+		if flowResult.Result != nil {
+			entryID = flowResult.Result.EntryID
+		}
+
 		// "name" is unconditionally injected by buildHelperConfig for every
 		// config-entry helper type, regardless of whether that platform's
 		// flow schema actually wants it (switch_as_x's has no "name" field
@@ -686,27 +763,29 @@ func (c *HybridClient) createHelperViaConfigFlow(ctx context.Context, config Hel
 		if unconsumed := unconsumedUserFields(userConfig, consumed); len(unconsumed) > 0 {
 			// The config entry already exists at this point - this is a
 			// *PartialApplyError, not a plain error, so internal/handlers
-			// (which predicts the created entity id with more platform
-			// knowledge than this client has - group/random/switch_as_x's
-			// dynamic prefixes) renders a successful create result carrying
-			// a warning instead of reporting the whole create as failed and
-			// risking a caller retry that would duplicate the helper.
-			return &PartialApplyError{Op: PartialApplyCreate, Platform: config.Platform, Fields: unconsumed}
+			// (which resolves the created entity id via the entity registry,
+			// falling back to a name-based prediction only if that lookup
+			// times out) renders a successful create result carrying a
+			// warning instead of reporting the whole create as failed and
+			// risking a caller retry that would duplicate the helper. The
+			// entry id is returned alongside the error so that resolution
+			// can still happen on this path.
+			return entryID, &PartialApplyError{Op: PartialApplyCreate, Platform: config.Platform, Fields: unconsumed}
 		}
-		return nil
+		return entryID, nil
 	}
 
 	// Still in form state after max steps
 	if flowResult.Type == flowTypeForm {
 		_ = c.rest.AbortConfigEntryFlow(ctx, flowResult.FlowID)
-		return fmt.Errorf("config entry flow exceeded max steps (last step_id: %s)", flowResult.StepID)
+		return "", fmt.Errorf("config entry flow exceeded max steps (last step_id: %s)", flowResult.StepID)
 	}
 
 	// An unrecognized terminal type (neither form, create_entry, nor abort)
 	// still leaves the flow open on HA's side - abort it rather than leaking
 	// it, same as every other exit path above.
 	_ = c.rest.AbortConfigEntryFlow(ctx, flowResult.FlowID)
-	return fmt.Errorf("unexpected config entry flow result type: %s", flowResult.Type)
+	return "", fmt.Errorf("unexpected config entry flow result type: %s", flowResult.Type)
 }
 
 // applyClientLevelCreateDefaults fills in defaults HA's own schema doesn't

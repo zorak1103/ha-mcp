@@ -4,6 +4,7 @@ package homeassistant
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -476,11 +477,21 @@ func (c *CachedClient) GetFloorRegistry(ctx context.Context) ([]FloorRegistryEnt
 
 // CreateHelper creates a helper and invalidates registry caches.
 func (c *CachedClient) CreateHelper(ctx context.Context, helper HelperConfig) error {
-	err := c.client.CreateHelper(ctx, helper)
-	if err == nil {
+	_, err := c.CreateHelperEntity(ctx, helper)
+	return err
+}
+
+// CreateHelperEntity delegates to the underlying client and invalidates
+// registry caches whenever the helper was actually created - including a
+// *PartialApplyError, where the config entry (and its entity) already exist
+// despite the non-nil error, so a stale cache must still be busted.
+func (c *CachedClient) CreateHelperEntity(ctx context.Context, helper HelperConfig) (string, error) {
+	entityID, err := c.client.CreateHelperEntity(ctx, helper)
+	var partialErr *PartialApplyError
+	if err == nil || entityID != "" || errors.As(err, &partialErr) {
 		c.InvalidateRegistryCaches()
 	}
-	return err
+	return entityID, err
 }
 
 // DeleteHelper deletes a helper and invalidates registry caches.

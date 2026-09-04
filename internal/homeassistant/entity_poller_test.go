@@ -141,6 +141,96 @@ func TestWaitForEntityDisappear_Timeout(t *testing.T) {
 	}
 }
 
+func TestWaitForConfigEntryEntity_ImmediateMatch(t *testing.T) {
+	fn := func(context.Context) ([]EntityRegistryEntry, error) {
+		return []EntityRegistryEntry{
+			{EntityID: "sensor.other", ConfigEntryID: "entry_other"},
+			{EntityID: "light.my_switch", ConfigEntryID: "entry_123"},
+		}, nil
+	}
+
+	got, ok := WaitForConfigEntryEntity(context.Background(), fn, "entry_123", fastConfig())
+	if !ok {
+		t.Fatal("expected entity to be found")
+	}
+	if got != "light.my_switch" {
+		t.Errorf("expected light.my_switch, got %s", got)
+	}
+}
+
+func TestWaitForConfigEntryEntity_DelayedMatch(t *testing.T) {
+	var callCount int32
+
+	fn := func(context.Context) ([]EntityRegistryEntry, error) {
+		n := atomic.AddInt32(&callCount, 1)
+		if n < 5 {
+			return []EntityRegistryEntry{{EntityID: "sensor.other", ConfigEntryID: "entry_other"}}, nil
+		}
+		return []EntityRegistryEntry{{EntityID: "cover.my_switch", ConfigEntryID: "entry_123"}}, nil
+	}
+
+	got, ok := WaitForConfigEntryEntity(context.Background(), fn, "entry_123", fastConfig())
+	if !ok {
+		t.Fatal("expected entity to appear after delay")
+	}
+	if got != "cover.my_switch" {
+		t.Errorf("expected cover.my_switch, got %s", got)
+	}
+	if atomic.LoadInt32(&callCount) < 5 {
+		t.Errorf("expected at least 5 poll attempts, got %d", callCount)
+	}
+}
+
+func TestWaitForConfigEntryEntity_Timeout(t *testing.T) {
+	fn := func(context.Context) ([]EntityRegistryEntry, error) {
+		return []EntityRegistryEntry{{EntityID: "sensor.other", ConfigEntryID: "entry_other"}}, nil
+	}
+
+	cfg := EntityPollerConfig{Timeout: 50 * time.Millisecond, PollInterval: 10 * time.Millisecond}
+	got, ok := WaitForConfigEntryEntity(context.Background(), fn, "entry_123", cfg)
+	if ok {
+		t.Fatal("expected timeout (false), but got true")
+	}
+	if got != "" {
+		t.Errorf("expected empty string on timeout, got %s", got)
+	}
+}
+
+func TestWaitForConfigEntryEntity_RegistryErrorIsTreatedAsMiss(t *testing.T) {
+	fn := func(context.Context) ([]EntityRegistryEntry, error) {
+		return nil, errors.New("registry unavailable")
+	}
+
+	cfg := EntityPollerConfig{Timeout: 50 * time.Millisecond, PollInterval: 10 * time.Millisecond}
+	got, ok := WaitForConfigEntryEntity(context.Background(), fn, "entry_123", cfg)
+	if ok {
+		t.Fatal("expected timeout (false) on persistent registry error")
+	}
+	if got != "" {
+		t.Errorf("expected empty string, got %s", got)
+	}
+}
+
+func TestWaitForConfigEntryEntity_ContextCancelled(t *testing.T) {
+	fn := func(context.Context) ([]EntityRegistryEntry, error) {
+		return []EntityRegistryEntry{{EntityID: "sensor.other", ConfigEntryID: "entry_other"}}, nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+
+	got, ok := WaitForConfigEntryEntity(ctx, fn, "entry_123", fastConfig())
+	if ok {
+		t.Fatal("expected false when context is canceled")
+	}
+	if got != "" {
+		t.Errorf("expected empty string, got %s", got)
+	}
+}
+
 func TestWaitForEntityDisappear_ContextCancelled(t *testing.T) {
 	fn := func(context.Context, string) (*Entity, error) {
 		return &Entity{EntityID: "light.living_room"}, nil

@@ -47,6 +47,37 @@ func WaitForEntityAppear(ctx context.Context, getState GetStateFn, entityID stri
 	}
 }
 
+// GetEntityRegistryFn is a function type for fetching the full entity registry.
+type GetEntityRegistryFn func(ctx context.Context) ([]EntityRegistryEntry, error)
+
+// WaitForConfigEntryEntity polls the entity registry until an entry with the
+// given config_entry_id appears, returning its entity_id.
+// Returns ("", false) on timeout or persistent registry errors — never an error.
+func WaitForConfigEntryEntity(ctx context.Context, getRegistry GetEntityRegistryFn, entryID string, cfg EntityPollerConfig) (string, bool) {
+	pollCtx, cancel := context.WithTimeout(ctx, cfg.Timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(cfg.PollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-pollCtx.Done():
+			return "", false
+		case <-ticker.C:
+			registry, err := getRegistry(pollCtx)
+			if err != nil {
+				continue
+			}
+			for _, entry := range registry {
+				if entry.ConfigEntryID == entryID {
+					return entry.EntityID, true
+				}
+			}
+		}
+	}
+}
+
 // notFoundThreshold is the number of consecutive not-found errors required to
 // confirm an entity has disappeared. This prevents a single network blip from
 // being misinterpreted as successful deletion (transient errors also return error

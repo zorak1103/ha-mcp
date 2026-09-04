@@ -116,7 +116,7 @@ Universal tool for helper lifecycle management:
 
 **ID Parameter Behavior:**
 - For WebSocket helpers (`input_*`, `counter`, `timer`, `schedule`): The `id` parameter controls the entity ID (e.g., `id="test_bool"` creates `input_boolean.test_bool`), while `name` sets the display name
-- For Config Entry Flow helpers (`threshold`, `derivative`, `integral`, `group`, `template_*`, `utility_meter`, `min_max`, `statistics`, `trend`, `random_*`, `filter`, `tod`, `generic_thermostat`, `generic_hygrostat`, `switch_as_x`): Entity ID is derived from `name` (Home Assistant limitation)
+- For Config Entry Flow helpers (`threshold`, `derivative`, `integral`, `group`, `template_*`, `utility_meter`, `min_max`, `statistics`, `trend`, `random_*`, `filter`, `tod`, `generic_thermostat`, `generic_hygrostat`): Entity ID is derived from `name` (Home Assistant limitation). `switch_as_x` is the exception — HA derives its entity_id from the wrapped source switch, not from `name`; `manage_helper create` resolves the real id via the entity registry instead of predicting it.
 
 #### helper_action
 

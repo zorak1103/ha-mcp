@@ -35,11 +35,12 @@ type UniversalMockClient struct {
 	ToggleAutomationFn func(ctx context.Context, entityID string, enabled bool) error
 
 	// Helper operations
-	ListHelpersFn    func(ctx context.Context) ([]homeassistant.Entity, error)
-	CreateHelperFn   func(ctx context.Context, helper homeassistant.HelperConfig) error
-	UpdateHelperFn   func(ctx context.Context, helperID string, helper homeassistant.HelperConfig) error
-	DeleteHelperFn   func(ctx context.Context, helperID string) error
-	SetHelperValueFn func(ctx context.Context, entityID string, value any) error
+	ListHelpersFn        func(ctx context.Context) ([]homeassistant.Entity, error)
+	CreateHelperFn       func(ctx context.Context, helper homeassistant.HelperConfig) error
+	CreateHelperEntityFn func(ctx context.Context, helper homeassistant.HelperConfig) (string, error)
+	UpdateHelperFn       func(ctx context.Context, helperID string, helper homeassistant.HelperConfig) error
+	DeleteHelperFn       func(ctx context.Context, helperID string) error
+	SetHelperValueFn     func(ctx context.Context, entityID string, value any) error
 
 	// Script operations
 	ListScriptsFn  func(ctx context.Context) ([]homeassistant.Entity, error)
@@ -247,6 +248,19 @@ func (m *UniversalMockClient) CreateHelper(ctx context.Context, helper homeassis
 		return m.CreateHelperFn(ctx, helper)
 	}
 	return nil
+}
+
+// CreateHelperEntity defaults to delegating to CreateHelperFn (via
+// CreateHelper) and returning "" for the entity id, so every existing test
+// that only sets CreateHelperFn keeps exercising the handler's own
+// name-based prediction fallback unchanged. Set CreateHelperEntityFn to
+// simulate a resolved real entity_id.
+func (m *UniversalMockClient) CreateHelperEntity(ctx context.Context, helper homeassistant.HelperConfig) (string, error) {
+	if m.CreateHelperEntityFn != nil {
+		return m.CreateHelperEntityFn(ctx, helper)
+	}
+	err := m.CreateHelper(ctx, helper)
+	return "", err
 }
 
 func (m *UniversalMockClient) UpdateHelper(ctx context.Context, helperID string, helper homeassistant.HelperConfig) error {

@@ -1055,13 +1055,51 @@ func (h *ConsolidatedHelperHandlers) createConfigEntryHelper(
 	// panic dereferencing the nil receiver's fields.
 	var partial *homeassistant.PartialApplyError
 	var partialErr error
-	if createErr := client.CreateHelper(ctx, helper); createErr != nil {
+	realEntityID, createErr := client.CreateHelperEntity(ctx, helper)
+	if createErr != nil {
 		if !errors.As(createErr, &partial) {
 			return "", fmt.Errorf("error creating %s: %w", helperType, createErr)
 		}
 		partialErr = partial
 	}
 
+	// CreateHelperEntity resolves the real id HA assigned via the entity
+	// registry - authoritative when available. It returns "" when
+	// resolution can't confirm an id in time (or for platforms it doesn't
+	// apply to), in which case the name-based prediction is the only
+	// option, exactly as before this method existed. Name-based prediction
+	// is structurally unable to get switch_as_x right: HA derives that
+	// entity's name from the wrapped source switch, not from any field this
+	// tool submits (see #224).
+	entityID := realEntityID
+	if entityID == "" {
+		entityID = predictConfigEntryEntityID(name, config, meta)
+	}
+
+	// Set icon via Entity Registry if provided
+	// Wait for entity to appear in registry before setting icon
+	if hasIcon && icon != "" {
+		waitForEntityAppear(ctx, client, entityID)
+
+		updateCfg := homeassistant.EntityRegistryUpdateConfig{
+			Icon: &icon,
+		}
+		if _, err := client.UpdateEntityRegistryEntry(ctx, entityID, updateCfg); err != nil {
+			// Non-fatal: entity was created successfully, just couldn't set icon
+			return entityID, errors.Join(partialErr, fmt.Errorf("%s created as %s, but failed to set icon: %w", formatHelperType(helperType), entityID, err))
+		}
+	}
+
+	return entityID, partialErr
+}
+
+// predictConfigEntryEntityID guesses the entity_id a Config Entry helper
+// create will produce, for use only when CreateHelperEntity's registry
+// resolution couldn't confirm the real id in time. This is a best-effort
+// fallback, not a source of truth - it cannot be correct for switch_as_x
+// (see #224), whose real id HA derives from the wrapped source entity, not
+// from name.
+func predictConfigEntryEntityID(name string, config map[string]any, meta helperTypeMetadata) string {
 	predictedSlug := slugifyName(name)
 	prefix := meta.entityPrefix
 
@@ -1081,23 +1119,7 @@ func (h *ConsolidatedHelperHandlers) createConfigEntryHelper(
 		}
 	}
 
-	entityID := fmt.Sprintf("%s.%s", prefix, predictedSlug)
-
-	// Set icon via Entity Registry if provided
-	// Wait for entity to appear in registry before setting icon
-	if hasIcon && icon != "" {
-		waitForEntityAppear(ctx, client, entityID)
-
-		updateCfg := homeassistant.EntityRegistryUpdateConfig{
-			Icon: &icon,
-		}
-		if _, err := client.UpdateEntityRegistryEntry(ctx, entityID, updateCfg); err != nil {
-			// Non-fatal: entity was created successfully, just couldn't set icon
-			return entityID, errors.Join(partialErr, fmt.Errorf("%s created as %s, but failed to set icon: %w", formatHelperType(helperType), entityID, err))
-		}
-	}
-
-	return entityID, partialErr
+	return fmt.Sprintf("%s.%s", prefix, predictedSlug)
 }
 
 func (h *ConsolidatedHelperHandlers) handleUpdate(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {

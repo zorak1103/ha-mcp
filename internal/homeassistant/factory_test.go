@@ -192,6 +192,9 @@ func (m *mockNonCloserClient) ListHelpers(_ context.Context) ([]Entity, error) {
 func (m *mockNonCloserClient) CreateHelper(_ context.Context, _ HelperConfig) error {
 	return nil
 }
+func (m *mockNonCloserClient) CreateHelperEntity(context.Context, HelperConfig) (string, error) {
+	return "", nil
+}
 func (m *mockNonCloserClient) UpdateHelper(_ context.Context, _ string, _ HelperConfig) error {
 	return nil
 }

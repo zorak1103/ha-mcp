@@ -528,6 +528,55 @@ func TestManageHelper_SwitchAsX(t *testing.T) {
 	runHandlerTestCases(t, tests, handler.handleManageHelper)
 }
 
+// TestManageHelper_SwitchAsX_UsesRegistryResolvedEntityID is the handler-level
+// regression test for #224: switch_as_x's real entity_id is derived by HA
+// from the source switch, not from the tool's "name" argument, so the
+// name-based prediction the handler falls back to is frequently wrong. When
+// the client can resolve the real id via the entity registry, the handler
+// must report that id instead of its own guess.
+func TestManageHelper_SwitchAsX_UsesRegistryResolvedEntityID(t *testing.T) {
+	tests := []handlerTestCase{
+		{
+			name: "create switch_as_x reports the registry-resolved id, not the name-based guess",
+			args: map[string]any{
+				"action":        "create",
+				"type":          "switch_as_x",
+				"id":            "test_switch",
+				"name":          "Test Switch as Light",
+				"entity_id":     "switch.outlet",
+				"target_domain": "light",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.CreateHelperEntityFn = func(context.Context, homeassistant.HelperConfig) (string, error) {
+					return "light.actual_wrapped_outlet", nil
+				}
+			},
+			wantContains:    []string{"created", "light.actual_wrapped_outlet"},
+			wantNotContains: []string{"light.test_switch"},
+		},
+		{
+			name: "create switch_as_x falls back to the name-based prediction when resolution can't confirm an id",
+			args: map[string]any{
+				"action":        "create",
+				"type":          "switch_as_x",
+				"id":            "test_switch",
+				"name":          "Test Switch as Light",
+				"entity_id":     "switch.outlet",
+				"target_domain": "light",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.CreateHelperEntityFn = func(context.Context, homeassistant.HelperConfig) (string, error) {
+					return "", nil
+				}
+			},
+			wantContains: []string{"created", "light.test_switch"},
+		},
+	}
+
+	handler := NewConsolidatedHelperHandlers()
+	runHandlerTestCases(t, tests, handler.handleManageHelper)
+}
+
 // TestManageHelper_GenericHygrostat tests generic_hygrostat helper creation.
 func TestManageHelper_GenericHygrostat(t *testing.T) {
 	tests := []handlerTestCase{
