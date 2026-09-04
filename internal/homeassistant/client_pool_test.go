@@ -156,6 +156,9 @@ func (m *mockClientForPool) ListHelpers(_ context.Context) ([]Entity, error) { r
 func (m *mockClientForPool) CreateHelper(_ context.Context, _ HelperConfig) error {
 	return nil
 }
+func (m *mockClientForPool) CreateHelperEntity(context.Context, HelperConfig) (string, error) {
+	return "", nil
+}
 func (m *mockClientForPool) UpdateHelper(_ context.Context, _ string, _ HelperConfig) error {
 	return nil
 }

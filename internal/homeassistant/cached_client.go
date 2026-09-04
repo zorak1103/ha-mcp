@@ -476,11 +476,24 @@ func (c *CachedClient) GetFloorRegistry(ctx context.Context) ([]FloorRegistryEnt
 
 // CreateHelper creates a helper and invalidates registry caches.
 func (c *CachedClient) CreateHelper(ctx context.Context, helper HelperConfig) error {
-	err := c.client.CreateHelper(ctx, helper)
-	if err == nil {
-		c.InvalidateRegistryCaches()
-	}
+	_, err := c.CreateHelperEntity(ctx, helper)
 	return err
+}
+
+// CreateHelperEntity delegates to the underlying client and invalidates
+// registry caches whenever the helper was actually created - including a
+// *PartialApplyError, where the config entry (and its entity) already exist
+// despite the non-nil error, so a stale cache must still be busted.
+func (c *CachedClient) CreateHelperEntity(ctx context.Context, helper HelperConfig) (string, error) {
+	// Unconditional: a create call can partially succeed on Home Assistant's
+	// side (the config entry - and its entity - already exist) under error
+	// shapes broader than *PartialApplyError alone, since CachedClient wraps
+	// whatever Client it's given, not only HybridClient. Re-deriving "did
+	// state change?" from the error value is exactly the gap that left a
+	// stale registry cache uninvalidated - a spurious invalidation just
+	// costs one lazy refetch.
+	defer c.InvalidateRegistryCaches()
+	return c.client.CreateHelperEntity(ctx, helper)
 }
 
 // DeleteHelper deletes a helper and invalidates registry caches.

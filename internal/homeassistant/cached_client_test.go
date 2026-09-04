@@ -3,6 +3,7 @@ package homeassistant
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -26,6 +27,7 @@ type mockClient struct {
 	mu                      sync.Mutex
 
 	configFileEntryExistsFn func(ctx context.Context, domain, configID string) (bool, error)
+	createHelperEntityFn    func(ctx context.Context, helper HelperConfig) (string, error)
 }
 
 func (m *mockClient) GetServices(ctx context.Context) ([]Service, error) {
@@ -185,10 +187,19 @@ func (m *mockClient) UpdateDeviceRegistryEntry(_ context.Context, _ string, _ De
 }
 
 func (m *mockClient) CreateHelper(ctx context.Context, helper HelperConfig) error {
+	_, err := m.CreateHelperEntity(ctx, helper)
+	return err
+}
+
+func (m *mockClient) CreateHelperEntity(ctx context.Context, helper HelperConfig) (string, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.createHelperCallCount++
-	return nil
+	fn := m.createHelperEntityFn
+	m.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, helper)
+	}
+	return "", nil
 }
 
 func (m *mockClient) DeleteHelper(ctx context.Context, helperID string) error {
@@ -481,6 +492,101 @@ func TestCachedClient_InvalidationAfterCreateHelper(t *testing.T) {
 	}
 	if mock.entityRegistryCallCount != 2 {
 		t.Errorf("Expected 2 API calls (cache invalidated), got %d", mock.entityRegistryCallCount)
+	}
+}
+
+// TestCachedClient_InvalidationOnNonNilNonPartialErrorWithResolvedID guards
+// CreateHelperEntity's unconditional invalidation: a resolved entity id
+// alongside a plain (non-partial) error must still bust the cache, since
+// CachedClient wraps whatever Client it's given, not only HybridClient.
+func TestCachedClient_InvalidationOnNonNilNonPartialErrorWithResolvedID(t *testing.T) {
+	mock := &mockClient{
+		createHelperEntityFn: func(context.Context, HelperConfig) (string, error) {
+			return "sensor.created_anyway", errors.New("some unrelated non-fatal error")
+		},
+	}
+	cfg := config.CacheConfig{
+		Enabled:         true,
+		ServicesTTLMin:  60,
+		ConfigTTLMin:    30,
+		EntityRegTTLMin: 10,
+		DeviceRegTTLMin: 10,
+		AreaRegTTLMin:   30,
+	}
+	logger := logging.New(logging.LevelError)
+	client := NewCachedClient(mock, cfg, logger)
+
+	ctx := context.Background()
+
+	if _, err := client.GetEntityRegistry(ctx); err != nil {
+		t.Fatalf("GetEntityRegistry failed: %v", err)
+	}
+	if mock.entityRegistryCallCount != 1 {
+		t.Errorf("Expected 1 API call, got %d", mock.entityRegistryCallCount)
+	}
+
+	entityID, err := client.CreateHelperEntity(ctx, HelperConfig{Platform: "threshold", ID: "test"})
+	if entityID != "sensor.created_anyway" {
+		t.Errorf("expected entityID to pass through, got %q", entityID)
+	}
+	if err == nil {
+		t.Fatal("expected the underlying error to pass through")
+	}
+
+	if _, err := client.GetEntityRegistry(ctx); err != nil {
+		t.Fatalf("GetEntityRegistry failed: %v", err)
+	}
+	if mock.entityRegistryCallCount != 2 {
+		t.Errorf("expected cache invalidation because entityID != \"\", got %d API calls", mock.entityRegistryCallCount)
+	}
+}
+
+// TestCachedClient_InvalidationOnPlainErrorWithEmptyEntityID pins W3: a
+// plain (non-partial) error with an unresolved ("") entity id must still
+// invalidate the registry caches. This is the gap the previous three-way OR
+// (err == nil || entityID != "" || errors.As(err, &PartialApplyError))
+// missed - a helper create that reaches HA (config entry created) but whose
+// entity_id resolution times out AND whose prediction fallback also fails
+// returns exactly this shape, and the helper still exists on HA's side.
+func TestCachedClient_InvalidationOnPlainErrorWithEmptyEntityID(t *testing.T) {
+	mock := &mockClient{
+		createHelperEntityFn: func(context.Context, HelperConfig) (string, error) {
+			return "", errors.New("helper created but its entity_id could not be resolved in time")
+		},
+	}
+	cfg := config.CacheConfig{
+		Enabled:         true,
+		ServicesTTLMin:  60,
+		ConfigTTLMin:    30,
+		EntityRegTTLMin: 10,
+		DeviceRegTTLMin: 10,
+		AreaRegTTLMin:   30,
+	}
+	logger := logging.New(logging.LevelError)
+	client := NewCachedClient(mock, cfg, logger)
+
+	ctx := context.Background()
+
+	if _, err := client.GetEntityRegistry(ctx); err != nil {
+		t.Fatalf("GetEntityRegistry failed: %v", err)
+	}
+	if mock.entityRegistryCallCount != 1 {
+		t.Errorf("Expected 1 API call, got %d", mock.entityRegistryCallCount)
+	}
+
+	entityID, err := client.CreateHelperEntity(ctx, HelperConfig{Platform: "switch_as_x", ID: "test"})
+	if entityID != "" {
+		t.Errorf("expected entityID to pass through empty, got %q", entityID)
+	}
+	if err == nil {
+		t.Fatal("expected the underlying error to pass through")
+	}
+
+	if _, err := client.GetEntityRegistry(ctx); err != nil {
+		t.Fatalf("GetEntityRegistry failed: %v", err)
+	}
+	if mock.entityRegistryCallCount != 2 {
+		t.Errorf("expected cache invalidation even with entityID == \"\" and a plain error, got %d API calls", mock.entityRegistryCallCount)
 	}
 }
 

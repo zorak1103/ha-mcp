@@ -1,9 +1,11 @@
 package homeassistant
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -11,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/zorak1103/ha-mcp/internal/logging"
 )
 
 // TestHybridClient_DeleteAutomation verifies that DeleteAutomation
@@ -1461,6 +1465,537 @@ func TestHybridClient_WSOperations_CreateHelper(t *testing.T) {
 	}
 	if !called {
 		t.Error("CreateHelper was not called")
+	}
+}
+
+// TestCreateHelperEntity_WSPlatformReturnsEmptyEntityID pins the documented
+// contract: WS helpers control their own slug via createWSHelper's
+// create-then-update pattern, so CreateHelperEntity returns "" rather than
+// guessing - the caller's own id is authoritative for these platforms.
+func TestCreateHelperEntity_WSPlatformReturnsEmptyEntityID(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	mockWS := &mockWSOperations{
+		createHelperFunc: func(_ context.Context, _ HelperConfig) error {
+			called = true
+			return nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, &mockRESTOperations{})
+	entityID, err := client.CreateHelperEntity(context.Background(), HelperConfig{Platform: "input_boolean"})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !called {
+		t.Error("ws CreateHelper was not called")
+	}
+	if entityID != "" {
+		t.Errorf("expected empty entity id for a WS platform, got %q", entityID)
+	}
+}
+
+// TestCreateHelperEntity_ConfigEntryResolvesRealEntityID is the core
+// regression test for #224: switch_as_x has no "name" field in its flow
+// schema, so the real entity_id can only be discovered via the entity
+// registry lookup keyed by the created config entry's entry_id - not
+// predicted from name.
+func TestCreateHelperEntity_ConfigEntryResolvesRealEntityID(t *testing.T) {
+	t.Parallel()
+
+	mockWS := &mockWSOperations{
+		getEntityRegistryFunc: func(context.Context) ([]EntityRegistryEntry, error) {
+			return []EntityRegistryEntry{
+				{EntityID: "light.some_other_switch", ConfigEntryID: "entry_other"},
+				{EntityID: "light.actual_wrapped_switch", ConfigEntryID: "entry_sax"},
+			}, nil
+		},
+	}
+	mockREST := &mockRESTOperations{
+		initConfigEntryFlowFunc: func(context.Context, string) (*ConfigEntryFlowResult, error) {
+			return &ConfigEntryFlowResult{
+				FlowID: "flowsax2", Type: flowTypeForm, StepID: "user",
+				DataSchema: []OptionsFlowField{{Name: "entity_id"}, {Name: "target_domain"}},
+			}, nil
+		},
+		submitConfigEntryFlowStepFunc: func(context.Context, string, map[string]any) (*ConfigEntryFlowResult, error) {
+			return &ConfigEntryFlowResult{
+				FlowID: "flowsax2", Type: flowTypeCreateEntry,
+				Result: &ConfigEntry{EntryID: "entry_sax", Domain: platformSwitchAsX},
+			}, nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	entityID, err := client.CreateHelperEntity(context.Background(), HelperConfig{
+		Platform: platformSwitchAsX,
+		Config:   map[string]any{"name": "my_switch_as_x", "entity_id": "switch.x", "target_domain": "light"},
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if entityID != "light.actual_wrapped_switch" {
+		t.Errorf("expected the registry-resolved id, got %q", entityID)
+	}
+}
+
+// TestResolveConfigEntryEntityID_TimeoutReturnsEmptyString pins the approved
+// "silent fallback" contract at the unit responsible for it: when the
+// registry lookup can't confirm the entity in time, resolution returns ""
+// (not an error, not a guess) so CreateHelperEntity's caller can apply its
+// own name-based prediction exactly as it did before this method existed.
+// Uses a short poller config directly (bypassing CreateHelperEntity's
+// hardcoded DefaultEntityPollerConfig()) so the timeout path stays a fast
+// unit test rather than a real 5-second wait.
+func TestResolveConfigEntryEntityID_TimeoutReturnsEmptyString(t *testing.T) {
+	t.Parallel()
+
+	mockWS := &mockWSOperations{
+		getEntityRegistryFunc: func(context.Context) ([]EntityRegistryEntry, error) {
+			return []EntityRegistryEntry{{EntityID: "light.unrelated", ConfigEntryID: "entry_other"}}, nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, &mockRESTOperations{})
+	ctx := WithEntityPollerConfig(context.Background(),
+		EntityPollerConfig{Timeout: 50 * time.Millisecond, PollInterval: 10 * time.Millisecond})
+	got := client.resolveConfigEntryEntityID(ctx, HelperConfig{Platform: "threshold"}, "entry_never_shows_up")
+
+	if got != "" {
+		t.Errorf("expected empty entity id on registry timeout, got %q", got)
+	}
+}
+
+// TestResolveConfigEntryEntityID_EmptyEntryIDShortCircuits guards against a
+// missing entry_id (createHelperViaConfigFlow's create_entry response had no
+// Result, e.g. an HA version quirk) triggering a pointless registry poll.
+func TestResolveConfigEntryEntityID_EmptyEntryIDShortCircuits(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	mockWS := &mockWSOperations{
+		getEntityRegistryFunc: func(context.Context) ([]EntityRegistryEntry, error) {
+			called = true
+			return nil, nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, &mockRESTOperations{})
+	got := client.resolveConfigEntryEntityID(context.Background(), HelperConfig{Platform: "threshold"}, "")
+
+	if got != "" {
+		t.Errorf("expected empty entity id, got %q", got)
+	}
+	if called {
+		t.Error("expected no registry lookup for an empty entry id")
+	}
+}
+
+// TestResolveConfigEntryEntityID_MultiEntityConfigEntryPrefersDomain pins
+// C1: a config entry that registers more than one entity (utility_meter
+// with tariffs registers a select.* tariff selector plus a sensor.* per
+// tariff) must resolve to the entity in the platform's real domain, not
+// whichever one happens to be first in the registry response.
+func TestResolveConfigEntryEntityID_MultiEntityConfigEntryPrefersDomain(t *testing.T) {
+	t.Parallel()
+
+	mockWS := &mockWSOperations{
+		getEntityRegistryFunc: func(context.Context) ([]EntityRegistryEntry, error) {
+			return []EntityRegistryEntry{
+				{EntityID: "select.energy_tariff", ConfigEntryID: "entry_um"},
+				{EntityID: "sensor.energy_peak", ConfigEntryID: "entry_um"},
+			}, nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, &mockRESTOperations{})
+	got := client.resolveConfigEntryEntityID(context.Background(), HelperConfig{Platform: "utility_meter"}, "entry_um")
+
+	if got != "sensor.energy_peak" {
+		t.Errorf("expected the sensor entity (utility_meter's real domain), got %q", got)
+	}
+}
+
+// TestResolveConfigEntryEntityID_LogsWarningOnTimeout pins W2: a persistent
+// registry error must not be silently swallowed - it should be logged so an
+// operator can distinguish "not created yet" from "registry unreachable".
+func TestResolveConfigEntryEntityID_LogsWarningOnTimeout(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	testLogger := &logging.Logger{Logger: slog.New(slog.NewTextHandler(&buf, nil))}
+
+	registryErr := errors.New("registry unavailable")
+	mockWS := &mockWSOperations{
+		getEntityRegistryFunc: func(context.Context) ([]EntityRegistryEntry, error) {
+			return nil, registryErr
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, &mockRESTOperations{})
+	client.logger = testLogger
+
+	ctx := WithEntityPollerConfig(context.Background(),
+		EntityPollerConfig{Timeout: 30 * time.Millisecond, PollInterval: 10 * time.Millisecond})
+	got := client.resolveConfigEntryEntityID(ctx, HelperConfig{Platform: "threshold"}, "entry_x")
+
+	if got != "" {
+		t.Errorf("expected empty entity id, got %q", got)
+	}
+	logged := buf.String()
+	if !strings.Contains(logged, "entry_x") || !strings.Contains(logged, "registry unavailable") {
+		t.Errorf("expected the resolution failure to be logged with the entry id and error, got: %s", logged)
+	}
+}
+
+// TestEntityIDPredictable pins the C2 deny-list: switch_as_x is the only
+// platform whose entity_id cannot be derived from name, and must never be
+// used as a write target when registry resolution fails.
+func TestEntityIDPredictable(t *testing.T) {
+	t.Parallel()
+
+	if entityIDPredictable(platformSwitchAsX) {
+		t.Error("switch_as_x must be reported as unpredictable (#224)")
+	}
+	if !entityIDPredictable("threshold") {
+		t.Error("threshold must be reported as predictable")
+	}
+}
+
+// TestCreateHelperEntity_SwitchAsXUnresolvedIconSkipsWrite pins C2: when
+// registry resolution can't confirm switch_as_x's real entity_id, the icon
+// must NOT be written to a guessed id - the guess is caller-controlled
+// (<target_domain>.<slugified name>) and may name an unrelated, pre-existing
+// entity.
+func TestCreateHelperEntity_SwitchAsXUnresolvedIconSkipsWrite(t *testing.T) {
+	t.Parallel()
+
+	updateCalled := false
+	mockWS := &mockWSOperations{
+		getEntityRegistryFunc: func(context.Context) ([]EntityRegistryEntry, error) {
+			return nil, nil // never resolves
+		},
+		updateEntityRegistryEntryFunc: func(context.Context, string, EntityRegistryUpdateConfig) (*EntityRegistryEntry, error) {
+			updateCalled = true
+			return nil, nil
+		},
+	}
+	mockREST := &mockRESTOperations{
+		initConfigEntryFlowFunc: func(context.Context, string) (*ConfigEntryFlowResult, error) {
+			return &ConfigEntryFlowResult{
+				FlowID: "flowswx", Type: flowTypeForm, StepID: "user",
+				DataSchema: []OptionsFlowField{{Name: "entity_id"}, {Name: "target_domain"}},
+			}, nil
+		},
+		submitConfigEntryFlowStepFunc: func(context.Context, string, map[string]any) (*ConfigEntryFlowResult, error) {
+			return &ConfigEntryFlowResult{
+				FlowID: "flowswx", Type: flowTypeCreateEntry,
+				Result: &ConfigEntry{EntryID: "entry_swx", Domain: platformSwitchAsX},
+			}, nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	ctx := WithEntityPollerConfig(context.Background(),
+		EntityPollerConfig{Timeout: 30 * time.Millisecond, PollInterval: 10 * time.Millisecond})
+	entityID, err := client.CreateHelperEntity(ctx, HelperConfig{
+		Platform: platformSwitchAsX,
+		Config:   map[string]any{"entity_id": "switch.x", "target_domain": "light", "icon": "mdi:skull"},
+	})
+
+	if entityID != "" {
+		t.Errorf("expected empty entity id when resolution never confirms, got %q", entityID)
+	}
+	if err == nil || !strings.Contains(err.Error(), "could not be resolved") {
+		t.Fatalf("expected an unresolved-entity error, got %v", err)
+	}
+	if updateCalled {
+		t.Error("must never write an icon to a guessed switch_as_x id")
+	}
+}
+
+// TestCreateHelperEntity_PartialApplyErrorStillReturnsResolvedID mirrors
+// TestCreateHelperViaConfigFlow_ReturnsEntryIDAlongsidePartialApplyError one
+// layer up: the public CreateHelperEntity method must also surface the
+// resolved entity id when the create only partially applied, since the
+// entry (and its entity) already exist on Home Assistant's side.
+func TestCreateHelperEntity_PartialApplyErrorStillReturnsResolvedID(t *testing.T) {
+	t.Parallel()
+
+	mockWS := &mockWSOperations{
+		getEntityRegistryFunc: func(context.Context) ([]EntityRegistryEntry, error) {
+			// threshold's real domain is binary_sensor (staticPlatformDomains) -
+			// the resolver only accepts a matching-domain candidate.
+			return []EntityRegistryEntry{{EntityID: "binary_sensor.threshold_x", ConfigEntryID: "entry_partial2"}}, nil
+		},
+	}
+	mockREST := &mockRESTOperations{
+		initConfigEntryFlowFunc: func(context.Context, string) (*ConfigEntryFlowResult, error) {
+			return &ConfigEntryFlowResult{
+				FlowID: "flowpartial2", Type: flowTypeForm, StepID: "user",
+				DataSchema: []OptionsFlowField{{Name: "name"}, {Name: "entity_id"}},
+			}, nil
+		},
+		submitConfigEntryFlowStepFunc: func(context.Context, string, map[string]any) (*ConfigEntryFlowResult, error) {
+			return &ConfigEntryFlowResult{
+				FlowID: "flowpartial2", Type: flowTypeCreateEntry,
+				Result: &ConfigEntry{EntryID: "entry_partial2", Domain: "threshold"},
+			}, nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	entityID, err := client.CreateHelperEntity(context.Background(), HelperConfig{
+		Platform: "threshold",
+		Config:   map[string]any{"name": "n", "entity_id": "sensor.x", "unrecognized_field": "x"},
+	})
+
+	var partialErr *PartialApplyError
+	if !errors.As(err, &partialErr) {
+		t.Fatalf("expected *PartialApplyError, got %v", err)
+	}
+	if entityID != "binary_sensor.threshold_x" {
+		t.Errorf("expected resolved id alongside the PartialApplyError, got %q", entityID)
+	}
+}
+
+// TestCreateHelperEntity_DelegatingCreateHelperDropsID confirms the
+// backward-compatible CreateHelper wrapper still behaves exactly as before:
+// same error semantics, entity id simply discarded.
+func TestCreateHelperEntity_DelegatingCreateHelperDropsID(t *testing.T) {
+	t.Parallel()
+
+	mockWS := &mockWSOperations{
+		getEntityRegistryFunc: func(context.Context) ([]EntityRegistryEntry, error) {
+			return []EntityRegistryEntry{{EntityID: "light.actual", ConfigEntryID: "entry_wrap"}}, nil
+		},
+	}
+	mockREST := &mockRESTOperations{
+		initConfigEntryFlowFunc: func(context.Context, string) (*ConfigEntryFlowResult, error) {
+			return &ConfigEntryFlowResult{
+				FlowID: "flowwrap", Type: flowTypeForm, StepID: "user",
+				DataSchema: []OptionsFlowField{{Name: "entity_id"}, {Name: "target_domain"}},
+			}, nil
+		},
+		submitConfigEntryFlowStepFunc: func(context.Context, string, map[string]any) (*ConfigEntryFlowResult, error) {
+			return &ConfigEntryFlowResult{
+				FlowID: "flowwrap", Type: flowTypeCreateEntry,
+				Result: &ConfigEntry{EntryID: "entry_wrap", Domain: platformSwitchAsX},
+			}, nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	err := client.CreateHelper(context.Background(), HelperConfig{
+		Platform: platformSwitchAsX,
+		Config:   map[string]any{"name": "my_switch_as_x", "entity_id": "switch.x", "target_domain": "light"},
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestCreateHelperEntity_IconSetOnResolvedEntity kills mutation survivors on
+// the icon-set guard/branch: a non-empty icon must (a) be stripped from the
+// config before submission (a real, non-empty icon that survived into the
+// flow submission would surface as a *PartialApplyError, not the plain
+// "failed to set icon" error asserted here - HA's Config Entry Flow schemas
+// don't declare an "icon" field), and (b) be applied to the
+// registry-resolved entity_id, not any prediction.
+func TestCreateHelperEntity_IconSetOnResolvedEntity(t *testing.T) {
+	t.Parallel()
+
+	mockWS := &mockWSOperations{
+		getEntityRegistryFunc: func(context.Context) ([]EntityRegistryEntry, error) {
+			return []EntityRegistryEntry{{EntityID: "binary_sensor.resolved", ConfigEntryID: "entry_icon1"}}, nil
+		},
+		getStateFunc: func(_ context.Context, entityID string) (*Entity, error) {
+			return &Entity{EntityID: entityID}, nil
+		},
+		updateEntityRegistryEntryFunc: func(_ context.Context, entityID string, cfg EntityRegistryUpdateConfig) (*EntityRegistryEntry, error) {
+			if entityID != "binary_sensor.resolved" {
+				t.Errorf("expected icon update on the resolved entity id, got %q", entityID)
+			}
+			if cfg.Icon == nil || *cfg.Icon != "mdi:test" {
+				t.Errorf("expected icon mdi:test, got %v", cfg.Icon)
+			}
+			return nil, errors.New("icon-update-called")
+		},
+	}
+	mockREST := &mockRESTOperations{
+		initConfigEntryFlowFunc: func(context.Context, string) (*ConfigEntryFlowResult, error) {
+			return &ConfigEntryFlowResult{
+				FlowID: "flowicon1", Type: flowTypeForm, StepID: "user",
+				DataSchema: []OptionsFlowField{{Name: "entity_id"}},
+			}, nil
+		},
+		submitConfigEntryFlowStepFunc: func(context.Context, string, map[string]any) (*ConfigEntryFlowResult, error) {
+			return &ConfigEntryFlowResult{
+				FlowID: "flowicon1", Type: flowTypeCreateEntry,
+				Result: &ConfigEntry{EntryID: "entry_icon1", Domain: "threshold"},
+			}, nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	config := HelperConfig{
+		Platform: "threshold",
+		Config:   map[string]any{"name": "n", "entity_id": "sensor.x", "icon": "mdi:test"},
+	}
+	entityID, err := client.CreateHelperEntity(context.Background(), config)
+
+	if entityID != "binary_sensor.resolved" {
+		t.Errorf("expected the resolved entity id to still be returned, got %q", entityID)
+	}
+	var partial *PartialApplyError
+	if errors.As(err, &partial) {
+		t.Fatalf("icon leaked into the flow submission and was reported unconsumed: %v", err)
+	}
+	if err == nil || !strings.Contains(err.Error(), "icon-update-called") {
+		t.Fatalf("expected the icon-update error to surface, got %v", err)
+	}
+	if _, stillPresent := config.Config["icon"]; stillPresent {
+		t.Error("expected icon to be deleted from config.Config before the flow ran")
+	}
+}
+
+// TestCreateHelperEntity_EmptyIconNeverTriggersUpdate kills mutation
+// survivors in the other direction: an explicitly empty icon string must
+// skip the icon-set branch entirely, even though hasIcon is true.
+func TestCreateHelperEntity_EmptyIconNeverTriggersUpdate(t *testing.T) {
+	t.Parallel()
+
+	mockWS := &mockWSOperations{
+		getEntityRegistryFunc: func(context.Context) ([]EntityRegistryEntry, error) {
+			return []EntityRegistryEntry{{EntityID: "binary_sensor.resolved", ConfigEntryID: "entry_icon2"}}, nil
+		},
+		updateEntityRegistryEntryFunc: func(context.Context, string, EntityRegistryUpdateConfig) (*EntityRegistryEntry, error) {
+			return nil, errors.New("icon update should not have been called for an empty icon")
+		},
+	}
+	mockREST := &mockRESTOperations{
+		initConfigEntryFlowFunc: func(context.Context, string) (*ConfigEntryFlowResult, error) {
+			return &ConfigEntryFlowResult{
+				FlowID: "flowicon2", Type: flowTypeForm, StepID: "user",
+				DataSchema: []OptionsFlowField{{Name: "entity_id"}},
+			}, nil
+		},
+		submitConfigEntryFlowStepFunc: func(context.Context, string, map[string]any) (*ConfigEntryFlowResult, error) {
+			return &ConfigEntryFlowResult{
+				FlowID: "flowicon2", Type: flowTypeCreateEntry,
+				Result: &ConfigEntry{EntryID: "entry_icon2", Domain: "threshold"},
+			}, nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	config := HelperConfig{
+		Platform: "threshold",
+		Config:   map[string]any{"name": "n", "entity_id": "sensor.x", "icon": ""},
+	}
+	_, err := client.CreateHelperEntity(context.Background(), config)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// An explicitly empty icon must skip the delete too - the guard is a
+	// single "hasIcon && icon != \"\"" condition shared by both the
+	// deletion and the update, not two independently-mutable checks.
+	if val, present := config.Config["icon"]; !present || val != "" {
+		t.Errorf(`expected icon="" to remain in config.Config untouched, got present=%v val=%v`, present, val)
+	}
+}
+
+// TestCreateHelperEntity_IconFallsBackToPredictionWhenUnresolved kills the
+// mutation survivor on the iconEntityID=="" fallback branch: when registry
+// resolution can't confirm an id (here, an HA response with no Result at
+// all), the icon must still be set, using the client's own name-based
+// prediction rather than being silently skipped.
+func TestCreateHelperEntity_IconFallsBackToPredictionWhenUnresolved(t *testing.T) {
+	t.Parallel()
+
+	mockWS := &mockWSOperations{
+		getEntityRegistryFunc: func(context.Context) ([]EntityRegistryEntry, error) {
+			return nil, nil
+		},
+		getStateFunc: func(_ context.Context, entityID string) (*Entity, error) {
+			return &Entity{EntityID: entityID}, nil
+		},
+		updateEntityRegistryEntryFunc: func(_ context.Context, entityID string, cfg EntityRegistryUpdateConfig) (*EntityRegistryEntry, error) {
+			if entityID != "binary_sensor.my_threshold" {
+				t.Errorf("expected icon update on the predicted id, got %q", entityID)
+			}
+			if cfg.Icon == nil || *cfg.Icon != "mdi:test" {
+				t.Errorf("expected icon mdi:test, got %v", cfg.Icon)
+			}
+			return &EntityRegistryEntry{EntityID: entityID}, nil
+		},
+	}
+	mockREST := &mockRESTOperations{
+		initConfigEntryFlowFunc: func(context.Context, string) (*ConfigEntryFlowResult, error) {
+			return &ConfigEntryFlowResult{
+				FlowID: "flowicon3", Type: flowTypeForm, StepID: "user",
+				DataSchema: []OptionsFlowField{{Name: "entity_id"}},
+			}, nil
+		},
+		submitConfigEntryFlowStepFunc: func(context.Context, string, map[string]any) (*ConfigEntryFlowResult, error) {
+			// No Result at all - simulates an HA response the client can't
+			// resolve an entry_id from, forcing the prediction fallback.
+			return &ConfigEntryFlowResult{FlowID: "flowicon3", Type: flowTypeCreateEntry}, nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	entityID, err := client.CreateHelperEntity(context.Background(), HelperConfig{
+		Platform: "threshold",
+		Config:   map[string]any{"name": "My Threshold", "entity_id": "sensor.x", "icon": "mdi:test"},
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if entityID != "" {
+		t.Errorf("expected the returned entity id to stay empty (unresolved) even though the icon used a prediction, got %q", entityID)
+	}
+}
+
+// TestCreateHelperEntity_IconPredictionFailureSurfacesError kills the
+// mutation survivor on the predictErr!=nil check: when resolution can't
+// confirm an id AND the client's own name-based prediction also fails (no
+// "name" in config), the icon update must report that failure rather than
+// silently dropping it.
+func TestCreateHelperEntity_IconPredictionFailureSurfacesError(t *testing.T) {
+	t.Parallel()
+
+	mockWS := &mockWSOperations{
+		getEntityRegistryFunc: func(context.Context) ([]EntityRegistryEntry, error) {
+			return nil, nil
+		},
+	}
+	mockREST := &mockRESTOperations{
+		initConfigEntryFlowFunc: func(context.Context, string) (*ConfigEntryFlowResult, error) {
+			return &ConfigEntryFlowResult{
+				FlowID: "flowicon4", Type: flowTypeForm, StepID: "user",
+				DataSchema: []OptionsFlowField{{Name: "entity_id"}},
+			}, nil
+		},
+		submitConfigEntryFlowStepFunc: func(context.Context, string, map[string]any) (*ConfigEntryFlowResult, error) {
+			return &ConfigEntryFlowResult{FlowID: "flowicon4", Type: flowTypeCreateEntry}, nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	_, err := client.CreateHelperEntity(context.Background(), HelperConfig{
+		Platform: "threshold",
+		Config:   map[string]any{"entity_id": "sensor.x", "icon": "mdi:test"},
+	})
+
+	if err == nil || !strings.Contains(err.Error(), "failed to predict entity ID for icon update") {
+		t.Fatalf("expected a prediction-failure error, got %v", err)
 	}
 }
 
@@ -3233,7 +3768,7 @@ func TestCreateHelperViaConfigFlow_StepSubmitErrorAbortsFlow(t *testing.T) {
 	}
 
 	client := NewHybridClientWithInterfaces(mockWS, mockREST)
-	err := client.createHelperViaConfigFlow(context.Background(), HelperConfig{
+	_, err := client.createHelperViaConfigFlow(context.Background(), HelperConfig{
 		Platform: "threshold",
 		Config:   map[string]any{"entity_id": "sensor.x", "lower": 5.0},
 	})
@@ -3270,7 +3805,7 @@ func TestCreateHelperViaConfigFlow_ValidationErrorsAbortsFlow(t *testing.T) {
 	}
 
 	client := NewHybridClientWithInterfaces(mockWS, mockREST)
-	err := client.createHelperViaConfigFlow(context.Background(), HelperConfig{
+	_, err := client.createHelperViaConfigFlow(context.Background(), HelperConfig{
 		Platform: "threshold",
 		Config:   map[string]any{"entity_id": "sensor.x", "lower": 5.0},
 	})
@@ -3305,7 +3840,7 @@ func TestCreateHelperViaConfigFlow_MaxStepsExceededAbortsFlow(t *testing.T) {
 	}
 
 	client := NewHybridClientWithInterfaces(mockWS, mockREST)
-	err := client.createHelperViaConfigFlow(context.Background(), HelperConfig{
+	_, err := client.createHelperViaConfigFlow(context.Background(), HelperConfig{
 		Platform: "threshold",
 		Config:   map[string]any{"entity_id": "sensor.x", "lower": 5.0},
 	})
@@ -3395,13 +3930,91 @@ func TestCreateHelperViaConfigFlow_UnclaimedNameIsNotReportedAsUnsupported(t *te
 	}
 
 	client := NewHybridClientWithInterfaces(mockWS, mockREST)
-	err := client.createHelperViaConfigFlow(context.Background(), HelperConfig{
+	_, err := client.createHelperViaConfigFlow(context.Background(), HelperConfig{
 		Platform: platformSwitchAsX,
 		Config:   map[string]any{"name": "my_switch_as_x", "entity_id": "switch.x", "target_domain": "light"},
 	})
 
 	if err != nil {
 		t.Errorf("unclaimed \"name\" should not fail the create: %v", err)
+	}
+}
+
+// TestCreateHelperViaConfigFlow_ReturnsEntryID is a regression test for #224:
+// the create_entry response's entry_id must be surfaced so callers can
+// resolve the real entity_id via the entity registry, instead of relying on
+// a name-based prediction that switch_as_x cannot satisfy (its flow has no
+// "name" field at all).
+func TestCreateHelperViaConfigFlow_ReturnsEntryID(t *testing.T) {
+	t.Parallel()
+
+	mockWS := &mockWSOperations{}
+	mockREST := &mockRESTOperations{
+		initConfigEntryFlowFunc: func(context.Context, string) (*ConfigEntryFlowResult, error) {
+			return &ConfigEntryFlowResult{
+				FlowID: "flowentry", Type: flowTypeForm, StepID: "user",
+				DataSchema: []OptionsFlowField{{Name: "entity_id"}, {Name: "target_domain"}},
+			}, nil
+		},
+		submitConfigEntryFlowStepFunc: func(context.Context, string, map[string]any) (*ConfigEntryFlowResult, error) {
+			return &ConfigEntryFlowResult{
+				FlowID: "flowentry", Type: flowTypeCreateEntry,
+				Result: &ConfigEntry{EntryID: "entry_abc123", Domain: platformSwitchAsX},
+			}, nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	entryID, err := client.createHelperViaConfigFlow(context.Background(), HelperConfig{
+		Platform: platformSwitchAsX,
+		Config:   map[string]any{"name": "my_switch_as_x", "entity_id": "switch.x", "target_domain": "light"},
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if entryID != "entry_abc123" {
+		t.Errorf("expected entry id entry_abc123, got %q", entryID)
+	}
+}
+
+// TestCreateHelperViaConfigFlow_ReturnsEntryIDAlongsidePartialApplyError
+// guards the case that matters most for #224: the config entry already
+// exists by the time an unclaimed-field PartialApplyError is returned, so
+// the entry_id must still be surfaced even though err != nil - otherwise a
+// caller that only checks err on failure loses the one identifier that lets
+// it resolve the entity the flow actually created.
+func TestCreateHelperViaConfigFlow_ReturnsEntryIDAlongsidePartialApplyError(t *testing.T) {
+	t.Parallel()
+
+	mockWS := &mockWSOperations{}
+	mockREST := &mockRESTOperations{
+		initConfigEntryFlowFunc: func(context.Context, string) (*ConfigEntryFlowResult, error) {
+			return &ConfigEntryFlowResult{
+				FlowID: "flowpartial", Type: flowTypeForm, StepID: "user",
+				DataSchema: []OptionsFlowField{{Name: "name"}, {Name: "entity_id"}},
+			}, nil
+		},
+		submitConfigEntryFlowStepFunc: func(context.Context, string, map[string]any) (*ConfigEntryFlowResult, error) {
+			return &ConfigEntryFlowResult{
+				FlowID: "flowpartial", Type: flowTypeCreateEntry,
+				Result: &ConfigEntry{EntryID: "entry_partial", Domain: "threshold"},
+			}, nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	entryID, err := client.createHelperViaConfigFlow(context.Background(), HelperConfig{
+		Platform: "threshold",
+		Config:   map[string]any{"name": "n", "entity_id": "sensor.x", "unrecognized_field": "x"},
+	})
+
+	var partialErr *PartialApplyError
+	if !errors.As(err, &partialErr) {
+		t.Fatalf("expected *PartialApplyError, got %v", err)
+	}
+	if entryID != "entry_partial" {
+		t.Errorf("expected entry id entry_partial to be returned alongside the PartialApplyError, got %q", entryID)
 	}
 }
 
@@ -3426,7 +4039,7 @@ func TestCreateHelperViaConfigFlow_UnrecognizedFieldStillFailsAfterCreation(t *t
 	}
 
 	client := NewHybridClientWithInterfaces(mockWS, mockREST)
-	err := client.createHelperViaConfigFlow(context.Background(), HelperConfig{
+	_, err := client.createHelperViaConfigFlow(context.Background(), HelperConfig{
 		Platform: "threshold",
 		Config:   map[string]any{"name": "my_helper", "entity_id": "sensor.x", "bogus_field": "x"},
 	})
@@ -3461,7 +4074,7 @@ func TestCreateHelperViaConfigFlow_SensorGroupDefaultsTypeToSum(t *testing.T) {
 	}
 
 	client := NewHybridClientWithInterfaces(mockWS, mockREST)
-	err := client.createHelperViaConfigFlow(context.Background(), HelperConfig{
+	_, err := client.createHelperViaConfigFlow(context.Background(), HelperConfig{
 		Platform: "group",
 		Config:   map[string]any{"name": "my_group", "entities": []string{"sensor.temp"}},
 	})
@@ -3501,7 +4114,7 @@ func TestCreateHelperViaConfigFlow_StatisticsDefaultsStateCharacteristicToMean(t
 	}
 
 	client := NewHybridClientWithInterfaces(mockWS, mockREST)
-	err := client.createHelperViaConfigFlow(context.Background(), HelperConfig{
+	_, err := client.createHelperViaConfigFlow(context.Background(), HelperConfig{
 		Platform: platformStatistics,
 		Config:   map[string]any{"name": "my_stats", "entity_id": "sensor.x"},
 	})
@@ -3538,7 +4151,7 @@ func TestCreateHelperViaConfigFlow_GenericThermostatPresetsStepSubmitsEmptyConfi
 	}
 
 	client := NewHybridClientWithInterfaces(mockWS, mockREST)
-	err := client.createHelperViaConfigFlow(context.Background(), HelperConfig{
+	_, err := client.createHelperViaConfigFlow(context.Background(), HelperConfig{
 		Platform: "generic_thermostat",
 		Config: map[string]any{
 			"name":          "my_thermostat",
@@ -3605,7 +4218,7 @@ func TestCreateHelperViaConfigFlow_PresetFieldReachesPresetsStep(t *testing.T) {
 	}
 
 	client := NewHybridClientWithInterfaces(mockWS, mockREST)
-	err := client.createHelperViaConfigFlow(context.Background(), HelperConfig{
+	_, err := client.createHelperViaConfigFlow(context.Background(), HelperConfig{
 		Platform: "generic_thermostat",
 		Config: map[string]any{
 			"name":          "my_thermostat",
@@ -3669,7 +4282,7 @@ func TestCreateHelperViaConfigFlow_PresetsStepAbsentReportsUnaccepted(t *testing
 	}
 
 	client := NewHybridClientWithInterfaces(mockWS, mockREST)
-	err := client.createHelperViaConfigFlow(context.Background(), HelperConfig{
+	_, err := client.createHelperViaConfigFlow(context.Background(), HelperConfig{
 		Platform: "generic_thermostat",
 		Config: map[string]any{
 			"name":          "my_thermostat",

@@ -38,6 +38,12 @@ type Client interface {
 	// Helper operations
 	ListHelpers(ctx context.Context) ([]Entity, error)
 	CreateHelper(ctx context.Context, helper HelperConfig) error
+	// CreateHelperEntity is like CreateHelper but also returns the real
+	// entity_id Home Assistant assigned, resolved via the entity registry
+	// for Config Entry platforms rather than predicted from name. Returns
+	// "" when resolution isn't applicable (WS helpers) or can't confirm an
+	// id in time - callers fall back to their own prediction in that case.
+	CreateHelperEntity(ctx context.Context, helper HelperConfig) (string, error)
 	UpdateHelper(ctx context.Context, helperID string, helper HelperConfig) error
 	DeleteHelper(ctx context.Context, helperID string) error
 	SetHelperValue(ctx context.Context, entityID string, value any) error

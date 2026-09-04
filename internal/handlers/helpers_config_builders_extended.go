@@ -183,11 +183,14 @@ func buildGenericThermostatConfig(config, args map[string]any) error {
 func buildSwitchAsXConfig(config, args map[string]any) error {
 	r := newArgReader(config, args)
 	// Required: entity_id (switch entity)
-	// Note: name field should NOT be sent to API
+	// name is unconditionally seeded by buildHelperConfig for every
+	// config-entry type, but switch_as_x's flow schema has no "name" field
+	// at all - it's simply never claimed by any step (see the
+	// createHelperViaConfigFlow gotcha in CLAUDE.md).
 	r.strID("entity_id")
 
-	// target_domain is a routing field for menu navigation (stored but
-	// filtered by shouldSkipConfigField before API submission).
+	// target_domain is switch_as_x's real (and only) "user"-step field, not
+	// a routing-only key - platformSkipFields does NOT filter it out.
 	r.str("target_domain")
 
 	r.boolean("invert")

@@ -67,15 +67,11 @@ func (s *SwitchAsXIntegrationTestSuite) TestSwitchAsXLight() {
 	// Create source switch (input_boolean + template switch wrapper)
 	boolEntityID, switchEntityID := s.createSourceSwitch("swx_light_src")
 	switchAsXName := GenerateTestID("switch_as_light")
-	switchAsXEntityID := BuildEntityID("light", switchAsXName)
 
-	s.RegisterCleanup(func() {
-		_ = s.Client().DeleteHelper(s.Context(), switchAsXEntityID)
-		_ = s.Client().DeleteHelper(s.Context(), switchEntityID)
-		_ = s.Client().DeleteHelper(s.Context(), boolEntityID)
-	})
-
-	// Create switch_as_x as light
+	// Create switch_as_x as light. switch_as_x's flow schema has no "name"
+	// field - HA derives the wrapped entity's id from the source switch, not
+	// from switchAsXName, so the real id must come from CreateHelperEntity's
+	// entity-registry resolution rather than a BuildEntityID guess (#224).
 	switchAsXConfig := homeassistant.HelperConfig{
 		Platform: "switch_as_x",
 		Config: map[string]any{
@@ -85,8 +81,15 @@ func (s *SwitchAsXIntegrationTestSuite) TestSwitchAsXLight() {
 		},
 	}
 
-	err := s.Client().CreateHelper(s.Context(), switchAsXConfig)
+	switchAsXEntityID, err := s.Client().CreateHelperEntity(s.Context(), switchAsXConfig)
 	s.Require().NoError(err, "Failed to create switch_as_x as light")
+	s.Require().NotEmpty(switchAsXEntityID, "expected the real entity_id to be resolved via the entity registry")
+
+	s.RegisterCleanup(func() {
+		_ = s.Client().DeleteHelper(s.Context(), switchAsXEntityID)
+		_ = s.Client().DeleteHelper(s.Context(), switchEntityID)
+		_ = s.Client().DeleteHelper(s.Context(), boolEntityID)
+	})
 
 	entity, err := s.WaitForEntity(switchAsXEntityID, 5*time.Second)
 	s.Require().NoError(err, "Switch_as_x light did not appear")
@@ -108,15 +111,10 @@ func (s *SwitchAsXIntegrationTestSuite) TestSwitchAsXCover() {
 	// Create source switch (input_boolean + template switch wrapper)
 	boolEntityID, switchEntityID := s.createSourceSwitch("swx_cover_src")
 	switchAsXName := GenerateTestID("switch_as_cover")
-	switchAsXEntityID := BuildEntityID("cover", switchAsXName)
 
-	s.RegisterCleanup(func() {
-		_ = s.Client().DeleteHelper(s.Context(), switchAsXEntityID)
-		_ = s.Client().DeleteHelper(s.Context(), switchEntityID)
-		_ = s.Client().DeleteHelper(s.Context(), boolEntityID)
-	})
-
-	// Create switch_as_x as cover
+	// Create switch_as_x as cover. See TestSwitchAsXLight for why the real
+	// id comes from CreateHelperEntity's resolution rather than a
+	// name-based guess (#224).
 	switchAsXConfig := homeassistant.HelperConfig{
 		Platform: "switch_as_x",
 		Config: map[string]any{
@@ -126,8 +124,15 @@ func (s *SwitchAsXIntegrationTestSuite) TestSwitchAsXCover() {
 		},
 	}
 
-	err := s.Client().CreateHelper(s.Context(), switchAsXConfig)
+	switchAsXEntityID, err := s.Client().CreateHelperEntity(s.Context(), switchAsXConfig)
 	s.Require().NoError(err, "Failed to create switch_as_x as cover")
+	s.Require().NotEmpty(switchAsXEntityID, "expected the real entity_id to be resolved via the entity registry")
+
+	s.RegisterCleanup(func() {
+		_ = s.Client().DeleteHelper(s.Context(), switchAsXEntityID)
+		_ = s.Client().DeleteHelper(s.Context(), switchEntityID)
+		_ = s.Client().DeleteHelper(s.Context(), boolEntityID)
+	})
 
 	entity, err := s.WaitForEntity(switchAsXEntityID, 5*time.Second)
 	s.Require().NoError(err, "Switch_as_x cover did not appear")
