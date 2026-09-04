@@ -403,7 +403,7 @@ set -a && source .env.integration && set +a && go test -tags=integration -v ./in
 
 **Source entity wrapper pattern**: Config Entry helpers with domain requirements need template wrappers in tests: `createSourceSensor()` (input_number + template sensor), `createSourceSwitch()` (input_boolean + template switch with turn_on/turn_off service actions).
 
-**Known non-regression integration failures on this HA instance**: `TestSwitchAsXIntegration`/`TestSwitchAsXCover`/`TestSwitchAsXLight` - created entity doesn't appear under the predicted id (`switch_as_x`'s real "user" step schema has no `name` field; entity-id prediction here is unsolved, separate from flow-step routing). `TestTemplateHelperIntegration/TestTemplateSensorUpdate` and `TestTemplateSensorUpdatePartial` - both pre-date issue #206 and fail identically with an HA version-specific 400 on the config entry flow step submission.
+**Known non-regression integration failures on this HA instance**: `TestSwitchAsXIntegration`/`TestSwitchAsXCover`/`TestSwitchAsXLight` - created entity doesn't appear under the predicted id (`switch_as_x`'s real "user" step schema has no `name` field; entity-id prediction here is unsolved, separate from flow-step routing).
 
 **Zone/Person WS command prefix**: zone/person WS commands use a bare domain prefix (`zone/list`, `person/list`), not `config/` - unlike the genuine `config/*_registry/*` APIs. Pinned by `TestWSClientImpl_ZonePersonCommands`.
 

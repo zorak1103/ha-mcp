@@ -254,7 +254,10 @@ func (s *TemplateHelperIntegrationTestSuite) TestTemplateSensorWithIcon() {
 	_, err = s.WaitForEntity(sourceEntityID, 5*time.Second)
 	s.Require().NoError(err, "Source input_number did not appear")
 
-	// Create template sensor with custom icon
+	// Create template sensor with custom icon. No device_class is set here,
+	// so HA's device-class/unit validation never fires and any unit string
+	// is accepted - unlike the update tests above, this "units" literal is
+	// not one of the invalid pairs fixed by issue #218.
 	templateConfig := homeassistant.HelperConfig{
 		Platform: "template",
 		Config: map[string]any{
@@ -404,7 +407,7 @@ func (s *TemplateHelperIntegrationTestSuite) TestTemplateSensorUpdate() {
 		Config: map[string]any{
 			"name":                templateName,
 			"state":               "{{ states('" + sourceEntityID + "') | float }}",
-			"unit_of_measurement": "units",
+			"unit_of_measurement": "°C",
 			"device_class":        "temperature",
 		},
 	}
@@ -435,13 +438,17 @@ func (s *TemplateHelperIntegrationTestSuite) TestTemplateSensorUpdate() {
 	s.Require().NoError(err)
 	s.Equal("100.0", entity.State, "Template sensor should show doubled value after update")
 
-	// Verify other fields were preserved (device_class, unit_of_measurement)
-	if deviceClass, ok := entity.Attributes["device_class"].(string); ok {
-		s.Equal("temperature", deviceClass, "Device class should be preserved")
-	}
-	if uom, ok := entity.Attributes["unit_of_measurement"].(string); ok {
-		s.Equal("units", uom, "Unit of measurement should be preserved")
-	}
+	// Verify other fields were preserved (device_class, unit_of_measurement).
+	// Type-assert with Require rather than a soft `if ok` guard: a missing or
+	// mistyped attribute here would mean the field wasn't actually preserved,
+	// and a skipped assertion must not read as a passing test.
+	deviceClass, ok := entity.Attributes["device_class"].(string)
+	s.Require().True(ok, "device_class attribute should be present as a string")
+	s.Equal("temperature", deviceClass, "Device class should be preserved")
+
+	uom, ok := entity.Attributes["unit_of_measurement"].(string)
+	s.Require().True(ok, "unit_of_measurement attribute should be present as a string")
+	s.Equal("°C", uom, "Unit of measurement should be preserved")
 
 	// Cleanup
 	_ = s.Client().DeleteHelper(s.Context(), templateEntityID)
@@ -449,7 +456,12 @@ func (s *TemplateHelperIntegrationTestSuite) TestTemplateSensorUpdate() {
 }
 
 func (s *TemplateHelperIntegrationTestSuite) TestTemplateSensorUpdatePartial() {
-	// Test partial update (only change device_class, preserve state template)
+	// Test partial update (change device_class + unit_of_measurement together,
+	// preserve state template). A device_class-only update isn't viable here -
+	// see CLAUDE.md's "Template sensor device_class requires a matching
+	// unit_of_measurement" gotcha: HA rejects a device_class change unless the
+	// existing unit is already valid for the new class, so the two fields must
+	// be changed together.
 	sourceName := GenerateTestID("tmpl_part_src")
 	sourceEntityID := BuildEntityID("input_number", sourceName)
 	templateName := GenerateTestID("tmpl_partial")
@@ -483,7 +495,7 @@ func (s *TemplateHelperIntegrationTestSuite) TestTemplateSensorUpdatePartial() {
 		Config: map[string]any{
 			"name":                templateName,
 			"state":               "{{ states('" + sourceEntityID + "') | float + 10 }}",
-			"unit_of_measurement": "units",
+			"unit_of_measurement": "°C",
 			"device_class":        "temperature",
 		},
 	}
@@ -495,11 +507,13 @@ func (s *TemplateHelperIntegrationTestSuite) TestTemplateSensorUpdatePartial() {
 	s.Require().NoError(err, "Template sensor did not appear")
 	s.NotNil(entity)
 
-	// Update only device_class (partial update should preserve state template)
+	// Update only device_class + unit_of_measurement (partial update should
+	// preserve state template)
 	updateConfig := homeassistant.HelperConfig{
 		Platform: "template",
 		Config: map[string]any{
-			"device_class": "power",
+			"device_class":        "power",
+			"unit_of_measurement": "W",
 		},
 	}
 
@@ -514,15 +528,17 @@ func (s *TemplateHelperIntegrationTestSuite) TestTemplateSensorUpdatePartial() {
 	s.Require().NoError(err)
 	s.Equal("35.0", entity.State, "Template sensor should still use original formula (25 + 10 = 35)")
 
-	// Verify device_class was updated
-	if deviceClass, ok := entity.Attributes["device_class"].(string); ok {
-		s.Equal("power", deviceClass, "Device class should be updated to power")
-	}
+	// Verify device_class and unit_of_measurement were updated. Type-assert
+	// with Require rather than a soft `if ok` guard: a missing or mistyped
+	// attribute means the update didn't actually take effect, and a skipped
+	// assertion must not read as a passing test.
+	deviceClass, ok := entity.Attributes["device_class"].(string)
+	s.Require().True(ok, "device_class attribute should be present as a string")
+	s.Equal("power", deviceClass, "Device class should be updated to power")
 
-	// Verify unit_of_measurement was preserved
-	if uom, ok := entity.Attributes["unit_of_measurement"].(string); ok {
-		s.Equal("units", uom, "Unit of measurement should be preserved")
-	}
+	uom, ok := entity.Attributes["unit_of_measurement"].(string)
+	s.Require().True(ok, "unit_of_measurement attribute should be present as a string")
+	s.Equal("W", uom, "Unit of measurement should be updated to W")
 
 	// Cleanup
 	_ = s.Client().DeleteHelper(s.Context(), templateEntityID)
