@@ -55,7 +55,7 @@ Tool schema size directly affects LLM context window limits and per-request infe
 | Entity history & stats   | `query_entities` mode=history / mode=statistics                           | `ha_get_history`                                      | ❌ Not supported                           |
 | Entity health audit      | `query_entities` mode=health (orphans, unavailable, stale)                | `ha_get_system_health` (system-wide only)             | ❌ Not supported                           |
 | Presence correlation     | `query_entities` mode=presence (tracker and person correlation)           | ❌ Not supported                                      | ❌ Not supported                           |
-| Device registry search   | `query_devices` (modes: list, get, health; filter by area, manufacturer)  | `ha_get_device`                                       | Via context prompt only                    |
+| Device registry search   | `query_devices` (mode=health), `get_registry` type=devices, `manage_device` | `ha_get_device`                                       | Via context prompt only                    |
 | Post-mutation diffing    | Smart Wait: returns `entity: old -> new` inline                           | `ha_get_operation_status` (separate call)             | ❌ Fire-and-forget                         |
 
 ### Automations, Scripts, and Scenes
@@ -85,7 +85,7 @@ Tool schema size directly affects LLM context window limits and per-request infe
 | ------------------------ | ------------------------------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------ |
 | Helper types supported   | 41 distinct helper types                                                  | WebSocket input helpers only (~6 types)               | ❌ Not supported                           |
 | Multi-step Config Flows  | `statistics` (3 steps), `filter` (2 steps), `generic_thermostat`, `trend` | ❌ Not supported                                      | ❌ Not supported                           |
-| Template subtypes        | 15 subtypes (`template_light`, `template_cover`, `template_sensor`, etc.) | ❌ Not supported                                      | ❌ Not supported                           |
+| Template subtypes        | 17 subtypes (15 domain-specific: `template_light`, `template_cover`, etc.)| ❌ Not supported                                      | ❌ Not supported                           |
 | Helper mutations         | `manage_helper` (create, update, delete, get_details)                     | `ha_config_{list,set,remove}_helper`                  | ❌ Not supported                           |
 | Helper actions           | `helper_action` (toggle, increment, set, timer controls)                  | Via `ha_call_service`                                 | Timer intents (if device supported)        |
 
@@ -139,7 +139,7 @@ Tool schema size directly affects LLM context window limits and per-request infe
 - **High-Performance & Low Footprint**: Runs as a single compiled Go binary (~30 MB) with zero external runtime dependencies and minimal RAM usage.
 - **Token Efficiency**: 41 consolidated tools consume only ~3,500 tokens of schema context, compared to 15,000+ tokens for 88 individual tools.
 - **Surgical Configuration Editing**: Full RFC 6902 and semantic property-based JSON patching for automations, scripts, scenes, and dashboards, avoiding destructive full-file overwrites.
-- **Complex Helper Lifecycle**: Full support for 41 helper types, including multi-step Config Entry flows (`statistics`, `trend`, `filter`, `generic_thermostat`, `generic_hygrostat`) and 15 template subtypes.
+- **Complex Helper Lifecycle**: Full support for 41 helper types, including multi-step Config Entry flows (`statistics`, `trend`, `filter`, `generic_thermostat`, `generic_hygrostat`) and 17 template subtypes (15 domain-specific subtypes alongside sensor/binary_sensor).
 - **Deep Troubleshooting**: Advanced diagnostic tools including entity blast-radius analysis (`analyze_entity`), dependency graphs, cross-configuration reference search (`find_references`), and unified trace debugging.
 - **Instant State Feedback**: Smart Wait automatically confirms post-mutation state changes (`entity: off -> on`) directly in the tool response.
 

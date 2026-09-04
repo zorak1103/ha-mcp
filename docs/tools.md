@@ -42,7 +42,7 @@ Authorization: Bearer <your-ha-access-token>
 
 | Tool                | Description                                                                                                                                   |
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `manage_automation` | Consolidated automation management (actions: list, get, create, update, delete, toggle, coverage, patch (RFC 6902 JSON Patch + semantic patch); format: natural/json for list/get/coverage) |
+| `manage_automation` | Consolidated automation management (actions: list, get, create, update, delete, toggle, coverage, patch (RFC 6902 JSON Patch + semantic patch), schema; format: natural/json for list/get/coverage) |
 
 **Flexible ID Lookup**: The `automation_id` parameter accepts multiple formats:
 - Entity ID: `automation.morning_lights`
@@ -316,7 +316,7 @@ Most tools support two output formats via the `format` parameter:
 - **`json`**: Structured JSON output for backward compatibility and programmatic access
   - Example: `{"entity_id": "light.living_room", "state": "on", "attributes": {"brightness": 204, ...}}`
 
-**Tools with format support**: `query_entities`, `query_devices`, `get_state`, `analyze_entity`, `get_entity_dependencies`, `find_references`, `call_service`, `get_registry`, `analyze_target`, `manage_automation`, `manage_script`, `manage_scene`, `manage_area`, `manage_label`, `manage_floor`, `manage_zone`, `manage_person`, `manage_tag`, `manage_helper`, `helper_action`, `manage_hacs`, `manage_trace`, `manage_blueprint`, `manage_update`, `manage_todo`, `manage_calendar`, `manage_camera`
+**Tools with format support**: `analyze_entity`, `analyze_target`, `call_service`, `find_references`, `get_entity_dependencies`, `get_logbook`, `get_registry`, `get_state`, `manage_area`, `manage_automation`, `manage_blueprint`, `manage_calendar`, `manage_camera`, `manage_config_entry`, `manage_dashboard`, `manage_device`, `manage_entity`, `manage_floor`, `manage_hacs`, `manage_helper`, `manage_label`, `manage_person`, `manage_scene`, `manage_script`, `manage_system_log`, `manage_tag`, `manage_todo`, `manage_trace`, `manage_update`, `manage_zone`, `query_devices`, `query_entities`
 
 ## Example Requests
 
@@ -432,8 +432,9 @@ Most tools support two output formats via the `format` parameter:
   "id": 7,
   "method": "tools/call",
   "params": {
-    "name": "create_automation",
+    "name": "manage_automation",
     "arguments": {
+      "action": "create",
       "alias": "Turn on lights at sunset",
       "trigger": [
         {
@@ -441,7 +442,7 @@ Most tools support two output formats via the `format` parameter:
           "event": "sunset"
         }
       ],
-      "action": [
+      "automation_action": [
         {
           "service": "light.turn_on",
           "target": {

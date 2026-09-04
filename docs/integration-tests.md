@@ -12,7 +12,7 @@ Integration tests verify that the MCP server correctly interacts with Home Assis
 - Calling Home Assistant services
 
 **Safety Guarantees:**
-- All test entities use a unique prefix (`__mcptest_`) to avoid conflicts with production data
+- All test entities use a unique prefix (`mcptest_`) to avoid conflicts with production data
 - Tests never modify existing entities without the test prefix
 - Pre-test and post-test cleanup ensures no test data is left behind
 
@@ -20,7 +20,7 @@ Integration tests verify that the MCP server correctly interacts with Home Assis
 
 1. A running Home Assistant instance (version 2023.1+)
 2. A long-lived access token with full API access
-3. Go 1.26+ installed
+3. Go 1.27+ installed
 
 ## Configuration
 
@@ -78,42 +78,66 @@ go test -tags=integration -v ./internal/handlers/integration/... 2>&1 | tee test
 
 ## Test Categories
 
-### Helper Tests (WebSocket-based helpers)
+### Helper Tests
 
-| Test Suite | Operations Tested |
-|------------|-------------------|
-| `TestCounterIntegration` | create, increment, decrement, set_value, reset, delete |
-| `TestInputBooleanIntegration` | create, turn_on, turn_off, toggle, delete |
-| `TestInputNumberIntegration` | create, set_value, increment, decrement, delete |
-| `TestInputTextIntegration` | create, set_value, delete |
-| `TestInputSelectIntegration` | create, select_option, set_options, select_first/last/next/previous, delete |
-| `TestInputDatetimeIntegration` | create, set_datetime, delete |
-| `TestInputButtonIntegration` | create, press, delete |
-| `TestTimerIntegration` | create, start, pause, cancel, finish, change, delete |
-| `TestGroupIntegration` | create, set_entities, delete |
-| `TestScheduleIntegration` | create, delete |
-| `TestThresholdIntegration` | create, delete |
-| `TestIntegralIntegration` | create, reset, delete |
-| `TestDerivativeIntegration` | create, delete |
-| `TestTemplateHelperIntegration` | create_sensor, create_binary_sensor, delete |
-| `TestTemplateSubtypesIntegration` | table-driven create/update/delete lifecycle and entity id resolution across the 15 new template subtypes (template_alarm_control_panel, template_button, template_cover, template_device_tracker, template_event, template_fan, template_image, template_light, template_lock, template_number, template_select, template_switch, template_update, template_vacuum, template_weather); template_sensor/template_binary_sensor are covered separately by `TestTemplateHelperIntegration` above |
-| `TestAutomationIntegration` | create, update, toggle, trigger, delete |
-| `TestScriptIntegration` | create, update, execute, delete |
-| `TestSceneIntegration` | create, update, activate, delete |
-| `TestZoneIntegration` | create, update (partial), delete, multiple zones |
-| `TestPersonIntegration` | create, update (partial), delete, multiple persons |
+| Test Suite                        | Operations Tested                                                                                                                                                                                                                                                                                                                                                       |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TestCounterIntegration`          | create, increment, decrement, set, reset, delete                                                                                                                                                                                                                                                                                                                        |
+| `TestInputBooleanIntegration`      | create, turn_on, turn_off, toggle, delete                                                                                                                                                                                                                                                                                                                               |
+| `TestInputNumberIntegration`       | create, set, increment, decrement, delete                                                                                                                                                                                                                                                                                                                               |
+| `TestInputTextIntegration`         | create, set, delete                                                                                                                                                                                                                                                                                                                                                     |
+| `TestInputSelectIntegration`       | create, select_option, set_options, select_first/last/next/previous, delete                                                                                                                                                                                                                                                                                             |
+| `TestInputDatetimeIntegration`     | create, set_datetime, delete                                                                                                                                                                                                                                                                                                                                            |
+| `TestInputButtonIntegration`       | create, press, delete                                                                                                                                                                                                                                                                                                                                                   |
+| `TestTimerIntegration`             | create, start, pause, cancel, finish, change, delete                                                                                                                                                                                                                                                                                                                    |
+| `TestGroupIntegration`             | create, set_entities, delete                                                                                                                                                                                                                                                                                                                                            |
+| `TestScheduleIntegration`          | create, delete                                                                                                                                                                                                                                                                                                                                                          |
+| `TestThresholdIntegration`         | create, delete                                                                                                                                                                                                                                                                                                                                                          |
+| `TestIntegralIntegration`          | create, reset, delete                                                                                                                                                                                                                                                                                                                                                   |
+| `TestDerivativeIntegration`        | create, delete                                                                                                                                                                                                                                                                                                                                                          |
+| `TestUtilityMeterIntegration`      | create, calibrate, reset, delete                                                                                                                                                                                                                                                                                                                                        |
+| `TestMinMaxIntegration`            | create, update, delete                                                                                                                                                                                                                                                                                                                                                  |
+| `TestStatisticsIntegration`        | create, update, delete                                                                                                                                                                                                                                                                                                                                                  |
+| `TestTrendIntegration`             | create, update, delete                                                                                                                                                                                                                                                                                                                                                  |
+| `TestFilterIntegration`            | create, update, delete                                                                                                                                                                                                                                                                                                                                                  |
+| `TestTodIntegration`               | create, update, delete                                                                                                                                                                                                                                                                                                                                                  |
+| `TestRandomIntegration`            | create random_sensor, random_binary_sensor, delete                                                                                                                                                                                                                                                                                                                      |
+| `TestGenericThermostatIntegration` | create, update with presets, delete                                                                                                                                                                                                                                                                                                                                     |
+| `TestGenericHygrostatIntegration`  | create, update, delete                                                                                                                                                                                                                                                                                                                                                  |
+| `TestSwitchAsXIntegration`         | create, entity_id registry resolution, delete                                                                                                                                                                                                                                                                                                                           |
+| `TestTemplateHelperIntegration`    | create_sensor, create_binary_sensor, delete                                                                                                                                                                                                                                                                                                                              |
+| `TestTemplateSubtypesIntegration`  | table-driven create/update/delete lifecycle and entity id resolution across the 15 new template subtypes (template_alarm_control_panel, template_button, template_cover, template_device_tracker, template_event, template_fan, template_image, template_light, template_lock, template_number, template_select, template_switch, template_update, template_vacuum, template_weather); template_sensor/template_binary_sensor are covered separately by `TestTemplateHelperIntegration` above |
+
+### Automation, Script, Scene, and Registry Tests
+
+| Test Suite                        | Operations Tested                                                                                                |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `TestAutomationIntegration`         | create, update, toggle, trigger, delete                                                                          |
+| `TestAutomationsCoverageIntegration`| coverage analysis of uncovered areas and entities                                                                |
+| `TestScriptIntegration`             | create, update, execute, delete                                                                                  |
+| `TestSceneIntegration`              | create, update, activate, delete                                                                                 |
+| `TestAreasIntegration`              | create, update (with label_mode and alias_mode), delete, multiple areas                                          |
+| `TestLabelsIntegration`             | create, update, delete, multiple labels                                                                          |
+| `TestFloorsIntegration`             | create, update (with alias_mode), delete, multiple floors                                                        |
+| `TestZonesIntegration`              | create, update (partial), delete, multiple zones                                                                 |
+| `TestPersonsIntegration`            | create, update (partial), delete, multiple persons                                                               |
+| `TestTagsIntegration`               | create, update, delete, multiple tags                                                                            |
+| `TestEntitiesManageIntegration`     | get, update (with label_mode and alias_mode), delete                                                             |
+| `TestDevicesManageIntegration`      | get, update (with label_mode), delete                                                                            |
 
 ### Advanced Feature Tests
 
-| Test Suite | Operations Tested |
-|------------|-------------------|
-| `TestTodoIntegration` | list, get_items, add_item, update_item (status), remove_item (full CRUD with status filtering) |
-| `TestCalendarIntegration` | list, get_events, create_event (datetime + all-day), delete_event (with writable calendar detection) |
-| `TestTraceIntegration` | list automation traces, list script traces (execution history), list filtered by entity_id (verifies unique_id-based item_id resolution against a live HA registry) |
-| `TestUpdateBlueprintIntegration` | list updates (pending filter), release_notes, list blueprints (automation/script) |
-| `TestCameraIntegration`    | list cameras, stream (HLS URL via manage_camera), get_snapshot (binary image data)                  |
-| `TestSystemLogIntegration` | GetSystemLog (list), ClearSystemLog (clear + verify empty)                                           |
-| `TestConfigEntriesIntegration` | list, list (filter by domain), get, get (not found), delete (via manage_config_entry tool dispatch, verifies entity + config entry are gone), options discovery |
+| Test Suite                     | Operations Tested                                                                                                                                                              |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `TestDashboardsIntegration`     | create, get, update, save_config, delete, find across nested views and cards                                                                                                   |
+| `TestTodoIntegration`           | list, get_items, add_item, update_item (status), remove_item (full CRUD with status filtering)                                                                                 |
+| `TestCalendarIntegration`       | list, get_events, create_event (datetime + all-day), delete_event (with writable calendar detection)                                                                           |
+| `TestTraceIntegration`          | list automation traces, list script traces (execution history), list filtered by entity_id (verifies unique_id-based item_id resolution against a live HA registry)            |
+| `TestUpdateBlueprintIntegration`| list updates (pending filter), release_notes, list blueprints (automation/script)                                                                                              |
+| `TestCameraIntegration`         | list cameras, stream (HLS URL via manage_camera), get_snapshot (binary image data)                                                                                             |
+| `TestSystemLogIntegration`      | GetSystemLog (list), ClearSystemLog (clear + verify empty)                                                                                                                      |
+| `TestConfigEntriesIntegration`  | list, list (filter by domain), get, get (not found), delete (via manage_config_entry tool dispatch, verifies entity + config entry are gone), options discovery                |
+| `TestDatetimeIntegration`       | get_datetime with configured Home Assistant timezone                                                                                                                          |
 
 **Documented Exception (unit tests only):**
 
@@ -129,20 +153,27 @@ Every test above calls `homeassistant.Client` methods directly, verifying the cl
 
 `*_tool_dispatch_integration_test.go` files close this gap: they use `s.CallTool(name, args)` (added to `IntegrationTestSuite` in `suite_test.go`) to dispatch through the real registry + handler layer - the same path a real MCP client exercises - while reusing the existing suites' proven fixture-creation and cleanup code for setup/teardown.
 
-| Test Suite | Tool | Action(s) tested via CallTool |
-|------------|------|-------------------------------|
-| `TestToolDispatchHarness` | `get_state` | Read-only smoke test proving the harness reaches the real client |
-| `TestTemplateHelperToolDispatch` | `manage_helper` | update (template_sensor) - direct regression test for the config-entry helper update `unknown_command` bug |
-| `TestThresholdToolDispatch` | `manage_helper` | update (threshold) |
-| `TestInputNumberToolDispatch` | `manage_helper` | update (input_number, WS helper) |
-| `TestGroupToolDispatch` | `manage_helper` | delete (group) |
-| `TestGetDetailsRemediation` | `manage_helper` | get_details (siren/valve switch_as_x wrappers, template_light, group_type:light collision) - regression coverage for the issue #216 natural-format fix's adversarial-review remediation |
-| `TestAutomationToolDispatch` | `manage_automation` | update, patch |
-| `TestScriptToolDispatch` | `manage_script` | update |
-| `TestFindReferencesToolDispatch` | `find_references` | search across script + dashboard references |
-| `TestDashboardFindToolDispatch` | `manage_dashboard` | find (deeply nested card) |
-| `TestPersonToolDispatch` | `manage_person` | list - regression test for the person WS command-prefix and response-shape fixes |
-| `TestZoneToolDispatch` | `manage_zone` | list - regression test for the zone WS command-prefix fix |
+| Test Suite                                | Tool               | Action(s) tested via CallTool                                                                                                                                               |
+| ----------------------------------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TestToolDispatchHarness`                 | `get_state`        | Read-only smoke test proving the harness reaches the real client                                                                                                            |
+| `TestTemplateHelperToolDispatch`          | `manage_helper`    | update (template_sensor) - direct regression test for the config-entry helper update `unknown_command` bug                                                                  |
+| `TestThresholdToolDispatch`               | `manage_helper`    | update (threshold)                                                                                                                                                          |
+| `TestInputNumberToolDispatch`             | `manage_helper`    | update (input_number, WS helper)                                                                                                                                            |
+| `TestGroupToolDispatch`                   | `manage_helper`    | delete (group)                                                                                                                                                              |
+| `TestGroupsToolDispatch`                  | `manage_helper`    | delete (group via tool dispatch)                                                                                                                                            |
+| `TestMinMaxToolDispatch`                  | `manage_helper`    | update (min_max calculation type and entity inputs)                                                                                                                         |
+| `TestFilterToolDispatch`                  | `manage_helper`    | update (filter window size and entity inputs)                                                                                                                               |
+| `TestHelperPartialUpdateToolDispatch`     | `manage_helper`    | update (partial field update merging current helper storage configuration)                                                                                                 |
+| `TestHelperSourceDomainToolDispatch`      | `manage_helper`    | create and update (source entity domain and device_class preflight validation)                                                                                              |
+| `TestGetDetailsRemediation`               | `manage_helper`    | get_details (siren/valve switch_as_x wrappers, template_light, group_type:light collision) - regression coverage for the natural-format get_details fix's adversarial-review remediation |
+| `TestAutomationToolDispatch`              | `manage_automation`| update, patch                                                                                                                                                               |
+| `TestScriptToolDispatch`                  | `manage_script`    | update                                                                                                                                                                      |
+| `TestScenesToolDispatch`                  | `manage_scene`     | update, patch                                                                                                                                                               |
+| `TestFindReferencesToolDispatch`          | `find_references`  | search across script + dashboard references                                                                                                                                 |
+| `TestDashboardFindToolDispatch`           | `manage_dashboard` | find (deeply nested card)                                                                                                                                                   |
+| `TestDashboardsPatchToolDispatch`         | `manage_dashboard` | patch (views, cards, and chips)                                                                                                                                             |
+| `TestPersonToolDispatch`                  | `manage_person`    | list - regression test for the person WS command-prefix and response-shape fixes                                                                                            |
+| `TestZoneToolDispatch`                    | `manage_zone`      | list - regression test for the zone WS command-prefix fix                                                                                                                  |
 
 Writing these tests uncovered and fixed three further, previously-unknown bugs in the config-entry helper update path (all unreachable until the config-entry helper update routing fix let update calls reach Home Assistant's Options Flow submission for the first time) - see `CLAUDE.md`'s API & Type Gotchas section for `buildConfigEntryUpdateConfig`'s `entity_id` leak, `addExtendedConfigEntryFields`'s `device_class` leak, and `extractOptionsFromSchema`'s nil `suggested_value` propagation.
 
@@ -153,13 +184,13 @@ Writing these tests uncovered and fixed three further, previously-unknown bugs i
 All test entities follow the pattern:
 
 ```
-__mcptest_<8-char-uuid>_<descriptive-name>
+mcptest_<8-char-uuid>_<descriptive-name>
 ```
 
 Example entity IDs:
-- `counter.__mcptest_a1b2c3d4_counter_test`
-- `input_boolean.__mcptest_e5f6g7h8_auto_target`
-- `automation.__mcptest_i9j0k1l2_automation`
+- `counter.mcptest_a1b2c3d4_counter_test`
+- `input_boolean.mcptest_e5f6g7h8_auto_target`
+- `automation.mcptest_i9j0k1l2_automation`
 
 This convention ensures:
 1. Test entities are easily identifiable
@@ -177,7 +208,7 @@ Tests automatically clean up after themselves using:
 If you need to manually clean test entities (e.g., after a crashed test run):
 
 ```bash
-# Use the HA API or UI to find and delete entities starting with __mcptest_
+# Use the HA API or UI to find and delete entities starting with mcptest_
 ```
 
 ## Troubleshooting
