@@ -458,6 +458,91 @@ func TestNaturalHelperFormatter_DetailRenderers_IncludeEntityID(t *testing.T) {
 	}
 }
 
+// TestNaturalHelperFormatter_FormatHelperDetail_GenericFallback pins the
+// fallback renderer added for issue #216: domains with no dedicated case
+// (climate, humidifier, select, and the 15 template_* subtypes) must render
+// natural-format output instead of erroring with "unsupported helper type".
+func TestNaturalHelperFormatter_FormatHelperDetail_GenericFallback(t *testing.T) {
+	t.Parallel()
+
+	f := NewNaturalHelperFormatter()
+
+	detail := map[string]any{
+		"entity_id":           "climate.thermostat",
+		"friendly_name":       "Wohnzimmer",
+		"state":               "heat",
+		"current_temperature": 21.5,
+		"temperature":         22.0,
+		"hvac_modes":          []any{"heat", "off"},
+		"min_temp":            float64(7),
+		"max_temp":            float64(35),
+	}
+
+	result, err := f.FormatHelperDetail(context.Background(), "climate", detail)
+	if err != nil {
+		t.Fatalf("FormatHelperDetail(climate) error = %v, want nil", err)
+	}
+
+	wantLines := []string{
+		"Climate: Wohnzimmer (climate.thermostat)",
+		"State: heat",
+		"Current temperature: 21.5",
+		"Hvac modes: heat, off",
+		"Max temp: 35",
+		"Min temp: 7",
+		"Temperature: 22",
+	}
+	for _, line := range wantLines {
+		if !strings.Contains(result, line) {
+			t.Errorf("FormatHelperDetail(climate) = %q, want it to contain %q", result, line)
+		}
+	}
+}
+
+// TestNaturalHelperFormatter_FormatHelperDetail_GenericFallback_KeyOrder pins
+// that the fallback renderer sorts attribute keys - Go randomizes map
+// iteration order per range statement, so an unsorted implementation would
+// produce a different attribute order on a later call within the same run.
+func TestNaturalHelperFormatter_FormatHelperDetail_GenericFallback_KeyOrder(t *testing.T) {
+	t.Parallel()
+
+	f := NewNaturalHelperFormatter()
+
+	detail := map[string]any{
+		"entity_id":     "select.mode",
+		"friendly_name": "Mode",
+		"state":         "eco",
+		"zeta":          "1",
+		"alpha":         "2",
+		"mike":          "3",
+	}
+
+	first, err := f.FormatHelperDetail(context.Background(), "select", detail)
+	if err != nil {
+		t.Fatalf("FormatHelperDetail(select) error = %v, want nil", err)
+	}
+
+	for i := 0; i < 20; i++ {
+		again, err := f.FormatHelperDetail(context.Background(), "select", detail)
+		if err != nil {
+			t.Fatalf("FormatHelperDetail(select) error = %v, want nil", err)
+		}
+		if again != first {
+			t.Fatalf("FormatHelperDetail(select) not deterministic across calls:\ncall 1: %q\ncall %d: %q", first, i+2, again)
+		}
+	}
+
+	alphaIdx := strings.Index(first, "Alpha:")
+	mikeIdx := strings.Index(first, "Mike:")
+	zetaIdx := strings.Index(first, "Zeta:")
+	if alphaIdx == -1 || mikeIdx == -1 || zetaIdx == -1 {
+		t.Fatalf("FormatHelperDetail(select) missing expected keys, got: %q", first)
+	}
+	if alphaIdx >= mikeIdx || mikeIdx >= zetaIdx {
+		t.Errorf("FormatHelperDetail(select) attributes not sorted alphabetically, got: %q", first)
+	}
+}
+
 func TestNaturalHelperFormatter_FormatCounterDetail_IncludesEntityID(t *testing.T) {
 	t.Parallel()
 

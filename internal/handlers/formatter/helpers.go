@@ -228,7 +228,92 @@ func (f *NaturalHelperFormatter) FormatHelperDetail(
 	case "binary_sensor":
 		return f.formatBinarySensorDetail(detail), nil
 	default:
-		return "", fmt.Errorf("unsupported helper type: %s", helperType)
+		return f.formatGenericDetail(helperType, detail), nil
+	}
+}
+
+// formatGenericDetail renders natural-format output for helper types with no
+// dedicated case above (climate, humidifier, select, and the 15 template_*
+// subtype domains from issue #206) - closing the gap where the natural
+// formatter errored with "unsupported helper type" while the JSON formatter,
+// which ignores helperType entirely, already worked (issue #216).
+func (f *NaturalHelperFormatter) formatGenericDetail(helperType string, detail map[string]any) string {
+	var result strings.Builder
+
+	name := f.getDetailString(detail, "friendly_name")
+	if name == "" {
+		name = f.getDetailString(detail, "entity_id")
+	}
+	entityID := f.getDetailString(detail, "entity_id")
+	state := f.getDetailString(detail, "state")
+
+	fmt.Fprintf(&result, "%s: %s\n", formatDetailTypeLabel(helperType), FormatNameWithID(name, entityID))
+	fmt.Fprintf(&result, "State: %s\n", state)
+
+	keys := make([]string, 0, len(detail))
+	for k := range detail {
+		if k == "entity_id" || k == "friendly_name" || k == "state" {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+
+	for _, k := range keys {
+		fmt.Fprintf(&result, "%s: %s\n", formatDetailKeyLabel(k), formatDetailValue(detail[k]))
+	}
+
+	return strings.TrimSuffix(result.String(), "\n")
+}
+
+// formatDetailTypeLabel renders a domain like "alarm_control_panel" as
+// "Alarm Control Panel", matching the title-case style of the hand-written
+// "Binary Sensor" heading rather than the sentence-case style used for
+// individual attribute labels below.
+func formatDetailTypeLabel(domain string) string {
+	words := strings.Split(domain, "_")
+	for i, w := range words {
+		if w == "" {
+			continue
+		}
+		words[i] = strings.ToUpper(w[:1]) + w[1:]
+	}
+	return strings.Join(words, " ")
+}
+
+// formatDetailKeyLabel renders an attribute key like "current_temperature" as
+// "Current temperature", matching the sentence-case style already used for
+// hand-written labels (e.g. "Device class", "Unit of measurement") elsewhere
+// in this file.
+func formatDetailKeyLabel(key string) string {
+	formatted := strings.ReplaceAll(key, "_", " ")
+	if formatted == "" {
+		return formatted
+	}
+	return strings.ToUpper(formatted[:1]) + formatted[1:]
+}
+
+// formatDetailValue renders an attribute value of unknown shape: strings are
+// used as-is, lists are comma-joined, nested maps are rendered as compact
+// JSON, and everything else falls back to its default string representation.
+func formatDetailValue(v any) string {
+	switch val := v.(type) {
+	case string:
+		return val
+	case []any:
+		parts := make([]string, 0, len(val))
+		for _, item := range val {
+			parts = append(parts, fmt.Sprintf("%v", item))
+		}
+		return strings.Join(parts, ", ")
+	case map[string]any:
+		data, err := json.Marshal(val)
+		if err != nil {
+			return fmt.Sprintf("%v", val)
+		}
+		return string(data)
+	default:
+		return fmt.Sprintf("%v", val)
 	}
 }
 

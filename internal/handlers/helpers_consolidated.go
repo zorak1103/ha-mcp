@@ -1838,9 +1838,34 @@ func buildHelperDetails(state *homeassistant.Entity, helperType string) map[stri
 		addSensorDetails(details, state)
 	case platformBinarySensorEntity:
 		addBinarySensorDetails(details, state)
+	default:
+		addGenericDetails(details, state)
 	}
 
 	return details
+}
+
+// genericDetailSkipAttributes lists state attributes never surfaced by the
+// generic get_details fallback: friendly_name is already a top-level detail
+// key, supported_features is an opaque bitmask, and attribution is boilerplate
+// noise repeated across most HA entities.
+var genericDetailSkipAttributes = map[string]bool{
+	"friendly_name":      true,
+	"supported_features": true,
+	"attribution":        true,
+}
+
+// addGenericDetails copies every state attribute not on genericDetailSkipAttributes
+// into details. Used for domains without a dedicated add*Details builder
+// (climate, humidifier, select, and the 15 template_* subtype domains) so
+// get_details returns real content instead of just entity_id/state/friendly_name.
+func addGenericDetails(details map[string]any, state *homeassistant.Entity) {
+	for k, v := range state.Attributes {
+		if genericDetailSkipAttributes[k] {
+			continue
+		}
+		details[k] = v
+	}
 }
 
 func addInputBooleanDetails(details map[string]any, state *homeassistant.Entity) {

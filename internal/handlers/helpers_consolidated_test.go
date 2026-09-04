@@ -3938,12 +3938,11 @@ func TestManageHelper_GetDetails(t *testing.T) {
 // TestManageHelper_GetDetails_TemplateSubtypeDomains pins the fix routing
 // the 15 new template_* subtype domains (issue #206) to the same generic
 // get_details path already used for climate/humidifier/select, instead of
-// hitting "get_details is not supported for helper type: %s". JSON format
-// works immediately (JSONHelperFormatter.FormatHelperDetail ignores
-// helperType entirely); natural format still returns the SAME
-// "unsupported helper type" error climate/humidifier/select already
-// return today (NaturalHelperFormatter.FormatHelperDetail has no case for
-// any of them) - a pre-existing gap this fix does not create or hide.
+// hitting "get_details is not supported for helper type: %s". Both formats
+// now succeed: JSON always ignored helperType (issue #216's layer 1 fix
+// additionally populates its detail map with the entity's real attributes),
+// and natural format uses the generic fallback renderer added for #216
+// instead of the "unsupported helper type" error it used to return.
 func TestManageHelper_GetDetails_TemplateSubtypeDomains(t *testing.T) {
 	t.Parallel()
 
@@ -3970,7 +3969,7 @@ func TestManageHelper_GetDetails_TemplateSubtypeDomains(t *testing.T) {
 			wantContains: []string{"cover.my_cover", "\"state\"", "\"closed\""},
 		},
 		{
-			name: "get_details for template_light entity with natural format matches climate's pre-existing gap",
+			name: "get_details for template_light entity with natural format",
 			args: map[string]any{
 				"action":    "get_details",
 				"entity_id": "light.my_light",
@@ -3983,13 +3982,129 @@ func TestManageHelper_GetDetails_TemplateSubtypeDomains(t *testing.T) {
 						State:    "on",
 						Attributes: map[string]any{
 							"friendly_name": "My Light",
+							"brightness":    float64(128),
 						},
 					}, nil
 				}
 			},
-			wantError:       true,
-			wantContains:    []string{"unsupported helper type: light"},
-			wantNotContains: []string{"get_details is not supported for helper type"},
+			wantError:       false,
+			wantContains:    []string{"Light", "My Light (light.my_light)", "State: on", "Brightness: 128"},
+			wantNotContains: []string{"unsupported helper type", "get_details is not supported for helper type"},
+		},
+	}
+
+	h := NewConsolidatedHelperHandlers()
+	runHandlerTestCases(t, tests, h.handleManageHelper)
+}
+
+// TestManageHelper_GetDetails_ClimateHumidifierSelectNaturalFormat pins the
+// issue #216 fix for the three pre-existing (pre-#206) domains that hit
+// handleGetDetailsGeneric: natural format must render real attributes
+// instead of erroring with "unsupported helper type", and the attribute
+// skiplist (friendly_name/supported_features/attribution) must not leak
+// into the rendered detail while other attributes (e.g. device_class) do.
+func TestManageHelper_GetDetails_ClimateHumidifierSelectNaturalFormat(t *testing.T) {
+	t.Parallel()
+
+	tests := []handlerTestCase{
+		{
+			name: "get_details for climate with natural format",
+			args: map[string]any{
+				"action":    "get_details",
+				"entity_id": "climate.thermostat",
+				"format":    "natural",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetStateFn = func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+					return &homeassistant.Entity{
+						EntityID: entityID,
+						State:    "heat",
+						Attributes: map[string]any{
+							"friendly_name":       "Wohnzimmer",
+							"current_temperature": 21.5,
+							"temperature":         22.0,
+							"min_temp":            float64(7),
+							"max_temp":            float64(35),
+							"supported_features":  float64(17),
+							"attribution":         "Data from local sensor",
+						},
+					}, nil
+				}
+			},
+			wantError:       false,
+			wantContains:    []string{"Climate", "Wohnzimmer (climate.thermostat)", "State: heat", "Current temperature: 21.5", "Max temp: 35"},
+			wantNotContains: []string{"unsupported helper type", "Supported features", "Attribution"},
+		},
+		{
+			name: "get_details for humidifier with natural format",
+			args: map[string]any{
+				"action":    "get_details",
+				"entity_id": "humidifier.basement",
+				"format":    "natural",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetStateFn = func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+					return &homeassistant.Entity{
+						EntityID: entityID,
+						State:    "on",
+						Attributes: map[string]any{
+							"friendly_name": "Basement Humidifier",
+							"humidity":      float64(45),
+							"device_class":  "humidifier",
+							"min_humidity":  float64(30),
+							"max_humidity":  float64(70),
+						},
+					}, nil
+				}
+			},
+			wantError:    false,
+			wantContains: []string{"Humidifier", "Basement Humidifier (humidifier.basement)", "State: on", "Device class: humidifier"},
+		},
+		{
+			name: "get_details for select with natural format",
+			args: map[string]any{
+				"action":    "get_details",
+				"entity_id": "select.mode",
+				"format":    "natural",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetStateFn = func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+					return &homeassistant.Entity{
+						EntityID: entityID,
+						State:    "eco",
+						Attributes: map[string]any{
+							"friendly_name": "Mode",
+							"options":       []any{"eco", "comfort", "boost"},
+						},
+					}, nil
+				}
+			},
+			wantError:    false,
+			wantContains: []string{"Select", "Mode (select.mode)", "State: eco", "Options: eco, comfort, boost"},
+		},
+		{
+			name: "get_details for climate with json format includes generic attributes",
+			args: map[string]any{
+				"action":    "get_details",
+				"entity_id": "climate.thermostat",
+				"format":    "json",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetStateFn = func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+					return &homeassistant.Entity{
+						EntityID: entityID,
+						State:    "heat",
+						Attributes: map[string]any{
+							"friendly_name":       "Wohnzimmer",
+							"current_temperature": 21.5,
+							"supported_features":  float64(17),
+						},
+					}, nil
+				}
+			},
+			wantError:       false,
+			wantContains:    []string{"climate.thermostat", "\"current_temperature\""},
+			wantNotContains: []string{"\"supported_features\""},
 		},
 	}
 
