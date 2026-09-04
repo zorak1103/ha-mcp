@@ -208,28 +208,60 @@ func (f *NaturalHelperFormatter) FormatHelperDetail(
 	helperType string,
 	detail map[string]any,
 ) (string, error) {
-	switch helperType {
-	case helperTypeInputBoolean:
-		return f.formatInputBooleanDetail(detail), nil
-	case helperTypeInputNumber:
-		return f.formatInputNumberDetail(detail), nil
-	case "input_text":
-		return f.formatInputTextDetail(detail), nil
-	case helperTypeInputSelect:
-		return f.formatInputSelectDetail(detail), nil
-	case "input_datetime":
-		return f.formatInputDatetimeDetail(detail), nil
-	case "input_button":
-		return f.formatInputButtonDetail(detail), nil
-	case "group":
-		return f.formatGroupDetail(detail), nil
-	case "sensor":
-		return f.formatSensorDetail(detail), nil
-	case "binary_sensor":
-		return f.formatBinarySensorDetail(detail), nil
-	default:
-		return f.formatGenericDetail(helperType, detail), nil
+	if renderer, ok := dedicatedDetailRenderers[helperType]; ok {
+		return renderer(f, detail), nil
 	}
+	return f.formatGenericDetail(helperType, detail), nil
+}
+
+// dedicatedDetailRenderers maps a helper type to its hand-tuned natural-format
+// renderer. A type absent from this map falls back to formatGenericDetail.
+// Built from a function (not a package-level literal) so its initializer can
+// be ordered correctly relative to other package state - the same pattern
+// CLAUDE.md documents for buildHelperConfigBuildersRegistry: a bare
+// func init() fails the gochecknoinits linter, and a var _ = f() side-effect
+// trick fails unused.
+var dedicatedDetailRenderers = buildDedicatedDetailRenderers()
+
+func buildDedicatedDetailRenderers() map[string]func(*NaturalHelperFormatter, map[string]any) string {
+	return map[string]func(*NaturalHelperFormatter, map[string]any) string{
+		helperTypeInputBoolean: (*NaturalHelperFormatter).formatInputBooleanDetail,
+		helperTypeInputNumber:  (*NaturalHelperFormatter).formatInputNumberDetail,
+		"input_text":           (*NaturalHelperFormatter).formatInputTextDetail,
+		helperTypeInputSelect:  (*NaturalHelperFormatter).formatInputSelectDetail,
+		"input_datetime":       (*NaturalHelperFormatter).formatInputDatetimeDetail,
+		"input_button":         (*NaturalHelperFormatter).formatInputButtonDetail,
+		"group":                (*NaturalHelperFormatter).formatGroupDetail,
+		"sensor":               (*NaturalHelperFormatter).formatSensorDetail,
+		"binary_sensor":        (*NaturalHelperFormatter).formatBinarySensorDetail,
+	}
+}
+
+// DedicatedDetailTypes returns the sorted list of helper types with a
+// dedicated (non-generic) natural-format renderer. Used by the handlers
+// package to assert that buildHelperDetails' builder registry covers exactly
+// the same set of types - the drift between those two switches (one erroring,
+// one silently ignoring helperType) is what issue #216 was filed for.
+func DedicatedDetailTypes() []string {
+	types := make([]string, 0, len(dedicatedDetailRenderers))
+	for t := range dedicatedDetailRenderers {
+		types = append(types, t)
+	}
+	slices.Sort(types)
+	return types
+}
+
+// genericDetailHeaderKeys are detail keys already rendered by
+// formatGenericDetail's header/State lines and therefore skipped in the
+// generic attribute dump below them. This is deliberately a different list
+// from the handlers package's genericDetailSkipAttributes: that one skips a
+// noisy *attribute* (supported_features, attribution) before it ever reaches
+// the detail map, while this one skips a detail key already shown elsewhere
+// in this renderer's own output.
+var genericDetailHeaderKeys = map[string]bool{
+	"entity_id":     true,
+	"friendly_name": true,
+	"state":         true,
 }
 
 // formatGenericDetail renders natural-format output for helper types with no
@@ -247,12 +279,12 @@ func (f *NaturalHelperFormatter) formatGenericDetail(helperType string, detail m
 	entityID := f.getDetailString(detail, "entity_id")
 	state := f.getDetailString(detail, "state")
 
-	fmt.Fprintf(&result, "%s: %s\n", formatDetailTypeLabel(helperType), FormatNameWithID(name, entityID))
-	fmt.Fprintf(&result, "State: %s\n", state)
+	fmt.Fprintf(&result, "%s: %s\n", titleCaseWords(helperType, "_"), FormatNameWithID(name, entityID))
+	fmt.Fprintf(&result, "State: %s\n", sanitizeDisplayValue(state))
 
 	keys := make([]string, 0, len(detail))
 	for k := range detail {
-		if k == "entity_id" || k == "friendly_name" || k == "state" {
+		if genericDetailHeaderKeys[k] {
 			continue
 		}
 		keys = append(keys, k)
@@ -260,61 +292,13 @@ func (f *NaturalHelperFormatter) formatGenericDetail(helperType string, detail m
 	slices.Sort(keys)
 
 	for _, k := range keys {
-		fmt.Fprintf(&result, "%s: %s\n", formatDetailKeyLabel(k), formatDetailValue(detail[k]))
+		if detail[k] == nil {
+			continue
+		}
+		fmt.Fprintf(&result, "%s: %s\n", sentenceCaseKey(k), formatDetailValue(detail[k]))
 	}
 
 	return strings.TrimSuffix(result.String(), "\n")
-}
-
-// formatDetailTypeLabel renders a domain like "alarm_control_panel" as
-// "Alarm Control Panel", matching the title-case style of the hand-written
-// "Binary Sensor" heading rather than the sentence-case style used for
-// individual attribute labels below.
-func formatDetailTypeLabel(domain string) string {
-	words := strings.Split(domain, "_")
-	for i, w := range words {
-		if w == "" {
-			continue
-		}
-		words[i] = strings.ToUpper(w[:1]) + w[1:]
-	}
-	return strings.Join(words, " ")
-}
-
-// formatDetailKeyLabel renders an attribute key like "current_temperature" as
-// "Current temperature", matching the sentence-case style already used for
-// hand-written labels (e.g. "Device class", "Unit of measurement") elsewhere
-// in this file.
-func formatDetailKeyLabel(key string) string {
-	formatted := strings.ReplaceAll(key, "_", " ")
-	if formatted == "" {
-		return formatted
-	}
-	return strings.ToUpper(formatted[:1]) + formatted[1:]
-}
-
-// formatDetailValue renders an attribute value of unknown shape: strings are
-// used as-is, lists are comma-joined, nested maps are rendered as compact
-// JSON, and everything else falls back to its default string representation.
-func formatDetailValue(v any) string {
-	switch val := v.(type) {
-	case string:
-		return val
-	case []any:
-		parts := make([]string, 0, len(val))
-		for _, item := range val {
-			parts = append(parts, fmt.Sprintf("%v", item))
-		}
-		return strings.Join(parts, ", ")
-	case map[string]any:
-		data, err := json.Marshal(val)
-		if err != nil {
-			return fmt.Sprintf("%v", val)
-		}
-		return string(data)
-	default:
-		return fmt.Sprintf("%v", val)
-	}
 }
 
 func (f *NaturalHelperFormatter) formatInputBooleanDetail(detail map[string]any) string {

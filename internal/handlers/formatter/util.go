@@ -1,9 +1,13 @@
 package formatter
 
 import (
+	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // FormatTimeSince returns a human-readable relative time string.
@@ -97,6 +101,165 @@ func FormatNameWithID(name, entityID string) string {
 func sanitizeDisplayName(name string) string {
 	replacer := strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ", "(", "", ")", "")
 	return replacer.Replace(name)
+}
+
+// titleCaseWords splits s on sep and upper-cases the first rune of each
+// non-empty segment, rejoining with a single space. Used to render a helper
+// domain ("alarm_control_panel") or attribute key as a natural-language
+// label ("Alarm Control Panel"). Rune-safe: uses utf8.DecodeRuneInString
+// rather than byte-slicing (s[:1]), which corrupts a multi-byte first rune.
+func titleCaseWords(s, sep string) string {
+	words := strings.Split(s, sep)
+	for i, w := range words {
+		if w == "" {
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(w)
+		words[i] = string(unicode.ToUpper(r)) + w[size:]
+	}
+	return strings.Join(words, " ")
+}
+
+// sentenceCaseKey renders an attribute key like "current_temperature" as
+// "Current temperature": underscores become spaces and only the first rune
+// of the whole result is upper-cased, matching the sentence-case style
+// already used for hand-written detail labels elsewhere in this package
+// (e.g. "Device class", "Unit of measurement") - deliberately not the
+// per-word title case titleCaseWords applies to a helper *type* header.
+// Rune-safe: uses utf8.DecodeRuneInString rather than byte-slicing
+// (formatted[:1]), which corrupts a multi-byte first rune.
+func sentenceCaseKey(key string) string {
+	formatted := strings.ReplaceAll(key, "_", " ")
+	if formatted == "" {
+		return formatted
+	}
+	r, size := utf8.DecodeRuneInString(formatted)
+	return string(unicode.ToUpper(r)) + formatted[size:]
+}
+
+// maxDetailValueChars/maxDetailListItems/maxDetailValueDepth bound the
+// generic attribute-value renderer (formatDetailValue) used by get_details'
+// fallback path for helper domains with no dedicated renderer (climate,
+// humidifier, select, the 15 template_* subtypes). 400 chars keeps
+// legitimately useful full-length values (climate.hvac_modes, select.options,
+// light.effect_list) intact while still bounding pathological ones
+// (update.release_summary, a large weather.forecast rendered as one line).
+// maxDetailValueDepth bounds recursion into nested list/map values.
+const (
+	maxDetailValueChars = 400
+	maxDetailListItems  = 20
+	maxDetailValueDepth = 4
+)
+
+// sanitizeDisplayValue collapses newlines/carriage returns in a natural-format
+// attribute value to spaces, so a value cannot forge additional "Key: value"
+// lines in line-oriented output. Unlike sanitizeDisplayName (used for entity
+// display names), parentheses are left intact - "(eco)" is a legitimate
+// attribute value, not an attempt to forge an "(entity_id)" suffix.
+func sanitizeDisplayValue(s string) string {
+	replacer := strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ")
+	return replacer.Replace(s)
+}
+
+// truncateRunes truncates s to at most maxRunes runes, appending "..." if
+// truncated. Rune-safe: counts and slices by rune, not by byte, so a
+// multi-byte rune is never split.
+func truncateRunes(s string, maxRunes int) string {
+	runes := []rune(s)
+	if len(runes) <= maxRunes {
+		return s
+	}
+	return string(runes[:maxRunes]) + "..."
+}
+
+// renderDetailValue renders v for natural-format display. Only the item-count
+// cap (maxDetailListItems) is applied here, for nested lists at depth > 0;
+// the character-length cap is deliberately deferred to formatDetailValue's
+// top-level handling, since applying it here too would double-truncate:
+// every list element would be pre-truncated before joining, and a long
+// list's "… +N more" suffix could then itself be truncated away.
+func renderDetailValue(v any, depth int) string {
+	if depth >= maxDetailValueDepth {
+		return fmt.Sprintf("%v", v)
+	}
+	switch val := v.(type) {
+	case string:
+		return val
+	case []any:
+		shown, more := capDetailList(val)
+		parts := make([]string, 0, len(shown))
+		for _, item := range shown {
+			parts = append(parts, renderDetailValue(item, depth+1))
+		}
+		joined := strings.Join(parts, ", ")
+		if more > 0 {
+			joined += fmt.Sprintf(", … +%d more", more)
+		}
+		return joined
+	case map[string]any:
+		data, err := json.Marshal(val)
+		if err != nil {
+			return fmt.Sprintf("%v", val)
+		}
+		return string(data)
+	default:
+		return fmt.Sprintf("%v", val)
+	}
+}
+
+// capDetailList caps list to maxDetailListItems, returning the shown prefix
+// and the count of omitted trailing items.
+func capDetailList(list []any) (shown []any, more int) {
+	if len(list) <= maxDetailListItems {
+		return list, 0
+	}
+	return list[:maxDetailListItems], len(list) - maxDetailListItems
+}
+
+// formatDetailValue renders an attribute value of unknown shape for natural
+// format: nil renders as "" (callers skip the whole line when this is
+// empty). A top-level list is handled separately from the generic
+// truncate-the-whole-rendered-string path below: the item-count cap's
+// "… +N more" suffix must survive even when the joined shown items alone
+// exceed maxDetailValueChars, so it is appended AFTER truncating only the
+// joined items - never truncated away itself.
+func formatDetailListValue(list []any) string {
+	shown, more := capDetailList(list)
+	parts := make([]string, 0, len(shown))
+	for _, item := range shown {
+		parts = append(parts, renderDetailValue(item, 1))
+	}
+	joined := truncateRunes(sanitizeDisplayValue(strings.Join(parts, ", ")), maxDetailValueChars)
+	if more > 0 {
+		joined += fmt.Sprintf(", … +%d more", more)
+	}
+	return joined
+}
+
+// renderDetailList joins the (item-count-capped) rendering of each element.
+// The "… +N more" suffix is intentionally returned separately from the
+// truncatable body by formatDetailValue's top-level handling below, rather
+// than appended here - the char-length cap must never be able to truncate
+// the suffix that tells the reader items were omitted.
+// formatDetailValue renders an attribute value of unknown shape for natural
+// format: nil renders as "" (callers skip the whole line when this is
+// empty), everything else is rendered via renderDetailValue then sanitized
+// and truncated once at the top level.
+func formatDetailValue(v any) string {
+	if v == nil {
+		return ""
+	}
+	// A top-level list is handled separately from formatDetailValue's generic
+	// truncate-the-whole-string path: the item-count cap's "… +N more" suffix
+	// must survive even when the joined shown items alone exceed
+	// maxDetailValueChars, so it is appended AFTER truncating only the joined
+	// items - never truncated away itself. A naive truncateRunes over the
+	// whole (items + suffix) string would otherwise silently swallow the
+	// suffix on a long list of long items, making the item cap invisible.
+	if list, ok := v.([]any); ok {
+		return formatDetailListValue(list)
+	}
+	return truncateRunes(sanitizeDisplayValue(renderDetailValue(v, 0)), maxDetailValueChars)
 }
 
 // ColorTempToDescription converts color temperature in Kelvin to a description.

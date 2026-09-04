@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/zorak1103/ha-mcp/internal/handlers/formatter"
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
@@ -4105,6 +4107,256 @@ func TestManageHelper_GetDetails_ClimateHumidifierSelectNaturalFormat(t *testing
 			wantError:       false,
 			wantContains:    []string{"climate.thermostat", "\"current_temperature\""},
 			wantNotContains: []string{"\"supported_features\""},
+		},
+	}
+
+	h := NewConsolidatedHelperHandlers()
+	runHandlerTestCases(t, tests, h.handleManageHelper)
+}
+
+// TestManageHelper_GetDetails_SirenValve pins finding G1 discovered while
+// reviewing this branch: handleGetDetails' dispatch used a third
+// hand-maintained domain list (beside buildHelperDetails' and
+// FormatHelperDetail's switches) that never included siren/valve - the two
+// entity domains switch_as_x can target alongside cover/fan/light/lock.
+// Before this fix, get_details on a siren/valve switch_as_x wrapper hit
+// "get_details is not supported for helper type" even though update/delete
+// on the same entity worked fine.
+func TestManageHelper_GetDetails_SirenValve(t *testing.T) {
+	t.Parallel()
+
+	tests := []handlerTestCase{
+		{
+			name: "get_details for siren entity succeeds",
+			args: map[string]any{
+				"action":    "get_details",
+				"entity_id": "siren.alarm_wrapper",
+				"format":    "natural",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetStateFn = func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+					return &homeassistant.Entity{
+						EntityID:   entityID,
+						State:      "on",
+						Attributes: map[string]any{"friendly_name": "Alarm Wrapper"},
+					}, nil
+				}
+			},
+			wantError:       false,
+			wantContains:    []string{"Alarm Wrapper (siren.alarm_wrapper)", "State: on"},
+			wantNotContains: []string{"not supported for helper type"},
+		},
+		{
+			name: "get_details for valve entity succeeds",
+			args: map[string]any{
+				"action":    "get_details",
+				"entity_id": "valve.garden_wrapper",
+				"format":    "natural",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetStateFn = func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+					return &homeassistant.Entity{
+						EntityID:   entityID,
+						State:      "closed",
+						Attributes: map[string]any{"friendly_name": "Garden Wrapper"},
+					}, nil
+				}
+			},
+			wantError:       false,
+			wantContains:    []string{"Garden Wrapper (valve.garden_wrapper)", "State: closed"},
+			wantNotContains: []string{"not supported for helper type"},
+		},
+	}
+
+	h := NewConsolidatedHelperHandlers()
+	runHandlerTestCases(t, tests, h.handleManageHelper)
+}
+
+// TestHelperEntityDomains_SupersetOfOldDispatchList pins that
+// helperEntityDomains (derived from every helperTypes entry's
+// validEntityDomains) covers at least every domain the hand-maintained case
+// list it replaced in handleGetDetails used to accept, plus every
+// templateSubtypeDomains entry - proving the derived-set rewrite drops no
+// previously-working domain.
+func TestHelperEntityDomains_SupersetOfOldDispatchList(t *testing.T) {
+	t.Parallel()
+
+	oldExplicitList := []string{
+		platformInputBoolean, platformInputNumber, platformInputText, platformInputSelect,
+		platformInputDatetime, platformInputButton, platformGroup, platformSensorEntity,
+		platformBinarySensorEntity, "climate", "humidifier", "select",
+	}
+	for _, domain := range oldExplicitList {
+		if !helperEntityDomains[domain] {
+			t.Errorf("helperEntityDomains[%q] = false, want true (was accepted by the old explicit case list)", domain)
+		}
+	}
+	for domain := range templateSubtypeDomains {
+		if !helperEntityDomains[domain] {
+			t.Errorf("helperEntityDomains[%q] = false, want true (was accepted via templateSubtypeDomains)", domain)
+		}
+	}
+	for _, domain := range []string{"siren", "valve"} {
+		if !helperEntityDomains[domain] {
+			t.Errorf("helperEntityDomains[%q] = false, want true (switch_as_x target domain, finding G1)", domain)
+		}
+	}
+}
+
+// TestHelperDetailBuilders_MatchDedicatedRenderers pins finding W4: the set
+// of helper types buildHelperDetails gives a dedicated builder to must match
+// exactly the set formatter.NaturalHelperFormatter gives a dedicated
+// renderer to. This is the drift issue #216 was filed for (a type reaching
+// the formatter without a case errored in natural format while JSON quietly
+// ignored helperType) - both switches are now built from map registries so
+// this test can compare their key sets directly instead of trusting the two
+// switches were edited together by hand.
+func TestHelperDetailBuilders_MatchDedicatedRenderers(t *testing.T) {
+	t.Parallel()
+
+	builderTypes := make([]string, 0, len(helperDetailBuilders))
+	for t := range helperDetailBuilders {
+		builderTypes = append(builderTypes, t)
+	}
+	slices.Sort(builderTypes)
+
+	rendererTypes := formatter.DedicatedDetailTypes()
+
+	if !slices.Equal(builderTypes, rendererTypes) {
+		t.Fatalf("buildHelperDetails' dedicated builder types = %v, formatter's dedicated renderer types = %v - these must match exactly", builderTypes, rendererTypes)
+	}
+}
+
+// TestBuildHelperDetails_GenericFallback_EntityIDCollision pins finding C1:
+// a group helper's "entity_id" state attribute (HA's group platform reports
+// its member list this way) must not silently overwrite the real entity_id
+// this detail map is keyed on. group_type's enum (light/cover/switch/fan/
+// lock) routes a group helper's entity through the generic fallback path
+// (none of those domains has a dedicated builder), so this collision is
+// reachable in practice, not merely hypothetical.
+func TestBuildHelperDetails_GenericFallback_EntityIDCollision(t *testing.T) {
+	t.Parallel()
+
+	state := &homeassistant.Entity{
+		EntityID: "light.my_group",
+		State:    "on",
+		Attributes: map[string]any{
+			"friendly_name": "My Group",
+			"entity_id":     []any{"light.living_room", "light.kitchen"},
+			"state":         "attribute-shaped collision",
+		},
+	}
+
+	details := buildHelperDetails(state, "light")
+
+	if details["entity_id"] != "light.my_group" {
+		t.Errorf("details[entity_id] = %v, want the real entity_id preserved, not overwritten by the member-list attribute", details["entity_id"])
+	}
+	members, ok := details["members"].([]any)
+	if !ok || len(members) != 2 {
+		t.Errorf("details[members] = %v, want the member list rescued from the entity_id attribute", details["members"])
+	}
+	if details["state"] != "on" {
+		t.Errorf("details[state] = %v, want the real runtime state preserved, not overwritten by the colliding attribute", details["state"])
+	}
+	if details["attr_state"] != "attribute-shaped collision" {
+		t.Errorf("details[attr_state] = %v, want the colliding attribute rescued under attr_state", details["attr_state"])
+	}
+}
+
+// TestManageHelper_GetDetails_TemplateLight_StateVsStateTemplate pins C1/W5:
+// widening get_details' template-config enrichment to the 15 template_*
+// subtype domains must not let a subtype's Jinja "state" template field
+// overwrite the entity's real runtime state - nine of the fifteen subtypes
+// reuse the arg name "state" for their template field, which is exactly
+// issue #216's C1 collision, reintroduced inside its own fix if written
+// unsuffixed. It must also surface a non-template (tplAction) field like
+// turn_on, so get_details is actually useful for a template_light and not
+// just a state/state_template pair.
+func TestManageHelper_GetDetails_TemplateLight_StateVsStateTemplate(t *testing.T) {
+	t.Parallel()
+
+	tests := []handlerTestCase{
+		{
+			name: "get_details for template_light natural format",
+			args: map[string]any{
+				"action":    "get_details",
+				"entity_id": "light.my_template_light",
+				"format":    "natural",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetStateFn = func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+					return &homeassistant.Entity{
+						EntityID: entityID,
+						State:    "on",
+						Attributes: map[string]any{
+							"friendly_name": "My Light",
+							"brightness":    float64(128),
+						},
+					}, nil
+				}
+				m.GetEntityRegistryFn = func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+					return []homeassistant.EntityRegistryEntry{
+						{
+							EntityID:      "light.my_template_light",
+							Platform:      "template",
+							ConfigEntryID: "config456",
+						},
+					}, nil
+				}
+				m.GetConfigEntryOptionsFn = func(context.Context, string) (map[string]any, error) {
+					return map[string]any{
+						"state": "{{ is_state('switch.wrapped', 'on') }}",
+						"turn_on": []any{
+							map[string]any{"action": "switch.turn_on", "target": map[string]any{"entity_id": "switch.wrapped"}},
+						},
+						"turn_off": []any{
+							map[string]any{"action": "switch.turn_off", "target": map[string]any{"entity_id": "switch.wrapped"}},
+						},
+					}, nil
+				}
+			},
+			wantError: false,
+			wantContains: []string{
+				"State: on",
+				"State template: {{ is_state('switch.wrapped', 'on') }}",
+				"Turn on:",
+				"switch.turn_on",
+			},
+			wantNotContains: []string{"State: {{ is_state"},
+		},
+		{
+			name: "get_details for template_light json format",
+			args: map[string]any{
+				"action":    "get_details",
+				"entity_id": "light.my_template_light",
+				"format":    "json",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetStateFn = func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+					return &homeassistant.Entity{
+						EntityID:   entityID,
+						State:      "on",
+						Attributes: map[string]any{"friendly_name": "My Light"},
+					}, nil
+				}
+				m.GetEntityRegistryFn = func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+					return []homeassistant.EntityRegistryEntry{
+						{
+							EntityID:      "light.my_template_light",
+							Platform:      "template",
+							ConfigEntryID: "config456",
+						},
+					}, nil
+				}
+				m.GetConfigEntryOptionsFn = func(context.Context, string) (map[string]any, error) {
+					return map[string]any{
+						"state": "{{ is_state('switch.wrapped', 'on') }}",
+					}, nil
+				}
+			},
+			wantError:    false,
+			wantContains: []string{`"state": "on"`, `"state_template": "{{ is_state('switch.wrapped', 'on') }}"`},
 		},
 	}
 

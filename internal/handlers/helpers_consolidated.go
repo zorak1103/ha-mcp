@@ -205,6 +205,25 @@ func updatableFieldsDescription() string {
 // helperTypes contains metadata for all supported helper types.
 var helperTypes = buildHelperTypesRegistry()
 
+// helperEntityDomains is the set of every entity domain any helperTypes
+// entry creates entities in, derived the same way templateSubtypeDomains
+// (helpers_template_types.go) is derived from templateSubtypes - so a domain
+// newly given to a helper type is automatically covered here without anyone
+// having to remember to update a hand-maintained list, the exact drift that
+// left siren/valve (switch_as_x's other two target domains, alongside
+// cover/fan/light/lock) out of handleGetDetails' dispatch until finding G1.
+var helperEntityDomains = buildHelperEntityDomains()
+
+func buildHelperEntityDomains() map[string]bool {
+	m := make(map[string]bool, len(helperTypes))
+	for _, meta := range helperTypes {
+		for _, domain := range meta.validEntityDomains {
+			m[domain] = true
+		}
+	}
+	return m
+}
+
 // buildInputHelperTypesGroup returns metadata for the basic WS-backed input_* helpers.
 func buildInputHelperTypesGroup() map[string]helperTypeMetadata {
 	return map[string]helperTypeMetadata{
@@ -1664,16 +1683,15 @@ func (h *ConsolidatedHelperHandlers) handleGetDetails(ctx context.Context, clien
 		return h.handleGetDetailsCounter(ctx, client, args)
 	case platformTimer:
 		return h.handleGetDetailsTimer(ctx, client, args)
-	case platformInputBoolean, platformInputNumber, platformInputText, platformInputSelect,
-		platformInputDatetime, platformInputButton, platformGroup, platformSensorEntity, platformBinarySensorEntity,
-		"climate", "humidifier", "select":
-		return h.handleGetDetailsGeneric(ctx, client, args, platform)
 	default:
-		// Entity domains created by the 15 new template_* subtypes (issue
-		// #206) are plain state-backed entities, same as climate/humidifier/
-		// select above - reuse templateSubtypeDomains rather than listing
-		// all 15 domains again here.
-		if templateSubtypeDomains[platform] {
+		// helperEntityDomains is derived from every helperTypes entry's
+		// validEntityDomains, so it can't drift out of sync with the domains
+		// helper types actually create entities in the way a hand-maintained
+		// list here did before (finding G1: siren/valve - switch_as_x's other
+		// two target domains alongside cover/fan/light/lock - were missing
+		// from the previous explicit case list, so get_details on those
+		// entities errored even though update/delete worked fine on them).
+		if helperEntityDomains[platform] {
 			return h.handleGetDetailsGeneric(ctx, client, args, platform)
 		}
 		return errorResult(fmt.Sprintf("get_details is not supported for helper type: %s", platform)), nil
@@ -1795,9 +1813,12 @@ func (h *ConsolidatedHelperHandlers) handleGetDetailsGeneric(ctx context.Context
 
 	details := buildHelperDetails(state, helperType)
 
-	// Enrich with template config for template sensors/binary_sensors
-	if helperType == platformSensorEntity || helperType == platformBinarySensorEntity {
-		enrichConfigEntryOptions(ctx, client, entityID, details)
+	// Enrich with template config for template sensors/binary_sensors, plus
+	// the 15 template_* subtype domains from issue #206 (finding W5: without
+	// this, get_details on e.g. a template_light returned only its runtime
+	// attributes, not how it's actually configured).
+	if helperType == platformSensorEntity || helperType == platformBinarySensorEntity || templateSubtypeDomains[helperType] {
+		enrichConfigEntryOptions(ctx, client, entityID, helperType, details)
 	}
 
 	formatStr, _ := args["format"].(string)
@@ -1819,30 +1840,36 @@ func buildHelperDetails(state *homeassistant.Entity, helperType string) map[stri
 		"friendly_name": state.Attributes["friendly_name"],
 	}
 
-	switch helperType {
-	case platformInputBoolean:
-		addInputBooleanDetails(details, state)
-	case platformInputNumber:
-		addInputNumberDetails(details, state)
-	case platformInputText:
-		addInputTextDetails(details, state)
-	case platformInputSelect:
-		addInputSelectDetails(details, state)
-	case platformInputDatetime:
-		addInputDatetimeDetails(details, state)
-	case platformInputButton:
-		addInputButtonDetails(details, state)
-	case platformGroup:
-		addGroupDetails(details, state)
-	case platformSensorEntity:
-		addSensorDetails(details, state)
-	case platformBinarySensorEntity:
-		addBinarySensorDetails(details, state)
-	default:
+	if builder, ok := helperDetailBuilders[helperType]; ok {
+		builder(details, state)
+	} else {
 		addGenericDetails(details, state)
 	}
 
 	return details
+}
+
+// helperDetailBuilders maps a helper type to its hand-tuned detail builder.
+// A type absent from this map falls back to addGenericDetails. Built from a
+// function (not a package-level literal) so it can be compared against
+// formatter.DedicatedDetailTypes() by TestHelperDetailBuilders_MatchDedicatedRenderers -
+// the drift between this switch and NaturalHelperFormatter.FormatHelperDetail's
+// switch (one silently ignoring helperType, one erroring on it) is what issue
+// #216 was filed for.
+var helperDetailBuilders = buildHelperDetailBuildersRegistry()
+
+func buildHelperDetailBuildersRegistry() map[string]func(map[string]any, *homeassistant.Entity) {
+	return map[string]func(map[string]any, *homeassistant.Entity){
+		platformInputBoolean:       addInputBooleanDetails,
+		platformInputNumber:        addInputNumberDetails,
+		platformInputText:          addInputTextDetails,
+		platformInputSelect:        addInputSelectDetails,
+		platformInputDatetime:      addInputDatetimeDetails,
+		platformInputButton:        addInputButtonDetails,
+		platformGroup:              addGroupDetails,
+		platformSensorEntity:       addSensorDetails,
+		platformBinarySensorEntity: addBinarySensorDetails,
+	}
 }
 
 // genericDetailSkipAttributes lists state attributes never surfaced by the
@@ -1864,8 +1891,26 @@ func addGenericDetails(details map[string]any, state *homeassistant.Entity) {
 		if genericDetailSkipAttributes[k] {
 			continue
 		}
-		details[k] = v
+		putDetail(details, k, v)
 	}
+}
+
+// putDetail writes value into details under key, applying issue #216's
+// collision policy so an attribute copy or template-config enrichment write
+// can never silently overwrite entity_id/state/friendly_name or another
+// already-set detail (finding C1): entity_id is renamed to "members",
+// mirroring addGroupDetails' existing convention for group helpers whose
+// entity_id state attribute IS their member list, not their own identity;
+// any other collision is stored under "attr_<key>" rather than overwriting.
+func putDetail(details map[string]any, key string, value any) {
+	target := key
+	if key == "entity_id" {
+		target = "members"
+	}
+	if _, exists := details[target]; exists {
+		target = "attr_" + key
+	}
+	details[target] = value
 }
 
 func addInputBooleanDetails(details map[string]any, state *homeassistant.Entity) {
@@ -2008,7 +2053,7 @@ func addBinarySensorDetails(details map[string]any, state *homeassistant.Entity)
 
 // enrichConfigEntryOptions enriches details with config entry options for template helpers.
 // Gracefully degrades: if registry lookup fails or entity is not template-based, returns silently.
-func enrichConfigEntryOptions(ctx context.Context, client homeassistant.Client, entityID string, details map[string]any) {
+func enrichConfigEntryOptions(ctx context.Context, client homeassistant.Client, entityID, helperType string, details map[string]any) {
 	// Look up entity in registry
 	registry, err := client.GetEntityRegistry(ctx)
 	if err != nil {
@@ -2034,11 +2079,20 @@ func enrichConfigEntryOptions(ctx context.Context, client homeassistant.Client, 
 	if err != nil {
 		return // Graceful degradation
 	}
-
-	// Extract template options if present
-	if len(options) > 0 {
-		addTemplateOptionsToDetails(options, details)
+	if len(options) == 0 {
+		return
 	}
+
+	// templateSubtypeDomains and {sensor, binary_sensor} are disjoint (the
+	// 15 template_* subtypes from issue #206 own alarm_control_panel/button/
+	// cover/device_tracker/event/fan/image/light/lock/number/select/switch/
+	// update/vacuum/weather - never sensor or binary_sensor), so this is an
+	// either/or, not an ordering-sensitive check.
+	if templateSubtypeDomains[helperType] {
+		addTemplateSubtypeOptionsToDetails(helperType, options, details)
+		return
+	}
+	addTemplateOptionsToDetails(options, details)
 }
 
 // addTemplateOptionsToDetails extracts template options from config entry Options.
@@ -2065,6 +2119,33 @@ func addTemplateOptionsToDetails(options, details map[string]any) {
 	}
 	if delayOff, ok := options["delay_off"]; ok && delayOff != nil {
 		details["delay_off"] = delayOff
+	}
+}
+
+// addTemplateSubtypeOptionsToDetails copies a template_* subtype's (issue
+// #206) Options Flow config into details, driven by the same
+// resolveTemplateFieldsForDomain table update() uses - so the detail output
+// can't drift from what update actually accepts. Every tplTemplate-kind
+// field's detail key gets a "_template" suffix (mirroring
+// addTemplateOptionsToDetails' state -> state_template convention above),
+// since nine of the fifteen subtypes reuse the arg name "state" for their
+// Jinja template: writing it unsuffixed would silently overwrite the
+// entity's real runtime state with a template string - issue #216's C1
+// collision, reintroduced inside this very fix. Every write goes through
+// putDetail as a safety net for any other, non-state collision.
+func addTemplateSubtypeOptionsToDetails(entityDomain string, options, details map[string]any) {
+	putDetail(details, "config_entry_type", platformTemplate)
+
+	for _, field := range resolveTemplateFieldsForDomain(entityDomain) {
+		val, ok := options[field.configKey()]
+		if !ok || val == nil {
+			continue
+		}
+		key := field.arg
+		if field.kind == tplTemplate {
+			key += "_template"
+		}
+		putDetail(details, key, val)
 	}
 }
 

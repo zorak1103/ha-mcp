@@ -136,6 +136,7 @@ Every test above calls `homeassistant.Client` methods directly, verifying the cl
 | `TestThresholdToolDispatch` | `manage_helper` | update (threshold) |
 | `TestInputNumberToolDispatch` | `manage_helper` | update (input_number, WS helper) |
 | `TestGroupToolDispatch` | `manage_helper` | delete (group) |
+| `TestGetDetailsRemediation` | `manage_helper` | get_details (siren/valve switch_as_x wrappers, template_light, group_type:light collision) - regression coverage for the issue #216 natural-format fix's adversarial-review remediation |
 | `TestAutomationToolDispatch` | `manage_automation` | update, patch |
 | `TestScriptToolDispatch` | `manage_script` | update |
 | `TestFindReferencesToolDispatch` | `find_references` | search across script + dashboard references |
