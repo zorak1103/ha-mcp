@@ -1712,10 +1712,11 @@ func TestCreateHelperEntity_IconSetOnResolvedEntity(t *testing.T) {
 	}
 
 	client := NewHybridClientWithInterfaces(mockWS, mockREST)
-	entityID, err := client.CreateHelperEntity(context.Background(), HelperConfig{
+	config := HelperConfig{
 		Platform: "threshold",
 		Config:   map[string]any{"name": "n", "entity_id": "sensor.x", "icon": "mdi:test"},
-	})
+	}
+	entityID, err := client.CreateHelperEntity(context.Background(), config)
 
 	if entityID != "binary_sensor.resolved" {
 		t.Errorf("expected the resolved entity id to still be returned, got %q", entityID)
@@ -1726,6 +1727,9 @@ func TestCreateHelperEntity_IconSetOnResolvedEntity(t *testing.T) {
 	}
 	if err == nil || !strings.Contains(err.Error(), "icon-update-called") {
 		t.Fatalf("expected the icon-update error to surface, got %v", err)
+	}
+	if _, stillPresent := config.Config["icon"]; stillPresent {
+		t.Error("expected icon to be deleted from config.Config before the flow ran")
 	}
 }
 
@@ -1759,13 +1763,20 @@ func TestCreateHelperEntity_EmptyIconNeverTriggersUpdate(t *testing.T) {
 	}
 
 	client := NewHybridClientWithInterfaces(mockWS, mockREST)
-	_, err := client.CreateHelperEntity(context.Background(), HelperConfig{
+	config := HelperConfig{
 		Platform: "threshold",
 		Config:   map[string]any{"name": "n", "entity_id": "sensor.x", "icon": ""},
-	})
+	}
+	_, err := client.CreateHelperEntity(context.Background(), config)
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	// An explicitly empty icon must skip the delete too - the guard is a
+	// single "hasIcon && icon != \"\"" condition shared by both the
+	// deletion and the update, not two independently-mutable checks.
+	if val, present := config.Config["icon"]; !present || val != "" {
+		t.Errorf(`expected icon="" to remain in config.Config untouched, got present=%v val=%v`, present, val)
 	}
 }
 
