@@ -210,7 +210,14 @@ func renderDetailValue(v any, depth int) string {
 // capDetailList caps list to maxDetailListItems, returning the shown prefix
 // and the count of omitted trailing items.
 func capDetailList(list []any) (shown []any, more int) {
-	if len(list) <= maxDetailListItems {
+	// `<=` vs `<` here is a proven-equivalent mutant (same reasoning as
+	// BoundedFieldList in internal/homeassistant/field_list.go): at
+	// len(list) == maxDetailListItems exactly, list[:maxDetailListItems] is
+	// a no-op slice of an already-that-length slice (same ptr/len/cap) and
+	// more computes to 0 either way, so which branch runs makes no
+	// observable difference. No test can kill it - both forms produce
+	// byte-identical output for every input.
+	if len(list) <= maxDetailListItems { //mutest:skip
 		return list, 0
 	}
 	return list[:maxDetailListItems], len(list) - maxDetailListItems

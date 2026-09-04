@@ -689,6 +689,55 @@ func TestFormatDetailValue_ListCapBeforeCharBudget(t *testing.T) {
 	}
 }
 
+// TestRenderDetailValue_DepthBoundary pins the exact maxDetailValueDepth
+// cutoff: at depth == maxDetailValueDepth, recursion must stop and fall
+// back to a raw %v rendering - even for a compound value that would
+// otherwise recurse further and produce a different (comma-joined) string.
+// A plain string leaf can't distinguish this boundary (%v of a string
+// equals the string itself either way), so the probe value is itself a
+// slice.
+func TestRenderDetailValue_DepthBoundary(t *testing.T) {
+	probe := []any{"a", "b"}
+
+	atLimit := renderDetailValue(probe, maxDetailValueDepth)
+	wantAtLimit := fmt.Sprintf("%v", probe)
+	if atLimit != wantAtLimit {
+		t.Errorf("renderDetailValue(_, maxDetailValueDepth) = %q, want %q (raw %%v fallback, no further recursion)", atLimit, wantAtLimit)
+	}
+
+	belowLimit := renderDetailValue(probe, maxDetailValueDepth-1)
+	if belowLimit != "a, b" {
+		t.Errorf("renderDetailValue(_, maxDetailValueDepth-1) = %q, want %q (normal recursion one level below the limit)", belowLimit, "a, b")
+	}
+}
+
+// TestRenderDetailValue_NestedListMoreBoundary pins the "more > 0" check in
+// renderDetailValue's own []any case (a list nested inside another list, at
+// depth > 0 - distinct from formatDetailListValue's top-level list
+// handling, which has its own equivalent check already covered by
+// TestFormatDetailValue_ListCapBeforeCharBudget). At exactly
+// maxDetailListItems items, no item is omitted and no "more" suffix must
+// appear; one item over, exactly one must be reported omitted.
+func TestRenderDetailValue_NestedListMoreBoundary(t *testing.T) {
+	exact := make([]any, maxDetailListItems)
+	for i := range exact {
+		exact[i] = i
+	}
+	got := renderDetailValue(exact, 1)
+	if strings.Contains(got, "more") {
+		t.Errorf("renderDetailValue(exactly maxDetailListItems items) = %q, want no more-suffix", got)
+	}
+
+	over := make([]any, maxDetailListItems+1)
+	for i := range over {
+		over[i] = i
+	}
+	got = renderDetailValue(over, 1)
+	if !strings.Contains(got, "+1 more") {
+		t.Errorf("renderDetailValue(maxDetailListItems+1 items) = %q, want a +1 more suffix", got)
+	}
+}
+
 func TestGetFloatAttr(t *testing.T) {
 	tests := []struct {
 		name     string
