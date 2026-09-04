@@ -393,8 +393,9 @@ Most tools support two output formats via the `format` parameter:
   "id": 5,
   "method": "tools/call",
   "params": {
-    "name": "get_statistics",
+    "name": "query_entities",
     "arguments": {
+      "mode": "statistics",
       "statistic_ids": ["sensor.temperature", "sensor.humidity"],
       "period": "hour"
     }
