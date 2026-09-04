@@ -132,6 +132,13 @@ func NewRESTClientWithConfig(baseURL, token string, config RESTClientConfig) *RE
 		token:   token,
 		httpClient: &http.Client{
 			Timeout: timeout,
+			// Cloned rather than left nil: a nil Transport implicitly falls
+			// back to the shared, package-global http.DefaultTransport,
+			// whose idle connections can be closed by unrelated code
+			// elsewhere in the process (e.g. any httptest.Server.Close()
+			// call - see issue #227). A private clone keeps this client's
+			// connection pool isolated.
+			Transport: http.DefaultTransport.(*http.Transport).Clone(),
 		},
 		limiter:      limiter,
 		retryManager: retryManager,
