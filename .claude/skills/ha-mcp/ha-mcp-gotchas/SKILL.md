@@ -54,7 +54,7 @@ Look up by symptom. Fix is actionable.
 | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
 | `input_boolean`, `input_number`, `input_text`, `input_select`, `input_datetime`, `input_button`, `counter`, `timer`, `schedule`                                            | `id` parameter (you control the slug)        |
 | `threshold`, `derivative`, `integral`, `group`, `template_sensor`, `template_binary_sensor`, `utility_meter`, `min_max`, `statistics`, `trend`, `random_sensor`, `random_binary_sensor`, `filter`, `tod`, `generic_thermostat`, `generic_hygrostat` | `name` parameter (HA slugifies it — ASCII only) |
-| `switch_as_x` | Neither — HA derives it from the wrapped source switch. `manage_helper create` resolves the real id via the entity registry (`entity_id`/`target_domain` control which entity gets wrapped, not the resulting id) |
+| `switch_as_x` | Neither — HA derives it from the wrapped source switch. `manage_helper create` resolves the real id via the entity registry, filtered to the `target_domain` (`entity_id`/`target_domain` control which entity gets wrapped, not the resulting id). If resolution can't confirm an id in time, the create still succeeds but is reported with a WARNING and no entity_id instead of a guessed one — this is the one Config Entry helper where an unresolved id is never predicted from name |
 
 ## Source for Maintenance
 

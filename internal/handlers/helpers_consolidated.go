@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/zorak1103/ha-mcp/internal/handlers/formatter"
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
@@ -950,25 +951,52 @@ func (h *ConsolidatedHelperHandlers) handleCreate(ctx context.Context, client ho
 		entityID, err = h.createConfigEntryHelper(ctx, client, id, name, config, meta, helperType)
 	}
 
-	successMsg := fmt.Sprintf("%s '%s' created successfully as %s", formatHelperType(helperType), name, entityID)
+	return renderCreateResult(helperType, name, entityID, err), nil
+}
+
+// renderCreateResult builds the final MCP result for a helper create call,
+// handling three outcomes uniformly: a hard failure (errorResult), a
+// success where the helper exists but carries a warning (unclaimed fields
+// via *homeassistant.PartialApplyError, or an unresolved entity_id via
+// entityUnresolvedError - see createConfigEntryHelper), and a clean
+// success.
+func renderCreateResult(helperType, name, entityID string, err error) *mcp.ToolsCallResult {
+	var successMsg string
+	if entityID != "" {
+		successMsg = fmt.Sprintf("%s '%s' created successfully as %s", formatHelperType(helperType), name, entityID)
+	} else {
+		// Config Entry resolution couldn't confirm the real entity_id in
+		// time, and the platform (currently only switch_as_x) is one where
+		// name-based prediction is known to be unreliable - see
+		// entityUnresolvedError.
+		successMsg = fmt.Sprintf("%s '%s' created successfully (entity_id could not be confirmed)", formatHelperType(helperType), name)
+	}
 
 	var partial *homeassistant.PartialApplyError
-	if errors.As(err, &partial) {
-		// The config entry already exists on Home Assistant's side by the
-		// time createConfigEntryHelper returns a *PartialApplyError - this
-		// must be a SUCCESS result carrying a warning, not an error result.
-		// IsError:true here would read as "nothing happened" and risk a
-		// caller retrying create, which would duplicate the helper.
-		return successResult(fmt.Sprintf(
-			"%s\nWARNING: %s. The helper exists - do not retry create; use manage_helper update, or delete it.",
-			successMsg, renderPartialApplyWarning(partial),
-		)), nil
+	var unresolved *entityUnresolvedError
+	hasPartial := errors.As(err, &partial)
+	hasUnresolved := errors.As(err, &unresolved)
+	if hasPartial || hasUnresolved {
+		// The helper (and, for a PartialApplyError, its config entry)
+		// already exists on Home Assistant's side by this point - this
+		// must be a SUCCESS result carrying a warning, not an error
+		// result. IsError:true here would read as "nothing happened" and
+		// risk a caller retrying create, which would duplicate the helper.
+		var warnings []string
+		if hasPartial {
+			warnings = append(warnings, renderPartialApplyWarning(partial)+
+				". The helper exists - do not retry create; use manage_helper update, or delete it.")
+		}
+		if hasUnresolved {
+			warnings = append(warnings, unresolved.Error())
+		}
+		return successResult(fmt.Sprintf("%s\nWARNING: %s", successMsg, strings.Join(warnings, " ")))
 	}
 	if err != nil {
-		return errorResult(err.Error()), nil
+		return errorResult(err.Error())
 	}
 
-	return successResult(successMsg), nil
+	return successResult(successMsg)
 }
 
 // createWSHelper creates a WebSocket-based helper, using id to control entity slug.
@@ -1031,66 +1059,138 @@ func (h *ConsolidatedHelperHandlers) createConfigEntryHelper(
 	// Config Entry Flow doesn't support icon in create flow
 	icon, hasIcon := config["icon"].(string)
 	if hasIcon {
-		// Remove icon from config to prevent it from being sent to Config Entry Flow
 		delete(config, "icon")
 	}
 
-	helper := homeassistant.HelperConfig{
-		Platform: meta.platform,
-		ID:       id,
-		Config:   config,
-	}
-
-	// A *homeassistant.PartialApplyError means the config entry already
-	// exists on Home Assistant's side - fall through to predict the
-	// entity id and apply the icon exactly as on a full success, instead
-	// of returning early as if creation never happened. Any other error is
-	// a genuine failure with no entity to report on.
-	//
-	// partialErr (the plain error we eventually return) is kept separate
-	// from the typed partial pointer: returning a nil *PartialApplyError
-	// directly as the error return would box a non-nil interface holding a
-	// nil pointer (the classic Go typed-nil-in-interface trap) - `err !=
-	// nil` upstream would then be true, and calling Error() on it would
-	// panic dereferencing the nil receiver's fields.
-	var partial *homeassistant.PartialApplyError
-	var partialErr error
-	realEntityID, createErr := client.CreateHelperEntity(ctx, helper)
-	if createErr != nil {
-		if !errors.As(createErr, &partial) {
-			return "", fmt.Errorf("error creating %s: %w", helperType, createErr)
-		}
-		partialErr = partial
+	helper := homeassistant.HelperConfig{Platform: meta.platform, ID: id, Config: config}
+	realEntityID, partialErr, err := h.createHelperEntityAllowingPartial(ctx, client, helper, helperType)
+	if err != nil {
+		return "", err
 	}
 
 	// CreateHelperEntity resolves the real id HA assigned via the entity
 	// registry - authoritative when available. It returns "" when
 	// resolution can't confirm an id in time (or for platforms it doesn't
-	// apply to), in which case the name-based prediction is the only
-	// option, exactly as before this method existed. Name-based prediction
-	// is structurally unable to get switch_as_x right: HA derives that
-	// entity's name from the wrapped source switch, not from any field this
-	// tool submits (see #224).
+	// apply to). Name-based prediction is structurally unable to get
+	// switch_as_x right (HA derives that entity's name from the wrapped
+	// source switch, not from any field this tool submits, #224), so it is
+	// used as a fallback only for platforms where entityIDPredictable
+	// reports it's safe.
 	entityID := realEntityID
-	if entityID == "" {
+	if entityID == "" && entityIDPredictable(meta.platform) {
 		entityID = predictConfigEntryEntityID(name, config, meta)
 	}
 
-	// Set icon via Entity Registry if provided
-	// Wait for entity to appear in registry before setting icon
-	if hasIcon && icon != "" {
-		waitForEntityAppear(ctx, client, entityID)
+	// Unresolved AND prediction unsafe: never report or write to a guessed
+	// id - not even as informational text in the success message, since a
+	// caller-controlled guess like <target_domain>.<slugified name> may
+	// legitimately name an unrelated, pre-existing entity. Report it
+	// instead via entityUnresolvedError; the helper still exists, so this
+	// is a warning, not a failure.
+	if entityID == "" {
+		return "", errors.Join(partialErr, &entityUnresolvedError{helperType: helperType, iconRequested: hasIcon && icon != ""})
+	}
 
-		updateCfg := homeassistant.EntityRegistryUpdateConfig{
-			Icon: &icon,
-		}
-		if _, err := client.UpdateEntityRegistryEntry(ctx, entityID, updateCfg); err != nil {
-			// Non-fatal: entity was created successfully, just couldn't set icon
-			return entityID, errors.Join(partialErr, fmt.Errorf("%s created as %s, but failed to set icon: %w", formatHelperType(helperType), entityID, err))
-		}
+	if hasIcon && icon != "" {
+		return h.applyCreateIcon(ctx, client, entityID, icon, helperType, partialErr)
 	}
 
 	return entityID, partialErr
+}
+
+// createHelperEntityAllowingPartial calls CreateHelperEntity and separates a
+// *homeassistant.PartialApplyError (the config entry already exists on
+// Home Assistant's side - callers fall through to resolve/predict the
+// entity id and apply the icon exactly as on a full success, instead of
+// treating creation as never having happened) from a genuine failure (no
+// entity to report on, so err is returned directly and callers must stop).
+//
+// partialErr is returned as a plain error, not the typed pointer: a nil
+// *PartialApplyError boxed directly in the plain error return would be a
+// non-nil interface holding a nil pointer (the classic Go typed-nil-in-
+// interface trap) - a caller's `err != nil` check would then be true, and
+// calling Error() on it would panic dereferencing the nil receiver.
+func (h *ConsolidatedHelperHandlers) createHelperEntityAllowingPartial(
+	ctx context.Context, client homeassistant.Client, helper homeassistant.HelperConfig, helperType string,
+) (entityID string, partialErr, err error) {
+	var partial *homeassistant.PartialApplyError
+	realEntityID, createErr := client.CreateHelperEntity(configEntryResolveContext(ctx), helper)
+	if createErr != nil {
+		if !errors.As(createErr, &partial) {
+			return "", nil, fmt.Errorf("error creating %s: %w", helperType, createErr)
+		}
+		partialErr = partial
+	}
+	return realEntityID, partialErr, nil
+}
+
+// applyCreateIcon sets the icon via Entity Registry on the entity created by
+// createConfigEntryHelper. entityID is guaranteed non-empty here -
+// createConfigEntryHelper returns early via entityUnresolvedError before
+// ever reaching this call when resolution failed and prediction was unsafe
+// for the platform (currently only switch_as_x, #224), so this never writes
+// to a guessed id.
+func (h *ConsolidatedHelperHandlers) applyCreateIcon(
+	ctx context.Context, client homeassistant.Client, entityID, icon, helperType string, partialErr error,
+) (string, error) {
+	waitForEntityAppear(ctx, client, entityID)
+
+	updateCfg := homeassistant.EntityRegistryUpdateConfig{Icon: &icon}
+	if _, err := client.UpdateEntityRegistryEntry(ctx, entityID, updateCfg); err != nil {
+		// Non-fatal: entity was created successfully, just couldn't set icon
+		return entityID, errors.Join(partialErr, fmt.Errorf("%s created as %s, but failed to set icon: %w", formatHelperType(helperType), entityID, err))
+	}
+
+	return entityID, partialErr
+}
+
+// entityUnresolvedError signals a Config Entry helper was created
+// successfully but its real entity_id could not be confirmed via the entity
+// registry, and - because name-based prediction is unsafe for this platform
+// (entityIDPredictable, currently only switch_as_x, #224) - neither the
+// entity_id itself nor (when requested) its icon could be reported/applied.
+// handleCreate renders this as a success result with an appended WARNING,
+// the same as a *homeassistant.PartialApplyError, rather than as a failure:
+// the helper genuinely exists.
+type entityUnresolvedError struct {
+	helperType    string
+	iconRequested bool
+}
+
+func (w *entityUnresolvedError) Error() string {
+	msg := fmt.Sprintf("%s created, but its entity_id could not be confirmed in time", formatHelperType(w.helperType))
+	if w.iconRequested {
+		msg += "; icon not applied"
+	}
+	return msg + "."
+}
+
+// entityIDPredictable reports whether a Config Entry platform's created
+// entity_id can be derived from name via predictConfigEntryEntityID.
+// switch_as_x cannot (#224): HA names the wrapper after the wrapped source
+// switch, not from any field submitted to the flow, so the "prediction" is
+// really just <target_domain>.<slugified name> - a caller-controlled guess
+// that may legitimately name an unrelated, pre-existing entity. That makes
+// it unsafe to use as an icon-update write target once we already know the
+// guess can be wrong, so callers must skip prediction entirely for these
+// platforms rather than use it as a lesser-confidence fallback.
+func entityIDPredictable(platform string) bool {
+	return platform != platformSwitchAsX
+}
+
+// configEntryResolveContext stamps the tool's configured wait onto ctx so
+// CreateHelperEntity's entity-registry resolution honors HA_WAIT_TIMEOUT_MS
+// instead of a hardcoded default. Each poll tick is a FULL entity-registry
+// fetch (unlike a single-entity GetState poll), so the interval is floored
+// at 500ms even when the configured wait is tuned tighter for fast
+// single-entity waits elsewhere in the same create call.
+func configEntryResolveContext(ctx context.Context) context.Context {
+	cfg := pollerConfigFromContext(ctx)
+	const minInterval = 500 * time.Millisecond
+	if cfg.PollInterval < minInterval {
+		cfg.PollInterval = minInterval
+	}
+	return homeassistant.WithEntityPollerConfig(ctx, cfg)
 }
 
 // predictConfigEntryEntityID guesses the entity_id a Config Entry helper

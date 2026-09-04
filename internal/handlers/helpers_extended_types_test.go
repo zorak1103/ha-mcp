@@ -483,6 +483,12 @@ func TestManageHelper_GenericThermostat(t *testing.T) {
 func TestManageHelper_SwitchAsX(t *testing.T) {
 	tests := []handlerTestCase{
 		{
+			// switch_as_x's entity_id cannot be predicted from name (#224),
+			// so with no CreateHelperEntityFn override (default resolved id
+			// ""), the create still succeeds but reports an unresolved
+			// warning instead of a name-based guess like "light.test_switch".
+			// See TestManageHelper_SwitchAsX_UsesRegistryResolvedEntityID
+			// for the registry-resolved-id success path.
 			name: "create switch_as_x as light",
 			args: map[string]any{
 				"action":        "create",
@@ -492,12 +498,8 @@ func TestManageHelper_SwitchAsX(t *testing.T) {
 				"entity_id":     "switch.outlet",
 				"target_domain": "light",
 			},
-			setupMock: func(m *UniversalMockClient) {
-				m.CreateHelperFn = func(context.Context, homeassistant.HelperConfig) error {
-					return nil
-				}
-			},
-			wantContains: []string{"created", "light.test_switch"},
+			wantContains:    []string{"created", "WARNING", "entity_id could not be confirmed"},
+			wantNotContains: []string{"light.test_switch"},
 		},
 		{
 			name: "create switch_as_x missing entity_id",
@@ -556,7 +558,14 @@ func TestManageHelper_SwitchAsX_UsesRegistryResolvedEntityID(t *testing.T) {
 			wantNotContains: []string{"light.test_switch"},
 		},
 		{
-			name: "create switch_as_x falls back to the name-based prediction when resolution can't confirm an id",
+			// switch_as_x's entity_id cannot be predicted from name (#224) -
+			// unlike every other Config Entry helper, an unresolved id must
+			// never fall back to a caller-controlled guess like
+			// "light.test_switch", since that guess could name an
+			// unrelated, pre-existing entity. The create still succeeds
+			// (the helper exists on HA's side) but is reported with a
+			// warning and no entity_id, rather than a fabricated one.
+			name: "create switch_as_x reports an unresolved warning instead of a name-based guess when resolution can't confirm an id",
 			args: map[string]any{
 				"action":        "create",
 				"type":          "switch_as_x",
@@ -570,7 +579,8 @@ func TestManageHelper_SwitchAsX_UsesRegistryResolvedEntityID(t *testing.T) {
 					return "", nil
 				}
 			},
-			wantContains: []string{"created", "light.test_switch"},
+			wantContains:    []string{"created", "WARNING", "entity_id could not be confirmed"},
+			wantNotContains: []string{"light.test_switch"},
 		},
 	}
 
@@ -634,6 +644,101 @@ func TestManageHelper_SwitchAsX_IconUsesResolvedEntity(t *testing.T) {
 
 	handler := NewConsolidatedHelperHandlers()
 	runHandlerTestCases(t, tests, handler.handleManageHelper)
+}
+
+// TestManageHelper_SwitchAsX_UnresolvedIconNeverWritesToGuessedID pins C2:
+// when resolution can't confirm switch_as_x's real entity_id, a requested
+// icon must never be written to the name-based guess - that guess
+// (<target_domain>.<slugified name>) is caller-controlled and may name an
+// unrelated, pre-existing entity. The create still succeeds with a warning;
+// UpdateEntityRegistryEntry must never be called.
+func TestManageHelper_SwitchAsX_UnresolvedIconNeverWritesToGuessedID(t *testing.T) {
+	updateCalled := false
+
+	tests := []handlerTestCase{
+		{
+			name: "create switch_as_x with icon and unresolved id skips the registry write entirely",
+			args: map[string]any{
+				"action":        "create",
+				"type":          "switch_as_x",
+				"id":            "test_switch",
+				"name":          "Test Switch as Light",
+				"entity_id":     "switch.outlet",
+				"target_domain": "light",
+				"icon":          "mdi:skull",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.CreateHelperEntityFn = func(context.Context, homeassistant.HelperConfig) (string, error) {
+					return "", nil
+				}
+				m.UpdateEntityRegistryEntryFn = func(context.Context, string, homeassistant.EntityRegistryUpdateConfig) (*homeassistant.EntityRegistryEntry, error) {
+					updateCalled = true
+					return nil, nil
+				}
+			},
+			wantContains:    []string{"created", "WARNING", "entity_id could not be confirmed", "icon not applied"},
+			wantNotContains: []string{"light.test_switch"},
+		},
+	}
+
+	handler := NewConsolidatedHelperHandlers()
+	runHandlerTestCases(t, tests, handler.handleManageHelper)
+
+	if updateCalled {
+		t.Error("must never write an icon to a guessed switch_as_x entity_id")
+	}
+}
+
+// TestManageHelper_Threshold_IconStillUsesPredictionWhenUnresolved is a
+// regression guard: platforms other than switch_as_x (entityIDPredictable
+// == true) must keep falling back to the name-based prediction when
+// registry resolution can't confirm an id - only switch_as_x is unsafe to
+// predict (#224).
+func TestManageHelper_Threshold_IconStillUsesPredictionWhenUnresolved(t *testing.T) {
+	tests := []handlerTestCase{
+		{
+			name: "create threshold with icon and unresolved id falls back to the name-based prediction",
+			args: map[string]any{
+				"action":    "create",
+				"type":      "threshold",
+				"id":        "test_threshold",
+				"name":      "My Threshold",
+				"entity_id": "sensor.x",
+				"upper":     "10",
+				"icon":      "mdi:test",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.CreateHelperEntityFn = func(context.Context, homeassistant.HelperConfig) (string, error) {
+					return "", nil
+				}
+				m.UpdateEntityRegistryEntryFn = func(_ context.Context, entityID string, cfg homeassistant.EntityRegistryUpdateConfig) (*homeassistant.EntityRegistryEntry, error) {
+					if entityID != "binary_sensor.my_threshold" {
+						t.Errorf("expected the icon update on the predicted id, got %q", entityID)
+					}
+					if cfg.Icon == nil || *cfg.Icon != "mdi:test" {
+						t.Errorf("expected icon mdi:test, got %v", cfg.Icon)
+					}
+					return nil, nil
+				}
+			},
+			wantContains:    []string{"created", "binary_sensor.my_threshold"},
+			wantNotContains: []string{"WARNING"},
+		},
+	}
+
+	handler := NewConsolidatedHelperHandlers()
+	runHandlerTestCases(t, tests, handler.handleManageHelper)
+}
+
+// TestEntityIDPredictable pins the C2 deny-list: switch_as_x is the only
+// helper platform whose entity_id cannot be derived from name.
+func TestEntityIDPredictable(t *testing.T) {
+	if entityIDPredictable(platformSwitchAsX) {
+		t.Error("switch_as_x must be reported as unpredictable (#224)")
+	}
+	if !entityIDPredictable("threshold") {
+		t.Error("threshold must be reported as predictable")
+	}
 }
 
 // TestManageHelper_GenericHygrostat tests generic_hygrostat helper creation.

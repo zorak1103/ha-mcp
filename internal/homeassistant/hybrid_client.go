@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/zorak1103/ha-mcp/internal/logging"
 )
 
 // Constants for entity domains and platforms used in Config Entry Flow logic.
@@ -210,20 +212,23 @@ type RESTOperations interface {
 // It uses WebSocket for most operations but falls back to REST for operations
 // that are not supported via WebSocket (e.g., deleting automations/scripts/scenes).
 type HybridClient struct {
-	ws   WSOperations   // WebSocket client for most operations
-	rest RESTOperations // REST client for delete operations
+	ws     WSOperations   // WebSocket client for most operations
+	rest   RESTOperations // REST client for delete operations
+	logger *logging.Logger
 }
 
 // NewHybridClient creates a new hybrid client with the given WebSocket and REST clients.
 func NewHybridClient(ws *WSClient, rest *RESTClient) *HybridClient {
 	return &HybridClient{
-		ws:   &wsClientImpl{ws: ws},
-		rest: rest,
+		ws:     &wsClientImpl{ws: ws},
+		rest:   rest,
+		logger: ws.logger,
 	}
 }
 
 // NewHybridClientWithInterfaces creates a new hybrid client with custom interfaces.
-// This is useful for testing with mock implementations.
+// This is useful for testing with mock implementations. logger is left nil -
+// every logging call site guards against that.
 func NewHybridClientWithInterfaces(ws WSOperations, rest RESTOperations) *HybridClient {
 	return &HybridClient{
 		ws:   ws,
@@ -351,7 +356,7 @@ func (c *HybridClient) CreateHelperEntity(ctx context.Context, config HelperConf
 	}
 
 	entryID, err := c.createHelperViaConfigFlow(ctx, config)
-	entityID := c.resolveConfigEntryEntityID(ctx, entryID, DefaultEntityPollerConfig())
+	entityID := c.resolveConfigEntryEntityID(ctx, config, entryID)
 	if err != nil {
 		// The config entry may already exist at this point (a
 		// *PartialApplyError) - the resolved entityID (possibly "") is
@@ -360,47 +365,83 @@ func (c *HybridClient) CreateHelperEntity(ctx context.Context, config HelperConf
 		return entityID, err
 	}
 
-	// Set icon via Entity Registry if provided
 	if hasIcon && icon != "" {
-		iconEntityID := entityID
-		if iconEntityID == "" {
-			// Fall back to the client's own (weaker) name-based prediction -
-			// only relevant here for the icon update, independent of the
-			// entityID this method returns to its caller.
-			predicted, predictErr := c.predictEntityIDForConfigEntry(ctx, config)
-			if predictErr != nil {
-				// Non-fatal: helper was created successfully
-				return entityID, fmt.Errorf("helper created but failed to predict entity ID for icon update: %w", predictErr)
-			}
-			iconEntityID = predicted
-		}
-
-		// Wait for entity to appear before setting icon.
-		WaitForEntityAppear(ctx, c.ws.GetState, iconEntityID, DefaultEntityPollerConfig())
-
-		// Update icon via Entity Registry
-		updateCfg := EntityRegistryUpdateConfig{
-			Icon: &icon,
-		}
-		if _, updateErr := c.ws.UpdateEntityRegistryEntry(ctx, iconEntityID, updateCfg); updateErr != nil {
-			// Non-fatal: helper was created successfully
-			return entityID, fmt.Errorf("helper created as %s but failed to set icon: %w", iconEntityID, updateErr)
-		}
+		return c.applyCreateIcon(ctx, config, entityID, icon)
 	}
 
 	return entityID, nil
 }
 
+// applyCreateIcon sets icon via Entity Registry on the entity created by
+// CreateHelperEntity. entityID is the registry-resolved id, or "" when
+// resolution failed. Only a platform whose id is derivable from name
+// (entityIDPredictable) falls back to that (weaker) prediction here - for a
+// platform where prediction is known to be unreliable (switch_as_x, #224),
+// writing to a guessed id could silently re-icon an unrelated, pre-existing
+// entity, so the icon update is skipped and reported instead.
+func (c *HybridClient) applyCreateIcon(ctx context.Context, config HelperConfig, entityID, icon string) (string, error) {
+	iconEntityID := entityID
+	if iconEntityID == "" {
+		if !entityIDPredictable(config.Platform) {
+			return entityID, fmt.Errorf("helper created but its entity_id could not be resolved in time; icon not applied")
+		}
+		predicted, predictErr := c.predictEntityIDForConfigEntry(ctx, config)
+		if predictErr != nil {
+			// Non-fatal: helper was created successfully
+			return entityID, fmt.Errorf("helper created but failed to predict entity ID for icon update: %w", predictErr)
+		}
+		iconEntityID = predicted
+	}
+
+	// Wait for entity to appear before setting icon.
+	WaitForEntityAppear(ctx, c.ws.GetState, iconEntityID, DefaultEntityPollerConfig())
+
+	updateCfg := EntityRegistryUpdateConfig{Icon: &icon}
+	if _, updateErr := c.ws.UpdateEntityRegistryEntry(ctx, iconEntityID, updateCfg); updateErr != nil {
+		// Non-fatal: helper was created successfully
+		return entityID, fmt.Errorf("helper created as %s but failed to set icon: %w", iconEntityID, updateErr)
+	}
+
+	return entityID, nil
+}
+
+// entityIDPredictable reports whether a Config Entry platform's created
+// entity_id can be derived from name via predictEntityIDForConfigEntry.
+// switch_as_x cannot (#224): HA names the wrapper after the wrapped source
+// switch, not from any field submitted to the flow, so the "prediction" is
+// really just <target_domain>.<slugified name> - a caller-controlled guess
+// that may legitimately name an unrelated, pre-existing entity. That makes
+// it unsafe to use as a write target once we already know it can be wrong,
+// so callers must skip prediction entirely for these platforms rather than
+// use it as a lesser-confidence fallback.
+func entityIDPredictable(platform string) bool {
+	return platform != platformSwitchAsX
+}
+
 // resolveConfigEntryEntityID looks up the real entity_id HA assigned to a
-// newly created config entry by polling the entity registry for entryID.
-// Returns "" if entryID is empty (e.g. an HA version whose create_entry
-// response omits Result) or the poll times out - never an error.
-func (c *HybridClient) resolveConfigEntryEntityID(ctx context.Context, entryID string, cfg EntityPollerConfig) string {
+// newly created config entry by polling the entity registry for entryID,
+// preferring an entity in the platform's expected domain (a config entry can
+// register more than one entity, e.g. utility_meter with tariffs - see
+// findConfigEntryEntity). Returns "" if entryID is empty (e.g. an HA version
+// whose create_entry response omits Result) or the poll times out - never an
+// error. The poller config is read from ctx (see WithEntityPollerConfig) so
+// callers can honor their own configured wait instead of a hardcoded
+// default; ConfigEntryResolvePollerConfig is used otherwise.
+func (c *HybridClient) resolveConfigEntryEntityID(ctx context.Context, config HelperConfig, entryID string) string {
 	if entryID == "" {
 		return ""
 	}
-	resolved, ok := WaitForConfigEntryEntity(ctx, c.ws.GetEntityRegistry, entryID, cfg)
+	cfg, ok := EntityPollerConfigFromContext(ctx)
 	if !ok {
+		cfg = ConfigEntryResolvePollerConfig()
+	}
+	preferDomain := c.determineEntityDomainForConfigEntry(config)
+	resolved, ok, err := WaitForConfigEntryEntity(ctx, c.ws.GetEntityRegistry, entryID, preferDomain, cfg)
+	if !ok {
+		if c.logger != nil {
+			c.logger.Warn("config entry entity resolution timed out",
+				"platform", config.Platform, "entry_id", entryID, "prefer_domain", preferDomain, "error", err)
+		}
 		return ""
 	}
 	return resolved

@@ -1,9 +1,11 @@
 package homeassistant
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -11,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/zorak1103/ha-mcp/internal/logging"
 )
 
 // TestHybridClient_DeleteAutomation verifies that DeleteAutomation
@@ -1556,8 +1560,9 @@ func TestResolveConfigEntryEntityID_TimeoutReturnsEmptyString(t *testing.T) {
 	}
 
 	client := NewHybridClientWithInterfaces(mockWS, &mockRESTOperations{})
-	got := client.resolveConfigEntryEntityID(context.Background(), "entry_never_shows_up",
+	ctx := WithEntityPollerConfig(context.Background(),
 		EntityPollerConfig{Timeout: 50 * time.Millisecond, PollInterval: 10 * time.Millisecond})
+	got := client.resolveConfigEntryEntityID(ctx, HelperConfig{Platform: "threshold"}, "entry_never_shows_up")
 
 	if got != "" {
 		t.Errorf("expected empty entity id on registry timeout, got %q", got)
@@ -1579,13 +1584,136 @@ func TestResolveConfigEntryEntityID_EmptyEntryIDShortCircuits(t *testing.T) {
 	}
 
 	client := NewHybridClientWithInterfaces(mockWS, &mockRESTOperations{})
-	got := client.resolveConfigEntryEntityID(context.Background(), "", DefaultEntityPollerConfig())
+	got := client.resolveConfigEntryEntityID(context.Background(), HelperConfig{Platform: "threshold"}, "")
 
 	if got != "" {
 		t.Errorf("expected empty entity id, got %q", got)
 	}
 	if called {
 		t.Error("expected no registry lookup for an empty entry id")
+	}
+}
+
+// TestResolveConfigEntryEntityID_MultiEntityConfigEntryPrefersDomain pins
+// C1: a config entry that registers more than one entity (utility_meter
+// with tariffs registers a select.* tariff selector plus a sensor.* per
+// tariff) must resolve to the entity in the platform's real domain, not
+// whichever one happens to be first in the registry response.
+func TestResolveConfigEntryEntityID_MultiEntityConfigEntryPrefersDomain(t *testing.T) {
+	t.Parallel()
+
+	mockWS := &mockWSOperations{
+		getEntityRegistryFunc: func(context.Context) ([]EntityRegistryEntry, error) {
+			return []EntityRegistryEntry{
+				{EntityID: "select.energy_tariff", ConfigEntryID: "entry_um"},
+				{EntityID: "sensor.energy_peak", ConfigEntryID: "entry_um"},
+			}, nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, &mockRESTOperations{})
+	got := client.resolveConfigEntryEntityID(context.Background(), HelperConfig{Platform: "utility_meter"}, "entry_um")
+
+	if got != "sensor.energy_peak" {
+		t.Errorf("expected the sensor entity (utility_meter's real domain), got %q", got)
+	}
+}
+
+// TestResolveConfigEntryEntityID_LogsWarningOnTimeout pins W2: a persistent
+// registry error must not be silently swallowed - it should be logged so an
+// operator can distinguish "not created yet" from "registry unreachable".
+func TestResolveConfigEntryEntityID_LogsWarningOnTimeout(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	testLogger := &logging.Logger{Logger: slog.New(slog.NewTextHandler(&buf, nil))}
+
+	registryErr := errors.New("registry unavailable")
+	mockWS := &mockWSOperations{
+		getEntityRegistryFunc: func(context.Context) ([]EntityRegistryEntry, error) {
+			return nil, registryErr
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, &mockRESTOperations{})
+	client.logger = testLogger
+
+	ctx := WithEntityPollerConfig(context.Background(),
+		EntityPollerConfig{Timeout: 30 * time.Millisecond, PollInterval: 10 * time.Millisecond})
+	got := client.resolveConfigEntryEntityID(ctx, HelperConfig{Platform: "threshold"}, "entry_x")
+
+	if got != "" {
+		t.Errorf("expected empty entity id, got %q", got)
+	}
+	logged := buf.String()
+	if !strings.Contains(logged, "entry_x") || !strings.Contains(logged, "registry unavailable") {
+		t.Errorf("expected the resolution failure to be logged with the entry id and error, got: %s", logged)
+	}
+}
+
+// TestEntityIDPredictable pins the C2 deny-list: switch_as_x is the only
+// platform whose entity_id cannot be derived from name, and must never be
+// used as a write target when registry resolution fails.
+func TestEntityIDPredictable(t *testing.T) {
+	t.Parallel()
+
+	if entityIDPredictable(platformSwitchAsX) {
+		t.Error("switch_as_x must be reported as unpredictable (#224)")
+	}
+	if !entityIDPredictable("threshold") {
+		t.Error("threshold must be reported as predictable")
+	}
+}
+
+// TestCreateHelperEntity_SwitchAsXUnresolvedIconSkipsWrite pins C2: when
+// registry resolution can't confirm switch_as_x's real entity_id, the icon
+// must NOT be written to a guessed id - the guess is caller-controlled
+// (<target_domain>.<slugified name>) and may name an unrelated, pre-existing
+// entity.
+func TestCreateHelperEntity_SwitchAsXUnresolvedIconSkipsWrite(t *testing.T) {
+	t.Parallel()
+
+	updateCalled := false
+	mockWS := &mockWSOperations{
+		getEntityRegistryFunc: func(context.Context) ([]EntityRegistryEntry, error) {
+			return nil, nil // never resolves
+		},
+		updateEntityRegistryEntryFunc: func(context.Context, string, EntityRegistryUpdateConfig) (*EntityRegistryEntry, error) {
+			updateCalled = true
+			return nil, nil
+		},
+	}
+	mockREST := &mockRESTOperations{
+		initConfigEntryFlowFunc: func(context.Context, string) (*ConfigEntryFlowResult, error) {
+			return &ConfigEntryFlowResult{
+				FlowID: "flowswx", Type: flowTypeForm, StepID: "user",
+				DataSchema: []OptionsFlowField{{Name: "entity_id"}, {Name: "target_domain"}},
+			}, nil
+		},
+		submitConfigEntryFlowStepFunc: func(context.Context, string, map[string]any) (*ConfigEntryFlowResult, error) {
+			return &ConfigEntryFlowResult{
+				FlowID: "flowswx", Type: flowTypeCreateEntry,
+				Result: &ConfigEntry{EntryID: "entry_swx", Domain: platformSwitchAsX},
+			}, nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	ctx := WithEntityPollerConfig(context.Background(),
+		EntityPollerConfig{Timeout: 30 * time.Millisecond, PollInterval: 10 * time.Millisecond})
+	entityID, err := client.CreateHelperEntity(ctx, HelperConfig{
+		Platform: platformSwitchAsX,
+		Config:   map[string]any{"entity_id": "switch.x", "target_domain": "light", "icon": "mdi:skull"},
+	})
+
+	if entityID != "" {
+		t.Errorf("expected empty entity id when resolution never confirms, got %q", entityID)
+	}
+	if err == nil || !strings.Contains(err.Error(), "could not be resolved") {
+		t.Fatalf("expected an unresolved-entity error, got %v", err)
+	}
+	if updateCalled {
+		t.Error("must never write an icon to a guessed switch_as_x id")
 	}
 }
 
@@ -1599,7 +1727,9 @@ func TestCreateHelperEntity_PartialApplyErrorStillReturnsResolvedID(t *testing.T
 
 	mockWS := &mockWSOperations{
 		getEntityRegistryFunc: func(context.Context) ([]EntityRegistryEntry, error) {
-			return []EntityRegistryEntry{{EntityID: "sensor.threshold_x", ConfigEntryID: "entry_partial2"}}, nil
+			// threshold's real domain is binary_sensor (staticPlatformDomains) -
+			// the resolver only accepts a matching-domain candidate.
+			return []EntityRegistryEntry{{EntityID: "binary_sensor.threshold_x", ConfigEntryID: "entry_partial2"}}, nil
 		},
 	}
 	mockREST := &mockRESTOperations{
@@ -1627,7 +1757,7 @@ func TestCreateHelperEntity_PartialApplyErrorStillReturnsResolvedID(t *testing.T
 	if !errors.As(err, &partialErr) {
 		t.Fatalf("expected *PartialApplyError, got %v", err)
 	}
-	if entityID != "sensor.threshold_x" {
+	if entityID != "binary_sensor.threshold_x" {
 		t.Errorf("expected resolved id alongside the PartialApplyError, got %q", entityID)
 	}
 }
