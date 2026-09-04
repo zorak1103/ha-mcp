@@ -53,7 +53,7 @@ func RegisterTraceTools(registry *mcp.Registry) {
 					Description: "Domain to query traces for: 'automation' or 'script'. Required for the 'list' action unless entity_id is provided (which auto-derives it).",
 					Enum:        []string{traceDomainAutomation, traceDomainScript},
 				},
-				"entity_id": {
+				attrEntityID: {
 					Type:        "string",
 					Description: "Entity ID for 'get' action (required) or 'list' action (optional, auto-derives domain and filters traces by item, e.g., 'automation.morning_routine').",
 				},
@@ -175,12 +175,12 @@ func resolveTraceItemID(ctx context.Context, client homeassistant.Client, domain
 	entry, err := client.GetEntityRegistryEntry(ctx, entityID)
 	if err != nil {
 		slog.WarnContext(ctx, "trace item_id resolution degraded to object_id: entity registry lookup failed",
-			"entity_id", entityID, "domain", domain, "error", err)
+			attrEntityID, entityID, "domain", domain, "error", err)
 		return objectID, false
 	}
 	if entry.UniqueID == "" {
 		slog.WarnContext(ctx, "trace item_id resolution degraded to object_id: entity has no unique_id in registry",
-			"entity_id", entityID, "domain", domain)
+			attrEntityID, entityID, "domain", domain)
 		return objectID, false
 	}
 	return entry.UniqueID, true
@@ -199,7 +199,7 @@ func unresolvedItemIDWarning(entityID string) string {
 // handleListTraces lists all traces for a domain.
 func (h *TraceHandlers) handleListTraces(ctx context.Context, client homeassistant.Client, args map[string]any, format string) (*mcp.ToolsCallResult, error) {
 	domain, _ := args["domain"].(string)
-	entityID, _ := args["entity_id"].(string)
+	entityID, _ := args[attrEntityID].(string)
 	wait, _ := args["wait"].(bool)
 
 	domain, traceEntityID, errMsg := resolveTraceListParams(entityID, domain)
@@ -303,7 +303,7 @@ func (h *TraceHandlers) handleGetTrace(ctx context.Context, client homeassistant
 		return errorResult("domain is required for get action"), nil
 	}
 
-	entityID, _ := args["entity_id"].(string)
+	entityID, _ := args[attrEntityID].(string)
 	if entityID == "" {
 		return errorResult("entity_id is required for get action"), nil
 	}

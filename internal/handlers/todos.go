@@ -56,7 +56,7 @@ func buildTodoSchemaProperties() map[string]mcp.JSONSchema {
 			Description: "Action to perform: 'list', 'get_items', 'add_item', 'update_item', or 'remove_item'.",
 			Enum:        []string{todoActionList, todoActionGetItems, todoActionAddItem, todoActionUpdateItem, todoActionRemoveItem},
 		},
-		"entity_id": {
+		attrEntityID: {
 			Type:        "string",
 			Description: "Todo list entity ID (required for get_items, add_item, update_item, remove_item, e.g., 'todo.shopping_list').",
 		},
@@ -166,14 +166,14 @@ func (h *TodoHandlers) handleListTodos(ctx context.Context, client homeassistant
 // handleGetItems retrieves items from a todo list.
 func (h *TodoHandlers) handleGetItems(ctx context.Context, client homeassistant.Client, args map[string]any, format string) (*mcp.ToolsCallResult, error) {
 	// Validate entity_id
-	entityID, _ := args["entity_id"].(string)
+	entityID, _ := args[attrEntityID].(string)
 	if entityID == "" {
 		return errorResult("entity_id is required for get_items action"), nil
 	}
 
 	// Build service data
 	data := map[string]any{
-		"entity_id": entityID,
+		attrEntityID: entityID,
 	}
 
 	// Add optional status filter
@@ -206,7 +206,7 @@ func (h *TodoHandlers) handleGetItems(ctx context.Context, client homeassistant.
 // handleAddItem adds a new item to a todo list.
 func (h *TodoHandlers) handleAddItem(ctx context.Context, client homeassistant.Client, args map[string]any, _ string) (*mcp.ToolsCallResult, error) {
 	// Validate required parameters
-	entityID, _ := args["entity_id"].(string)
+	entityID, _ := args[attrEntityID].(string)
 	if entityID == "" {
 		return errorResult("entity_id is required for add_item action"), nil
 	}
@@ -218,8 +218,8 @@ func (h *TodoHandlers) handleAddItem(ctx context.Context, client homeassistant.C
 
 	// Build service data
 	data := map[string]any{
-		"entity_id": entityID,
-		"item":      item,
+		attrEntityID: entityID,
+		"item":       item,
 	}
 
 	// Add optional parameters
@@ -245,7 +245,7 @@ func (h *TodoHandlers) handleAddItem(ctx context.Context, client homeassistant.C
 // handleUpdateItem updates an existing todo item.
 func (h *TodoHandlers) handleUpdateItem(ctx context.Context, client homeassistant.Client, args map[string]any, _ string) (*mcp.ToolsCallResult, error) {
 	// Validate required parameters
-	entityID, _ := args["entity_id"].(string)
+	entityID, _ := args[attrEntityID].(string)
 	if entityID == "" {
 		return errorResult("entity_id is required for update_item action"), nil
 	}
@@ -257,8 +257,8 @@ func (h *TodoHandlers) handleUpdateItem(ctx context.Context, client homeassistan
 
 	// Build service data
 	data := map[string]any{
-		"entity_id": entityID,
-		"item":      uid,
+		attrEntityID: entityID,
+		"item":       uid,
 	}
 
 	// Add optional update fields
@@ -290,7 +290,7 @@ func (h *TodoHandlers) handleUpdateItem(ctx context.Context, client homeassistan
 // handleRemoveItem removes an item from a todo list.
 func (h *TodoHandlers) handleRemoveItem(ctx context.Context, client homeassistant.Client, args map[string]any, _ string) (*mcp.ToolsCallResult, error) {
 	// Validate required parameters
-	entityID, _ := args["entity_id"].(string)
+	entityID, _ := args[attrEntityID].(string)
 	if entityID == "" {
 		return errorResult("entity_id is required for remove_item action"), nil
 	}
@@ -302,8 +302,8 @@ func (h *TodoHandlers) handleRemoveItem(ctx context.Context, client homeassistan
 
 	// Build service data
 	data := map[string]any{
-		"entity_id": entityID,
-		"item":      uid,
+		attrEntityID: entityID,
+		"item":       uid,
 	}
 
 	// Call todo.remove_item service

@@ -76,7 +76,7 @@ func getAnalyzeTargetProperties() map[string]mcp.JSONSchema {
 			Enum:        []string{"natural", "json"},
 			Description: "Output format: 'natural' for LLM-optimized human-readable output (default), 'json' for structured JSON",
 		},
-		"entity_id": {
+		attrEntityID: {
 			Type:        "array",
 			Description: "List of entity IDs (e.g., ['light.living_room', 'switch.kitchen'])",
 			Items:       &mcp.JSONSchema{Type: "string"},
@@ -142,7 +142,7 @@ func (h *ConsolidatedTargetHandlers) handleAnalyzeTarget(
 // parseTargetParams extracts target and expand_group from parameters.
 func (h *ConsolidatedTargetHandlers) parseTargetParams(params map[string]any) (homeassistant.Target, *bool, error) {
 	target := homeassistant.Target{
-		EntityID: h.extractStringArray(params, "entity_id"),
+		EntityID: h.extractStringArray(params, attrEntityID),
 		DeviceID: h.extractStringArray(params, "device_id"),
 		AreaID:   h.extractStringArray(params, "area_id"),
 		LabelID:  h.extractStringArray(params, "label_id"),

@@ -458,6 +458,273 @@ func TestNaturalHelperFormatter_DetailRenderers_IncludeEntityID(t *testing.T) {
 	}
 }
 
+// TestNaturalHelperFormatter_FormatHelperDetail_GenericFallback pins the
+// fallback renderer added for issue #216: domains with no dedicated case
+// (climate, humidifier, select, and the 15 template_* subtypes) must render
+// natural-format output instead of erroring with "unsupported helper type".
+func TestNaturalHelperFormatter_FormatHelperDetail_GenericFallback(t *testing.T) {
+	t.Parallel()
+
+	f := NewNaturalHelperFormatter()
+
+	detail := map[string]any{
+		"entity_id":           "climate.thermostat",
+		"friendly_name":       "Wohnzimmer",
+		"state":               "heat",
+		"current_temperature": 21.5,
+		"temperature":         22.0,
+		"hvac_modes":          []any{"heat", "off"},
+		"min_temp":            float64(7),
+		"max_temp":            float64(35),
+	}
+
+	result, err := f.FormatHelperDetail(context.Background(), "climate", detail)
+	if err != nil {
+		t.Fatalf("FormatHelperDetail(climate) error = %v, want nil", err)
+	}
+
+	wantLines := []string{
+		"Climate: Wohnzimmer (climate.thermostat)",
+		"State: heat",
+		"Current temperature: 21.5",
+		"Hvac modes: heat, off",
+		"Max temp: 35",
+		"Min temp: 7",
+		"Temperature: 22",
+	}
+	for _, line := range wantLines {
+		if !strings.Contains(result, line) {
+			t.Errorf("FormatHelperDetail(climate) = %q, want it to contain %q", result, line)
+		}
+	}
+}
+
+// TestNaturalHelperFormatter_FormatHelperDetail_GenericFallback_KeyOrder pins
+// that the fallback renderer sorts attribute keys - Go randomizes map
+// iteration order per range statement, so an unsorted implementation would
+// produce a different attribute order on a later call within the same run.
+func TestNaturalHelperFormatter_FormatHelperDetail_GenericFallback_KeyOrder(t *testing.T) {
+	t.Parallel()
+
+	f := NewNaturalHelperFormatter()
+
+	detail := map[string]any{
+		"entity_id":     "select.mode",
+		"friendly_name": "Mode",
+		"state":         "eco",
+		"zeta":          "1",
+		"alpha":         "2",
+		"mike":          "3",
+	}
+
+	first, err := f.FormatHelperDetail(context.Background(), "select", detail)
+	if err != nil {
+		t.Fatalf("FormatHelperDetail(select) error = %v, want nil", err)
+	}
+
+	for i := 0; i < 20; i++ {
+		again, err := f.FormatHelperDetail(context.Background(), "select", detail)
+		if err != nil {
+			t.Fatalf("FormatHelperDetail(select) error = %v, want nil", err)
+		}
+		if again != first {
+			t.Fatalf("FormatHelperDetail(select) not deterministic across calls:\ncall 1: %q\ncall %d: %q", first, i+2, again)
+		}
+	}
+
+	alphaIdx := strings.Index(first, "Alpha:")
+	mikeIdx := strings.Index(first, "Mike:")
+	zetaIdx := strings.Index(first, "Zeta:")
+	if alphaIdx == -1 || mikeIdx == -1 || zetaIdx == -1 {
+		t.Fatalf("FormatHelperDetail(select) missing expected keys, got: %q", first)
+	}
+	if alphaIdx >= mikeIdx || mikeIdx >= zetaIdx {
+		t.Errorf("FormatHelperDetail(select) attributes not sorted alphabetically, got: %q", first)
+	}
+}
+
+// TestNaturalHelperFormatter_FormatHelperDetail_GenericFallback_OmitsNilAttribute
+// pins finding W1 of the issue #216 remediation: HA reports many optional
+// attributes as JSON null (e.g. climate.hvac_action when unsupported). The
+// generic fallback must omit that line entirely rather than rendering the
+// literal "<nil>", while a genuinely empty string attribute is still shown -
+// nil and "" are distinct states, not both "absent".
+func TestNaturalHelperFormatter_FormatHelperDetail_GenericFallback_OmitsNilAttribute(t *testing.T) {
+	t.Parallel()
+
+	f := NewNaturalHelperFormatter()
+
+	detail := map[string]any{
+		"entity_id":     "climate.thermostat",
+		"friendly_name": "Wohnzimmer",
+		"state":         "heat",
+		"hvac_action":   nil,
+		"note":          "",
+	}
+
+	result, err := f.FormatHelperDetail(context.Background(), "climate", detail)
+	if err != nil {
+		t.Fatalf("FormatHelperDetail(climate) error = %v, want nil", err)
+	}
+
+	if strings.Contains(result, "<nil>") {
+		t.Errorf("FormatHelperDetail(climate) = %q, must not render a nil attribute as <nil>", result)
+	}
+	if strings.Contains(result, "Hvac action") {
+		t.Errorf("FormatHelperDetail(climate) = %q, must omit the nil hvac_action line entirely", result)
+	}
+	if !strings.Contains(result, "Note:") {
+		t.Errorf("FormatHelperDetail(climate) = %q, must still render an empty-string attribute (distinct from nil)", result)
+	}
+}
+
+// TestNaturalHelperFormatter_FormatHelperDetail_GenericFallback_SanitizesValues
+// pins finding W3: an attribute value is user/integration-controlled data
+// (e.g. a template helper's rendered state, or a third-party integration's
+// text attribute) and must not be able to forge additional "Key: value"
+// lines via an embedded newline - the same hazard FormatNameWithID already
+// guards against for entity names.
+func TestNaturalHelperFormatter_FormatHelperDetail_GenericFallback_SanitizesValues(t *testing.T) {
+	t.Parallel()
+
+	f := NewNaturalHelperFormatter()
+
+	detail := map[string]any{
+		"entity_id":     "select.mode",
+		"friendly_name": "Mode",
+		"state":         "eco\nDevice class: safe",
+		"note":          "line one\nline two",
+	}
+
+	result, err := f.FormatHelperDetail(context.Background(), "select", detail)
+	if err != nil {
+		t.Fatalf("FormatHelperDetail(select) error = %v, want nil", err)
+	}
+
+	if strings.Contains(result, "State: eco\n") {
+		t.Errorf("FormatHelperDetail(select) = %q, State line must not contain a raw newline", result)
+	}
+	if !strings.Contains(result, "line one line two") {
+		t.Errorf("FormatHelperDetail(select) = %q, want sanitized single-line attribute value", result)
+	}
+}
+
+// TestNaturalHelperFormatter_FormatHelperDetail_GenericFallback_SanitizesKeys
+// pins a second review round's finding: formatGenericDetail emits
+// sentenceCaseKey(k) directly into a "%s: %s\n" line without sanitizing the
+// key, while the value on the same line already goes through
+// sanitizeDisplayValue. An attribute key containing a newline (e.g. from an
+// integration or template-provided attribute) must not be able to forge an
+// extra "Key: value" line in the natural-format response - the same
+// line-injection guarantee sanitizeDisplayValue already gives values.
+func TestNaturalHelperFormatter_FormatHelperDetail_GenericFallback_SanitizesKeys(t *testing.T) {
+	t.Parallel()
+
+	f := NewNaturalHelperFormatter()
+
+	detail := map[string]any{
+		"entity_id":     "select.mode",
+		"friendly_name": "Mode",
+		"state":         "eco",
+		"note\nForged":  "attacker-controlled",
+	}
+
+	result, err := f.FormatHelperDetail(context.Background(), "select", detail)
+	if err != nil {
+		t.Fatalf("FormatHelperDetail(select) error = %v, want nil", err)
+	}
+
+	if strings.Contains(result, "\nForged:") {
+		t.Errorf("FormatHelperDetail(select) = %q, an attribute key must not be able to forge a standalone additional line", result)
+	}
+	if !strings.Contains(result, "Note Forged: attacker-controlled") {
+		t.Errorf("FormatHelperDetail(select) = %q, want sanitized single-line key rendered on one line", result)
+	}
+
+	lines := strings.Split(result, "\n")
+	wantLines := 3 // header, State, Note Forged
+	if len(lines) != wantLines {
+		t.Errorf("FormatHelperDetail(select) produced %d lines %q, want %d - a forged key must not add a line", len(lines), lines, wantLines)
+	}
+}
+
+// TestNaturalHelperFormatter_FormatHelperDetail_GenericFallback_ParensSurvive
+// documents that formatDetailValue's sanitization is deliberately narrower
+// than sanitizeDisplayName's: it strips newlines but not parentheses, since
+// "(eco)" is a legitimate attribute value with no id-forging risk the way a
+// forged "(entity_id)" suffix in a name would have.
+func TestNaturalHelperFormatter_FormatHelperDetail_GenericFallback_ParensSurvive(t *testing.T) {
+	t.Parallel()
+
+	f := NewNaturalHelperFormatter()
+
+	detail := map[string]any{
+		"entity_id":     "select.mode",
+		"friendly_name": "Mode",
+		"state":         "eco",
+		"preset":        "Auto (eco)",
+	}
+
+	result, err := f.FormatHelperDetail(context.Background(), "select", detail)
+	if err != nil {
+		t.Fatalf("FormatHelperDetail(select) error = %v, want nil", err)
+	}
+	if !strings.Contains(result, "Auto (eco)") {
+		t.Errorf("FormatHelperDetail(select) = %q, want attribute value parentheses preserved", result)
+	}
+}
+
+// TestNaturalHelperFormatter_FormatHelperDetail_GenericFallback_NoFriendlyName
+// pins finding N5: when an entity has no friendly_name, the header must
+// collapse to the bare entity_id via FormatNameWithID rather than rendering
+// "id (id)".
+func TestNaturalHelperFormatter_FormatHelperDetail_GenericFallback_NoFriendlyName(t *testing.T) {
+	t.Parallel()
+
+	f := NewNaturalHelperFormatter()
+
+	detail := map[string]any{
+		"entity_id": "select.mode",
+		"state":     "eco",
+	}
+
+	result, err := f.FormatHelperDetail(context.Background(), "select", detail)
+	if err != nil {
+		t.Fatalf("FormatHelperDetail(select) error = %v, want nil", err)
+	}
+	if !strings.Contains(result, "Select: select.mode\n") {
+		t.Errorf("FormatHelperDetail(select) = %q, want header to collapse to the bare entity_id", result)
+	}
+	if strings.Contains(result, "select.mode (select.mode)") {
+		t.Errorf("FormatHelperDetail(select) = %q, must not duplicate the id in parentheses", result)
+	}
+}
+
+// TestDedicatedDetailTypes_MatchesFormatHelperDetailDispatch pins finding W4:
+// DedicatedDetailTypes() must report exactly the helper types that get a
+// dedicated (non-generic) natural-format renderer, so
+// TestHelperDetailBuilders_MatchDedicatedRenderers in the handlers package
+// can assert the two packages' registries stay in sync instead of silently
+// drifting the way builder/renderer coverage drifted before issue #216.
+func TestDedicatedDetailTypes_MatchesFormatHelperDetailDispatch(t *testing.T) {
+	t.Parallel()
+
+	want := []string{
+		"binary_sensor", "group", "input_boolean", "input_button", "input_datetime",
+		"input_number", "input_select", "input_text", "sensor",
+	}
+
+	got := DedicatedDetailTypes()
+	if len(got) != len(want) {
+		t.Fatalf("DedicatedDetailTypes() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("DedicatedDetailTypes() = %v, want %v", got, want)
+		}
+	}
+}
+
 func TestNaturalHelperFormatter_FormatCounterDetail_IncludesEntityID(t *testing.T) {
 	t.Parallel()
 

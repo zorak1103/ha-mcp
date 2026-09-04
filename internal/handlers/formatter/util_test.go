@@ -1,6 +1,8 @@
 package formatter
 
 import (
+	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -444,6 +446,337 @@ func TestGetIntAttr(t *testing.T) {
 				t.Errorf("GetIntAttr() = %d, want %d", result, tt.expected)
 			}
 		})
+	}
+}
+
+// TestTitleCaseWords pins the rune-safe title-casing used to render helper
+// domains ("alarm_control_panel" -> "Alarm Control Panel") and attribute
+// keys, replacing byte-slicing that mangled multi-byte first runes.
+func TestTitleCaseWords(t *testing.T) {
+	tests := []struct {
+		name     string
+		s        string
+		sep      string
+		expected string
+	}{
+		{
+			name:     "domain with underscores",
+			s:        "alarm_control_panel",
+			sep:      "_",
+			expected: "Alarm Control Panel",
+		},
+		{
+			name:     "single word",
+			s:        "climate",
+			sep:      "_",
+			expected: "Climate",
+		},
+		{
+			name:     "empty string",
+			s:        "",
+			sep:      "_",
+			expected: "",
+		},
+		{
+			name:     "non-ASCII first rune does not mangle",
+			s:        "ätzend_modus",
+			sep:      "_",
+			expected: "Ätzend Modus",
+		},
+		{
+			name:     "leading separator produces empty segment",
+			s:        "_leading",
+			sep:      "_",
+			expected: " Leading",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := titleCaseWords(tt.s, tt.sep)
+			if result != tt.expected {
+				t.Errorf("titleCaseWords(%q, %q) = %q, want %q", tt.s, tt.sep, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestSanitizeDisplayValue pins the newline-collapsing applied to natural-format
+// attribute values (issue #216 remediation, finding W3): a value must not be able
+// to forge additional "Key: value" lines, but unlike sanitizeDisplayName (used for
+// entity names), parentheses are legitimate in attribute values and must survive.
+func TestSanitizeDisplayValue(t *testing.T) {
+	tests := []struct {
+		name     string
+		s        string
+		expected string
+	}{
+		{
+			name:     "plain value unchanged",
+			s:        "on",
+			expected: "on",
+		},
+		{
+			name:     "parentheses preserved",
+			s:        "Auto (eco)",
+			expected: "Auto (eco)",
+		},
+		{
+			name:     "newline forging additional lines is collapsed",
+			s:        "on\nState: off\nDevice class: safe",
+			expected: "on State: off Device class: safe",
+		},
+		{
+			name:     "carriage return collapsed",
+			s:        "on\r\noff",
+			expected: "on off",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := sanitizeDisplayValue(tt.s)
+			if result != tt.expected {
+				t.Errorf("sanitizeDisplayValue(%q) = %q, want %q", tt.s, result, tt.expected)
+			}
+			if strings.Contains(result, "\n") || strings.Contains(result, "\r") {
+				t.Errorf("sanitizeDisplayValue(%q) = %q, must not contain raw newlines", tt.s, result)
+			}
+		})
+	}
+}
+
+// TestSentenceCaseKey pins a second review round's finding: sentenceCaseKey
+// must sanitize CR/LF the same way sanitizeDisplayValue already does for
+// values, since formatGenericDetail emits its result directly into a
+// line-oriented "%s: %s\n" natural-format line - an unsanitized key like
+// "note\nState" would otherwise forge an extra "State: ..." line the same
+// way an unsanitized value could.
+func TestSentenceCaseKey(t *testing.T) {
+	tests := []struct {
+		name     string
+		key      string
+		expected string
+	}{
+		{
+			name:     "underscore replaced and first rune upper-cased",
+			key:      "current_temperature",
+			expected: "Current temperature",
+		},
+		{
+			name:     "newline forging an additional line is collapsed",
+			key:      "note\nState",
+			expected: "Note State",
+		},
+		{
+			name:     "carriage return collapsed",
+			key:      "note\r\nState",
+			expected: "Note State",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := sentenceCaseKey(tt.key)
+			if result != tt.expected {
+				t.Errorf("sentenceCaseKey(%q) = %q, want %q", tt.key, result, tt.expected)
+			}
+			if strings.Contains(result, "\n") || strings.Contains(result, "\r") {
+				t.Errorf("sentenceCaseKey(%q) = %q, must not contain raw newlines", tt.key, result)
+			}
+		})
+	}
+}
+
+// TestTruncateRunes pins rune-safe truncation (not byte-slicing, which can split
+// a multi-byte rune and corrupt output).
+func TestTruncateRunes(t *testing.T) {
+	tests := []struct {
+		name     string
+		s        string
+		maxRunes int
+		expected string
+	}{
+		{
+			name:     "under limit unchanged",
+			s:        "short",
+			maxRunes: 10,
+			expected: "short",
+		},
+		{
+			name:     "exactly at limit unchanged",
+			s:        "12345",
+			maxRunes: 5,
+			expected: "12345",
+		},
+		{
+			name:     "over limit truncated with ellipsis",
+			s:        "0123456789",
+			maxRunes: 5,
+			expected: "01234...",
+		},
+		{
+			name:     "multi-byte runes not split",
+			s:        strings.Repeat("ä", 10),
+			maxRunes: 5,
+			expected: strings.Repeat("ä", 5) + "...",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := truncateRunes(tt.s, tt.maxRunes)
+			if result != tt.expected {
+				t.Errorf("truncateRunes(%q, %d) = %q, want %q", tt.s, tt.maxRunes, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFormatDetailValue pins the generic attribute-value renderer added for
+// issue #216's remediation (findings W1/W2/W3/N2): nil is omitted (empty
+// string, callers check for this to skip the whole line), strings pass
+// through sanitized+truncated, lists are comma-joined and length-capped,
+// nested maps render as compact JSON at any depth, and the truncation cap
+// applies once at the top level - not per list element - so the item cap
+// remains reachable instead of every element being pre-truncated first.
+func TestFormatDetailValue(t *testing.T) {
+	longList := make([]any, 30)
+	for i := range longList {
+		longList[i] = i
+	}
+
+	tests := []struct {
+		name     string
+		v        any
+		expected string
+	}{
+		{
+			name:     "nil renders empty",
+			v:        nil,
+			expected: "",
+		},
+		{
+			name:     "string passthrough",
+			v:        "heat",
+			expected: "heat",
+		},
+		{
+			name:     "string with newline sanitized",
+			v:        "on\nState: off",
+			expected: "on State: off",
+		},
+		{
+			name:     "list of strings comma-joined",
+			v:        []any{"heat", "off"},
+			expected: "heat, off",
+		},
+		{
+			name:     "nested map renders as compact JSON",
+			v:        map[string]any{"a": float64(1)},
+			expected: `{"a":1}`,
+		},
+		{
+			name:     "list containing a nested map renders that element as JSON, not Go syntax",
+			v:        []any{map[string]any{"a": float64(1)}},
+			expected: `{"a":1}`,
+		},
+		{
+			name:     "long list capped by item count",
+			v:        longList,
+			expected: joinIntsWithMore(20, 10),
+		},
+		{
+			name:     "long string truncated",
+			v:        strings.Repeat("x", maxDetailValueChars+50),
+			expected: strings.Repeat("x", maxDetailValueChars) + "...",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := formatDetailValue(tt.v)
+			if result != tt.expected {
+				t.Errorf("formatDetailValue(%v) = %q, want %q", tt.v, result, tt.expected)
+			}
+		})
+	}
+}
+
+// joinIntsWithMore builds the expected "0, 1, ..., n-1, … +more more" string
+// for a 0..29 int list capped at `shown` items.
+func joinIntsWithMore(shown, more int) string {
+	var parts []string
+	for i := 0; i < shown; i++ {
+		parts = append(parts, strconv.Itoa(i))
+	}
+	return strings.Join(parts, ", ") + fmt.Sprintf(", … +%d more", more)
+}
+
+// TestFormatDetailValue_ListCapBeforeCharBudget guards the double-truncation
+// trap: a long list of long strings must be capped by item count first, then
+// the joined result truncated by character budget once - not each element
+// truncated individually before joining, which would make the item cap
+// effectively unreachable behind the character cap.
+func TestFormatDetailValue_ListCapBeforeCharBudget(t *testing.T) {
+	items := make([]any, 30)
+	for i := range items {
+		items[i] = strings.Repeat("x", 50)
+	}
+
+	result := formatDetailValue(items)
+
+	if !strings.Contains(result, "+10 more") {
+		t.Errorf("formatDetailValue(30 long items) = %q, want it to contain the item-count cap marker", result)
+	}
+}
+
+// TestRenderDetailValue_DepthBoundary pins the exact maxDetailValueDepth
+// cutoff: at depth == maxDetailValueDepth, recursion must stop and fall
+// back to a raw %v rendering - even for a compound value that would
+// otherwise recurse further and produce a different (comma-joined) string.
+// A plain string leaf can't distinguish this boundary (%v of a string
+// equals the string itself either way), so the probe value is itself a
+// slice.
+func TestRenderDetailValue_DepthBoundary(t *testing.T) {
+	probe := []any{"a", "b"}
+
+	atLimit := renderDetailValue(probe, maxDetailValueDepth)
+	wantAtLimit := fmt.Sprintf("%v", probe)
+	if atLimit != wantAtLimit {
+		t.Errorf("renderDetailValue(_, maxDetailValueDepth) = %q, want %q (raw %%v fallback, no further recursion)", atLimit, wantAtLimit)
+	}
+
+	belowLimit := renderDetailValue(probe, maxDetailValueDepth-1)
+	if belowLimit != "a, b" {
+		t.Errorf("renderDetailValue(_, maxDetailValueDepth-1) = %q, want %q (normal recursion one level below the limit)", belowLimit, "a, b")
+	}
+}
+
+// TestRenderDetailValue_NestedListMoreBoundary pins the "more > 0" check in
+// renderDetailValue's own []any case (a list nested inside another list, at
+// depth > 0 - distinct from formatDetailListValue's top-level list
+// handling, which has its own equivalent check already covered by
+// TestFormatDetailValue_ListCapBeforeCharBudget). At exactly
+// maxDetailListItems items, no item is omitted and no "more" suffix must
+// appear; one item over, exactly one must be reported omitted.
+func TestRenderDetailValue_NestedListMoreBoundary(t *testing.T) {
+	exact := make([]any, maxDetailListItems)
+	for i := range exact {
+		exact[i] = i
+	}
+	got := renderDetailValue(exact, 1)
+	if strings.Contains(got, "more") {
+		t.Errorf("renderDetailValue(exactly maxDetailListItems items) = %q, want no more-suffix", got)
+	}
+
+	over := make([]any, maxDetailListItems+1)
+	for i := range over {
+		over[i] = i
+	}
+	got = renderDetailValue(over, 1)
+	if !strings.Contains(got, "+1 more") {
+		t.Errorf("renderDetailValue(maxDetailListItems+1 items) = %q, want a +1 more suffix", got)
 	}
 }
 

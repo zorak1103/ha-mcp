@@ -74,7 +74,7 @@ func (h *EntityManageHandlers) buildEntityManageSchema() mcp.JSONSchema {
 				Description: "Operation to perform: get, update, delete",
 				Enum:        []string{"get", "update", "delete"},
 			},
-			"entity_id": {
+			attrEntityID: {
 				Type:        "string",
 				Description: "Entity ID (e.g., 'light.living_room'). Required for all actions.",
 			},
@@ -154,7 +154,7 @@ func (h *EntityManageHandlers) handleManageEntity(ctx context.Context, client ho
 }
 
 func (h *EntityManageHandlers) handleGetEntity(ctx context.Context, client homeassistant.Client, args map[string]any, format string) (*mcp.ToolsCallResult, error) {
-	entityID, ok := args["entity_id"].(string)
+	entityID, ok := args[attrEntityID].(string)
 	if !ok || entityID == "" {
 		return errorResult("entity_id is required for get action"), nil
 	}
@@ -179,7 +179,7 @@ func (h *EntityManageHandlers) handleGetEntity(ctx context.Context, client homea
 }
 
 func (h *EntityManageHandlers) handleUpdateEntity(ctx context.Context, client homeassistant.Client, args map[string]any, format string) (*mcp.ToolsCallResult, error) {
-	entityID, ok := args["entity_id"].(string)
+	entityID, ok := args[attrEntityID].(string)
 	if !ok || entityID == "" {
 		return errorResult("entity_id is required for update action"), nil
 	}
@@ -235,7 +235,7 @@ func (h *EntityManageHandlers) handleUpdateEntity(ctx context.Context, client ho
 }
 
 func (h *EntityManageHandlers) handleDeleteEntity(ctx context.Context, client homeassistant.Client, args map[string]any, format string) (*mcp.ToolsCallResult, error) {
-	entityID, ok := args["entity_id"].(string)
+	entityID, ok := args[attrEntityID].(string)
 	if !ok || entityID == "" {
 		return errorResult("entity_id is required for delete action"), nil
 	}
@@ -245,7 +245,7 @@ func (h *EntityManageHandlers) handleDeleteEntity(ctx context.Context, client ho
 	}
 
 	if format == formatJSON {
-		data, err := json.Marshal(map[string]any{"entity_id": entityID, "deleted": true})
+		data, err := json.Marshal(map[string]any{attrEntityID: entityID, "deleted": true})
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal result: %w", err)
 		}

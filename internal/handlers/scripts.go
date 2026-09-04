@@ -670,7 +670,7 @@ func (h *ScriptHandlers) handleExecute(ctx context.Context, client homeassistant
 	entityID, _ := normalizeScriptID(scriptID)
 
 	data := map[string]any{
-		"entity_id": entityID,
+		attrEntityID: entityID,
 	}
 
 	if variables, ok := args["variables"].(map[string]any); ok {
@@ -818,7 +818,7 @@ func extractEntityTargets(data map[string]any) []string {
 		return []string{}
 	}
 
-	entityIDVal, ok := data["entity_id"]
+	entityIDVal, ok := data[attrEntityID]
 	if !ok {
 		return []string{}
 	}

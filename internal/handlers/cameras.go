@@ -39,7 +39,7 @@ func RegisterCameraTools(registry *mcp.Registry) {
 					Description: "Action to perform: 'snapshot' (get current image) or 'stream' (get stream URL).",
 					Enum:        []string{cameraActionSnapshot, cameraActionStream},
 				},
-				"entity_id": {
+				attrEntityID: {
 					Type:        "string",
 					Description: "Camera entity ID (e.g., 'camera.front_door').",
 				},
@@ -50,7 +50,7 @@ func RegisterCameraTools(registry *mcp.Registry) {
 					Default:     "natural",
 				},
 			},
-			Required: []string{"action", "entity_id"},
+			Required: []string{"action", attrEntityID},
 		},
 	}, handler.HandleManageCamera)
 }
@@ -64,7 +64,7 @@ func (h *CameraHandlers) HandleManageCamera(ctx context.Context, client homeassi
 	}
 
 	// Validate entity_id
-	entityID, _ := args["entity_id"].(string)
+	entityID, _ := args[attrEntityID].(string)
 	if entityID == "" {
 		return errorResult("entity_id is required"), nil
 	}

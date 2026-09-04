@@ -205,6 +205,25 @@ func updatableFieldsDescription() string {
 // helperTypes contains metadata for all supported helper types.
 var helperTypes = buildHelperTypesRegistry()
 
+// helperEntityDomains is the set of every entity domain any helperTypes
+// entry creates entities in, derived the same way templateSubtypeDomains
+// (helpers_template_types.go) is derived from templateSubtypes - so a domain
+// newly given to a helper type is automatically covered here without anyone
+// having to remember to update a hand-maintained list, the exact drift that
+// left siren/valve (switch_as_x's other two target domains, alongside
+// cover/fan/light/lock) out of handleGetDetails' dispatch until finding G1.
+var helperEntityDomains = buildHelperEntityDomains()
+
+func buildHelperEntityDomains() map[string]bool {
+	m := make(map[string]bool, len(helperTypes))
+	for _, meta := range helperTypes {
+		for _, domain := range meta.validEntityDomains {
+			m[domain] = true
+		}
+	}
+	return m
+}
+
 // buildInputHelperTypesGroup returns metadata for the basic WS-backed input_* helpers.
 func buildInputHelperTypesGroup() map[string]helperTypeMetadata {
 	return map[string]helperTypeMetadata{
@@ -324,7 +343,7 @@ func buildSensorCalcHelperTypesGroup() map[string]helperTypeMetadata {
 			platform:           "threshold",
 			entityPrefix:       "binary_sensor",
 			supportedActions:   []string{},
-			requiredFields:     []string{"entity_id"},
+			requiredFields:     []string{attrEntityID},
 			optionalFields:     []string{"icon", "lower", "upper", "hysteresis", "device_class"},
 			validEntityDomains: []string{"binary_sensor"},
 		},
@@ -373,7 +392,7 @@ func buildSensorAggregateHelperTypesGroup() map[string]helperTypeMetadata {
 			platform:           platformStatistics,
 			entityPrefix:       "sensor",
 			supportedActions:   []string{},
-			requiredFields:     []string{"entity_id"},
+			requiredFields:     []string{attrEntityID},
 			optionalFields:     []string{"icon", "state_characteristic", "sampling_size", "max_age", "percentile", "precision"},
 			validEntityDomains: []string{"sensor"},
 			sourceEntities:     []sourceEntityConstraint{{field: attrEntityID, domains: []string{"sensor", "binary_sensor"}}},
@@ -382,7 +401,7 @@ func buildSensorAggregateHelperTypesGroup() map[string]helperTypeMetadata {
 			platform:           platformTrend,
 			entityPrefix:       "binary_sensor",
 			supportedActions:   []string{},
-			requiredFields:     []string{"entity_id"},
+			requiredFields:     []string{attrEntityID},
 			optionalFields:     []string{"icon", "min_gradient", "min_samples", "sample_duration", "max_samples", "invert"},
 			validEntityDomains: []string{"binary_sensor"},
 			sourceEntities:     []sourceEntityConstraint{{field: attrEntityID, domains: []string{"sensor", "counter"}}},
@@ -407,7 +426,7 @@ func buildSensorAggregateHelperTypesGroup() map[string]helperTypeMetadata {
 			platform:           platformFilter,
 			entityPrefix:       "sensor",
 			supportedActions:   []string{},
-			requiredFields:     []string{"entity_id", "filter"},
+			requiredFields:     []string{attrEntityID, "filter"},
 			optionalFields:     []string{"icon", "window_size", "radius", "time_constant", "lower_bound", "upper_bound", "precision"},
 			validEntityDomains: []string{"sensor"},
 			sourceEntities:     []sourceEntityConstraint{{field: attrEntityID, domains: []string{"sensor"}}},
@@ -449,7 +468,7 @@ func buildClimateHelperTypesGroup() map[string]helperTypeMetadata {
 			platform:           platformSwitchAsX,
 			entityPrefix:       "light",
 			supportedActions:   []string{},
-			requiredFields:     []string{"entity_id", "target_domain"},
+			requiredFields:     []string{attrEntityID, "target_domain"},
 			optionalFields:     []string{"icon", "invert"},
 			validEntityDomains: []string{"cover", "fan", "light", "lock", "siren", "valve"},
 			sourceEntities:     []sourceEntityConstraint{{field: attrEntityID, domains: []string{"switch"}}},
@@ -563,7 +582,7 @@ func (h *ConsolidatedHelperHandlers) manageHelperTool() mcp.Tool {
 			Description: fmt.Sprintf("Helper type (required for create) - see Enum for the full list of %d supported types", len(typeNames)),
 			Enum:        typeNames,
 		},
-		"entity_id": {
+		attrEntityID: {
 			Type:        "string",
 			Description: "Full entity ID (required for delete/get_details). Also required as source entity for threshold create.",
 		},
@@ -813,7 +832,7 @@ Actions by helper type:
 			Type:        "object",
 			Description: "Helper action parameters",
 			Properties: map[string]mcp.JSONSchema{
-				"entity_id": {
+				attrEntityID: {
 					Type:        "string",
 					Description: "Full entity ID of the helper",
 				},
@@ -850,7 +869,7 @@ Actions by helper type:
 					Items:       &mcp.JSONSchema{Type: "string"},
 				},
 			},
-			Required: []string{"entity_id", "action"},
+			Required: []string{attrEntityID, "action"},
 		},
 	}
 }
@@ -1221,7 +1240,7 @@ func predictConfigEntryEntityID(name string, config map[string]any, meta helperT
 }
 
 func (h *ConsolidatedHelperHandlers) handleUpdate(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	entityID, _ := args["entity_id"].(string)
+	entityID, _ := args[attrEntityID].(string)
 	if entityID == "" {
 		return errorResult("entity_id is required for update action"), nil
 	}
@@ -1618,7 +1637,7 @@ func updateFetchFailureHint(fetchErr error, entityID string) string {
 }
 
 func (h *ConsolidatedHelperHandlers) handleDelete(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	entityID, _ := args["entity_id"].(string)
+	entityID, _ := args[attrEntityID].(string)
 	if entityID == "" {
 		return errorResult("entity_id is required for delete action"), nil
 	}
@@ -1651,7 +1670,7 @@ func (h *ConsolidatedHelperHandlers) handleDelete(ctx context.Context, client ho
 }
 
 func (h *ConsolidatedHelperHandlers) handleGetDetails(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	entityID, _ := args["entity_id"].(string)
+	entityID, _ := args[attrEntityID].(string)
 	if entityID == "" {
 		return errorResult("entity_id is required for get_details action"), nil
 	}
@@ -1664,16 +1683,24 @@ func (h *ConsolidatedHelperHandlers) handleGetDetails(ctx context.Context, clien
 		return h.handleGetDetailsCounter(ctx, client, args)
 	case platformTimer:
 		return h.handleGetDetailsTimer(ctx, client, args)
-	case platformInputBoolean, platformInputNumber, platformInputText, platformInputSelect,
-		platformInputDatetime, platformInputButton, platformGroup, platformSensorEntity, platformBinarySensorEntity,
-		"climate", "humidifier", "select":
-		return h.handleGetDetailsGeneric(ctx, client, args, platform)
 	default:
-		// Entity domains created by the 15 new template_* subtypes (issue
-		// #206) are plain state-backed entities, same as climate/humidifier/
-		// select above - reuse templateSubtypeDomains rather than listing
-		// all 15 domains again here.
-		if templateSubtypeDomains[platform] {
+		// helperEntityDomains is derived from every helperTypes entry's
+		// validEntityDomains, so it can't drift out of sync with the domains
+		// helper types actually create entities in the way a hand-maintained
+		// list here did before (finding G1: siren/valve - switch_as_x's other
+		// two target domains alongside cover/fan/light/lock - were missing
+		// from the previous explicit case list, so get_details on those
+		// entities errored even though update/delete worked fine on them).
+		if helperEntityDomains[platform] {
+			// Deliberately does NOT call checkHelperOnlyDomain here, unlike
+			// update/delete: that guard exists to bound write blast radius
+			// (an update/delete on a non-helper entity mutates or deletes a
+			// real integration's entity), which a read has none of. Wiring it
+			// in would also newly reject get_details on ordinary light/cover/
+			// fan/lock entities that work today (widenedHelperOnlyDomains
+			// covers more than just the two domains any single review round
+			// has flagged), and would hard-fail a read on a transient entity
+			// registry fetch error. See CLAUDE.md's "API & Type Gotchas".
 			return h.handleGetDetailsGeneric(ctx, client, args, platform)
 		}
 		return errorResult(fmt.Sprintf("get_details is not supported for helper type: %s", platform)), nil
@@ -1681,7 +1708,7 @@ func (h *ConsolidatedHelperHandlers) handleGetDetails(ctx context.Context, clien
 }
 
 func (h *ConsolidatedHelperHandlers) handleGetDetailsSchedule(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	entityID, _ := args["entity_id"].(string)
+	entityID, _ := args[attrEntityID].(string)
 
 	state, err := client.GetState(ctx, entityID)
 	if err != nil {
@@ -1709,7 +1736,7 @@ func (h *ConsolidatedHelperHandlers) handleGetDetailsSchedule(ctx context.Contex
 }
 
 func (h *ConsolidatedHelperHandlers) handleGetDetailsCounter(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	entityID, _ := args["entity_id"].(string)
+	entityID, _ := args[attrEntityID].(string)
 
 	state, err := client.GetState(ctx, entityID)
 	if err != nil {
@@ -1717,7 +1744,7 @@ func (h *ConsolidatedHelperHandlers) handleGetDetailsCounter(ctx context.Context
 	}
 
 	details := map[string]any{
-		"entity_id":     state.EntityID,
+		attrEntityID:    state.EntityID,
 		"state":         state.State,
 		"friendly_name": state.Attributes["friendly_name"],
 	}
@@ -1749,7 +1776,7 @@ func (h *ConsolidatedHelperHandlers) handleGetDetailsCounter(ctx context.Context
 }
 
 func (h *ConsolidatedHelperHandlers) handleGetDetailsTimer(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	entityID, _ := args["entity_id"].(string)
+	entityID, _ := args[attrEntityID].(string)
 
 	state, err := client.GetState(ctx, entityID)
 	if err != nil {
@@ -1757,7 +1784,7 @@ func (h *ConsolidatedHelperHandlers) handleGetDetailsTimer(ctx context.Context, 
 	}
 
 	details := map[string]any{
-		"entity_id":     state.EntityID,
+		attrEntityID:    state.EntityID,
 		"state":         state.State,
 		"friendly_name": state.Attributes["friendly_name"],
 	}
@@ -1786,7 +1813,7 @@ func (h *ConsolidatedHelperHandlers) handleGetDetailsTimer(ctx context.Context, 
 }
 
 func (h *ConsolidatedHelperHandlers) handleGetDetailsGeneric(ctx context.Context, client homeassistant.Client, args map[string]any, helperType string) (*mcp.ToolsCallResult, error) {
-	entityID, _ := args["entity_id"].(string)
+	entityID, _ := args[attrEntityID].(string)
 
 	state, err := client.GetState(ctx, entityID)
 	if err != nil {
@@ -1795,9 +1822,12 @@ func (h *ConsolidatedHelperHandlers) handleGetDetailsGeneric(ctx context.Context
 
 	details := buildHelperDetails(state, helperType)
 
-	// Enrich with template config for template sensors/binary_sensors
-	if helperType == platformSensorEntity || helperType == platformBinarySensorEntity {
-		enrichConfigEntryOptions(ctx, client, entityID, details)
+	// Enrich with template config for template sensors/binary_sensors, plus
+	// the 15 template_* subtype domains from issue #206 (finding W5: without
+	// this, get_details on e.g. a template_light returned only its runtime
+	// attributes, not how it's actually configured).
+	if helperType == platformSensorEntity || helperType == platformBinarySensorEntity || templateSubtypeDomains[helperType] {
+		enrichConfigEntryOptions(ctx, client, entityID, helperType, details)
 	}
 
 	formatStr, _ := args["format"].(string)
@@ -1814,33 +1844,101 @@ func (h *ConsolidatedHelperHandlers) handleGetDetailsGeneric(ctx context.Context
 
 func buildHelperDetails(state *homeassistant.Entity, helperType string) map[string]any {
 	details := map[string]any{
-		"entity_id":     state.EntityID,
+		attrEntityID:    state.EntityID,
 		"state":         state.State,
 		"friendly_name": state.Attributes["friendly_name"],
 	}
 
-	switch helperType {
-	case platformInputBoolean:
-		addInputBooleanDetails(details, state)
-	case platformInputNumber:
-		addInputNumberDetails(details, state)
-	case platformInputText:
-		addInputTextDetails(details, state)
-	case platformInputSelect:
-		addInputSelectDetails(details, state)
-	case platformInputDatetime:
-		addInputDatetimeDetails(details, state)
-	case platformInputButton:
-		addInputButtonDetails(details, state)
-	case platformGroup:
-		addGroupDetails(details, state)
-	case platformSensorEntity:
-		addSensorDetails(details, state)
-	case platformBinarySensorEntity:
-		addBinarySensorDetails(details, state)
+	if builder, ok := helperDetailBuilders[helperType]; ok {
+		builder(details, state)
+	} else {
+		addGenericDetails(details, state)
 	}
 
 	return details
+}
+
+// helperDetailBuilders maps a helper type to its hand-tuned detail builder.
+// A type absent from this map falls back to addGenericDetails. Built from a
+// function (not a package-level literal) so it can be compared against
+// formatter.DedicatedDetailTypes() by TestHelperDetailBuilders_MatchDedicatedRenderers -
+// the drift between this switch and NaturalHelperFormatter.FormatHelperDetail's
+// switch (one silently ignoring helperType, one erroring on it) is what issue
+// #216 was filed for.
+var helperDetailBuilders = buildHelperDetailBuildersRegistry()
+
+func buildHelperDetailBuildersRegistry() map[string]func(map[string]any, *homeassistant.Entity) {
+	return map[string]func(map[string]any, *homeassistant.Entity){
+		platformInputBoolean:       addInputBooleanDetails,
+		platformInputNumber:        addInputNumberDetails,
+		platformInputText:          addInputTextDetails,
+		platformInputSelect:        addInputSelectDetails,
+		platformInputDatetime:      addInputDatetimeDetails,
+		platformInputButton:        addInputButtonDetails,
+		platformGroup:              addGroupDetails,
+		platformSensorEntity:       addSensorDetails,
+		platformBinarySensorEntity: addBinarySensorDetails,
+	}
+}
+
+// genericDetailSkipAttributes lists state attributes never surfaced by the
+// generic get_details fallback: friendly_name is already a top-level detail
+// key, supported_features is an opaque bitmask, and attribution is boilerplate
+// noise repeated across most HA entities.
+var genericDetailSkipAttributes = map[string]bool{
+	"friendly_name":      true,
+	"supported_features": true,
+	"attribution":        true,
+}
+
+// addGenericDetails copies every state attribute not on genericDetailSkipAttributes
+// into details. Used for domains without a dedicated add*Details builder
+// (climate, humidifier, select, and the 15 template_* subtype domains) so
+// get_details returns real content instead of just entity_id/state/friendly_name.
+func addGenericDetails(details map[string]any, state *homeassistant.Entity) {
+	for k, v := range state.Attributes {
+		if genericDetailSkipAttributes[k] {
+			continue
+		}
+		putDetail(details, k, v)
+	}
+}
+
+// putDetail writes value into details under key, applying issue #216's
+// collision policy so an attribute copy or template-config enrichment write
+// can never silently overwrite entity_id/state/friendly_name or another
+// already-set detail (finding C1): entity_id is renamed to "members",
+// mirroring addGroupDetails' existing convention for group helpers whose
+// entity_id state attribute IS their member list, not their own identity;
+// any other collision is stored under "attr_<key>" rather than overwriting.
+// putDetail writes value into details under key, applying issue #216's
+// collision policy so an attribute copy or template-config enrichment write
+// can never silently overwrite entity_id/state/friendly_name or another
+// already-set detail (finding C1): entity_id is renamed to "members",
+// mirroring addGroupDetails' existing convention for group helpers whose
+// entity_id state attribute IS their member list, not their own identity;
+// any other collision is stored under "attr_<key>" rather than overwriting.
+// A second review round's finding (finding W2): the "attr_<key>" fallback can
+// itself already be occupied by an attribute literally named that - which of
+// two colliding attributes wins was decided by Go's randomized map iteration
+// order in addGenericDetails. Once the first fallback is occupied, keep
+// advancing ("attr_" + previous target) until an unoccupied key is found -
+// terminates because target strictly grows and details is finite.
+func putDetail(details map[string]any, key string, value any) {
+	target := key
+	if key == attrEntityID {
+		target = "members"
+	}
+	if _, exists := details[target]; exists {
+		target = "attr_" + key
+	}
+	for {
+		if _, exists := details[target]; !exists {
+			break
+		}
+		target = "attr_" + target
+	}
+	details[target] = value
 }
 
 func addInputBooleanDetails(details map[string]any, state *homeassistant.Entity) {
@@ -1943,7 +2041,7 @@ func addInputButtonDetails(details map[string]any, state *homeassistant.Entity) 
 }
 
 func addGroupDetails(details map[string]any, state *homeassistant.Entity) {
-	if members, ok := state.Attributes["entity_id"]; ok {
+	if members, ok := state.Attributes[attrEntityID]; ok {
 		details["members"] = members
 	}
 	if all, ok := state.Attributes["all"]; ok {
@@ -1970,7 +2068,7 @@ func addBinarySensorDetails(details map[string]any, state *homeassistant.Entity)
 	if deviceClass, ok := state.Attributes["device_class"]; ok {
 		details["device_class"] = deviceClass
 	}
-	if sourceEntity, ok := state.Attributes["entity_id"]; ok {
+	if sourceEntity, ok := state.Attributes[attrEntityID]; ok {
 		details["source_entity"] = sourceEntity
 	}
 	if hysteresis, ok := state.Attributes["hysteresis"]; ok {
@@ -1983,7 +2081,7 @@ func addBinarySensorDetails(details map[string]any, state *homeassistant.Entity)
 
 // enrichConfigEntryOptions enriches details with config entry options for template helpers.
 // Gracefully degrades: if registry lookup fails or entity is not template-based, returns silently.
-func enrichConfigEntryOptions(ctx context.Context, client homeassistant.Client, entityID string, details map[string]any) {
+func enrichConfigEntryOptions(ctx context.Context, client homeassistant.Client, entityID, helperType string, details map[string]any) {
 	// Look up entity in registry
 	registry, err := client.GetEntityRegistry(ctx)
 	if err != nil {
@@ -2009,11 +2107,20 @@ func enrichConfigEntryOptions(ctx context.Context, client homeassistant.Client, 
 	if err != nil {
 		return // Graceful degradation
 	}
-
-	// Extract template options if present
-	if len(options) > 0 {
-		addTemplateOptionsToDetails(options, details)
+	if len(options) == 0 {
+		return
 	}
+
+	// templateSubtypeDomains and {sensor, binary_sensor} are disjoint (the
+	// 15 template_* subtypes from issue #206 own alarm_control_panel/button/
+	// cover/device_tracker/event/fan/image/light/lock/number/select/switch/
+	// update/vacuum/weather - never sensor or binary_sensor), so this is an
+	// either/or, not an ordering-sensitive check.
+	if templateSubtypeDomains[helperType] {
+		addTemplateSubtypeOptionsToDetails(helperType, options, details)
+		return
+	}
+	addTemplateOptionsToDetails(options, details)
 }
 
 // addTemplateOptionsToDetails extracts template options from config entry Options.
@@ -2043,12 +2150,39 @@ func addTemplateOptionsToDetails(options, details map[string]any) {
 	}
 }
 
+// addTemplateSubtypeOptionsToDetails copies a template_* subtype's (issue
+// #206) Options Flow config into details, driven by the same
+// resolveTemplateFieldsForDomain table update() uses - so the detail output
+// can't drift from what update actually accepts. Every tplTemplate-kind
+// field's detail key gets a "_template" suffix (mirroring
+// addTemplateOptionsToDetails' state -> state_template convention above),
+// since nine of the fifteen subtypes reuse the arg name "state" for their
+// Jinja template: writing it unsuffixed would silently overwrite the
+// entity's real runtime state with a template string - issue #216's C1
+// collision, reintroduced inside this very fix. Every write goes through
+// putDetail as a safety net for any other, non-state collision.
+func addTemplateSubtypeOptionsToDetails(entityDomain string, options, details map[string]any) {
+	putDetail(details, "config_entry_type", platformTemplate)
+
+	for _, field := range resolveTemplateFieldsForDomain(entityDomain) {
+		val, ok := options[field.configKey()]
+		if !ok || val == nil {
+			continue
+		}
+		key := field.arg
+		if field.kind == tplTemplate {
+			key += "_template"
+		}
+		putDetail(details, key, val)
+	}
+}
+
 // =============================================================================
 // Handler: helper_action
 // =============================================================================
 
 func (h *ConsolidatedHelperHandlers) handleHelperAction(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	entityID, _ := args["entity_id"].(string)
+	entityID, _ := args[attrEntityID].(string)
 	if entityID == "" {
 		return errorResult("entity_id is required"), nil
 	}
@@ -2146,7 +2280,7 @@ func (h *ConsolidatedHelperHandlers) handleToggle(ctx context.Context, client ho
 		return errorResult("toggle action is only supported for input_boolean helpers"), nil
 	}
 
-	serviceData := map[string]any{"entity_id": entityID}
+	serviceData := map[string]any{attrEntityID: entityID}
 	if _, err := client.CallService(ctx, domain, "toggle", serviceData); err != nil {
 		return errorResult(fmt.Sprintf("Error toggling %s: %v", entityID, err)), nil
 	}
@@ -2161,7 +2295,7 @@ func (h *ConsolidatedHelperHandlers) handleSet(ctx context.Context, client homea
 	}
 
 	var serviceDomain, serviceName string
-	serviceData := map[string]any{"entity_id": entityID}
+	serviceData := map[string]any{attrEntityID: entityID}
 
 	switch domain {
 	case platformInputNumber:
@@ -2201,7 +2335,7 @@ func (h *ConsolidatedHelperHandlers) handleCounterAction(ctx context.Context, cl
 		return errorResult(fmt.Sprintf("%s action is only supported for counter helpers", action)), nil
 	}
 
-	serviceData := map[string]any{"entity_id": entityID}
+	serviceData := map[string]any{attrEntityID: entityID}
 	if _, err := client.CallService(ctx, platformCounter, action, serviceData); err != nil {
 		return errorResult(fmt.Sprintf("Error %sing counter: %v", action, err)), nil
 	}
@@ -2211,7 +2345,7 @@ func (h *ConsolidatedHelperHandlers) handleCounterAction(ctx context.Context, cl
 
 //nolint:unparam // Error return follows handler interface pattern; errors wrapped in result
 func (h *ConsolidatedHelperHandlers) handleReset(ctx context.Context, client homeassistant.Client, entityID, domain string) (*mcp.ToolsCallResult, error) {
-	serviceData := map[string]any{"entity_id": entityID}
+	serviceData := map[string]any{attrEntityID: entityID}
 
 	switch domain {
 	case platformCounter:
@@ -2235,7 +2369,7 @@ func (h *ConsolidatedHelperHandlers) handleTimerStart(ctx context.Context, clien
 		return errorResult("start action is only supported for timer helpers"), nil
 	}
 
-	serviceData := map[string]any{"entity_id": entityID}
+	serviceData := map[string]any{attrEntityID: entityID}
 	if duration, ok := args["duration"].(string); ok && duration != "" {
 		serviceData["duration"] = duration
 	}
@@ -2253,7 +2387,7 @@ func (h *ConsolidatedHelperHandlers) handleTimerAction(ctx context.Context, clie
 		return errorResult(fmt.Sprintf("%s action is only supported for timer helpers", action)), nil
 	}
 
-	serviceData := map[string]any{"entity_id": entityID}
+	serviceData := map[string]any{attrEntityID: entityID}
 	if _, err := client.CallService(ctx, platformTimer, action, serviceData); err != nil {
 		return errorResult(fmt.Sprintf("Error %sing timer: %v", action[:len(action)-1], err)), nil
 	}
@@ -2272,8 +2406,8 @@ func (h *ConsolidatedHelperHandlers) handleTimerChange(ctx context.Context, clie
 	}
 
 	serviceData := map[string]any{
-		"entity_id": entityID,
-		"duration":  duration,
+		attrEntityID: entityID,
+		"duration":   duration,
 	}
 
 	if _, err := client.CallService(ctx, platformTimer, "change", serviceData); err != nil {
@@ -2289,7 +2423,7 @@ func (h *ConsolidatedHelperHandlers) handlePress(ctx context.Context, client hom
 		return errorResult("press action is only supported for input_button helpers"), nil
 	}
 
-	serviceData := map[string]any{"entity_id": entityID}
+	serviceData := map[string]any{attrEntityID: entityID}
 	if _, err := client.CallService(ctx, platformInputButton, "press", serviceData); err != nil {
 		return errorResult(fmt.Sprintf("Error pressing button: %v", err)), nil
 	}
@@ -2308,8 +2442,8 @@ func (h *ConsolidatedHelperHandlers) handleSelect(ctx context.Context, client ho
 	}
 
 	serviceData := map[string]any{
-		"entity_id": entityID,
-		"option":    option,
+		attrEntityID: entityID,
+		"option":     option,
 	}
 
 	if _, err := client.CallService(ctx, platformInputSelect, "select_option", serviceData); err != nil {
@@ -2338,8 +2472,8 @@ func (h *ConsolidatedHelperHandlers) handleSetOptions(ctx context.Context, clien
 	}
 
 	serviceData := map[string]any{
-		"entity_id": entityID,
-		"options":   strOptions,
+		attrEntityID: entityID,
+		"options":    strOptions,
 	}
 
 	if _, err := client.CallService(ctx, platformInputSelect, "set_options", serviceData); err != nil {
@@ -2395,8 +2529,8 @@ func (h *ConsolidatedHelperHandlers) handleGroupEntities(ctx context.Context, cl
 	}
 
 	serviceData := map[string]any{
-		"entity_id": entityID,
-		key:         entities,
+		attrEntityID: entityID,
+		key:          entities,
 	}
 
 	if _, err := client.CallService(ctx, platformGroup, "set", serviceData); err != nil {
@@ -2686,7 +2820,7 @@ func buildThresholdConfig(config, args map[string]any) error {
 	r.num("upper")
 	r.num("hysteresis")
 	r.str("device_class")
-	r.strID("entity_id")
+	r.strID(attrEntityID)
 	return r.err()
 }
 
@@ -2790,7 +2924,7 @@ func checkSourceEntityDeviceClass(ctx context.Context, client homeassistant.Clie
 	state, err := client.GetState(ctx, sourceEntityID)
 	if err != nil {
 		slog.WarnContext(ctx, "source-entity device_class validation skipped: state fetch failed",
-			"entity_id", sourceEntityID, "error", err)
+			attrEntityID, sourceEntityID, "error", err)
 		return nil //nolint:nilerr // fetch failure degrades to unchecked, see checkSourceEntityDomain's doc comment
 	}
 	deviceClass, _ := state.Attributes["device_class"].(string)
@@ -3019,7 +3153,7 @@ func checkUpdateSourceEntityDomain(ctx context.Context, client homeassistant.Cli
 		// fetch is otherwise indistinguishable from a passing check - log it
 		// so the gap is at least visible.
 		slog.WarnContext(ctx, "source-domain update validation skipped: entity registry fetch failed",
-			"entity_id", entityID, "error", err)
+			attrEntityID, entityID, "error", err)
 		return nil //nolint:nilerr // registry lookup failure degrades to an unchecked update, see doc comment above
 	}
 	for _, entry := range entries {
@@ -3032,7 +3166,7 @@ func checkUpdateSourceEntityDomain(ctx context.Context, client homeassistant.Cli
 		}
 		return checkSourceEntityDomain(ctx, client, entry.Platform, updatableSourceEntities(meta.sourceEntities), args)
 	}
-	slog.WarnContext(ctx, "source-domain update validation skipped: entity not found in registry", "entity_id", entityID)
+	slog.WarnContext(ctx, "source-domain update validation skipped: entity not found in registry", attrEntityID, entityID)
 	return nil
 }
 
@@ -3292,7 +3426,7 @@ func parseTimeBlock(block any) map[string]string {
 // buildScheduleDetails creates a formatted details object for schedule entities.
 func buildScheduleDetails(state *homeassistant.Entity, timeBlocks map[string][]map[string]string) map[string]any {
 	details := map[string]any{
-		"entity_id":     state.EntityID,
+		attrEntityID:    state.EntityID,
 		"state":         state.State,
 		"friendly_name": state.Attributes["friendly_name"],
 	}
