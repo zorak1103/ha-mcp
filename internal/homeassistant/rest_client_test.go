@@ -109,6 +109,40 @@ func TestNewRESTClientWithConfig(t *testing.T) {
 	}
 }
 
+// TestNewRESTClient_UsesDedicatedTransport guards against issue #227: every
+// RESTClient must own a private *http.Transport rather than implicitly
+// falling back to the shared, package-global http.DefaultTransport.
+// httptest.Server.Close() unconditionally calls
+// http.DefaultTransport.CloseIdleConnections() as a courtesy to callers -
+// if RESTClient shared that transport, an unrelated httptest server
+// (including ones spun up by other parallel subtests/tests in the same
+// binary) closing down could yank idle connections out from under an
+// entirely different, still-live RESTClient.
+func TestNewRESTClient_UsesDedicatedTransport(t *testing.T) {
+	t.Parallel()
+
+	client := NewRESTClient("http://localhost:8123", "token")
+
+	transport, ok := client.httpClient.Transport.(*http.Transport)
+	if !ok || transport == nil {
+		t.Fatalf("httpClient.Transport = %#v, want a non-nil *http.Transport", client.httpClient.Transport)
+	}
+
+	if defaultTransport, ok := http.DefaultTransport.(*http.Transport); ok && transport == defaultTransport {
+		t.Fatal("httpClient.Transport must not be the shared http.DefaultTransport")
+	}
+
+	other := NewRESTClient("http://localhost:8124", "token")
+	otherTransport, ok := other.httpClient.Transport.(*http.Transport)
+	if !ok || otherTransport == nil {
+		t.Fatalf("second client's httpClient.Transport = %#v, want a non-nil *http.Transport", other.httpClient.Transport)
+	}
+
+	if transport == otherTransport {
+		t.Fatal("two RESTClients must not share the same *http.Transport instance")
+	}
+}
+
 func TestRESTClient_DeleteAutomation(t *testing.T) {
 	t.Parallel()
 
