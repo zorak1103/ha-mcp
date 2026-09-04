@@ -404,7 +404,7 @@ func (s *TemplateHelperIntegrationTestSuite) TestTemplateSensorUpdate() {
 		Config: map[string]any{
 			"name":                templateName,
 			"state":               "{{ states('" + sourceEntityID + "') | float }}",
-			"unit_of_measurement": "units",
+			"unit_of_measurement": "°C",
 			"device_class":        "temperature",
 		},
 	}
@@ -440,7 +440,7 @@ func (s *TemplateHelperIntegrationTestSuite) TestTemplateSensorUpdate() {
 		s.Equal("temperature", deviceClass, "Device class should be preserved")
 	}
 	if uom, ok := entity.Attributes["unit_of_measurement"].(string); ok {
-		s.Equal("units", uom, "Unit of measurement should be preserved")
+		s.Equal("°C", uom, "Unit of measurement should be preserved")
 	}
 
 	// Cleanup
@@ -449,7 +449,12 @@ func (s *TemplateHelperIntegrationTestSuite) TestTemplateSensorUpdate() {
 }
 
 func (s *TemplateHelperIntegrationTestSuite) TestTemplateSensorUpdatePartial() {
-	// Test partial update (only change device_class, preserve state template)
+	// Test partial update (change device_class + unit_of_measurement together,
+	// preserve state template). A device_class-only update isn't viable here:
+	// HA's template sensor schema doesn't expose unit_of_measurement at all for
+	// percentage-native classes like "battery"/"humidity" (the unit is implied),
+	// so submitting one always fails as an unclaimed field - there is no pair of
+	// device classes that both accept an explicit unit and share the same one.
 	sourceName := GenerateTestID("tmpl_part_src")
 	sourceEntityID := BuildEntityID("input_number", sourceName)
 	templateName := GenerateTestID("tmpl_partial")
@@ -483,7 +488,7 @@ func (s *TemplateHelperIntegrationTestSuite) TestTemplateSensorUpdatePartial() {
 		Config: map[string]any{
 			"name":                templateName,
 			"state":               "{{ states('" + sourceEntityID + "') | float + 10 }}",
-			"unit_of_measurement": "units",
+			"unit_of_measurement": "°C",
 			"device_class":        "temperature",
 		},
 	}
@@ -495,11 +500,13 @@ func (s *TemplateHelperIntegrationTestSuite) TestTemplateSensorUpdatePartial() {
 	s.Require().NoError(err, "Template sensor did not appear")
 	s.NotNil(entity)
 
-	// Update only device_class (partial update should preserve state template)
+	// Update only device_class + unit_of_measurement (partial update should
+	// preserve state template)
 	updateConfig := homeassistant.HelperConfig{
 		Platform: "template",
 		Config: map[string]any{
-			"device_class": "power",
+			"device_class":        "power",
+			"unit_of_measurement": "W",
 		},
 	}
 
@@ -519,9 +526,9 @@ func (s *TemplateHelperIntegrationTestSuite) TestTemplateSensorUpdatePartial() {
 		s.Equal("power", deviceClass, "Device class should be updated to power")
 	}
 
-	// Verify unit_of_measurement was preserved
+	// Verify unit_of_measurement was updated
 	if uom, ok := entity.Attributes["unit_of_measurement"].(string); ok {
-		s.Equal("units", uom, "Unit of measurement should be preserved")
+		s.Equal("W", uom, "Unit of measurement should be updated to W")
 	}
 
 	// Cleanup
