@@ -3,6 +3,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -570,6 +571,64 @@ func TestManageHelper_SwitchAsX_UsesRegistryResolvedEntityID(t *testing.T) {
 				}
 			},
 			wantContains: []string{"created", "light.test_switch"},
+		},
+	}
+
+	handler := NewConsolidatedHelperHandlers()
+	runHandlerTestCases(t, tests, handler.handleManageHelper)
+}
+
+// TestManageHelper_SwitchAsX_IconUsesResolvedEntity kills mutation
+// survivors on createConfigEntryHelper's icon guard (`hasIcon && icon !=
+// ""`): a non-empty icon must trigger the entity-registry update using the
+// already-resolved id, and an explicitly empty icon must skip it entirely.
+func TestManageHelper_SwitchAsX_IconUsesResolvedEntity(t *testing.T) {
+	tests := []handlerTestCase{
+		{
+			name: "create switch_as_x with a non-empty icon sets it on the resolved entity",
+			args: map[string]any{
+				"action":        "create",
+				"type":          "switch_as_x",
+				"id":            "test_switch",
+				"name":          "Test Switch as Light",
+				"entity_id":     "switch.outlet",
+				"target_domain": "light",
+				"icon":          "mdi:lightbulb",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.CreateHelperEntityFn = func(context.Context, homeassistant.HelperConfig) (string, error) {
+					return "light.actual_wrapped_outlet", nil
+				}
+				m.UpdateEntityRegistryEntryFn = func(_ context.Context, entityID string, cfg homeassistant.EntityRegistryUpdateConfig) (*homeassistant.EntityRegistryEntry, error) {
+					if entityID != "light.actual_wrapped_outlet" || cfg.Icon == nil || *cfg.Icon != "mdi:lightbulb" {
+						return nil, errors.New("unexpected icon update call")
+					}
+					return nil, errors.New("icon-update-called")
+				}
+			},
+			wantError:    true,
+			wantContains: []string{"icon-update-called"},
+		},
+		{
+			name: "create switch_as_x with an explicitly empty icon never touches the entity registry",
+			args: map[string]any{
+				"action":        "create",
+				"type":          "switch_as_x",
+				"id":            "test_switch",
+				"name":          "Test Switch as Light",
+				"entity_id":     "switch.outlet",
+				"target_domain": "light",
+				"icon":          "",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.CreateHelperEntityFn = func(context.Context, homeassistant.HelperConfig) (string, error) {
+					return "light.actual_wrapped_outlet", nil
+				}
+				m.UpdateEntityRegistryEntryFn = func(context.Context, string, homeassistant.EntityRegistryUpdateConfig) (*homeassistant.EntityRegistryEntry, error) {
+					return nil, errors.New("icon update should not have been called for an empty icon")
+				}
+			},
+			wantContains: []string{"created", "light.actual_wrapped_outlet"},
 		},
 	}
 
