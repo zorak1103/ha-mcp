@@ -58,7 +58,7 @@ var templateSubtypeCases = []templateSubtypeCase{
 		extraArgs: func(string) map[string]any {
 			return map[string]any{"state": "{{ 'disarmed' }}"}
 		},
-		updateArg: func(actionTargetEntityID string) (string, any) { return "code_arm_required", false },
+		updateArg: func(string) (string, any) { return "code_arm_required", false },
 	},
 	{
 		helperType: "template_button",
@@ -66,7 +66,7 @@ var templateSubtypeCases = []templateSubtypeCase{
 		extraArgs: func(actionTargetEntityID string) map[string]any {
 			return map[string]any{"press": toggleAction(actionTargetEntityID)}
 		},
-		updateArg: func(actionTargetEntityID string) (string, any) { return "availability", "{{ true }}" },
+		updateArg: func(string) (string, any) { return "availability", "{{ true }}" },
 	},
 	{
 		helperType: "template_cover",
@@ -91,7 +91,7 @@ var templateSubtypeCases = []templateSubtypeCase{
 		extraArgs: func(string) map[string]any {
 			return map[string]any{"in_zones": "{{ 'home' }}"}
 		},
-		updateArg: func(actionTargetEntityID string) (string, any) { return "latitude", "{{ 48.0 }}" },
+		updateArg: func(string) (string, any) { return "latitude", "{{ 48.0 }}" },
 	},
 	{
 		helperType: "template_event",
@@ -102,7 +102,7 @@ var templateSubtypeCases = []templateSubtypeCase{
 				"event_types": "{{ ['my_event'] }}",
 			}
 		},
-		updateArg: func(actionTargetEntityID string) (string, any) { return "event_type", "{{ 'updated_event' }}" },
+		updateArg: func(string) (string, any) { return "event_type", "{{ 'updated_event' }}" },
 	},
 	{
 		helperType: "template_fan",
@@ -114,7 +114,7 @@ var templateSubtypeCases = []templateSubtypeCase{
 				"turn_off": toggleAction(actionTargetEntityID),
 			}
 		},
-		updateArg: func(actionTargetEntityID string) (string, any) { return "speed_count", 5 },
+		updateArg: func(string) (string, any) { return "speed_count", 5 },
 	},
 	{
 		helperType: "template_image",
@@ -122,7 +122,7 @@ var templateSubtypeCases = []templateSubtypeCase{
 		extraArgs: func(string) map[string]any {
 			return map[string]any{"url": "{{ 'https://example.com/image.png' }}"}
 		},
-		updateArg: func(actionTargetEntityID string) (string, any) { return "verify_ssl", false },
+		updateArg: func(string) (string, any) { return "verify_ssl", false },
 	},
 	{
 		helperType: "template_light",
@@ -134,7 +134,7 @@ var templateSubtypeCases = []templateSubtypeCase{
 				"turn_off": toggleAction(actionTargetEntityID),
 			}
 		},
-		updateArg: func(actionTargetEntityID string) (string, any) { return "level", "{{ 100 }}" },
+		updateArg: func(string) (string, any) { return "level", "{{ 100 }}" },
 	},
 	{
 		helperType: "template_lock",
@@ -148,7 +148,7 @@ var templateSubtypeCases = []templateSubtypeCase{
 		},
 		// "lock_code_format" renames to "code_format" - regression target,
 		// same reason as template_cover's "set_position" above.
-		updateArg: func(actionTargetEntityID string) (string, any) { return "lock_code_format", "{{ 'number' }}" },
+		updateArg: func(string) (string, any) { return "lock_code_format", "{{ 'number' }}" },
 	},
 	{
 		helperType: "template_number",
@@ -159,7 +159,7 @@ var templateSubtypeCases = []templateSubtypeCase{
 				"set_value": toggleAction(actionTargetEntityID),
 			}
 		},
-		updateArg: func(actionTargetEntityID string) (string, any) { return "step", 2 },
+		updateArg: func(string) (string, any) { return "step", 2 },
 	},
 	{
 		helperType: "template_select",
@@ -172,7 +172,7 @@ var templateSubtypeCases = []templateSubtypeCase{
 		},
 		// "options_template" renames to "options" - regression target, same
 		// reason as template_cover's "set_position" above.
-		updateArg: func(actionTargetEntityID string) (string, any) { return "options_template", "{{ ['a', 'b', 'c'] }}" },
+		updateArg: func(string) (string, any) { return "options_template", "{{ ['a', 'b', 'c'] }}" },
 	},
 	{
 		helperType: "template_switch",
@@ -183,7 +183,7 @@ var templateSubtypeCases = []templateSubtypeCase{
 		// "state" renames to "value_template" for this subtype only -
 		// regression target, same reason as template_cover's "set_position"
 		// above.
-		updateArg: func(actionTargetEntityID string) (string, any) { return "state", "{{ 'on' }}" },
+		updateArg: func(string) (string, any) { return "state", "{{ 'on' }}" },
 	},
 	{
 		helperType: "template_update",
@@ -194,7 +194,7 @@ var templateSubtypeCases = []templateSubtypeCase{
 				"latest_version":    "{{ '1.0' }}",
 			}
 		},
-		updateArg: func(actionTargetEntityID string) (string, any) { return "title", "{{ 'v2' }}" },
+		updateArg: func(string) (string, any) { return "title", "{{ 'v2' }}" },
 	},
 	{
 		helperType: "template_vacuum",
@@ -207,7 +207,7 @@ var templateSubtypeCases = []templateSubtypeCase{
 		},
 		// "fan_speed_list" renames to "fan_speeds" - regression target,
 		// same reason as template_cover's "set_position" above.
-		updateArg: func(actionTargetEntityID string) (string, any) { return "fan_speed_list", []any{"low", "high"} },
+		updateArg: func(string) (string, any) { return "fan_speed_list", []any{"low", "high"} },
 	},
 	{
 		helperType: "template_weather",
@@ -219,7 +219,7 @@ var templateSubtypeCases = []templateSubtypeCase{
 				"temperature": "{{ 20 }}",
 			}
 		},
-		updateArg: func(actionTargetEntityID string) (string, any) { return "forecast_daily", "{{ [] }}" },
+		updateArg: func(string) (string, any) { return "forecast_daily", "{{ [] }}" },
 	},
 }
 
