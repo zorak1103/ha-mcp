@@ -546,6 +546,48 @@ func TestSanitizeDisplayValue(t *testing.T) {
 	}
 }
 
+// TestSentenceCaseKey pins a second review round's finding: sentenceCaseKey
+// must sanitize CR/LF the same way sanitizeDisplayValue already does for
+// values, since formatGenericDetail emits its result directly into a
+// line-oriented "%s: %s\n" natural-format line - an unsanitized key like
+// "note\nState" would otherwise forge an extra "State: ..." line the same
+// way an unsanitized value could.
+func TestSentenceCaseKey(t *testing.T) {
+	tests := []struct {
+		name     string
+		key      string
+		expected string
+	}{
+		{
+			name:     "underscore replaced and first rune upper-cased",
+			key:      "current_temperature",
+			expected: "Current temperature",
+		},
+		{
+			name:     "newline forging an additional line is collapsed",
+			key:      "note\nState",
+			expected: "Note State",
+		},
+		{
+			name:     "carriage return collapsed",
+			key:      "note\r\nState",
+			expected: "Note State",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := sentenceCaseKey(tt.key)
+			if result != tt.expected {
+				t.Errorf("sentenceCaseKey(%q) = %q, want %q", tt.key, result, tt.expected)
+			}
+			if strings.Contains(result, "\n") || strings.Contains(result, "\r") {
+				t.Errorf("sentenceCaseKey(%q) = %q, must not contain raw newlines", tt.key, result)
+			}
+		})
+	}
+}
+
 // TestTruncateRunes pins rune-safe truncation (not byte-slicing, which can split
 // a multi-byte rune and corrupt output).
 func TestTruncateRunes(t *testing.T) {

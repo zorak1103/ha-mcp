@@ -609,6 +609,45 @@ func TestNaturalHelperFormatter_FormatHelperDetail_GenericFallback_SanitizesValu
 	}
 }
 
+// TestNaturalHelperFormatter_FormatHelperDetail_GenericFallback_SanitizesKeys
+// pins a second review round's finding: formatGenericDetail emits
+// sentenceCaseKey(k) directly into a "%s: %s\n" line without sanitizing the
+// key, while the value on the same line already goes through
+// sanitizeDisplayValue. An attribute key containing a newline (e.g. from an
+// integration or template-provided attribute) must not be able to forge an
+// extra "Key: value" line in the natural-format response - the same
+// line-injection guarantee sanitizeDisplayValue already gives values.
+func TestNaturalHelperFormatter_FormatHelperDetail_GenericFallback_SanitizesKeys(t *testing.T) {
+	t.Parallel()
+
+	f := NewNaturalHelperFormatter()
+
+	detail := map[string]any{
+		"entity_id":     "select.mode",
+		"friendly_name": "Mode",
+		"state":         "eco",
+		"note\nForged":  "attacker-controlled",
+	}
+
+	result, err := f.FormatHelperDetail(context.Background(), "select", detail)
+	if err != nil {
+		t.Fatalf("FormatHelperDetail(select) error = %v, want nil", err)
+	}
+
+	if strings.Contains(result, "\nForged:") {
+		t.Errorf("FormatHelperDetail(select) = %q, an attribute key must not be able to forge a standalone additional line", result)
+	}
+	if !strings.Contains(result, "Note Forged: attacker-controlled") {
+		t.Errorf("FormatHelperDetail(select) = %q, want sanitized single-line key rendered on one line", result)
+	}
+
+	lines := strings.Split(result, "\n")
+	wantLines := 3 // header, State, Note Forged
+	if len(lines) != wantLines {
+		t.Errorf("FormatHelperDetail(select) produced %d lines %q, want %d - a forged key must not add a line", len(lines), lines, wantLines)
+	}
+}
+
 // TestNaturalHelperFormatter_FormatHelperDetail_GenericFallback_ParensSurvive
 // documents that formatDetailValue's sanitization is deliberately narrower
 // than sanitizeDisplayName's: it strips newlines but not parentheses, since

@@ -1692,6 +1692,15 @@ func (h *ConsolidatedHelperHandlers) handleGetDetails(ctx context.Context, clien
 		// from the previous explicit case list, so get_details on those
 		// entities errored even though update/delete worked fine on them).
 		if helperEntityDomains[platform] {
+			// Deliberately does NOT call checkHelperOnlyDomain here, unlike
+			// update/delete: that guard exists to bound write blast radius
+			// (an update/delete on a non-helper entity mutates or deletes a
+			// real integration's entity), which a read has none of. Wiring it
+			// in would also newly reject get_details on ordinary light/cover/
+			// fan/lock entities that work today (widenedHelperOnlyDomains
+			// covers more than just the two domains any single review round
+			// has flagged), and would hard-fail a read on a transient entity
+			// registry fetch error. See CLAUDE.md's "API & Type Gotchas".
 			return h.handleGetDetailsGeneric(ctx, client, args, platform)
 		}
 		return errorResult(fmt.Sprintf("get_details is not supported for helper type: %s", platform)), nil
@@ -1902,6 +1911,19 @@ func addGenericDetails(details map[string]any, state *homeassistant.Entity) {
 // mirroring addGroupDetails' existing convention for group helpers whose
 // entity_id state attribute IS their member list, not their own identity;
 // any other collision is stored under "attr_<key>" rather than overwriting.
+// putDetail writes value into details under key, applying issue #216's
+// collision policy so an attribute copy or template-config enrichment write
+// can never silently overwrite entity_id/state/friendly_name or another
+// already-set detail (finding C1): entity_id is renamed to "members",
+// mirroring addGroupDetails' existing convention for group helpers whose
+// entity_id state attribute IS their member list, not their own identity;
+// any other collision is stored under "attr_<key>" rather than overwriting.
+// A second review round's finding (finding W2): the "attr_<key>" fallback can
+// itself already be occupied by an attribute literally named that - which of
+// two colliding attributes wins was decided by Go's randomized map iteration
+// order in addGenericDetails. Once the first fallback is occupied, keep
+// advancing ("attr_" + previous target) until an unoccupied key is found -
+// terminates because target strictly grows and details is finite.
 func putDetail(details map[string]any, key string, value any) {
 	target := key
 	if key == attrEntityID {
@@ -1909,6 +1931,12 @@ func putDetail(details map[string]any, key string, value any) {
 	}
 	if _, exists := details[target]; exists {
 		target = "attr_" + key
+	}
+	for {
+		if _, exists := details[target]; !exists {
+			break
+		}
+		target = "attr_" + target
 	}
 	details[target] = value
 }

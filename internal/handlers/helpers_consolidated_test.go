@@ -4264,6 +4264,63 @@ func TestBuildHelperDetails_GenericFallback_EntityIDCollision(t *testing.T) {
 	}
 }
 
+// TestPutDetail_SecondCollision_LoopsPastOccupiedFallback pins the fix for a
+// second review round's finding: putDetail's fallback target ("attr_<key>")
+// can itself already be occupied by an attribute literally named that, and a
+// single occupancy check silently drops one of the two values depending on
+// Go's randomized map iteration order. Calling putDetail directly (rather
+// than through addGenericDetails, whose iteration order can't be controlled
+// from a test) pins the exact collision chain regardless of order: seeding
+// "state" first (the pre-existing detail) means the incoming "state" attribute
+// collides into "attr_state", and a second "attr_state" attribute must then
+// advance past that to "attr_attr_state" rather than overwriting it.
+func TestPutDetail_SecondCollision_LoopsPastOccupiedFallback(t *testing.T) {
+	t.Parallel()
+
+	// Order matters for the bug: "attr_state" must occupy the fallback slot
+	// BEFORE the "state" attribute collides into it, matching the case where
+	// Go's randomized map iteration in addGenericDetails visits attr_state
+	// first. With a single occupancy check, the second putDetail call simply
+	// overwrites the first attribute's value at "attr_state" instead of
+	// advancing further.
+	details := map[string]any{"state": "running"}
+	putDetail(details, "attr_state", "colliding-attr_state-attr")
+	putDetail(details, "state", "colliding-state-attr")
+
+	if details["state"] != "running" {
+		t.Errorf("details[state] = %v, want the pre-seeded runtime state preserved", details["state"])
+	}
+	if details["attr_state"] != "colliding-attr_state-attr" {
+		t.Errorf("details[attr_state] = %v, want the attr_state attribute preserved, not overwritten by the later state collision", details["attr_state"])
+	}
+	if details["attr_attr_state"] != "colliding-state-attr" {
+		t.Errorf("details[attr_attr_state] = %v, want the state collision to advance past the occupied fallback instead of overwriting it", details["attr_attr_state"])
+	}
+}
+
+// TestPutDetail_EntityIDCollision_FallbackNamingUnchanged pins that fixing the
+// second-collision case above did not change the existing entity_id -> members
+// -> attr_entity_id naming for the single-collision case (a naive "loop from
+// target" fix that advances from "members" instead of from "attr_"+key would
+// silently rename this to attr_members).
+func TestPutDetail_EntityIDCollision_FallbackNamingUnchanged(t *testing.T) {
+	t.Parallel()
+
+	details := map[string]any{"entity_id": "light.my_group", "members": "pre-existing-members-value"}
+	putDetail(details, "entity_id", []any{"light.living_room", "light.kitchen"})
+
+	if details["entity_id"] != "light.my_group" {
+		t.Errorf("details[entity_id] = %v, want the real entity_id preserved", details["entity_id"])
+	}
+	if details["members"] != "pre-existing-members-value" {
+		t.Errorf("details[members] = %v, want the pre-existing members detail preserved", details["members"])
+	}
+	got, ok := details["attr_entity_id"].([]any)
+	if !ok || len(got) != 2 {
+		t.Errorf("details[attr_entity_id] = %v, want the entity_id attribute rescued here (unchanged fallback naming)", details["attr_entity_id"])
+	}
+}
+
 // TestManageHelper_GetDetails_TemplateLight_StateVsStateTemplate pins C1/W5:
 // widening get_details' template-config enrichment to the 15 template_*
 // subtype domains must not let a subtype's Jinja "state" template field

@@ -128,8 +128,20 @@ func titleCaseWords(s, sep string) string {
 // per-word title case titleCaseWords applies to a helper *type* header.
 // Rune-safe: uses utf8.DecodeRuneInString rather than byte-slicing
 // (formatted[:1]), which corrupts a multi-byte first rune.
+// sentenceCaseKey renders an attribute key like "current_temperature" as
+// "Current temperature": underscores become spaces and only the first rune
+// of the whole result is upper-cased, matching the sentence-case style
+// already used for hand-written detail labels elsewhere in this package
+// (e.g. "Device class", "Unit of measurement") - deliberately not the
+// per-word title case titleCaseWords applies to a helper *type* header.
+// Rune-safe: uses utf8.DecodeRuneInString rather than byte-slicing
+// (formatted[:1]), which corrupts a multi-byte first rune.
+// Sanitized via sanitizeDisplayValue for the same reason attribute values
+// are: formatGenericDetail emits the result directly into a line-oriented
+// "%s: %s\n" line, so an unsanitized key could forge an extra line the same
+// way an unsanitized value could (second review round finding).
 func sentenceCaseKey(key string) string {
-	formatted := strings.ReplaceAll(key, "_", " ")
+	formatted := sanitizeDisplayValue(strings.ReplaceAll(key, "_", " "))
 	if formatted == "" {
 		return formatted
 	}
@@ -223,13 +235,10 @@ func capDetailList(list []any) (shown []any, more int) {
 	return list[:maxDetailListItems], len(list) - maxDetailListItems
 }
 
-// formatDetailValue renders an attribute value of unknown shape for natural
-// format: nil renders as "" (callers skip the whole line when this is
-// empty). A top-level list is handled separately from the generic
-// truncate-the-whole-rendered-string path below: the item-count cap's
-// "… +N more" suffix must survive even when the joined shown items alone
-// exceed maxDetailValueChars, so it is appended AFTER truncating only the
-// joined items - never truncated away itself.
+// formatDetailListValue renders a top-level list attribute for natural
+// format: the item-count cap's "… +N more" suffix must survive even when the
+// joined shown items alone exceed maxDetailValueChars, so it is appended
+// AFTER truncating only the joined items - never truncated away itself.
 func formatDetailListValue(list []any) string {
 	shown, more := capDetailList(list)
 	parts := make([]string, 0, len(shown))
@@ -243,11 +252,6 @@ func formatDetailListValue(list []any) string {
 	return joined
 }
 
-// renderDetailList joins the (item-count-capped) rendering of each element.
-// The "… +N more" suffix is intentionally returned separately from the
-// truncatable body by formatDetailValue's top-level handling below, rather
-// than appended here - the char-length cap must never be able to truncate
-// the suffix that tells the reader items were omitted.
 // formatDetailValue renders an attribute value of unknown shape for natural
 // format: nil renders as "" (callers skip the whole line when this is
 // empty), everything else is rendered via renderDetailValue then sanitized
@@ -256,13 +260,8 @@ func formatDetailValue(v any) string {
 	if v == nil {
 		return ""
 	}
-	// A top-level list is handled separately from formatDetailValue's generic
-	// truncate-the-whole-string path: the item-count cap's "… +N more" suffix
-	// must survive even when the joined shown items alone exceed
-	// maxDetailValueChars, so it is appended AFTER truncating only the joined
-	// items - never truncated away itself. A naive truncateRunes over the
-	// whole (items + suffix) string would otherwise silently swallow the
-	// suffix on a long list of long items, making the item cap invisible.
+	// See formatDetailListValue's doc comment for why the "… +N more" suffix
+	// must be appended after truncation, not before.
 	if list, ok := v.([]any); ok {
 		return formatDetailListValue(list)
 	}
