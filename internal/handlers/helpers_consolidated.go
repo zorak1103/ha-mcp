@@ -1187,9 +1187,7 @@ func entityIDPredictable(platform string) bool {
 func configEntryResolveContext(ctx context.Context) context.Context {
 	cfg := pollerConfigFromContext(ctx)
 	const minInterval = 500 * time.Millisecond
-	if cfg.PollInterval < minInterval {
-		cfg.PollInterval = minInterval
-	}
+	cfg.PollInterval = max(cfg.PollInterval, minInterval)
 	return homeassistant.WithEntityPollerConfig(ctx, cfg)
 }
 

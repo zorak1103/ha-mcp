@@ -99,9 +99,11 @@ func findConfigEntryEntity(registry []EntityRegistryEntry, entryID, preferDomain
 		if preferDomain != "" && extractEntityDomain(entry.EntityID) != preferDomain {
 			continue
 		}
-		if best == "" || entry.EntityID < best {
+		if best == "" {
 			best = entry.EntityID
+			continue
 		}
+		best = min(best, entry.EntityID)
 	}
 	return best
 }
