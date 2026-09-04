@@ -183,7 +183,7 @@ Actions:
 					Type:        "string",
 					Description: "Filter by state: 'on' (enabled), 'off' (disabled) (for list action)",
 				},
-				"entity_id": {
+				attrEntityID: {
 					Type:        "string",
 					Description: "Filter by entity used in the automation (for list action)",
 				},
@@ -752,7 +752,7 @@ func parseAutomationFilters(args map[string]any) automationFilters {
 	return automationFilters{
 		state:    getString(args, "state"),
 		alias:    getString(args, "alias"),
-		entityID: getString(args, "entity_id"),
+		entityID: getString(args, attrEntityID),
 	}
 }
 
@@ -896,7 +896,7 @@ func buildAutomationFiltersMap(filters automationFilters) map[string]any {
 		filtersMap["alias"] = filters.alias
 	}
 	if filters.entityID != "" {
-		filtersMap["entity_id"] = filters.entityID
+		filtersMap[attrEntityID] = filters.entityID
 	}
 	return filtersMap
 }

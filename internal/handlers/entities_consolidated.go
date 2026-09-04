@@ -18,7 +18,7 @@ import (
 
 // Constants for sorting and grouping options.
 const (
-	sortByEntityID     = "entity_id"
+	sortByEntityID     = attrEntityID
 	sortByState        = "state"
 	sortByLastChanged  = "last_changed"
 	sortByFriendlyName = "friendly_name"
@@ -369,7 +369,7 @@ func buildPaginatedStatesResponse(paginated PaginatedResponse[homeassistant.Enti
 
 // parseHistoryParams extracts and validates all parameters from args.
 func parseHistoryParams(args map[string]any) (*historyParams, error) {
-	entityID, ok := args["entity_id"].(string)
+	entityID, ok := args[attrEntityID].(string)
 	if !ok || entityID == "" {
 		return nil, fmt.Errorf("entity_id is required")
 	}
@@ -578,7 +578,7 @@ func queryEntitiesProperties() map[string]mcp.JSONSchema {
 		},
 		"sort_by": {
 			Type:        "string",
-			Enum:        []string{"entity_id", "state", "last_changed", "friendly_name"},
+			Enum:        []string{attrEntityID, "state", "last_changed", "friendly_name"},
 			Description: "Sort results by field: entity_id (default), state, last_changed, friendly_name. Only for mode=current",
 		},
 		"group_by": {
@@ -587,7 +587,7 @@ func queryEntitiesProperties() map[string]mcp.JSONSchema {
 			Description: "Group results by field: domain (default in natural format), area_id, device_class, integration. Only for mode=current with format=natural",
 		},
 		// History mode parameters
-		"entity_id": {
+		attrEntityID: {
 			Type:        "string",
 			Description: "Entity ID to query. Required for mode=history",
 		},

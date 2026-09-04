@@ -57,7 +57,7 @@ func buildCalendarSchemaProperties() map[string]mcp.JSONSchema {
 			Description: "Action to perform: 'list', 'get_events', 'create_event', or 'delete_event'.",
 			Enum:        []string{calendarActionList, calendarActionGetEvents, calendarActionCreateEvent, calendarActionDeleteEvent},
 		},
-		"entity_id":        {Type: "string", Description: "Calendar entity ID (required for get_events, create_event, delete_event, e.g., 'calendar.personal')."},
+		attrEntityID:       {Type: "string", Description: "Calendar entity ID (required for get_events, create_event, delete_event, e.g., 'calendar.personal')."},
 		"start":            {Type: "string", Description: "Start date/time in ISO 8601 format (required for 'get_events', e.g., '2024-01-15T00:00:00Z')."},
 		"end":              {Type: "string", Description: "End date/time in ISO 8601 format (required for 'get_events', e.g., '2024-01-16T00:00:00Z')."},
 		"summary":          {Type: "string", Description: "Event title/summary (required for 'create_event')."},
@@ -127,7 +127,7 @@ func (h *CalendarHandlers) handleListCalendars(ctx context.Context, client homea
 // handleGetEvents retrieves calendar events within a date range.
 func (h *CalendarHandlers) handleGetEvents(ctx context.Context, client homeassistant.Client, args map[string]any, format string) (*mcp.ToolsCallResult, error) {
 	// Validate required parameters
-	entityID, _ := args["entity_id"].(string)
+	entityID, _ := args[attrEntityID].(string)
 	if entityID == "" {
 		return errorResult("entity_id is required for get_events action"), nil
 	}
@@ -164,7 +164,7 @@ func (h *CalendarHandlers) handleGetEvents(ctx context.Context, client homeassis
 // handleCreateEvent creates a new calendar event.
 func (h *CalendarHandlers) handleCreateEvent(ctx context.Context, client homeassistant.Client, args map[string]any, _ string) (*mcp.ToolsCallResult, error) {
 	// Validate required parameters
-	entityID, _ := args["entity_id"].(string)
+	entityID, _ := args[attrEntityID].(string)
 	if entityID == "" {
 		return errorResult("entity_id is required for create_event action"), nil
 	}
@@ -189,8 +189,8 @@ func (h *CalendarHandlers) handleCreateEvent(ctx context.Context, client homeass
 // buildCreateEventData builds service data for calendar event creation.
 func buildCreateEventData(entityID, summary string, args map[string]any) map[string]any {
 	data := map[string]any{
-		"entity_id": entityID,
-		"summary":   summary,
+		attrEntityID: entityID,
+		"summary":    summary,
 	}
 
 	// Add start/end datetime or date
@@ -221,7 +221,7 @@ func buildCreateEventData(entityID, summary string, args map[string]any) map[str
 // handleDeleteEvent deletes a calendar event.
 func (h *CalendarHandlers) handleDeleteEvent(ctx context.Context, client homeassistant.Client, args map[string]any, _ string) (*mcp.ToolsCallResult, error) {
 	// Validate required parameters
-	entityID, _ := args["entity_id"].(string)
+	entityID, _ := args[attrEntityID].(string)
 	if entityID == "" {
 		return errorResult("entity_id is required for delete_event action"), nil
 	}
@@ -233,8 +233,8 @@ func (h *CalendarHandlers) handleDeleteEvent(ctx context.Context, client homeass
 
 	// Build service data
 	data := map[string]any{
-		"entity_id": entityID,
-		"uid":       uid,
+		attrEntityID: entityID,
+		"uid":        uid,
 	}
 
 	// Add optional recurrence fields

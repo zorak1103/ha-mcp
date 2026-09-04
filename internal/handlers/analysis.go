@@ -43,7 +43,7 @@ func (h *AnalysisHandlers) analyzeEntityTool() mcp.Tool {
 			Type:        "object",
 			Description: "Parameters for analyzing an entity",
 			Properties: map[string]mcp.JSONSchema{
-				"entity_id": {
+				attrEntityID: {
 					Type:        "string",
 					Description: "The entity ID to analyze (e.g., 'light.living_room', 'sensor.temperature')",
 				},
@@ -61,7 +61,7 @@ func (h *AnalysisHandlers) analyzeEntityTool() mcp.Tool {
 					Description: "If true, include per-reference config excerpts showing how the entity is used (trigger state values, condition states, action services). Default: false",
 				},
 			},
-			Required: []string{"entity_id"},
+			Required: []string{attrEntityID},
 		},
 	}
 }
@@ -74,7 +74,7 @@ func (h *AnalysisHandlers) getEntityDependenciesTool() mcp.Tool {
 			Type:        "object",
 			Description: "Parameters for getting entity dependencies",
 			Properties: map[string]mcp.JSONSchema{
-				"entity_id": {
+				attrEntityID: {
 					Type:        "string",
 					Description: "The automation or script entity ID (e.g., 'automation.my_automation', 'script.my_script')",
 				},
@@ -84,7 +84,7 @@ func (h *AnalysisHandlers) getEntityDependenciesTool() mcp.Tool {
 					Description: "Output format: 'natural' (default) for LLM-optimized text, 'json' for structured data",
 				},
 			},
-			Required: []string{"entity_id"},
+			Required: []string{attrEntityID},
 		},
 	}
 }
@@ -223,7 +223,7 @@ type DependencyEntry struct {
 }
 
 func (h *AnalysisHandlers) handleAnalyzeEntity(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	entityID, ok := args["entity_id"].(string)
+	entityID, ok := args[attrEntityID].(string)
 	if !ok || entityID == "" {
 		return &mcp.ToolsCallResult{
 			Content: []mcp.ContentBlock{mcp.NewTextContent("entity_id is required")},
@@ -411,7 +411,7 @@ func (h *AnalysisHandlers) findSceneReferences(ctx context.Context, client homea
 	}
 
 	for _, scene := range scenes {
-		entities, ok := scene.Attributes["entity_id"].([]any)
+		entities, ok := scene.Attributes[attrEntityID].([]any)
 		if !ok {
 			continue
 		}
@@ -502,7 +502,7 @@ func (h *AnalysisHandlers) findGroupReferencesWithSnapshot(snapshot *AnalysisSna
 			continue
 		}
 
-		entities, ok := s.Attributes["entity_id"].([]any)
+		entities, ok := s.Attributes[attrEntityID].([]any)
 		if !ok {
 			continue
 		}
@@ -687,7 +687,7 @@ func (h *AnalysisHandlers) getEntityHistory(ctx context.Context, client homeassi
 }
 
 func (h *AnalysisHandlers) handleGetEntityDependencies(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	entityID, ok := args["entity_id"].(string)
+	entityID, ok := args[attrEntityID].(string)
 	if !ok || entityID == "" {
 		return &mcp.ToolsCallResult{
 			Content: []mcp.ContentBlock{mcp.NewTextContent("entity_id is required")},
@@ -943,10 +943,10 @@ func (h *AnalysisHandlers) shouldRecurseIntoKey(key string) bool {
 }
 
 func (h *AnalysisHandlers) extractEntityID(m map[string]any) string {
-	if entityID, ok := m["entity_id"].(string); ok {
+	if entityID, ok := m[attrEntityID].(string); ok {
 		return entityID
 	}
-	if entityIDs, ok := m["entity_id"].([]any); ok && len(entityIDs) > 0 {
+	if entityIDs, ok := m[attrEntityID].([]any); ok && len(entityIDs) > 0 {
 		if first, ok := entityIDs[0].(string); ok {
 			return first
 		}

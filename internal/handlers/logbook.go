@@ -45,7 +45,7 @@ func (h *LogbookHandlers) getLogbookTool() mcp.Tool {
 					Type:        "string",
 					Description: "End time in ISO 8601 format. Default: now",
 				},
-				"entity_id": {
+				attrEntityID: {
 					Type:        "string",
 					Description: "Filter by single entity ID (e.g., 'light.living_room'). For mode=entries only",
 				},
@@ -184,7 +184,7 @@ func (h *LogbookHandlers) handleEntriesMode(
 		}, nil
 	}
 
-	entityID := getString(args, "entity_id")
+	entityID := getString(args, attrEntityID)
 
 	entries, err := client.GetLogbook(ctx, startTime.Format(time.RFC3339), endTime.Format(time.RFC3339), entityID)
 	if err != nil {
@@ -236,7 +236,7 @@ func buildLogbookFiltersMap(startTime, endTime time.Time, entityID string) map[s
 	filters["start_time"] = startTime.Format(time.RFC3339)
 	filters["end_time"] = endTime.Format(time.RFC3339)
 	if entityID != "" {
-		filters["entity_id"] = entityID
+		filters[attrEntityID] = entityID
 	}
 	return filters
 }

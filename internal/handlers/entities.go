@@ -12,7 +12,7 @@ import (
 	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
 
-const configKeyEntityID = "entity_id"
+const configKeyEntityID = attrEntityID
 
 // EntityHandlers provides MCP tool handlers for entity operations.
 type EntityHandlers struct{}
@@ -35,7 +35,7 @@ func (h *EntityHandlers) getStateTool() mcp.Tool {
 			Type:        "object",
 			Description: "Parameters for getting entity state(s)",
 			Properties: map[string]mcp.JSONSchema{
-				"entity_id": {
+				attrEntityID: {
 					Type:        "string",
 					Description: "Single entity ID (e.g., 'light.living_room'). Use entity_id OR entity_ids, not both.",
 				},
@@ -67,7 +67,7 @@ func getBoolArg(args map[string]any, key string) bool {
 }
 
 func (h *EntityHandlers) handleGetState(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	entityID, hasSingle := args["entity_id"].(string)
+	entityID, hasSingle := args[attrEntityID].(string)
 	entityIDs, hasBatch := args["entity_ids"]
 
 	// Validate: exactly one of entity_id or entity_ids must be provided

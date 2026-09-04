@@ -68,7 +68,7 @@ func buildMinMaxConfig(config, args map[string]any) error {
 // buildStatisticsConfig builds configuration for statistics helper.
 func buildStatisticsConfig(config, args map[string]any) error {
 	r := newArgReader(config, args)
-	r.strID("entity_id")
+	r.strID(attrEntityID)
 	r.str("state_characteristic")
 	r.integer("sampling_size")
 	r.str("max_age")
@@ -90,7 +90,7 @@ func buildStatisticsConfig(config, args map[string]any) error {
 // buildTrendConfig builds configuration for trend helper.
 func buildTrendConfig(config, args map[string]any) error {
 	r := newArgReader(config, args)
-	r.strID("entity_id")
+	r.strID(attrEntityID)
 	r.num("min_gradient")
 	r.integer("min_samples")
 	r.num("sample_duration")
@@ -130,7 +130,7 @@ func buildRandomBinarySensorConfig(config, _ map[string]any) error {
 // CLAUDE.md's filter gotcha).
 func buildFilterConfig(config, args map[string]any) error {
 	r := newArgReader(config, args)
-	r.strID("entity_id")
+	r.strID(attrEntityID)
 	r.strID("filter")
 	r.raw("window_size")
 	r.num("radius")
@@ -187,7 +187,7 @@ func buildSwitchAsXConfig(config, args map[string]any) error {
 	// config-entry type, but switch_as_x's flow schema has no "name" field
 	// at all - it's simply never claimed by any step (see the
 	// createHelperViaConfigFlow gotcha in CLAUDE.md).
-	r.strID("entity_id")
+	r.strID(attrEntityID)
 
 	// target_domain is switch_as_x's real (and only) "user"-step field, not
 	// a routing-only key - platformSkipFields does NOT filter it out.

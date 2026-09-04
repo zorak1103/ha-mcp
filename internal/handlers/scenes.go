@@ -514,7 +514,7 @@ func (h *SceneHandlers) handleActivate(ctx context.Context, client homeassistant
 	entityID, _ := normalizeSceneID(sceneID)
 
 	data := map[string]any{
-		"entity_id": entityID,
+		attrEntityID: entityID,
 	}
 
 	if transition, ok := args["transition"].(float64); ok {
@@ -563,7 +563,7 @@ func entityToSceneInfo(s homeassistant.Entity) sceneInfo {
 	if name, ok := s.Attributes["friendly_name"].(string); ok {
 		info.FriendlyName = name
 	}
-	if entityIDs, ok := s.Attributes["entity_id"].([]any); ok {
+	if entityIDs, ok := s.Attributes[attrEntityID].([]any); ok {
 		info.EntityIDs = extractStringSlice(entityIDs)
 	}
 	return info

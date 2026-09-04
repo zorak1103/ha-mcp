@@ -294,7 +294,7 @@ func scanScenesForReferences(ctx context.Context, client homeassistant.Client, m
 
 	var hits []ConfigHit
 	for _, scene := range scenes {
-		entities, ok := scene.Attributes["entity_id"].([]any)
+		entities, ok := scene.Attributes[attrEntityID].([]any)
 		if !ok {
 			continue
 		}

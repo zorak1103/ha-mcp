@@ -43,7 +43,7 @@ func RegisterUpdateTools(registry *mcp.Registry) {
 					Description: "Action to perform: 'list', 'release_notes', 'install', or 'skip'.",
 					Enum:        []string{updateActionList, updateActionReleaseNotes, updateActionInstall, updateActionSkip},
 				},
-				"entity_id": {
+				attrEntityID: {
 					Type:        "string",
 					Description: "Update entity ID (required for release_notes, install, skip actions, e.g., 'update.hass_os').",
 				},
@@ -146,14 +146,14 @@ func (h *UpdateHandlers) handleListUpdates(ctx context.Context, client homeassis
 // handleReleaseNotes retrieves release notes for an update.
 func (h *UpdateHandlers) handleReleaseNotes(ctx context.Context, client homeassistant.Client, args map[string]any, format string) (*mcp.ToolsCallResult, error) {
 	// Validate entity_id
-	entityID, _ := args["entity_id"].(string)
+	entityID, _ := args[attrEntityID].(string)
 	if entityID == "" {
 		return errorResult("entity_id is required for release_notes action"), nil
 	}
 
 	// Build command data
 	data := map[string]any{
-		"entity_id": entityID,
+		attrEntityID: entityID,
 	}
 
 	// Call update/release_notes WebSocket command
@@ -184,14 +184,14 @@ func (h *UpdateHandlers) handleReleaseNotes(ctx context.Context, client homeassi
 // handleInstallUpdate installs an update.
 func (h *UpdateHandlers) handleInstallUpdate(ctx context.Context, client homeassistant.Client, args map[string]any, _ string) (*mcp.ToolsCallResult, error) {
 	// Validate entity_id
-	entityID, _ := args["entity_id"].(string)
+	entityID, _ := args[attrEntityID].(string)
 	if entityID == "" {
 		return errorResult("entity_id is required for install action"), nil
 	}
 
 	// Build service data
 	data := map[string]any{
-		"entity_id": entityID,
+		attrEntityID: entityID,
 	}
 
 	// Add optional parameters
@@ -218,14 +218,14 @@ func (h *UpdateHandlers) handleInstallUpdate(ctx context.Context, client homeass
 // handleSkipUpdate skips an update version.
 func (h *UpdateHandlers) handleSkipUpdate(ctx context.Context, client homeassistant.Client, args map[string]any, _ string) (*mcp.ToolsCallResult, error) {
 	// Validate entity_id
-	entityID, _ := args["entity_id"].(string)
+	entityID, _ := args[attrEntityID].(string)
 	if entityID == "" {
 		return errorResult("entity_id is required for skip action"), nil
 	}
 
 	// Build service data
 	data := map[string]any{
-		"entity_id": entityID,
+		attrEntityID: entityID,
 	}
 
 	// Call update.skip service

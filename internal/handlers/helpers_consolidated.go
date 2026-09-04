@@ -343,7 +343,7 @@ func buildSensorCalcHelperTypesGroup() map[string]helperTypeMetadata {
 			platform:           "threshold",
 			entityPrefix:       "binary_sensor",
 			supportedActions:   []string{},
-			requiredFields:     []string{"entity_id"},
+			requiredFields:     []string{attrEntityID},
 			optionalFields:     []string{"icon", "lower", "upper", "hysteresis", "device_class"},
 			validEntityDomains: []string{"binary_sensor"},
 		},
@@ -392,7 +392,7 @@ func buildSensorAggregateHelperTypesGroup() map[string]helperTypeMetadata {
 			platform:           platformStatistics,
 			entityPrefix:       "sensor",
 			supportedActions:   []string{},
-			requiredFields:     []string{"entity_id"},
+			requiredFields:     []string{attrEntityID},
 			optionalFields:     []string{"icon", "state_characteristic", "sampling_size", "max_age", "percentile", "precision"},
 			validEntityDomains: []string{"sensor"},
 			sourceEntities:     []sourceEntityConstraint{{field: attrEntityID, domains: []string{"sensor", "binary_sensor"}}},
@@ -401,7 +401,7 @@ func buildSensorAggregateHelperTypesGroup() map[string]helperTypeMetadata {
 			platform:           platformTrend,
 			entityPrefix:       "binary_sensor",
 			supportedActions:   []string{},
-			requiredFields:     []string{"entity_id"},
+			requiredFields:     []string{attrEntityID},
 			optionalFields:     []string{"icon", "min_gradient", "min_samples", "sample_duration", "max_samples", "invert"},
 			validEntityDomains: []string{"binary_sensor"},
 			sourceEntities:     []sourceEntityConstraint{{field: attrEntityID, domains: []string{"sensor", "counter"}}},
@@ -426,7 +426,7 @@ func buildSensorAggregateHelperTypesGroup() map[string]helperTypeMetadata {
 			platform:           platformFilter,
 			entityPrefix:       "sensor",
 			supportedActions:   []string{},
-			requiredFields:     []string{"entity_id", "filter"},
+			requiredFields:     []string{attrEntityID, "filter"},
 			optionalFields:     []string{"icon", "window_size", "radius", "time_constant", "lower_bound", "upper_bound", "precision"},
 			validEntityDomains: []string{"sensor"},
 			sourceEntities:     []sourceEntityConstraint{{field: attrEntityID, domains: []string{"sensor"}}},
@@ -468,7 +468,7 @@ func buildClimateHelperTypesGroup() map[string]helperTypeMetadata {
 			platform:           platformSwitchAsX,
 			entityPrefix:       "light",
 			supportedActions:   []string{},
-			requiredFields:     []string{"entity_id", "target_domain"},
+			requiredFields:     []string{attrEntityID, "target_domain"},
 			optionalFields:     []string{"icon", "invert"},
 			validEntityDomains: []string{"cover", "fan", "light", "lock", "siren", "valve"},
 			sourceEntities:     []sourceEntityConstraint{{field: attrEntityID, domains: []string{"switch"}}},
@@ -582,7 +582,7 @@ func (h *ConsolidatedHelperHandlers) manageHelperTool() mcp.Tool {
 			Description: fmt.Sprintf("Helper type (required for create) - see Enum for the full list of %d supported types", len(typeNames)),
 			Enum:        typeNames,
 		},
-		"entity_id": {
+		attrEntityID: {
 			Type:        "string",
 			Description: "Full entity ID (required for delete/get_details). Also required as source entity for threshold create.",
 		},
@@ -832,7 +832,7 @@ Actions by helper type:
 			Type:        "object",
 			Description: "Helper action parameters",
 			Properties: map[string]mcp.JSONSchema{
-				"entity_id": {
+				attrEntityID: {
 					Type:        "string",
 					Description: "Full entity ID of the helper",
 				},
@@ -869,7 +869,7 @@ Actions by helper type:
 					Items:       &mcp.JSONSchema{Type: "string"},
 				},
 			},
-			Required: []string{"entity_id", "action"},
+			Required: []string{attrEntityID, "action"},
 		},
 	}
 }
@@ -1240,7 +1240,7 @@ func predictConfigEntryEntityID(name string, config map[string]any, meta helperT
 }
 
 func (h *ConsolidatedHelperHandlers) handleUpdate(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	entityID, _ := args["entity_id"].(string)
+	entityID, _ := args[attrEntityID].(string)
 	if entityID == "" {
 		return errorResult("entity_id is required for update action"), nil
 	}
@@ -1637,7 +1637,7 @@ func updateFetchFailureHint(fetchErr error, entityID string) string {
 }
 
 func (h *ConsolidatedHelperHandlers) handleDelete(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	entityID, _ := args["entity_id"].(string)
+	entityID, _ := args[attrEntityID].(string)
 	if entityID == "" {
 		return errorResult("entity_id is required for delete action"), nil
 	}
@@ -1670,7 +1670,7 @@ func (h *ConsolidatedHelperHandlers) handleDelete(ctx context.Context, client ho
 }
 
 func (h *ConsolidatedHelperHandlers) handleGetDetails(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	entityID, _ := args["entity_id"].(string)
+	entityID, _ := args[attrEntityID].(string)
 	if entityID == "" {
 		return errorResult("entity_id is required for get_details action"), nil
 	}
@@ -1699,7 +1699,7 @@ func (h *ConsolidatedHelperHandlers) handleGetDetails(ctx context.Context, clien
 }
 
 func (h *ConsolidatedHelperHandlers) handleGetDetailsSchedule(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	entityID, _ := args["entity_id"].(string)
+	entityID, _ := args[attrEntityID].(string)
 
 	state, err := client.GetState(ctx, entityID)
 	if err != nil {
@@ -1727,7 +1727,7 @@ func (h *ConsolidatedHelperHandlers) handleGetDetailsSchedule(ctx context.Contex
 }
 
 func (h *ConsolidatedHelperHandlers) handleGetDetailsCounter(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	entityID, _ := args["entity_id"].(string)
+	entityID, _ := args[attrEntityID].(string)
 
 	state, err := client.GetState(ctx, entityID)
 	if err != nil {
@@ -1735,7 +1735,7 @@ func (h *ConsolidatedHelperHandlers) handleGetDetailsCounter(ctx context.Context
 	}
 
 	details := map[string]any{
-		"entity_id":     state.EntityID,
+		attrEntityID:    state.EntityID,
 		"state":         state.State,
 		"friendly_name": state.Attributes["friendly_name"],
 	}
@@ -1767,7 +1767,7 @@ func (h *ConsolidatedHelperHandlers) handleGetDetailsCounter(ctx context.Context
 }
 
 func (h *ConsolidatedHelperHandlers) handleGetDetailsTimer(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	entityID, _ := args["entity_id"].(string)
+	entityID, _ := args[attrEntityID].(string)
 
 	state, err := client.GetState(ctx, entityID)
 	if err != nil {
@@ -1775,7 +1775,7 @@ func (h *ConsolidatedHelperHandlers) handleGetDetailsTimer(ctx context.Context, 
 	}
 
 	details := map[string]any{
-		"entity_id":     state.EntityID,
+		attrEntityID:    state.EntityID,
 		"state":         state.State,
 		"friendly_name": state.Attributes["friendly_name"],
 	}
@@ -1804,7 +1804,7 @@ func (h *ConsolidatedHelperHandlers) handleGetDetailsTimer(ctx context.Context, 
 }
 
 func (h *ConsolidatedHelperHandlers) handleGetDetailsGeneric(ctx context.Context, client homeassistant.Client, args map[string]any, helperType string) (*mcp.ToolsCallResult, error) {
-	entityID, _ := args["entity_id"].(string)
+	entityID, _ := args[attrEntityID].(string)
 
 	state, err := client.GetState(ctx, entityID)
 	if err != nil {
@@ -1835,7 +1835,7 @@ func (h *ConsolidatedHelperHandlers) handleGetDetailsGeneric(ctx context.Context
 
 func buildHelperDetails(state *homeassistant.Entity, helperType string) map[string]any {
 	details := map[string]any{
-		"entity_id":     state.EntityID,
+		attrEntityID:    state.EntityID,
 		"state":         state.State,
 		"friendly_name": state.Attributes["friendly_name"],
 	}
@@ -1904,7 +1904,7 @@ func addGenericDetails(details map[string]any, state *homeassistant.Entity) {
 // any other collision is stored under "attr_<key>" rather than overwriting.
 func putDetail(details map[string]any, key string, value any) {
 	target := key
-	if key == "entity_id" {
+	if key == attrEntityID {
 		target = "members"
 	}
 	if _, exists := details[target]; exists {
@@ -2013,7 +2013,7 @@ func addInputButtonDetails(details map[string]any, state *homeassistant.Entity) 
 }
 
 func addGroupDetails(details map[string]any, state *homeassistant.Entity) {
-	if members, ok := state.Attributes["entity_id"]; ok {
+	if members, ok := state.Attributes[attrEntityID]; ok {
 		details["members"] = members
 	}
 	if all, ok := state.Attributes["all"]; ok {
@@ -2040,7 +2040,7 @@ func addBinarySensorDetails(details map[string]any, state *homeassistant.Entity)
 	if deviceClass, ok := state.Attributes["device_class"]; ok {
 		details["device_class"] = deviceClass
 	}
-	if sourceEntity, ok := state.Attributes["entity_id"]; ok {
+	if sourceEntity, ok := state.Attributes[attrEntityID]; ok {
 		details["source_entity"] = sourceEntity
 	}
 	if hysteresis, ok := state.Attributes["hysteresis"]; ok {
@@ -2154,7 +2154,7 @@ func addTemplateSubtypeOptionsToDetails(entityDomain string, options, details ma
 // =============================================================================
 
 func (h *ConsolidatedHelperHandlers) handleHelperAction(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	entityID, _ := args["entity_id"].(string)
+	entityID, _ := args[attrEntityID].(string)
 	if entityID == "" {
 		return errorResult("entity_id is required"), nil
 	}
@@ -2252,7 +2252,7 @@ func (h *ConsolidatedHelperHandlers) handleToggle(ctx context.Context, client ho
 		return errorResult("toggle action is only supported for input_boolean helpers"), nil
 	}
 
-	serviceData := map[string]any{"entity_id": entityID}
+	serviceData := map[string]any{attrEntityID: entityID}
 	if _, err := client.CallService(ctx, domain, "toggle", serviceData); err != nil {
 		return errorResult(fmt.Sprintf("Error toggling %s: %v", entityID, err)), nil
 	}
@@ -2267,7 +2267,7 @@ func (h *ConsolidatedHelperHandlers) handleSet(ctx context.Context, client homea
 	}
 
 	var serviceDomain, serviceName string
-	serviceData := map[string]any{"entity_id": entityID}
+	serviceData := map[string]any{attrEntityID: entityID}
 
 	switch domain {
 	case platformInputNumber:
@@ -2307,7 +2307,7 @@ func (h *ConsolidatedHelperHandlers) handleCounterAction(ctx context.Context, cl
 		return errorResult(fmt.Sprintf("%s action is only supported for counter helpers", action)), nil
 	}
 
-	serviceData := map[string]any{"entity_id": entityID}
+	serviceData := map[string]any{attrEntityID: entityID}
 	if _, err := client.CallService(ctx, platformCounter, action, serviceData); err != nil {
 		return errorResult(fmt.Sprintf("Error %sing counter: %v", action, err)), nil
 	}
@@ -2317,7 +2317,7 @@ func (h *ConsolidatedHelperHandlers) handleCounterAction(ctx context.Context, cl
 
 //nolint:unparam // Error return follows handler interface pattern; errors wrapped in result
 func (h *ConsolidatedHelperHandlers) handleReset(ctx context.Context, client homeassistant.Client, entityID, domain string) (*mcp.ToolsCallResult, error) {
-	serviceData := map[string]any{"entity_id": entityID}
+	serviceData := map[string]any{attrEntityID: entityID}
 
 	switch domain {
 	case platformCounter:
@@ -2341,7 +2341,7 @@ func (h *ConsolidatedHelperHandlers) handleTimerStart(ctx context.Context, clien
 		return errorResult("start action is only supported for timer helpers"), nil
 	}
 
-	serviceData := map[string]any{"entity_id": entityID}
+	serviceData := map[string]any{attrEntityID: entityID}
 	if duration, ok := args["duration"].(string); ok && duration != "" {
 		serviceData["duration"] = duration
 	}
@@ -2359,7 +2359,7 @@ func (h *ConsolidatedHelperHandlers) handleTimerAction(ctx context.Context, clie
 		return errorResult(fmt.Sprintf("%s action is only supported for timer helpers", action)), nil
 	}
 
-	serviceData := map[string]any{"entity_id": entityID}
+	serviceData := map[string]any{attrEntityID: entityID}
 	if _, err := client.CallService(ctx, platformTimer, action, serviceData); err != nil {
 		return errorResult(fmt.Sprintf("Error %sing timer: %v", action[:len(action)-1], err)), nil
 	}
@@ -2378,8 +2378,8 @@ func (h *ConsolidatedHelperHandlers) handleTimerChange(ctx context.Context, clie
 	}
 
 	serviceData := map[string]any{
-		"entity_id": entityID,
-		"duration":  duration,
+		attrEntityID: entityID,
+		"duration":   duration,
 	}
 
 	if _, err := client.CallService(ctx, platformTimer, "change", serviceData); err != nil {
@@ -2395,7 +2395,7 @@ func (h *ConsolidatedHelperHandlers) handlePress(ctx context.Context, client hom
 		return errorResult("press action is only supported for input_button helpers"), nil
 	}
 
-	serviceData := map[string]any{"entity_id": entityID}
+	serviceData := map[string]any{attrEntityID: entityID}
 	if _, err := client.CallService(ctx, platformInputButton, "press", serviceData); err != nil {
 		return errorResult(fmt.Sprintf("Error pressing button: %v", err)), nil
 	}
@@ -2414,8 +2414,8 @@ func (h *ConsolidatedHelperHandlers) handleSelect(ctx context.Context, client ho
 	}
 
 	serviceData := map[string]any{
-		"entity_id": entityID,
-		"option":    option,
+		attrEntityID: entityID,
+		"option":     option,
 	}
 
 	if _, err := client.CallService(ctx, platformInputSelect, "select_option", serviceData); err != nil {
@@ -2444,8 +2444,8 @@ func (h *ConsolidatedHelperHandlers) handleSetOptions(ctx context.Context, clien
 	}
 
 	serviceData := map[string]any{
-		"entity_id": entityID,
-		"options":   strOptions,
+		attrEntityID: entityID,
+		"options":    strOptions,
 	}
 
 	if _, err := client.CallService(ctx, platformInputSelect, "set_options", serviceData); err != nil {
@@ -2501,8 +2501,8 @@ func (h *ConsolidatedHelperHandlers) handleGroupEntities(ctx context.Context, cl
 	}
 
 	serviceData := map[string]any{
-		"entity_id": entityID,
-		key:         entities,
+		attrEntityID: entityID,
+		key:          entities,
 	}
 
 	if _, err := client.CallService(ctx, platformGroup, "set", serviceData); err != nil {
@@ -2792,7 +2792,7 @@ func buildThresholdConfig(config, args map[string]any) error {
 	r.num("upper")
 	r.num("hysteresis")
 	r.str("device_class")
-	r.strID("entity_id")
+	r.strID(attrEntityID)
 	return r.err()
 }
 
@@ -2896,7 +2896,7 @@ func checkSourceEntityDeviceClass(ctx context.Context, client homeassistant.Clie
 	state, err := client.GetState(ctx, sourceEntityID)
 	if err != nil {
 		slog.WarnContext(ctx, "source-entity device_class validation skipped: state fetch failed",
-			"entity_id", sourceEntityID, "error", err)
+			attrEntityID, sourceEntityID, "error", err)
 		return nil //nolint:nilerr // fetch failure degrades to unchecked, see checkSourceEntityDomain's doc comment
 	}
 	deviceClass, _ := state.Attributes["device_class"].(string)
@@ -3125,7 +3125,7 @@ func checkUpdateSourceEntityDomain(ctx context.Context, client homeassistant.Cli
 		// fetch is otherwise indistinguishable from a passing check - log it
 		// so the gap is at least visible.
 		slog.WarnContext(ctx, "source-domain update validation skipped: entity registry fetch failed",
-			"entity_id", entityID, "error", err)
+			attrEntityID, entityID, "error", err)
 		return nil //nolint:nilerr // registry lookup failure degrades to an unchecked update, see doc comment above
 	}
 	for _, entry := range entries {
@@ -3138,7 +3138,7 @@ func checkUpdateSourceEntityDomain(ctx context.Context, client homeassistant.Cli
 		}
 		return checkSourceEntityDomain(ctx, client, entry.Platform, updatableSourceEntities(meta.sourceEntities), args)
 	}
-	slog.WarnContext(ctx, "source-domain update validation skipped: entity not found in registry", "entity_id", entityID)
+	slog.WarnContext(ctx, "source-domain update validation skipped: entity not found in registry", attrEntityID, entityID)
 	return nil
 }
 
@@ -3398,7 +3398,7 @@ func parseTimeBlock(block any) map[string]string {
 // buildScheduleDetails creates a formatted details object for schedule entities.
 func buildScheduleDetails(state *homeassistant.Entity, timeBlocks map[string][]map[string]string) map[string]any {
 	details := map[string]any{
-		"entity_id":     state.EntityID,
+		attrEntityID:    state.EntityID,
 		"state":         state.State,
 		"friendly_name": state.Attributes["friendly_name"],
 	}
