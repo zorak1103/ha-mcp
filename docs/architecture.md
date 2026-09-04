@@ -46,7 +46,7 @@ Some Home Assistant operations have limitations:
 - **Scripts**: REST API works, but `script.reload` service call is needed after create/update for entity to appear immediately
 - **Automations/Scenes**: REST API stores config, but entity may not appear until Home Assistant restart or reload
 - **Config Entry helpers**: Template, threshold, derivative, integration, and group helpers use HTTP-based Config Entry Flow (automatically handled by ha-mcp)
-- **Entity/Device Registry CREATE operations**: `get_registry` and `query_devices` support UPDATE and DELETE but not CREATE. This is by design—entities and devices are created by integrations (Zigbee, Z-Wave, MQTT, etc.), not manually. Creating registry entries without a backing integration produces orphaned entries that cause errors. UPDATE operations (renaming, area assignment, icons, device class, enable/disable) are safe as they modify metadata only. DELETE operations are essential for cleaning up stale/orphaned entries via `query_entities` health mode and `query_devices` health mode.
+- **Entity/Device Registry CREATE operations**: `manage_entity` and `manage_device` support UPDATE and DELETE but not CREATE. This is by design—entities and devices are created by integrations (Zigbee, Z-Wave, MQTT, etc.), not manually. Creating registry entries without a backing integration produces orphaned entries that cause errors. UPDATE operations (renaming, area assignment, icons, device class, enable/disable) are safe as they modify metadata only. DELETE operations are essential for cleaning up stale/orphaned entries via `query_entities` health mode and `query_devices` health mode.
 
 ## Project Structure
 
@@ -61,20 +61,29 @@ ha-mcp/
 │   ├── homeassistant/
 │   │   ├── client.go            # Client interface (~70 methods)
 │   │   ├── cached_client.go     # TTL-based caching decorator
+│   │   ├── client_pool.go       # Per-token client pool with LRU eviction (max 100 entries)
+│   │   ├── config_entry_helpers.go # Config entry helper lifecycle and options flow dispatch
+│   │   ├── entity_poller.go     # Entity state polling for post-mutation confirmation
 │   │   ├── factory.go           # Client factory (creates HybridClient)
+│   │   ├── field_list.go        # Field extraction and tracking utilities
+│   │   ├── flow_steps.go        # Schema-driven multi-step config and options flow runner
 │   │   ├── hybrid_client.go     # Hybrid client combining WS + REST
+│   │   ├── partial_apply_error.go # Partial apply error type for unconsumed config flow fields
 │   │   ├── rest_client.go       # REST client for automation/script/scene CRUD
 │   │   ├── retry.go             # Retry logic with exponential backoff
+│   │   ├── types.go             # Data types
 │   │   ├── ws_client.go         # WebSocket connection management
 │   │   ├── ws_client_impl.go    # WebSocket Client implementation
 │   │   ├── ws_messages.go       # WebSocket message types
-│   │   ├── ws_reconnect.go      # Reconnection logic
-│   │   ├── entity_poller.go     # Entity state polling for post-mutation confirmation
-│   │   ├── client_pool.go       # Per-token client pool with LRU eviction (max 100 entries)
-│   │   └── types.go             # Data types
+│   │   └── ws_reconnect.go      # Reconnection logic
+│   ├── jsonpatch/
+│   │   ├── jsonpatch.go         # RFC 6902 JSON Patch implementation
+│   │   └── pointer.go           # RFC 6901 JSON Pointer navigation
 │   ├── mcp/
-│   │   ├── server.go            # MCP HTTP server; per-IP rate limiting middleware
+│   │   ├── access_control.go    # Static tool/action read-write classification
 │   │   ├── registry.go          # Tool registry
+│   │   ├── server.go            # MCP HTTP server; per-IP rate limiting middleware
+│   │   ├── tool_filter.go       # ToolFilterEngine with whitelist/blacklist/category filtering
 │   │   └── types.go             # MCP protocol types
 │   ├── handlers/
 │   │   ├── formatter/           # Output formatters (natural/json)
@@ -93,21 +102,32 @@ ha-mcp/
 │   │   │   ├── suite_test.go    # Base test suite
 │   │   │   └── *_integration_test.go  # Domain-specific tests
 │   │   ├── analysis_snapshot.go # Parallel data fetching for analysis
+│   │   ├── analysis_verbose.go  # Excerpt summaries for verbose entity analysis
 │   │   ├── entities.go          # Entity tool handlers (get_state)
 │   │   ├── analysis.go          # Analysis tool handlers (analyze_entity, get_entity_dependencies)
 │   │   ├── analysis_paths.go    # RFC 6901 path walker for automation/script reference locations
+│   │   ├── array_mode.go        # Label and alias array mode (add/remove/replace)
 │   │   ├── config_search.go     # Shared reference-search scanners (dashboards, template helpers)
 │   │   ├── find_references.go   # Cross-config find_references tool (automations/scripts/scenes/dashboards/helpers)
 │   │   ├── entities_consolidated.go # Consolidated query_entities tool (current/history/statistics/domains/presence/health)
 │   │   ├── entities_presence.go # Presence analysis for query_entities (mode=presence)
 │   │   ├── entities_health.go   # Health mode: detect and remove dead entities (mode=health)
+│   │   ├── entities_manage.go   # manage_entity tool handler (entity registry get/update/delete)
 │   │   ├── devices_consolidated.go # Consolidated query_devices tool (health)
 │   │   ├── devices_health.go    # Device health: detect and remove problematic devices
+│   │   ├── devices_manage.go    # manage_device tool handler (device registry get/update/delete)
 │   │   ├── automations.go       # Consolidated manage_automation tool
 │   │   ├── automations_coverage.go # Automation coverage analysis
 │   │   ├── helpers_consolidated.go  # manage_helper and helper_action tools
+│   │   ├── helpers_arg_reader.go    # Type-safe parameter parser for helper builders
+│   │   ├── helpers_config_builders.go # Config builders for standard helper types
+│   │   ├── helpers_config_builders_extended.go # Config builders for advanced/multi-step helpers
+│   │   ├── helpers_template_types.go # Template helper subtype definitions and schema tables
 │   │   ├── scripts.go           # Consolidated manage_script tool
 │   │   ├── scenes.go            # Consolidated manage_scene tool
+│   │   ├── patch.go             # JSON Patch handler with dry-run support
+│   │   ├── patch_semantic.go    # Semantic property-based patching layer
+│   │   ├── yaml_defined.go      # YAML-defined config write protection
 │   │   ├── areas.go             # Consolidated manage_area tool
 │   │   ├── labels.go            # Consolidated manage_label tool
 │   │   ├── floors.go            # Consolidated manage_floor tool
@@ -164,7 +184,7 @@ ha-mcp/
 
 ### Prerequisites
 
-- Go 1.26+
+- Go 1.27+
 - golangci-lint v2
 - [Task](https://taskfile.dev/#/installation) (build automation)
 - Docker (for container builds)
@@ -197,7 +217,7 @@ task test:coverage
 
 ### Integration Tests
 
-Integration tests verify the MCP server against a real Home Assistant instance. They are isolated using a unique `__mcptest_` prefix for all created entities.
+Integration tests verify the MCP server against a real Home Assistant instance. They are isolated using a unique `mcptest_` prefix for all created entities.
 
 **Prerequisites:**
 - Running Home Assistant instance (version 2023.1+)
@@ -220,7 +240,7 @@ go test -tags=integration -v ./internal/handlers/integration/... -run TestCounte
 ```
 
 **Safety guarantees:**
-- All test entities use `__mcptest_` prefix to avoid conflicts
+- All test entities use `mcptest_` prefix to avoid conflicts
 - Pre-test cleanup removes leftover entities from previous runs
 - Post-test verification ensures no test data remains
 - Tests are skipped automatically if environment variables are not set

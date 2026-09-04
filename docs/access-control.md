@@ -25,7 +25,7 @@ export HA_MCP_READ_ONLY=true
 **What gets blocked in read-only mode:**
 - All `create`, `update`, `delete` actions in `manage_*` tools
 - Service calls (`call_service`)
-- Helper actions (`helper_action` - toggle, set_value, increment, etc.)
+- Helper actions (`helper_action` - toggle, set, increment, etc.)
 - Script execution, scene activation
 - Any operation that modifies Home Assistant state
 
