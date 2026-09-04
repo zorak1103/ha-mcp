@@ -3,7 +3,6 @@
 [![GitHub release](https://img.shields.io/github/v/release/zorak1103/ha-mcp)](https://github.com/zorak1103/ha-mcp/releases/latest)
 [![License](https://img.shields.io/github/license/zorak1103/ha-mcp)](LICENSE)
 [![CI](https://github.com/zorak1103/ha-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/zorak1103/ha-mcp/actions/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/zorak1103/ha-mcp?style=flat)](https://goreportcard.com/report/github.com/zorak1103/ha-mcp)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/zorak1103/ha-mcp)](https://go.dev/)
 [![Go Reference](https://pkg.go.dev/badge/github.com/zorak1103/ha-mcp.svg)](https://pkg.go.dev/github.com/zorak1103/ha-mcp)
 [![Docker Hub](https://img.shields.io/docker/v/zorak1103/ha-mcp?label=Docker%20Hub&logo=docker)](https://hub.docker.com/r/zorak1103/ha-mcp)
@@ -15,7 +14,7 @@ A Model Context Protocol (MCP) server that provides AI assistants with access to
 
 ## Features
 
-- **40 Specialized Tools**: Entity queries, automation CRUD, helper management, scripts, scenes, devices, areas, labels, floors, zones, persons, tags, traces, blueprints, updates, todos, calendars, cameras, dashboards, system log, and more
+- **41 Specialized Tools**: Entity queries, automation CRUD, helper management, scripts, scenes, devices, areas, labels, floors, zones, persons, tags, traces, blueprints, updates, todos, calendars, cameras, dashboards, system log, and more
 - **Hybrid Architecture**: WebSocket for most operations, REST API for automation/script/scene CRUD
 - **Complete CRUD**: Create, read, update, delete automations/scripts/scenes/helpers
 - **Deep System Access**: Query registries, analyze dependencies, access logbook, validate config
@@ -26,16 +25,20 @@ A Model Context Protocol (MCP) server that provides AI assistants with access to
 
 ## vs. Other MCP Servers for Home Assistant
 
-Two alternatives exist: the [official HA MCP integration](https://www.home-assistant.io/integrations/mcp_server) (built-in, ~10 intent-based tools) and the community [homeassistant-ai/ha-mcp](https://github.com/homeassistant-ai/ha-mcp) (Python/FastMCP, 95+ tools).
+Two alternatives exist: the [official HA MCP integration](https://www.home-assistant.io/integrations/mcp_server) (built-in Core component, ~15 intent tools) and community [homeassistant-ai/ha-mcp](https://github.com/homeassistant-ai/ha-mcp) (Python/FastMCP, 88 tools).
 
 Choose ha-mcp if you need:
-- Full automation/script/scene/helper lifecycle management (create, edit, delete)
-- Advanced analysis (dependencies, cross-references, automation coverage)
-- System administration (registry queries, config validation, logbook, history)
-- Media management (browser, camera streams), HACS, and dashboard access
-- Reliable LLM tool selection — 41 consolidated tools reduce selection errors compared to 95+ fine-grained alternatives
+- Full automation, script, scene, and helper lifecycle management (create, edit, delete)
+- RFC 6902 and semantic JSON patching for automations and dashboards without full-file overwrites
+- Helper management across 41 types, including multi-step config entry flows and template subtypes
+- Deep diagnostics (blast-radius analysis, dependency graphs, cross-configuration reference search)
+- Post-mutation state diffing (Smart Wait confirms `entity: off -> on` inline)
+- Efficient LLM context usage: 41 consolidated tools consume ~3,500 tokens of schema space, compared to 15,000+ tokens for 88 separate tools
+- Single static binary with zero runtime dependencies and low memory usage
 
-Choose the official integration if you need entity-level security or no external infrastructure.
+Choose the official integration if you need basic device control with zero external setup, or strictly rely on Assist Voice exposure settings.
+
+Choose community ha-mcp if you need in-HA execution via HACS or Add-on, human-in-the-loop approval policy queues, or entity concealment filters.
 
 See [docs/feature-comparison.md](docs/feature-comparison.md) for a detailed three-way feature matrix.
 
@@ -154,7 +157,7 @@ Seven guidance topics are also available as MCP resources under `skill://ha-mcp/
 ha-mcp provides read-only mode, whitelist, and blacklist filtering at the tool and action level:
 
 ```yaml
-# config.yaml — read-only monitoring
+# config.yaml - read-only monitoring
 server:
   read_only: true
 
