@@ -244,6 +244,26 @@ func TestManageStatistics_ListAction(t *testing.T) {
 		assertNotContainsAny(t, content, []string{"sensor.mcptest_energy"})
 	})
 
+	t.Run("limit equal to total does not truncate", func(t *testing.T) {
+		t.Parallel()
+
+		client := &UniversalMockClient{}
+		client.ListStatisticIDsFn = func(_ context.Context, _ string) ([]homeassistant.StatisticMeta, error) {
+			return statTestLegacyMeta(), nil
+		}
+
+		result, err := h.handleManageStatistics(context.Background(), client, map[string]any{
+			"action": statActionList,
+			"limit":  float64(2),
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		content := result.Content[0].Text
+		assertContainsAll(t, content, []string{"sensor.mcptest_battery", "sensor.mcptest_energy"})
+		assertNotContainsAny(t, content, []string{"Showing"})
+	})
+
 	t.Run("client error surfaces as IsError", func(t *testing.T) {
 		t.Parallel()
 
@@ -417,6 +437,58 @@ func TestFormatStatisticListNatural(t *testing.T) {
 
 		out := formatStatisticListNatural(statTestModernMeta())
 		assertContainsAll(t, out, []string{"- sensor.mcptest_battery", "mean"})
+	})
+
+	t.Run("modern mean_type circular and none", func(t *testing.T) {
+		t.Parallel()
+
+		metas := []homeassistant.StatisticMeta{
+			{
+				StatisticID: "sensor.circular",
+				Source:      "recorder",
+				MeanType:    statTestInt(2), // CIRCULAR
+			},
+			{
+				StatisticID: "sensor.none",
+				Source:      "recorder",
+				MeanType:    statTestInt(0), // NONE
+			},
+		}
+		out := formatStatisticListNatural(metas)
+		assertContainsAll(t, out, []string{"- sensor.circular", "circular mean", "- sensor.none"})
+		noneLine := out[strings.Index(out, "sensor.none"):]
+		if strings.Contains(noneLine, "mean") {
+			t.Errorf("none entry should not claim mean capability:\n%s", noneLine)
+		}
+	})
+
+	t.Run("display_unit fallback when statistics_unit is nil", func(t *testing.T) {
+		t.Parallel()
+
+		metas := []homeassistant.StatisticMeta{
+			{
+				StatisticID: "sensor.display_only",
+				Source:      "recorder",
+				DisplayUnit: statTestStr("W"),
+			},
+		}
+		out := formatStatisticListNatural(metas)
+		assertContainsAll(t, out, []string{"- sensor.display_only", "unit: W"})
+	})
+
+	t.Run("display_unit fallback when statistics_unit is empty", func(t *testing.T) {
+		t.Parallel()
+
+		metas := []homeassistant.StatisticMeta{
+			{
+				StatisticID:    "sensor.empty_stat_unit",
+				Source:         "recorder",
+				StatisticsUnit: statTestStr(""),
+				DisplayUnit:    statTestStr("A"),
+			},
+		}
+		out := formatStatisticListNatural(metas)
+		assertContainsAll(t, out, []string{"- sensor.empty_stat_unit", "unit: A"})
 	})
 
 	t.Run("empty list", func(t *testing.T) {
