@@ -420,9 +420,10 @@ func TestFormatStatisticListNatural(t *testing.T) {
 	t.Run("legacy has_mean/has_sum shape", func(t *testing.T) {
 		t.Parallel()
 
-		out := formatStatisticListNatural(statTestLegacyMeta())
+		metas := statTestLegacyMeta()
+		out := formatStatisticListNatural(metas, len(metas))
 		assertContainsAll(t, out, []string{
-			"- sensor.mcptest_battery",
+			"- sensor.mcptest_battery (Battery)",
 			"recorder",
 			"mV",
 			"mean",
@@ -443,7 +444,8 @@ func TestFormatStatisticListNatural(t *testing.T) {
 	t.Run("modern mean_type-only shape", func(t *testing.T) {
 		t.Parallel()
 
-		out := formatStatisticListNatural(statTestModernMeta())
+		metas := statTestModernMeta()
+		out := formatStatisticListNatural(metas, len(metas))
 		assertContainsAll(t, out, []string{"- sensor.mcptest_battery", "mean"})
 	})
 
@@ -462,7 +464,7 @@ func TestFormatStatisticListNatural(t *testing.T) {
 				MeanType:    statTestInt(0), // NONE
 			},
 		}
-		out := formatStatisticListNatural(metas)
+		out := formatStatisticListNatural(metas, len(metas))
 		assertContainsAll(t, out, []string{"- sensor.circular", "circular mean", "- sensor.none"})
 		noneLine := out[strings.Index(out, "sensor.none"):]
 		if strings.Contains(noneLine, "mean") {
@@ -480,7 +482,7 @@ func TestFormatStatisticListNatural(t *testing.T) {
 				DisplayUnit: statTestStr("W"),
 			},
 		}
-		out := formatStatisticListNatural(metas)
+		out := formatStatisticListNatural(metas, len(metas))
 		assertContainsAll(t, out, []string{"- sensor.display_only", "unit: W"})
 	})
 
@@ -495,17 +497,43 @@ func TestFormatStatisticListNatural(t *testing.T) {
 				DisplayUnit:    statTestStr("A"),
 			},
 		}
-		out := formatStatisticListNatural(metas)
+		out := formatStatisticListNatural(metas, len(metas))
 		assertContainsAll(t, out, []string{"- sensor.empty_stat_unit", "unit: A"})
 	})
 
 	t.Run("empty list", func(t *testing.T) {
 		t.Parallel()
 
-		out := formatStatisticListNatural(nil)
+		out := formatStatisticListNatural(nil, 0)
 		if !strings.Contains(out, "No statistic ids found") {
 			t.Errorf("want empty-list message, got:\n%s", out)
 		}
+	})
+
+	t.Run("includes friendly name when present", func(t *testing.T) {
+		t.Parallel()
+
+		metas := []homeassistant.StatisticMeta{
+			{
+				StatisticID: "sensor.living_room_temp",
+				Name:        statTestStr("Living Room Temperature"),
+				Source:      "recorder",
+			},
+		}
+
+		out := formatStatisticListNatural(metas, len(metas))
+		assertContainsAll(t, out, []string{"sensor.living_room_temp (Living Room Temperature)"})
+	})
+
+	t.Run("header indicates total when truncated", func(t *testing.T) {
+		t.Parallel()
+
+		metas := []homeassistant.StatisticMeta{
+			{StatisticID: "sensor.a", Source: "recorder"},
+		}
+
+		out := formatStatisticListNatural(metas, 5)
+		assertContainsAll(t, out, []string{"Found 5 statistic ids in the recorder database (showing 1):"})
 	})
 }
 

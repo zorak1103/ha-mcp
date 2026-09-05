@@ -133,7 +133,7 @@ func (h *StatisticsHandlers) handleStatisticList(
 		return successResult(out), nil
 	}
 
-	out := formatStatisticListNatural(metas)
+	out := formatStatisticListNatural(metas, total)
 	if truncated {
 		out += fmt.Sprintf("\n\n[Showing %d of %d statistic ids. Use limit parameter for more.]", len(metas), total)
 	}
@@ -213,16 +213,25 @@ func statisticCapabilities(m homeassistant.StatisticMeta) string {
 }
 
 // formatStatisticListNatural produces a human-readable statistic id list.
-func formatStatisticListNatural(metas []homeassistant.StatisticMeta) string {
+func formatStatisticListNatural(metas []homeassistant.StatisticMeta, total int) string {
 	if len(metas) == 0 {
 		return "No statistic ids found in the recorder database."
 	}
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "Found %d statistic %s in the recorder database:\n",
-		len(metas), pluralize(len(metas), "id", "ids"))
+	if total > len(metas) {
+		fmt.Fprintf(&sb, "Found %d statistic %s in the recorder database (showing %d):\n",
+			total, pluralize(total, "id", "ids"), len(metas))
+	} else {
+		fmt.Fprintf(&sb, "Found %d statistic %s in the recorder database:\n",
+			len(metas), pluralize(len(metas), "id", "ids"))
+	}
 
 	for _, m := range metas {
+		namePart := ""
+		if m.Name != nil && *m.Name != "" && *m.Name != m.StatisticID {
+			namePart = fmt.Sprintf(" (%s)", *m.Name)
+		}
 		unit := ""
 		if m.StatisticsUnit != nil && *m.StatisticsUnit != "" {
 			unit = *m.StatisticsUnit
@@ -237,7 +246,7 @@ func formatStatisticListNatural(metas []homeassistant.StatisticMeta) string {
 		if caps := statisticCapabilities(m); caps != "" {
 			capPart = fmt.Sprintf(" — %s", caps)
 		}
-		fmt.Fprintf(&sb, "- %s (source: %s)%s%s\n", m.StatisticID, m.Source, unitPart, capPart)
+		fmt.Fprintf(&sb, "- %s%s (source: %s)%s%s\n", m.StatisticID, namePart, m.Source, unitPart, capPart)
 	}
 	return sb.String()
 }
