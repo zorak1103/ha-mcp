@@ -150,7 +150,7 @@ func sentenceCaseKey(key string) string {
 }
 
 // maxDetailValueChars/maxDetailListItems/maxDetailValueDepth bound the
-// generic attribute-value renderer (formatDetailValue) used by get_details'
+// generic attribute-value renderer (FormatDetailValue) used by get_details'
 // fallback path for helper domains with no dedicated renderer (climate,
 // humidifier, select, the 15 template_* subtypes). 400 chars keeps
 // legitimately useful full-length values (climate.hvac_modes, select.options,
@@ -165,7 +165,7 @@ const (
 
 // sanitizeDisplayValue collapses newlines/carriage returns in a natural-format
 // attribute value to spaces, so a value cannot forge additional "Key: value"
-// lines in line-oriented output. Unlike sanitizeDisplayName (used for entity
+// lines in line-oriented output. Unlike SanitizeDisplayName (used for entity
 // display names), parentheses are left intact - "(eco)" is a legitimate
 // attribute value, not an attempt to forge an "(entity_id)" suffix.
 func sanitizeDisplayValue(s string) string {
@@ -186,7 +186,7 @@ func truncateRunes(s string, maxRunes int) string {
 
 // renderDetailValue renders v for natural-format display. Only the item-count
 // cap (maxDetailListItems) is applied here, for nested lists at depth > 0;
-// the character-length cap is deliberately deferred to formatDetailValue's
+// the character-length cap is deliberately deferred to FormatDetailValue's
 // top-level handling, since applying it here too would double-truncate:
 // every list element would be pre-truncated before joining, and a long
 // list's "… +N more" suffix could then itself be truncated away.

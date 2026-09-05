@@ -649,8 +649,8 @@ func TestNaturalHelperFormatter_FormatHelperDetail_GenericFallback_SanitizesKeys
 }
 
 // TestNaturalHelperFormatter_FormatHelperDetail_GenericFallback_ParensSurvive
-// documents that formatDetailValue's sanitization is deliberately narrower
-// than sanitizeDisplayName's: it strips newlines but not parentheses, since
+// documents that FormatDetailValue's sanitization is deliberately narrower
+// than SanitizeDisplayName's: it strips newlines but not parentheses, since
 // "(eco)" is a legitimate attribute value with no id-forging risk the way a
 // forged "(entity_id)" suffix in a name would have.
 func TestNaturalHelperFormatter_FormatHelperDetail_GenericFallback_ParensSurvive(t *testing.T) {
