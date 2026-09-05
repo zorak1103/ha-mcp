@@ -294,11 +294,13 @@ Universal tool for runtime helper operations:
 
 | Action     | Access | Description                                                                             | Key params                              |
 | ---------- | ------ | --------------------------------------------------------------------------------------- | ---------------------------------------- |
-| `list`     | read   | Enumerate known statistic ids incl. orphaned ones (Developer Tools → Statistics basis) | `statistic_type` (mean/sum), `limit` (default 100, 0 = unlimited), `format` |
-| `validate` | read   | Validation issue list per statistic id; issue type `no_state` = orphaned statistic     | `limit` (default 100, 0 = unlimited), `format` |
+| `list`     | read   | Enumerate known statistic ids incl. orphaned ones (Developer Tools → Statistics basis) | `statistic_type` (mean/sum), `limit` (default 100, 0 = unlimited, capped at 1000), `offset`, `cursor`, `format` |
+| `validate` | read   | Validation issue list per statistic id; issue type `no_state` = orphaned statistic     | `limit` (default 100, 0 = unlimited, capped at 1000), `offset`, `cursor`, `format` |
 | `clear`    | write  | Permanently remove statistics data + metadata for the given ids                        | `statistic_ids` (required array), `dry_run` |
 
-Note: `clear` is a write action but is **not** matched by a `manage_*:delete` tool-filter pattern (the action name is `clear`, not `delete`) — block it explicitly via `manage_statistics:clear` if a filter policy needs to exclude it. `clear` cross-checks requested ids against the recorder's known ids and reports which were actually cleared vs. skipped as not present; pass `dry_run: true` to preview that split without purging anything.
+Note: `clear` is a write action but is **not** matched by a `manage_*:delete` tool-filter pattern (the action name is `clear`, not `delete`) — block it explicitly via `manage_statistics:clear` if a filter policy needs to exclude it. `clear` cross-checks requested ids against the recorder's known ids and reports which were actually cleared vs. skipped as not present; pass `dry_run: true` to preview that split without purging anything. `dry_run` must be a real boolean — a stringified `"true"` is rejected rather than silently treated as `false`, since it is the only thing standing between a preview and an irreversible purge. An id that doesn't match HA's statistic_id shape no longer hard-fails the whole `clear` call by itself: it is reported back as "not a recognizable statistic id (skipped)" alongside ids the recorder doesn't know, as long as at least one requested id is well-formed.
+
+`list`/`validate` responses include `next_cursor` when more results exist beyond the current page (JSON format); pass it back as `cursor` on the next call to page through a large result set instead of the only prior escape hatch, `limit=0` (unlimited).
 
 ### Guidance Tools
 

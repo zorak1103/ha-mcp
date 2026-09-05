@@ -86,9 +86,18 @@ func (h *StatisticsHandlers) manageStatisticsTool() mcp.Tool {
 					Type: "integer",
 					Description: fmt.Sprintf(
 						"Optional maximum number of statistic ids to return for action=list, "+
-							"or statistic ids to include for action=validate; ignored for action=clear. "+
-							"Defaults to %d when omitted; pass 0 explicitly for unlimited.",
-						defaultStatisticListLimit),
+							"or statistic ids to include for action=validate; ignored for action=clear and when cursor is set. "+
+							"Defaults to %d when omitted; pass 0 explicitly for unlimited (capped at %d). Ignored for action=clear.",
+						defaultStatisticListLimit, DefaultMaxLimit),
+				},
+				"offset": {
+					Type:        "integer",
+					Description: "Optional number of statistic ids/issues to skip before applying limit, for action=list/validate; ignored when cursor is set.",
+				},
+				"cursor": {
+					Type: "string",
+					Description: "Optional pagination cursor from a previous action=list/validate response's next_cursor, " +
+						"to fetch the next page. Overrides limit/offset.",
 				},
 				"format": {
 					Type:        "string",
@@ -135,7 +144,9 @@ func (h *StatisticsHandlers) handleStatisticList(
 	if statisticType != "" && statisticType != statTypeMean && statisticType != statTypeSum {
 		return errorResult(fmt.Sprintf("invalid statistic_type %q: must be %q or %q", statisticType, statTypeMean, statTypeSum)), nil
 	}
-	if err := validateLimitArg(args); err != nil {
+
+	params, err := buildStatisticListPaginationParams(args, statisticType)
+	if err != nil {
 		return errorResult(err.Error()), nil
 	}
 
@@ -144,18 +155,18 @@ func (h *StatisticsHandlers) handleStatisticList(
 		return errorResult(fmt.Sprintf("Error listing statistic ids: %v", err)), nil
 	}
 
-	metas, total, truncated := applyStatisticLimit(metas, resolveLimitArg(args))
+	page := ApplyPagination(metas, params)
 
 	format := getString(args, "format")
 	if format == formatJSON {
-		out, err := formatStatisticListJSON(metas, total, truncated)
+		out, err := formatStatisticListJSON(page)
 		if err != nil {
 			return errorResult(fmt.Sprintf("Error formatting output: %v", err)), nil
 		}
 		return successResult(out), nil
 	}
 
-	return successResult(formatStatisticListNatural(metas, total)), nil
+	return successResult(formatStatisticListNatural(page.Items, page.Pagination.Total)), nil
 }
 
 // handleStatisticValidate returns the recorder validation issue list.
@@ -164,7 +175,8 @@ func (h *StatisticsHandlers) handleStatisticValidate(
 	client homeassistant.Client,
 	args map[string]any,
 ) (*mcp.ToolsCallResult, error) {
-	if err := validateLimitArg(args); err != nil {
+	params, err := buildStatisticListPaginationParams(args, "")
+	if err != nil {
 		return errorResult(err.Error()), nil
 	}
 
@@ -173,7 +185,7 @@ func (h *StatisticsHandlers) handleStatisticValidate(
 		return errorResult(fmt.Sprintf("Error validating statistics: %v", err)), nil
 	}
 
-	limited, summary := applyValidateLimit(issues, resolveLimitArg(args))
+	limited, summary := paginateValidateIssues(issues, params)
 
 	format := getString(args, "format")
 	if format == formatJSON {
@@ -193,12 +205,19 @@ func (h *StatisticsHandlers) handleStatisticClear(
 	client homeassistant.Client,
 	args map[string]any,
 ) (*mcp.ToolsCallResult, error) {
-	statIDs, err := parseStatisticIDsStrict(args)
+	// dry_run is the only thing standing between a preview and an
+	// irreversible purge, and the MCP server does no schema validation of
+	// its own (InputSchema is advisory) - a non-bool value must error, not
+	// silently become false and clear for real (issue C1).
+	dryRun, err := parseBoolArg(args, "dry_run")
 	if err != nil {
 		return errorResult(err.Error()), nil
 	}
 
-	dryRun, _ := args["dry_run"].(bool)
+	statIDs, unrecognized, err := parseStatisticIDsStrict(args)
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
 
 	known, unknown, checked := resolveKnownStatisticIDs(ctx, client, statIDs)
 	if !checked {
@@ -209,8 +228,9 @@ func (h *StatisticsHandlers) handleStatisticClear(
 		if dryRun {
 			return successResult(fmt.Sprintf(
 				"Would attempt to clear statistics for %d %s: %s\n"+
-					"WARNING: could not verify which ids exist in the recorder database before this preview.",
+					"WARNING: could not verify which ids exist in the recorder database before this preview.%s",
 				len(statIDs), pluralize(len(statIDs), "statistic id", "statistic ids"), strings.Join(statIDs, ", "),
+				unrecognizedNote(unrecognized),
 			)), nil
 		}
 		if err := client.ClearStatistics(ctx, statIDs); err != nil {
@@ -218,20 +238,21 @@ func (h *StatisticsHandlers) handleStatisticClear(
 		}
 		return successResult(fmt.Sprintf(
 			"Cleared statistics for %d %s: %s\n"+
-				"WARNING: could not verify which of these ids actually existed in the recorder database before clearing.",
+				"WARNING: could not verify which of these ids actually existed in the recorder database before clearing.%s",
 			len(statIDs), pluralize(len(statIDs), "statistic id", "statistic ids"), strings.Join(statIDs, ", "),
+			unrecognizedNote(unrecognized),
 		)), nil
 	}
 
 	if dryRun {
-		return successResult(formatClearMessage("Would clear", known, unknown)), nil
+		return successResult(formatClearMessage("Would clear", known, unknown, unrecognized)), nil
 	}
 
 	if err := client.ClearStatistics(ctx, statIDs); err != nil {
 		return errorResult(fmt.Sprintf("Error clearing statistics: %v", err)), nil
 	}
 
-	return successResult(formatClearMessage("Cleared", known, unknown)), nil
+	return successResult(formatClearMessage("Cleared", known, unknown, unrecognized)), nil
 }
 
 // resolveKnownStatisticIDs splits the requested ids into those the recorder
@@ -270,7 +291,7 @@ func resolveKnownStatisticIDs(
 // clear", its dry_run preview): which requested ids the recorder actually
 // knows (and were cleared/would be cleared), and which were skipped because
 // the recorder never had them.
-func formatClearMessage(verb string, known, unknown []string) string {
+func formatClearMessage(verb string, known, unknown, unrecognized []string) string {
 	var sb strings.Builder
 	if len(known) == 0 {
 		fmt.Fprintf(&sb, "%s statistics for 0 statistic ids: none of the requested ids were present in the recorder database.", verb)
@@ -282,7 +303,25 @@ func formatClearMessage(verb string, known, unknown []string) string {
 		fmt.Fprintf(&sb, "\n%d %s not present in the recorder database (skipped): %s",
 			len(unknown), pluralize(len(unknown), "id", "ids"), strings.Join(unknown, ", "))
 	}
+	sb.WriteString(unrecognizedNote(unrecognized))
 	return sb.String()
+}
+
+// unrecognizedNote renders the ids parseStatisticIDsStrict flagged as not
+// matching HA's statistic_id shape (issue W6) but forwarded anyway - unlike
+// known/unknown, which come from statIDs and are therefore already
+// regex-valid, an unrecognized id was never shape-checked, so it is
+// sanitized before joining into a line-oriented message.
+func unrecognizedNote(unrecognized []string) string {
+	if len(unrecognized) == 0 {
+		return ""
+	}
+	sanitized := make([]string, len(unrecognized))
+	for i, id := range unrecognized {
+		sanitized[i] = formatter.SanitizeDisplayName(id)
+	}
+	return fmt.Sprintf("\n%d %s not a recognizable statistic id (skipped): %s",
+		len(unrecognized), pluralize(len(unrecognized), "id", "ids"), strings.Join(sanitized, ", "))
 }
 
 // maxClearStatisticIDs bounds one clear call's batch size, so a single
@@ -297,95 +336,156 @@ const maxClearStatisticIDs = 500
 // and integration domains like "17track" start with one.
 var statisticIDPattern = regexp.MustCompile(`^[a-z0-9_]+[.:][a-z0-9_]+$`)
 
-// parseStatisticIDsStrict extracts and strictly validates statistic_ids for
-// the destructive clear action. Unlike parseStatisticIDsLenient (used by the
-// read-only get_statistics path, which silently drops malformed elements),
-// clear is irreversible: a silently dropped or malformed id would make the
-// tool's success message misrepresent what was actually purged. Every
-// element must be a well-formed, non-empty statistic id; duplicates are
-// dropped (order-preserving) and the batch is capped.
-func parseStatisticIDsStrict(args map[string]any) ([]string, error) {
+// parseStatisticIDsStrict extracts statistic_ids for the destructive clear
+// action, splitting into ids that match HA's known statistic_id shape
+// (valid) and ids that don't (unrecognized, issue W6). A shape mismatch
+// alone no longer hard-fails the whole batch: an orphaned statistic can
+// carry an id shape older or buggier than HA's own validator currently
+// allows, and cleaning that up is exactly this tool's purpose.
+// resolveKnownStatisticIDs is the real correctness gate downstream - it
+// checks against the recorder's actual known ids, which is strictly
+// stronger than a shape guess. Structural problems (wrong type, too many,
+// empty, oversized) still hard-fail: they indicate a caller mistake, not a
+// legitimate orphan. If every id turns out unrecognized, this still errors -
+// there is nothing left to act on.
+func parseStatisticIDsStrict(args map[string]any) (valid, unrecognized []string, err error) {
 	statIDsRaw, ok := args["statistic_ids"]
 	if !ok {
-		return nil, fmt.Errorf("statistic_ids is required")
+		return nil, nil, fmt.Errorf("statistic_ids is required")
 	}
 
 	statIDsSlice, ok := statIDsRaw.([]any)
 	if !ok {
-		return nil, fmt.Errorf("statistic_ids must be an array")
+		return nil, nil, fmt.Errorf("statistic_ids must be an array")
 	}
 
 	if len(statIDsSlice) == 0 {
-		return nil, fmt.Errorf("at least one statistic_id is required")
+		return nil, nil, fmt.Errorf("at least one statistic_id is required")
 	}
 	if len(statIDsSlice) > maxClearStatisticIDs {
-		return nil, fmt.Errorf("too many statistic_ids: got %d, max %d", len(statIDsSlice), maxClearStatisticIDs)
+		return nil, nil, fmt.Errorf("too many statistic_ids: got %d, max %d", len(statIDsSlice), maxClearStatisticIDs)
 	}
 
 	seen := make(map[string]bool, len(statIDsSlice))
-	statIDs := make([]string, 0, len(statIDsSlice))
 	for i, raw := range statIDsSlice {
 		s, ok := raw.(string)
 		if !ok {
-			return nil, fmt.Errorf("statistic_ids[%d] must be a string, got %T", i, raw)
+			return nil, nil, fmt.Errorf("statistic_ids[%d] must be a string, got %T", i, raw)
 		}
 		s = strings.TrimSpace(s)
 		if s == "" {
-			return nil, fmt.Errorf("statistic_ids[%d] must not be empty", i)
+			return nil, nil, fmt.Errorf("statistic_ids[%d] must not be empty", i)
 		}
-		if !statisticIDPattern.MatchString(s) {
-			return nil, fmt.Errorf(
-				"statistic_ids[%d] %q is not a valid statistic id (expected domain.object_id or domain:key)", i, s)
+		// maxScalarStringLen (helpers_arg_reader.go) bounds every other
+		// caller-supplied string field in the codebase; statistic_ids had no
+		// per-element length bound despite maxClearStatisticIDs's comment
+		// implying one (issue W2 - that constant only bounds element count).
+		if len(s) > maxScalarStringLen {
+			return nil, nil, fmt.Errorf("statistic_ids[%d] exceeds maximum length of %d bytes", i, maxScalarStringLen)
 		}
 		if seen[s] {
 			continue
 		}
 		seen[s] = true
-		statIDs = append(statIDs, s)
+		if statisticIDPattern.MatchString(s) {
+			valid = append(valid, s)
+		} else {
+			unrecognized = append(unrecognized, s)
+		}
 	}
 
-	return statIDs, nil
+	if len(valid) == 0 {
+		return nil, nil, fmt.Errorf(
+			"no recognizable statistic ids (expected domain.object_id or domain:key): %s",
+			strings.Join(unrecognized, ", "))
+	}
+
+	return valid, unrecognized, nil
 }
 
-// validateLimitArg rejects a limit argument that isn't a non-negative
-// integer. getInt silently reads anything non-numeric (a string "10") or
-// negative as "no limit" - explicit validation here mirrors the
-// statistic_type check above it instead of hiding a caller's mistake behind
-// unbounded output.
+// parseBoolArg reads an optional boolean arg strictly. A non-bool value is
+// an error, never a silent false: the MCP server performs no schema
+// validation of its own (InputSchema is advisory metadata only), so nothing
+// else stops a stringified "true" from reaching a handler. For action=clear
+// this is the difference between a preview and an irreversible purge
+// (issue C1) - it must fail closed, not open.
+func parseBoolArg(args map[string]any, key string) (bool, error) {
+	raw, ok := args[key]
+	if !ok {
+		return false, nil
+	}
+	b, ok := raw.(bool)
+	if !ok {
+		return false, fmt.Errorf("invalid %s %v: must be a boolean", key, raw)
+	}
+	return b, nil
+}
+
+// validateLimitArg rejects a limit argument that isn't a finite, in-range,
+// non-negative integer. Accepts both float64 (the normal JSON-RPC decoding)
+// and int (a caller reaching the handler without a JSON round-trip, e.g. the
+// integration test suite's CallTool). A value that is finite and integral
+// but outside int range (e.g. 1e19) must still be rejected here: converting
+// an out-of-range float to int is implementation-defined and can produce a
+// negative result, which would silently defeat every limit/offset guard
+// downstream and restore the unbounded output this validation exists to
+// prevent (issue C2).
 func validateLimitArg(args map[string]any) error {
 	raw, ok := args["limit"]
 	if !ok {
 		return nil
 	}
-	limitF, isNum := raw.(float64)
-	if !isNum || limitF < 0 || limitF != math.Trunc(limitF) {
+	var limitF float64
+	switch v := raw.(type) {
+	case float64:
+		limitF = v
+	case int:
+		limitF = float64(v)
+	default:
 		return fmt.Errorf("invalid limit %v: must be a non-negative integer", raw)
+	}
+	if math.IsNaN(limitF) || math.IsInf(limitF, 0) || limitF < 0 || limitF != math.Trunc(limitF) {
+		return fmt.Errorf("invalid limit %v: must be a non-negative integer", raw)
+	}
+	if limitF > math.MaxInt32 {
+		return fmt.Errorf("invalid limit %v: must not exceed %d", raw, math.MaxInt32)
 	}
 	return nil
 }
 
-// resolveLimitArg returns the effective limit for list/validate actions.
-// getInt treats an absent "limit" key the same as an explicit 0, which would
-// make the common no-argument call return every row in the recorder
-// database (issue C1) - a mature HA install can have thousands of statistic
-// ids. Distinguishing "absent" from "explicitly 0" here lets 0 keep meaning
-// "unlimited" only when the caller says so, while an omitted limit gets a
-// safe default. validateLimitArg has already rejected a malformed explicit
-// value by the time this runs.
-func resolveLimitArg(args map[string]any) int {
-	if _, ok := args["limit"]; !ok {
-		return defaultStatisticListLimit
+// buildStatisticListPaginationParams parses cursor/limit/offset for
+// action=list/validate via the shared pagination helpers (ParsePaginationParams,
+// pagination.go), converging manage_statistics onto the same DefaultMaxLimit
+// clamp and cursor mechanism as every other paginated tool (issue W5) instead
+// of a bespoke, unbounded-by-default limiter.
+//
+// ParsePaginationParams cannot be called as-is for two reasons:
+//  1. validateLimitArg must reject a malformed limit before
+//     ParsePaginationParams silently coerces it to NoLimit (unlimited).
+//  2. ParsePaginationParams leaves an absent limit at its zero value, which
+//     means NoLimit/unlimited - the same value it produces for an explicit
+//     limit=0. Left alone, the common no-argument call would return every
+//     row in the recorder database (issue C1). The default is therefore
+//     applied here, and only when the caller supplied neither limit nor
+//     cursor - a cursor already carries its own limit from the page that
+//     produced it, and an explicit limit=0 must keep meaning "unlimited".
+func buildStatisticListPaginationParams(args map[string]any, statisticType string) (PaginationParams, error) {
+	if err := validateLimitArg(args); err != nil {
+		return PaginationParams{}, err
 	}
-	return getInt(args, "limit")
-}
 
-// applyStatisticLimit truncates the list client-side and reports the total.
-func applyStatisticLimit(metas []homeassistant.StatisticMeta, limit int) ([]homeassistant.StatisticMeta, int, bool) {
-	total := len(metas)
-	if limit > 0 && total > limit {
-		return metas[:limit], total, true
+	filters := map[string]any{"statistic_type": statisticType}
+	params, err := ParsePaginationParams(args, filters)
+	if err != nil {
+		return PaginationParams{}, err
 	}
-	return metas, total, false
+
+	if params.Cursor == "" {
+		if _, hasLimit := args["limit"]; !hasLimit {
+			params.Limit = defaultStatisticListLimit
+		}
+	}
+	return params, nil
 }
 
 // validateSummary bundles the id/issue counts formatValidateNatural and
@@ -394,13 +494,15 @@ func applyStatisticLimit(metas []homeassistant.StatisticMeta, limit int) ([]home
 // a truncated header can't conflate the two populations (issue W1: an id can
 // carry more than one issue, so "N ids shown" and "M issues shown" are
 // different numbers and summing issues over an already-truncated map gives
-// the wrong total).
+// the wrong total). Pagination carries the id-level cursor/offset/limit
+// metadata for action=validate's JSON output.
 type validateSummary struct {
 	ShownIDs    int
 	TotalIDs    int
 	ShownIssues int
 	TotalIssues int
 	Truncated   bool
+	Pagination  PaginationMetadata
 }
 
 // countIssues sums the issue lists across every statistic id in the map.
@@ -412,23 +514,16 @@ func countIssues(issues map[string][]homeassistant.StatisticValidationIssue) int
 	return n
 }
 
-// applyValidateLimit truncates the validation issue map to at most limit
-// statistic ids, chosen by sorted id for determinism, and returns the
-// truncated map plus a validateSummary describing both the shown and total
-// id/issue counts. Mirrors applyStatisticLimit for action=validate.
-func applyValidateLimit(
+// paginateValidateIssues applies the shared pagination helpers to the
+// validation issue map, chosen by sorted id for determinism, and returns the
+// paginated map plus a validateSummary describing both the shown and total
+// id/issue counts. Ids (not issues) are the paginated unit, matching the
+// pre-pagination behavior this replaces.
+func paginateValidateIssues(
 	issues map[string][]homeassistant.StatisticValidationIssue,
-	limit int,
+	params PaginationParams,
 ) (map[string][]homeassistant.StatisticValidationIssue, validateSummary) {
 	totalIssues := countIssues(issues)
-	if limit <= 0 || len(issues) <= limit {
-		return issues, validateSummary{
-			ShownIDs:    len(issues),
-			TotalIDs:    len(issues),
-			ShownIssues: totalIssues,
-			TotalIssues: totalIssues,
-		}
-	}
 
 	ids := make([]string, 0, len(issues))
 	for id := range issues {
@@ -436,16 +531,23 @@ func applyValidateLimit(
 	}
 	slices.Sort(ids)
 
-	limited := make(map[string][]homeassistant.StatisticValidationIssue, limit)
-	for _, id := range ids[:limit] {
+	page := ApplyPagination(ids, params)
+
+	limited := make(map[string][]homeassistant.StatisticValidationIssue, len(page.Items))
+	for _, id := range page.Items {
 		limited[id] = issues[id]
 	}
+
 	return limited, validateSummary{
-		ShownIDs:    len(limited),
-		TotalIDs:    len(issues),
+		ShownIDs:    page.Pagination.Count,
+		TotalIDs:    page.Pagination.Total,
 		ShownIssues: countIssues(limited),
 		TotalIssues: totalIssues,
-		Truncated:   true,
+		// HasMore, not Total>Count - see the identical comment in
+		// formatStatisticListJSON for why this must mean "more exists
+		// beyond this page", not "this page is smaller than the total".
+		Truncated:  page.Pagination.HasMore,
+		Pagination: page.Pagination,
 	}
 }
 
@@ -526,18 +628,28 @@ type statisticListJSONResponse struct {
 	Total        int                           `json:"total"`
 	Returned     int                           `json:"returned"`
 	Truncated    bool                          `json:"truncated"`
+	NextCursor   *string                       `json:"next_cursor,omitempty"`
 }
 
-// formatStatisticListJSON serializes the metadata entries as indented JSON.
-func formatStatisticListJSON(metas []homeassistant.StatisticMeta, total int, truncated bool) (string, error) {
+// formatStatisticListJSON serializes a paginated page of metadata entries as
+// indented JSON. NextCursor lets a caller page past a truncated response
+// (issue W5) instead of the previous all-or-nothing limit=0 escape hatch.
+func formatStatisticListJSON(page PaginatedResponse[homeassistant.StatisticMeta]) (string, error) {
+	metas := page.Items
 	if metas == nil {
 		metas = []homeassistant.StatisticMeta{}
 	}
 	resp := statisticListJSONResponse{
 		StatisticIDs: metas,
-		Total:        total,
-		Returned:     len(metas),
-		Truncated:    truncated,
+		Total:        page.Pagination.Total,
+		Returned:     page.Pagination.Count,
+		// HasMore, not Total>Count: on the true last page of a cursor-paged
+		// walk, Total can still exceed this page's Count (e.g. total=3,
+		// offset=2, limit=2 -> Count=1) even though nothing remains to
+		// fetch. Truncated must mean "more exists beyond this page", which
+		// is exactly what HasMore/NextCursor already answer.
+		Truncated:  page.Pagination.HasMore,
+		NextCursor: page.Pagination.NextCursor,
 	}
 	b, err := json.MarshalIndent(resp, "", "  ")
 	if err != nil {
@@ -577,10 +689,19 @@ func formatValidateNatural(issues map[string][]homeassistant.StatisticValidation
 	for _, t := range types {
 		ids := byType[t]
 		slices.Sort(ids)
+		// t is server-provided (HA's recorder/validate_statistics issue
+		// type) and rendered into its own header line - sanitized the same
+		// way the id on the neighboring line already is (issue W3), so it
+		// can't forge an extra line. SanitizeDisplayName, not
+		// FormatDetailValue: an issue type is a fixed HA-defined identifier
+		// (e.g. "no_state", "units_changed") with no legitimate use for
+		// parentheses, unlike a unit value such as "kWh (net)" - stripping
+		// them is safe and matches how the id on the next line is handled.
+		safeType := formatter.SanitizeDisplayName(t)
 		if label, known := statisticIssueLabels[t]; known {
-			fmt.Fprintf(&sb, "\n%s (%d %s) — %s:\n", t, len(ids), pluralize(len(ids), "id", "ids"), label)
+			fmt.Fprintf(&sb, "\n%s (%d %s) — %s:\n", safeType, len(ids), pluralize(len(ids), "id", "ids"), label)
 		} else {
-			fmt.Fprintf(&sb, "\n%s (%d %s):\n", t, len(ids), pluralize(len(ids), "id", "ids"))
+			fmt.Fprintf(&sb, "\n%s (%d %s):\n", safeType, len(ids), pluralize(len(ids), "id", "ids"))
 		}
 		for _, id := range ids {
 			fmt.Fprintf(&sb, "  - %s\n", formatter.SanitizeDisplayName(id))
@@ -624,7 +745,11 @@ func sortedIssueData(issue homeassistant.StatisticValidationIssue) string {
 	slices.Sort(dataKeys)
 	var sb strings.Builder
 	for _, k := range dataKeys {
-		fmt.Fprintf(&sb, "      %s: %s\n", k, formatter.FormatDetailValue(issue.Data[k]))
+		// k is a server-provided map key (HA's issue.Data) rendered
+		// line-oriented alongside its value - sanitized the same way the
+		// value already is, so a key can't forge an extra line (issue W3;
+		// mirrors sentenceCaseKey's key sanitization in formatter/util.go).
+		fmt.Fprintf(&sb, "      %s: %s\n", formatter.FormatDetailValue(k), formatter.FormatDetailValue(issue.Data[k]))
 	}
 	return sb.String()
 }
@@ -639,9 +764,12 @@ type statisticValidateJSONResponse struct {
 	TotalIssues    int                                                 `json:"total_issues"`
 	ReturnedIssues int                                                 `json:"returned_issues"`
 	Truncated      bool                                                `json:"truncated"`
+	NextCursor     *string                                             `json:"next_cursor,omitempty"`
 }
 
-// formatValidateJSON serializes the issues map as indented JSON.
+// formatValidateJSON serializes the issues map as indented JSON. NextCursor
+// (from summary.Pagination) lets a caller page past a truncated response
+// (issue W5).
 func formatValidateJSON(
 	issues map[string][]homeassistant.StatisticValidationIssue,
 	summary validateSummary,
@@ -656,6 +784,7 @@ func formatValidateJSON(
 		TotalIssues:    summary.TotalIssues,
 		ReturnedIssues: summary.ShownIssues,
 		Truncated:      summary.Truncated,
+		NextCursor:     summary.Pagination.NextCursor,
 	}
 	b, err := json.MarshalIndent(resp, "", "  ")
 	if err != nil {

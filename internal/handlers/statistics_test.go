@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 
@@ -99,7 +100,7 @@ func TestManageStatisticsToolSchema(t *testing.T) {
 		ExpectedName:    "manage_statistics",
 		WantDescription: true,
 		RequiredParams:  []string{"action"},
-		OptionalParams:  []string{"statistic_type", "statistic_ids", "limit", "format", "dry_run"},
+		OptionalParams:  []string{"statistic_type", "statistic_ids", "limit", "offset", "cursor", "format", "dry_run"},
 	})
 
 	actionEnum := tool.InputSchema.Properties["action"].Enum
@@ -151,6 +152,22 @@ func TestManageStatisticsToolSchema(t *testing.T) {
 		t.Errorf("limit.Type = %q, want integer", limitProp.Type)
 	}
 
+	offsetProp, ok := tool.InputSchema.Properties["offset"]
+	if !ok {
+		t.Fatal("missing offset property in schema")
+	}
+	if offsetProp.Type != "integer" {
+		t.Errorf("offset.Type = %q, want integer", offsetProp.Type)
+	}
+
+	cursorProp, ok := tool.InputSchema.Properties["cursor"]
+	if !ok {
+		t.Fatal("missing cursor property in schema")
+	}
+	if cursorProp.Type != "string" {
+		t.Errorf("cursor.Type = %q, want string", cursorProp.Type)
+	}
+
 	dryRunProp, ok := tool.InputSchema.Properties["dry_run"]
 	if !ok {
 		t.Fatal("missing dry_run property in schema")
@@ -167,6 +184,8 @@ func TestManageStatistics_DispatchValidation(t *testing.T) {
 	for i := range tooManyIDs {
 		tooManyIDs[i] = fmt.Sprintf("sensor.mcptest_%d", i)
 	}
+
+	oversizedID := "sensor." + strings.Repeat("a", maxScalarStringLen+1)
 
 	tests := []handlerTestCase{
 		{
@@ -196,6 +215,34 @@ func TestManageStatistics_DispatchValidation(t *testing.T) {
 		{
 			name:         "list with negative limit rejected",
 			args:         map[string]any{"action": statActionList, "limit": float64(-1)},
+			wantError:    true,
+			wantContains: []string{"limit"},
+		},
+		{
+			// issue C2: a limit large enough to overflow int on conversion
+			// must be rejected outright, not silently truncated to a
+			// negative value that then defeats every limit/offset guard
+			// downstream and returns the entire recorder database.
+			name:         "list with limit overflowing int range rejected (issue C2)",
+			args:         map[string]any{"action": statActionList, "limit": float64(1e19)},
+			wantError:    true,
+			wantContains: []string{"limit"},
+		},
+		{
+			name:         "list with +Inf limit rejected (issue C2)",
+			args:         map[string]any{"action": statActionList, "limit": math.Inf(1)},
+			wantError:    true,
+			wantContains: []string{"limit"},
+		},
+		{
+			name:         "list with NaN limit rejected (issue C2)",
+			args:         map[string]any{"action": statActionList, "limit": math.NaN()},
+			wantError:    true,
+			wantContains: []string{"limit"},
+		},
+		{
+			name:         "list with bool limit rejected",
+			args:         map[string]any{"action": statActionList, "limit": true},
 			wantError:    true,
 			wantContains: []string{"limit"},
 		},
@@ -242,16 +289,43 @@ func TestManageStatistics_DispatchValidation(t *testing.T) {
 			wantContains: []string{"statistic_ids[0]", "empty"},
 		},
 		{
-			name:         "clear with malformed id rejected",
+			// issue W6: a shape mismatch alone no longer hard-fails the
+			// batch when at least one other id is well-formed - see
+			// TestManageStatistics_ClearAction's warn-and-forward cases.
+			// With every id malformed there is nothing left to act on, so
+			// this must still error.
+			name:         "clear with only a malformed id rejected",
 			args:         map[string]any{"action": statActionClear, "statistic_ids": []any{"not-a-valid-id"}},
 			wantError:    true,
-			wantContains: []string{"not-a-valid-id", "valid statistic id"},
+			wantContains: []string{"not-a-valid-id", "no recognizable statistic ids"},
 		},
 		{
 			name:         "clear with too many ids rejected",
 			args:         map[string]any{"action": statActionClear, "statistic_ids": tooManyIDs},
 			wantError:    true,
 			wantContains: []string{"too many", fmt.Sprintf("%d", maxClearStatisticIDs)},
+		},
+		{
+			// issue W2: maxClearStatisticIDs only bounds element count, not
+			// element length - each id needs its own bound too.
+			name:         "clear with oversized id element rejected (issue W2)",
+			args:         map[string]any{"action": statActionClear, "statistic_ids": []any{oversizedID}},
+			wantError:    true,
+			wantContains: []string{"statistic_ids[0]", "exceeds maximum length"},
+		},
+		{
+			// issue C1: dry_run must fail closed on a non-bool value, since
+			// it is the only thing standing between a preview and an
+			// irreversible purge and the MCP server does no schema
+			// validation of its own.
+			name: "clear with non-bool dry_run rejected (issue C1)",
+			args: map[string]any{
+				"action":        statActionClear,
+				"statistic_ids": []any{"sensor.mcptest_a"},
+				"dry_run":       "true",
+			},
+			wantError:    true,
+			wantContains: []string{"dry_run", "boolean"},
 		},
 	}
 	runHandlerTestCases(t, tests, (&StatisticsHandlers{}).handleManageStatistics)
@@ -431,6 +505,90 @@ func TestManageStatistics_ListAction(t *testing.T) {
 		content := result.Content[0].Text
 		assertContainsAll(t, content, []string{fmt.Sprintf("%d statistic ids", total)})
 		assertNotContainsAny(t, content, []string{"showing"})
+	})
+
+	// format=json through the handler (issue W7): the only prior coverage
+	// called formatStatisticListJSON directly, so a wiring regression at
+	// the handler's call site (e.g. swapped Total/Returned) passed the
+	// whole suite.
+	t.Run("format=json returns the structured shape through the handler", func(t *testing.T) {
+		t.Parallel()
+
+		client := &UniversalMockClient{}
+		client.ListStatisticIDsFn = func(_ context.Context, _ string) ([]homeassistant.StatisticMeta, error) {
+			return statTestLegacyMeta(), nil
+		}
+
+		result, err := h.handleManageStatistics(context.Background(), client, map[string]any{
+			"action": statActionList,
+			"limit":  float64(1),
+			"format": formatJSON,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("unexpected IsError result: %s", result.Content[0].Text)
+		}
+
+		var parsed statisticListJSONResponse
+		if err := json.Unmarshal([]byte(result.Content[0].Text), &parsed); err != nil {
+			t.Fatalf("output is not the expected JSON shape: %v\n%s", err, result.Content[0].Text)
+		}
+		if parsed.Total != 2 || parsed.Returned != 1 || !parsed.Truncated {
+			t.Errorf("got (total=%d, returned=%d, truncated=%v), want (2, 1, true)",
+				parsed.Total, parsed.Returned, parsed.Truncated)
+		}
+		if parsed.NextCursor == nil || *parsed.NextCursor == "" {
+			t.Error("want a non-empty next_cursor when the response is truncated")
+		}
+	})
+
+	// issue W5: a truncated response must be page-able past the cap instead
+	// of the only prior escape hatch (limit=0, i.e. unbounded).
+	t.Run("next_cursor advances to the next page", func(t *testing.T) {
+		t.Parallel()
+
+		client := &UniversalMockClient{}
+		client.ListStatisticIDsFn = func(_ context.Context, _ string) ([]homeassistant.StatisticMeta, error) {
+			return statTestManyMeta(3), nil
+		}
+
+		first, err := h.handleManageStatistics(context.Background(), client, map[string]any{
+			"action": statActionList,
+			"limit":  float64(2),
+			"format": formatJSON,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		var firstPage statisticListJSONResponse
+		if err := json.Unmarshal([]byte(first.Content[0].Text), &firstPage); err != nil {
+			t.Fatalf("output is not the expected JSON shape: %v", err)
+		}
+		if firstPage.NextCursor == nil {
+			t.Fatal("want a next_cursor on the first (truncated) page")
+		}
+
+		second, err := h.handleManageStatistics(context.Background(), client, map[string]any{
+			"action": statActionList,
+			"cursor": *firstPage.NextCursor,
+			"format": formatJSON,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		var secondPage statisticListJSONResponse
+		if err := json.Unmarshal([]byte(second.Content[0].Text), &secondPage); err != nil {
+			t.Fatalf("output is not the expected JSON shape: %v", err)
+		}
+		if secondPage.Returned != 1 || secondPage.Truncated {
+			t.Errorf("got (returned=%d, truncated=%v), want (1, false) for the final page",
+				secondPage.Returned, secondPage.Truncated)
+		}
+		if len(secondPage.StatisticIDs) != 1 || secondPage.StatisticIDs[0].StatisticID == firstPage.StatisticIDs[0].StatisticID {
+			t.Errorf("second page did not advance past the first page's items: %+v", secondPage.StatisticIDs)
+		}
 	})
 }
 
@@ -746,6 +904,81 @@ func TestManageStatistics_ClearAction(t *testing.T) {
 			t.Error("dry_run must not call ClearStatistics even when the pre-check fails")
 		}
 		assertContainsAll(t, result.Content[0].Text, []string{"Would attempt to clear statistics for 1", "WARNING", "could not verify"})
+	})
+
+	t.Run("shape-mismatched id forwarded as a recognizable-orphan warning, not a hard failure (issue W6)", func(t *testing.T) {
+		t.Parallel()
+
+		var gotIDs []string
+		client := &UniversalMockClient{}
+		client.ListStatisticIDsFn = func(_ context.Context, _ string) ([]homeassistant.StatisticMeta, error) {
+			return statTestMetaForIDs("sensor.mcptest_a"), nil
+		}
+		client.ClearStatisticsFn = func(_ context.Context, ids []string) error {
+			gotIDs = ids
+			return nil
+		}
+
+		result, err := (&StatisticsHandlers{}).handleManageStatistics(context.Background(), client, map[string]any{
+			"action":        statActionClear,
+			"statistic_ids": []any{"sensor.mcptest_a", "Sensor.Bad-Id"},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("unexpected IsError result: %s", result.Content[0].Text)
+		}
+		// Only the shape-valid id is ever sent to HA - an unrecognized id
+		// was never regex-checked and must not be forwarded to the
+		// destructive operation.
+		if len(gotIDs) != 1 || gotIDs[0] != "sensor.mcptest_a" {
+			t.Errorf("ClearStatistics called with %v, want [sensor.mcptest_a]", gotIDs)
+		}
+		assertContainsAll(t, result.Content[0].Text, []string{
+			"Cleared statistics for 1 statistic id: sensor.mcptest_a",
+			"1 id not a recognizable statistic id (skipped): Sensor.Bad-Id",
+		})
+	})
+
+	t.Run("all ids unrecognized is rejected before reaching the client (issue W6)", func(t *testing.T) {
+		t.Parallel()
+
+		result, err := (&StatisticsHandlers{}).handleManageStatistics(context.Background(), &UniversalMockClient{}, map[string]any{
+			"action":        statActionClear,
+			"statistic_ids": []any{"Sensor.Bad-Id", "also bad"},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !result.IsError {
+			t.Fatalf("want IsError, got: %s", result.Content[0].Text)
+		}
+		assertContainsAll(t, result.Content[0].Text, []string{"no recognizable statistic ids"})
+	})
+
+	t.Run("pre-check failure and a failing clear both surface (issue W7 gap)", func(t *testing.T) {
+		t.Parallel()
+
+		client := &UniversalMockClient{}
+		client.ListStatisticIDsFn = func(_ context.Context, _ string) ([]homeassistant.StatisticMeta, error) {
+			return nil, fmt.Errorf("ws not connected")
+		}
+		client.ClearStatisticsFn = func(_ context.Context, _ []string) error {
+			return fmt.Errorf("clear_statistics timed out")
+		}
+
+		result, err := (&StatisticsHandlers{}).handleManageStatistics(context.Background(), client, map[string]any{
+			"action":        statActionClear,
+			"statistic_ids": []any{"sensor.mcptest_a"},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !result.IsError {
+			t.Fatalf("want IsError, got: %s", result.Content[0].Text)
+		}
+		assertContainsAll(t, result.Content[0].Text, []string{"clear_statistics timed out"})
 	})
 }
 
@@ -1078,6 +1311,28 @@ func TestFormatStatisticListNatural(t *testing.T) {
 		}
 	})
 
+	t.Run("unknown mean_type falls back to the raw value (issue W7)", func(t *testing.T) {
+		t.Parallel()
+
+		metas := []homeassistant.StatisticMeta{
+			{StatisticID: "sensor.mystery", Source: "recorder", MeanType: statTestInt(3)},
+		}
+		out := formatStatisticListNatural(metas, len(metas))
+		assertContainsAll(t, out, []string{"sensor.mystery", "mean_type: 3"})
+	})
+
+	t.Run("name identical to statistic_id is not shown redundantly", func(t *testing.T) {
+		t.Parallel()
+
+		metas := []homeassistant.StatisticMeta{
+			{StatisticID: "sensor.mcptest_same", Source: "recorder", Name: statTestStr("sensor.mcptest_same")},
+		}
+		out := formatStatisticListNatural(metas, len(metas))
+		if strings.Contains(out, "sensor.mcptest_same (sensor.mcptest_same)") {
+			t.Errorf("name identical to statistic_id should not be shown as a redundant suffix:\n%s", out)
+		}
+	})
+
 	t.Run("statistic_id or source containing a newline does not forge an extra line", func(t *testing.T) {
 		t.Parallel()
 
@@ -1108,7 +1363,8 @@ func TestFormatStatisticListJSON(t *testing.T) {
 		t.Parallel()
 
 		metas := statTestLegacyMeta()
-		b, err := formatStatisticListJSON(metas, len(metas), false)
+		page := ApplyPagination(metas, PaginationParams{})
+		b, err := formatStatisticListJSON(page)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -1127,13 +1383,17 @@ func TestFormatStatisticListJSON(t *testing.T) {
 			t.Errorf("got (total=%d, returned=%d, truncated=%v), want (2, 2, false)",
 				parsed.Total, parsed.Returned, parsed.Truncated)
 		}
+		if parsed.NextCursor != nil {
+			t.Errorf("want no next_cursor on an untruncated response, got %v", *parsed.NextCursor)
+		}
 	})
 
-	t.Run("truncated response carries total and truncated flag", func(t *testing.T) {
+	t.Run("truncated response carries total, truncated flag, and a next_cursor", func(t *testing.T) {
 		t.Parallel()
 
 		metas := statTestLegacyMeta()
-		b, err := formatStatisticListJSON(metas[:1], len(metas), true)
+		page := ApplyPagination(metas, PaginationParams{Limit: 1})
+		b, err := formatStatisticListJSON(page)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -1145,6 +1405,9 @@ func TestFormatStatisticListJSON(t *testing.T) {
 		if parsed.Total != 2 || parsed.Returned != 1 || !parsed.Truncated {
 			t.Errorf("got (total=%d, returned=%d, truncated=%v), want (2, 1, true)",
 				parsed.Total, parsed.Returned, parsed.Truncated)
+		}
+		if parsed.NextCursor == nil || *parsed.NextCursor == "" {
+			t.Error("want a non-empty next_cursor on a truncated response")
 		}
 	})
 }
@@ -1163,7 +1426,7 @@ func TestFormatValidateNatural(t *testing.T) {
 				{Type: "units_changed", Data: map[string]any{"statistic_unit": "kWh", "state_unit": "Wh"}},
 			},
 		}
-		_, summary := applyValidateLimit(issues, 0)
+		_, summary := paginateValidateIssues(issues, PaginationParams{})
 		out := formatValidateNatural(issues, summary)
 		assertContainsAll(t, out, []string{
 			"sensor.mcptest_orphaned",
@@ -1183,7 +1446,7 @@ func TestFormatValidateNatural(t *testing.T) {
 				{Type: "exotic_issue", Data: nil},
 			},
 		}
-		_, summary := applyValidateLimit(issues, 0)
+		_, summary := paginateValidateIssues(issues, PaginationParams{})
 		out := formatValidateNatural(issues, summary)
 		assertContainsAll(t, out, []string{"sensor.mcptest_weird", "exotic_issue"})
 	})
@@ -1192,7 +1455,7 @@ func TestFormatValidateNatural(t *testing.T) {
 		t.Parallel()
 
 		issues := map[string][]homeassistant.StatisticValidationIssue{}
-		_, summary := applyValidateLimit(issues, 0)
+		_, summary := paginateValidateIssues(issues, PaginationParams{})
 		out := formatValidateNatural(issues, summary)
 		assertContainsAll(t, out, []string{"no issues"})
 	})
@@ -1207,7 +1470,7 @@ func TestFormatValidateNatural(t *testing.T) {
 			},
 		}
 
-		_, summary := applyValidateLimit(issues, 0)
+		_, summary := paginateValidateIssues(issues, PaginationParams{})
 		out := formatValidateNatural(issues, summary)
 		// Should count 1 id, not 2 ids
 		assertContainsAll(t, out, []string{"unsupported_unit (1 id)", "sensor.duplicate_issues"})
@@ -1243,7 +1506,7 @@ func TestFormatValidateNatural(t *testing.T) {
 				{Type: "no_state", Data: nil},
 			},
 		}
-		_, summary := applyValidateLimit(issues, 0)
+		_, summary := paginateValidateIssues(issues, PaginationParams{})
 		out := formatValidateNatural(issues, summary)
 		if strings.Contains(out, "sensor.thermostat_battery (source: recorder)") {
 			t.Errorf("newline in statistic id forged an extra line:\n%s", out)
@@ -1258,7 +1521,7 @@ func TestFormatValidateNatural(t *testing.T) {
 				{Type: "no_state", Data: map[string]any{"start": "evil\n      fake_key: fake_value"}},
 			},
 		}
-		_, summary := applyValidateLimit(issues, 0)
+		_, summary := paginateValidateIssues(issues, PaginationParams{})
 		out := formatValidateNatural(issues, summary)
 		// The forged text may still appear (sanitization collapses the
 		// newline to a space, it doesn't remove the value's content) - what
@@ -1271,6 +1534,81 @@ func TestFormatValidateNatural(t *testing.T) {
 			t.Errorf("want %d newlines (no forged extra line), got %d:\n%s", wantLines, got, out)
 		}
 	})
+
+	// issue W3: the id and issue-data value on the neighboring lines were
+	// already sanitized against newline injection; the issue type string
+	// wasn't.
+	t.Run("issue type containing a newline does not forge an extra line", func(t *testing.T) {
+		t.Parallel()
+
+		issues := map[string][]homeassistant.StatisticValidationIssue{
+			"sensor.mcptest_a": {
+				{Type: "evil\n- sensor.thermostat_battery (source: recorder)", Data: nil},
+			},
+		}
+		_, summary := paginateValidateIssues(issues, PaginationParams{})
+		out := formatValidateNatural(issues, summary)
+		if strings.Contains(out, "sensor.thermostat_battery (source: recorder)") {
+			t.Errorf("newline in issue type forged an extra line:\n%s", out)
+		}
+	})
+
+	// issue W3: the issue-data value was sanitized; the map key sharing the
+	// same line wasn't.
+	t.Run("issue data key containing a newline does not forge an extra line", func(t *testing.T) {
+		t.Parallel()
+
+		issues := map[string][]homeassistant.StatisticValidationIssue{
+			"sensor.mcptest_a": {
+				{Type: "no_state", Data: map[string]any{
+					"evil\n      fake_key": "fake_value",
+				}},
+			},
+		}
+		_, summary := paginateValidateIssues(issues, PaginationParams{})
+		out := formatValidateNatural(issues, summary)
+		if strings.Contains(out, "\n      fake_key: fake_value\n") {
+			t.Errorf("newline in issue data key forged an extra line:\n%s", out)
+		}
+	})
+
+	// Pins the ordering the doc comment claims ("types, ids, and data keys
+	// are sorted") with enough distinct types/ids/keys that deleting any of
+	// the three slices.Sort calls changes the output (issue W7 - the prior
+	// single-type/single-id fixtures couldn't detect a missing sort).
+	t.Run("types, ids within a type, and data keys are all sorted (determinism)", func(t *testing.T) {
+		t.Parallel()
+
+		issues := map[string][]homeassistant.StatisticValidationIssue{
+			"sensor.z_last": {
+				{Type: "zzz_type", Data: map[string]any{"z_key": "1", "a_key": "2"}},
+			},
+			"sensor.a_first": {
+				{Type: "zzz_type", Data: nil},
+			},
+			"sensor.middle": {
+				{Type: "aaa_type", Data: nil},
+			},
+		}
+		_, summary := paginateValidateIssues(issues, PaginationParams{})
+		out := formatValidateNatural(issues, summary)
+
+		wantOrder := []string{
+			"aaa_type", "sensor.middle",
+			"zzz_type", "sensor.a_first", "sensor.z_last", "a_key", "z_key",
+		}
+		lastIdx := -1
+		for _, want := range wantOrder {
+			idx := strings.Index(out, want)
+			if idx == -1 {
+				t.Fatalf("expected %q in output:\n%s", want, out)
+			}
+			if idx <= lastIdx {
+				t.Errorf("expected %q to appear after the previous element (got out of order):\n%s", want, out)
+			}
+			lastIdx = idx
+		}
+	})
 }
 
 func TestFormatValidateJSON(t *testing.T) {
@@ -1281,7 +1619,7 @@ func TestFormatValidateJSON(t *testing.T) {
 			{Type: "no_state", Data: map[string]any{"start": "2026-01-01T00:00:00+00:00"}},
 		},
 	}
-	_, summary := applyValidateLimit(issues, 0)
+	_, summary := paginateValidateIssues(issues, PaginationParams{})
 	b, err := formatValidateJSON(issues, summary)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1304,92 +1642,9 @@ func TestFormatValidateJSON(t *testing.T) {
 	}
 }
 
-func TestApplyStatisticLimit(t *testing.T) {
-	t.Parallel()
-
-	metas := statTestLegacyMeta()
-
-	t.Run("limit less than total truncates", func(t *testing.T) {
-		t.Parallel()
-
-		sliced, total, truncated := applyStatisticLimit(metas, 1)
-		if len(sliced) != 1 || total != 2 || !truncated {
-			t.Errorf("got (%d, %d, %v), want (1, 2, true)", len(sliced), total, truncated)
-		}
-	})
-
-	t.Run("limit equal to total does not truncate", func(t *testing.T) {
-		t.Parallel()
-
-		sliced, total, truncated := applyStatisticLimit(metas, 2)
-		if len(sliced) != 2 || total != 2 || truncated {
-			t.Errorf("got (%d, %d, %v), want (2, 2, false)", len(sliced), total, truncated)
-		}
-	})
-
-	t.Run("limit zero does not truncate", func(t *testing.T) {
-		t.Parallel()
-
-		sliced, total, truncated := applyStatisticLimit(metas, 0)
-		if len(sliced) != 2 || total != 2 || truncated {
-			t.Errorf("got (%d, %d, %v), want (2, 2, false)", len(sliced), total, truncated)
-		}
-	})
-}
-
-// TestApplyValidateLimit mirrors TestApplyStatisticLimit's boundary coverage
-// for the analogous validate-side limiter.
-func TestApplyValidateLimit(t *testing.T) {
-	t.Parallel()
-
-	issues := map[string][]homeassistant.StatisticValidationIssue{
-		"sensor.mcptest_a": {{Type: "no_state", Data: nil}},
-		"sensor.mcptest_b": {{Type: "no_state", Data: nil}, {Type: "units_changed", Data: nil}},
-	}
-
-	t.Run("limit less than total truncates", func(t *testing.T) {
-		t.Parallel()
-
-		limited, summary := applyValidateLimit(issues, 1)
-		if len(limited) != 1 || summary.TotalIDs != 2 || !summary.Truncated {
-			t.Errorf("got (len=%d, totalIDs=%d, truncated=%v), want (1, 2, true)",
-				len(limited), summary.TotalIDs, summary.Truncated)
-		}
-		if summary.TotalIssues != 3 {
-			t.Errorf("summary.TotalIssues = %d, want 3", summary.TotalIssues)
-		}
-		if summary.ShownIssues != countIssues(limited) {
-			t.Errorf("summary.ShownIssues = %d, want %d (countIssues(limited))", summary.ShownIssues, countIssues(limited))
-		}
-	})
-
-	t.Run("limit equal to total does not truncate", func(t *testing.T) {
-		t.Parallel()
-
-		limited, summary := applyValidateLimit(issues, 2)
-		if len(limited) != 2 || summary.TotalIDs != 2 || summary.Truncated {
-			t.Errorf("got (len=%d, totalIDs=%d, truncated=%v), want (2, 2, false)",
-				len(limited), summary.TotalIDs, summary.Truncated)
-		}
-		if summary.ShownIssues != 3 || summary.TotalIssues != 3 {
-			t.Errorf("got (shownIssues=%d, totalIssues=%d), want (3, 3)", summary.ShownIssues, summary.TotalIssues)
-		}
-	})
-
-	t.Run("limit zero does not truncate", func(t *testing.T) {
-		t.Parallel()
-
-		limited, summary := applyValidateLimit(issues, 0)
-		if len(limited) != 2 || summary.TotalIDs != 2 || summary.Truncated {
-			t.Errorf("got (len=%d, totalIDs=%d, truncated=%v), want (2, 2, false)",
-				len(limited), summary.TotalIDs, summary.Truncated)
-		}
-	})
-}
-
 // TestCountIssues pins countIssues' boundary at an empty map (returns 0, not
 // a nil-map panic) alongside the multi-id summation the other tests already
-// exercise indirectly through applyValidateLimit.
+// exercise indirectly through paginateValidateIssues.
 func TestCountIssues(t *testing.T) {
 	t.Parallel()
 
@@ -1406,9 +1661,70 @@ func TestCountIssues(t *testing.T) {
 	}
 }
 
+// TestPaginateValidateIssues covers the id-level pagination glue that
+// replaced applyValidateLimit's hand-rolled limiter (issue C2/W5): ids
+// (not issues) are the paginated unit, and ShownIssues/TotalIssues stay
+// tracked separately from the id counts (issue W1).
+func TestPaginateValidateIssues(t *testing.T) {
+	t.Parallel()
+
+	issues := map[string][]homeassistant.StatisticValidationIssue{
+		"sensor.mcptest_a": {{Type: "no_state", Data: nil}},
+		"sensor.mcptest_b": {{Type: "no_state", Data: nil}, {Type: "units_changed", Data: nil}},
+	}
+
+	t.Run("limit less than total truncates", func(t *testing.T) {
+		t.Parallel()
+
+		limited, summary := paginateValidateIssues(issues, PaginationParams{Limit: 1})
+		if len(limited) != 1 || summary.TotalIDs != 2 || !summary.Truncated {
+			t.Errorf("got (len=%d, totalIDs=%d, truncated=%v), want (1, 2, true)",
+				len(limited), summary.TotalIDs, summary.Truncated)
+		}
+		if summary.TotalIssues != 3 {
+			t.Errorf("summary.TotalIssues = %d, want 3", summary.TotalIssues)
+		}
+		// sensor.mcptest_a sorts before sensor.mcptest_b, so a limit of 1
+		// keeps mcptest_a (1 issue) - pin the concrete count rather than
+		// re-deriving it from the implementation under test (the prior
+		// version of this assertion compared summary.ShownIssues against
+		// countIssues(limited), which is exactly how ShownIssues is
+		// computed and so could never fail).
+		if summary.ShownIssues != 1 {
+			t.Errorf("summary.ShownIssues = %d, want 1", summary.ShownIssues)
+		}
+		if summary.Pagination.NextCursor == nil {
+			t.Error("want a next_cursor when truncated")
+		}
+	})
+
+	t.Run("limit equal to total does not truncate", func(t *testing.T) {
+		t.Parallel()
+
+		limited, summary := paginateValidateIssues(issues, PaginationParams{Limit: 2})
+		if len(limited) != 2 || summary.TotalIDs != 2 || summary.Truncated {
+			t.Errorf("got (len=%d, totalIDs=%d, truncated=%v), want (2, 2, false)",
+				len(limited), summary.TotalIDs, summary.Truncated)
+		}
+		if summary.ShownIssues != 3 || summary.TotalIssues != 3 {
+			t.Errorf("got (shownIssues=%d, totalIssues=%d), want (3, 3)", summary.ShownIssues, summary.TotalIssues)
+		}
+	})
+
+	t.Run("limit zero does not truncate", func(t *testing.T) {
+		t.Parallel()
+
+		limited, summary := paginateValidateIssues(issues, PaginationParams{})
+		if len(limited) != 2 || summary.TotalIDs != 2 || summary.Truncated {
+			t.Errorf("got (len=%d, totalIDs=%d, truncated=%v), want (2, 2, false)",
+				len(limited), summary.TotalIDs, summary.Truncated)
+		}
+	})
+}
+
 // TestValidateLimitArg pins the boundary between "no limit" (0, or the key
-// absent) and a rejected value, plus the non-numeric/negative/non-integer
-// rejection cases.
+// absent) and a rejected value, plus the non-numeric/negative/non-integer/
+// out-of-range/non-finite rejection cases (issue C2).
 func TestValidateLimitArg(t *testing.T) {
 	t.Parallel()
 
@@ -1419,10 +1735,16 @@ func TestValidateLimitArg(t *testing.T) {
 	}{
 		{name: "key absent", args: map[string]any{}, wantErr: false},
 		{name: "zero is valid (unlimited)", args: map[string]any{"limit": float64(0)}, wantErr: false},
-		{name: "positive integer is valid", args: map[string]any{"limit": float64(10)}, wantErr: false},
+		{name: "positive integer (float64) is valid", args: map[string]any{"limit": float64(10)}, wantErr: false},
+		{name: "positive integer (int) is valid", args: map[string]any{"limit": 10}, wantErr: false},
 		{name: "negative is rejected", args: map[string]any{"limit": float64(-1)}, wantErr: true},
 		{name: "non-integer is rejected", args: map[string]any{"limit": float64(1.5)}, wantErr: true},
 		{name: "non-numeric is rejected", args: map[string]any{"limit": "10"}, wantErr: true},
+		{name: "bool is rejected", args: map[string]any{"limit": true}, wantErr: true},
+		{name: "nil is rejected", args: map[string]any{"limit": nil}, wantErr: true},
+		{name: "value overflowing int range is rejected", args: map[string]any{"limit": 1e19}, wantErr: true},
+		{name: "+Inf is rejected", args: map[string]any{"limit": math.Inf(1)}, wantErr: true},
+		{name: "NaN is rejected", args: map[string]any{"limit": math.NaN()}, wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1436,36 +1758,103 @@ func TestValidateLimitArg(t *testing.T) {
 	}
 }
 
-// TestResolveLimitArg pins the C1 fix's key distinction: an absent limit key
-// gets defaultStatisticListLimit, while an explicit 0 keeps meaning
-// "unlimited" (getInt alone can't tell these apart, since it returns 0 for
-// both).
-func TestResolveLimitArg(t *testing.T) {
+// TestParseBoolArg pins the C1 fix: a non-bool value must error, not
+// silently become false.
+func TestParseBoolArg(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name string
-		args map[string]any
-		want int
+		name    string
+		args    map[string]any
+		want    bool
+		wantErr bool
 	}{
-		{name: "key absent gets the default", args: map[string]any{}, want: defaultStatisticListLimit},
-		{name: "explicit zero stays unlimited", args: map[string]any{"limit": float64(0)}, want: 0},
-		{name: "explicit positive value passes through", args: map[string]any{"limit": float64(5)}, want: 5},
+		{name: "key absent defaults false", args: map[string]any{}, want: false},
+		{name: "true", args: map[string]any{"dry_run": true}, want: true},
+		{name: "false", args: map[string]any{"dry_run": false}, want: false},
+		{name: "stringified true is rejected, not coerced (issue C1)", args: map[string]any{"dry_run": "true"}, wantErr: true},
+		{name: "numeric 1 is rejected", args: map[string]any{"dry_run": float64(1)}, wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := resolveLimitArg(tt.args); got != tt.want {
-				t.Errorf("resolveLimitArg(%v) = %d, want %d", tt.args, got, tt.want)
+			got, err := parseBoolArg(tt.args, "dry_run")
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("parseBoolArg(%v) error = %v, wantErr %v", tt.args, err, tt.wantErr)
+			}
+			if !tt.wantErr && got != tt.want {
+				t.Errorf("parseBoolArg(%v) = %v, want %v", tt.args, got, tt.want)
 			}
 		})
 	}
 }
 
-// TestResolveKnownStatisticIDs covers the known/unknown split action=clear
-// relies on (issue W2), plus the checked=false degradation path on a
-// pre-check fetch failure.
+// TestBuildStatisticListPaginationParams pins the C1 fix's key distinction:
+// an absent limit key gets defaultStatisticListLimit, while an explicit 0
+// keeps meaning "unlimited" - and a cursor's own stored limit is never
+// overridden by the default (issue C2/W5 trap #1).
+func TestBuildStatisticListPaginationParams(t *testing.T) {
+	t.Parallel()
+
+	t.Run("key absent gets the default", func(t *testing.T) {
+		t.Parallel()
+
+		params, err := buildStatisticListPaginationParams(map[string]any{}, "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if params.Limit != defaultStatisticListLimit {
+			t.Errorf("Limit = %d, want %d", params.Limit, defaultStatisticListLimit)
+		}
+	})
+
+	t.Run("explicit zero stays unlimited", func(t *testing.T) {
+		t.Parallel()
+
+		params, err := buildStatisticListPaginationParams(map[string]any{"limit": float64(0)}, "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if params.Limit != NoLimit {
+			t.Errorf("Limit = %d, want %d (NoLimit)", params.Limit, NoLimit)
+		}
+	})
+
+	t.Run("explicit positive value passes through", func(t *testing.T) {
+		t.Parallel()
+
+		params, err := buildStatisticListPaginationParams(map[string]any{"limit": float64(5)}, "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if params.Limit != 5 {
+			t.Errorf("Limit = %d, want 5", params.Limit)
+		}
+	})
+
+	t.Run("a cursor's own limit is not overridden by the default", func(t *testing.T) {
+		t.Parallel()
+
+		cursor := EncodeCursor(3, 7, ComputeFiltersHash(map[string]any{"statistic_type": ""}))
+		params, err := buildStatisticListPaginationParams(map[string]any{"cursor": cursor}, "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if params.Limit != 7 || params.Offset != 3 {
+			t.Errorf("got (limit=%d, offset=%d), want (7, 3) from the cursor, not the default", params.Limit, params.Offset)
+		}
+	})
+
+	t.Run("malformed limit is rejected before pagination coerces it away", func(t *testing.T) {
+		t.Parallel()
+
+		if _, err := buildStatisticListPaginationParams(map[string]any{"limit": "10"}, ""); err == nil {
+			t.Error("want error for a non-numeric limit, got nil")
+		}
+	})
+}
+
 func TestResolveKnownStatisticIDs(t *testing.T) {
 	t.Parallel()
 
@@ -1516,7 +1905,7 @@ func TestFormatClearMessage(t *testing.T) {
 	t.Run("all known", func(t *testing.T) {
 		t.Parallel()
 
-		got := formatClearMessage("Cleared", []string{"sensor.mcptest_a", "sensor.mcptest_b"}, nil)
+		got := formatClearMessage("Cleared", []string{"sensor.mcptest_a", "sensor.mcptest_b"}, nil, nil)
 		assertContainsAll(t, got, []string{"Cleared statistics for 2 statistic ids: sensor.mcptest_a, sensor.mcptest_b"})
 		assertNotContainsAny(t, got, []string{"skipped"})
 	})
@@ -1524,7 +1913,7 @@ func TestFormatClearMessage(t *testing.T) {
 	t.Run("mixed known and unknown", func(t *testing.T) {
 		t.Parallel()
 
-		got := formatClearMessage("Would clear", []string{"sensor.mcptest_a"}, []string{"sensor.mcptest_b"})
+		got := formatClearMessage("Would clear", []string{"sensor.mcptest_a"}, []string{"sensor.mcptest_b"}, nil)
 		assertContainsAll(t, got, []string{
 			"Would clear statistics for 1 statistic id: sensor.mcptest_a",
 			"1 id not present in the recorder database (skipped): sensor.mcptest_b",
@@ -1534,11 +1923,42 @@ func TestFormatClearMessage(t *testing.T) {
 	t.Run("all unknown", func(t *testing.T) {
 		t.Parallel()
 
-		got := formatClearMessage("Cleared", nil, []string{"sensor.mcptest_a"})
+		got := formatClearMessage("Cleared", nil, []string{"sensor.mcptest_a"}, nil)
 		assertContainsAll(t, got, []string{
 			"Cleared statistics for 0 statistic ids: none of the requested ids were present in the recorder database.",
 			"1 id not present in the recorder database (skipped): sensor.mcptest_a",
 		})
+	})
+
+	// issue W6: the third bucket for ids that never matched HA's
+	// statistic_id shape at all.
+	t.Run("unrecognized ids get their own bucket", func(t *testing.T) {
+		t.Parallel()
+
+		got := formatClearMessage("Cleared", []string{"sensor.mcptest_a"}, nil, []string{"Sensor.Bad-Id"})
+		assertContainsAll(t, got, []string{
+			"Cleared statistics for 1 statistic id: sensor.mcptest_a",
+			"1 id not a recognizable statistic id (skipped): Sensor.Bad-Id",
+		})
+	})
+
+	t.Run("a newline in an unrecognized id does not forge an extra line", func(t *testing.T) {
+		t.Parallel()
+
+		got := formatClearMessage("Cleared", []string{"sensor.mcptest_a"}, nil,
+			[]string{"evil\nCleared statistics for 999 statistic ids: sensor.forged"})
+		// Sanitization collapses the embedded newline to a space - it
+		// doesn't remove the forged text's content, so a blanket substring
+		// check would fail even on correctly-sanitized output. What must
+		// not happen is the forged text starting a fresh line: exactly one
+		// newline should separate the "Cleared..." line from the
+		// unrecognized-ids line, not two.
+		if strings.Contains(got, "\nCleared statistics for 999") {
+			t.Errorf("newline in unrecognized id forged a fresh line:\n%s", got)
+		}
+		if wantLines := 2; strings.Count(got, "\n") != wantLines-1 {
+			t.Errorf("want %d lines (no forged extra line), got:\n%s", wantLines, got)
+		}
 	})
 }
 
@@ -1557,12 +1977,15 @@ func TestParseStatisticIDsStrict_MaxBoundary(t *testing.T) {
 			ids[i] = fmt.Sprintf("sensor.mcptest_%d", i)
 		}
 
-		got, err := parseStatisticIDsStrict(map[string]any{"statistic_ids": ids})
+		got, unrecognized, err := parseStatisticIDsStrict(map[string]any{"statistic_ids": ids})
 		if err != nil {
 			t.Fatalf("unexpected error at exactly max: %v", err)
 		}
 		if len(got) != maxClearStatisticIDs {
 			t.Errorf("got %d ids, want %d", len(got), maxClearStatisticIDs)
+		}
+		if len(unrecognized) != 0 {
+			t.Errorf("got %d unrecognized, want 0", len(unrecognized))
 		}
 	})
 
@@ -1574,9 +1997,75 @@ func TestParseStatisticIDsStrict_MaxBoundary(t *testing.T) {
 			ids[i] = fmt.Sprintf("sensor.mcptest_%d", i)
 		}
 
-		_, err := parseStatisticIDsStrict(map[string]any{"statistic_ids": ids})
+		_, _, err := parseStatisticIDsStrict(map[string]any{"statistic_ids": ids})
 		if err == nil {
 			t.Fatal("want error at max+1, got nil")
+		}
+	})
+}
+
+// TestParseStatisticIDsStrict_WarnAndForward pins the W6 split between a
+// well-formed id (valid) and one that doesn't match HA's statistic_id shape
+// (unrecognized, forwarded as a warning rather than hard-failing the whole
+// batch) - plus the per-element length bound (issue W2) and negative shape
+// cases the malformed-id dispatch test doesn't cover.
+func TestParseStatisticIDsStrict_WarnAndForward(t *testing.T) {
+	t.Parallel()
+
+	t.Run("mixed valid and unrecognized ids are split, not rejected", func(t *testing.T) {
+		t.Parallel()
+
+		valid, unrecognized, err := parseStatisticIDsStrict(map[string]any{
+			"statistic_ids": []any{"sensor.mcptest_a", "Sensor.Bad-Id"},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(valid) != 1 || valid[0] != "sensor.mcptest_a" {
+			t.Errorf("valid = %v, want [sensor.mcptest_a]", valid)
+		}
+		if len(unrecognized) != 1 || unrecognized[0] != "Sensor.Bad-Id" {
+			t.Errorf("unrecognized = %v, want [Sensor.Bad-Id]", unrecognized)
+		}
+	})
+
+	t.Run("all unrecognized still errors - nothing left to act on", func(t *testing.T) {
+		t.Parallel()
+
+		_, _, err := parseStatisticIDsStrict(map[string]any{
+			"statistic_ids": []any{"Sensor.Bad-Id", "not valid either"},
+		})
+		if err == nil {
+			t.Fatal("want error when every id is unrecognized")
+		}
+	})
+
+	t.Run("oversized element rejected regardless of shape (issue W2)", func(t *testing.T) {
+		t.Parallel()
+
+		oversized := "sensor." + strings.Repeat("a", maxScalarStringLen+1)
+		_, _, err := parseStatisticIDsStrict(map[string]any{
+			"statistic_ids": []any{oversized},
+		})
+		if err == nil {
+			t.Fatal("want error for an id exceeding maxScalarStringLen")
+		}
+	})
+
+	t.Run("element at exactly the length bound is accepted", func(t *testing.T) {
+		t.Parallel()
+
+		// "sensor." (7) + N a's must total exactly maxScalarStringLen and
+		// still match the shape regex.
+		exact := "sensor." + strings.Repeat("a", maxScalarStringLen-7)
+		valid, unrecognized, err := parseStatisticIDsStrict(map[string]any{
+			"statistic_ids": []any{exact},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error at exactly the length bound: %v", err)
+		}
+		if len(valid) != 1 || len(unrecognized) != 0 {
+			t.Errorf("got valid=%v unrecognized=%v, want the id accepted as valid", valid, unrecognized)
 		}
 	})
 }
