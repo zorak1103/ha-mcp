@@ -975,3 +975,110 @@ func TestApplyStatisticLimit(t *testing.T) {
 		}
 	})
 }
+
+// TestApplyValidateLimit mirrors TestApplyStatisticLimit's boundary coverage
+// for the analogous validate-side limiter.
+func TestApplyValidateLimit(t *testing.T) {
+	t.Parallel()
+
+	issues := map[string][]homeassistant.StatisticValidationIssue{
+		"sensor.mcptest_a": {{Type: "no_state", Data: nil}},
+		"sensor.mcptest_b": {{Type: "no_state", Data: nil}},
+	}
+
+	t.Run("limit less than total truncates", func(t *testing.T) {
+		t.Parallel()
+
+		limited, total, truncated := applyValidateLimit(issues, 1)
+		if len(limited) != 1 || total != 2 || !truncated {
+			t.Errorf("got (%d, %d, %v), want (1, 2, true)", len(limited), total, truncated)
+		}
+	})
+
+	t.Run("limit equal to total does not truncate", func(t *testing.T) {
+		t.Parallel()
+
+		limited, total, truncated := applyValidateLimit(issues, 2)
+		if len(limited) != 2 || total != 2 || truncated {
+			t.Errorf("got (%d, %d, %v), want (2, 2, false)", len(limited), total, truncated)
+		}
+	})
+
+	t.Run("limit zero does not truncate", func(t *testing.T) {
+		t.Parallel()
+
+		limited, total, truncated := applyValidateLimit(issues, 0)
+		if len(limited) != 2 || total != 2 || truncated {
+			t.Errorf("got (%d, %d, %v), want (2, 2, false)", len(limited), total, truncated)
+		}
+	})
+}
+
+// TestValidateLimitArg pins the boundary between "no limit" (0, or the key
+// absent) and a rejected value, plus the non-numeric/negative/non-integer
+// rejection cases.
+func TestValidateLimitArg(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		args    map[string]any
+		wantErr bool
+	}{
+		{name: "key absent", args: map[string]any{}, wantErr: false},
+		{name: "zero is valid (unlimited)", args: map[string]any{"limit": float64(0)}, wantErr: false},
+		{name: "positive integer is valid", args: map[string]any{"limit": float64(10)}, wantErr: false},
+		{name: "negative is rejected", args: map[string]any{"limit": float64(-1)}, wantErr: true},
+		{name: "non-integer is rejected", args: map[string]any{"limit": float64(1.5)}, wantErr: true},
+		{name: "non-numeric is rejected", args: map[string]any{"limit": "10"}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := validateLimitArg(tt.args)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateLimitArg(%v) error = %v, wantErr %v", tt.args, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestParseStatisticIDsStrict_MaxBoundary pins the boundary between an
+// accepted batch (exactly maxClearStatisticIDs) and a rejected one (one
+// more), matching the same off-by-one guard style as
+// TestApplyStatisticLimit's boundary case.
+func TestParseStatisticIDsStrict_MaxBoundary(t *testing.T) {
+	t.Parallel()
+
+	t.Run("exactly max ids accepted", func(t *testing.T) {
+		t.Parallel()
+
+		ids := make([]any, maxClearStatisticIDs)
+		for i := range ids {
+			ids[i] = fmt.Sprintf("sensor.mcptest_%d", i)
+		}
+
+		got, err := parseStatisticIDsStrict(map[string]any{"statistic_ids": ids})
+		if err != nil {
+			t.Fatalf("unexpected error at exactly max: %v", err)
+		}
+		if len(got) != maxClearStatisticIDs {
+			t.Errorf("got %d ids, want %d", len(got), maxClearStatisticIDs)
+		}
+	})
+
+	t.Run("one over max rejected", func(t *testing.T) {
+		t.Parallel()
+
+		ids := make([]any, maxClearStatisticIDs+1)
+		for i := range ids {
+			ids[i] = fmt.Sprintf("sensor.mcptest_%d", i)
+		}
+
+		_, err := parseStatisticIDsStrict(map[string]any{"statistic_ids": ids})
+		if err == nil {
+			t.Fatal("want error at max+1, got nil")
+		}
+	})
+}
