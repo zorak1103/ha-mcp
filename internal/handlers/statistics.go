@@ -317,7 +317,7 @@ func sortedIssueData(issue homeassistant.StatisticValidationIssue) string {
 	slices.Sort(dataKeys)
 	var sb strings.Builder
 	for _, k := range dataKeys {
-		fmt.Fprintf(&sb, "      %s: %s\n", k, issue.Data[k])
+		fmt.Fprintf(&sb, "      %s: %v\n", k, issue.Data[k])
 	}
 	return sb.String()
 }

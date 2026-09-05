@@ -346,10 +346,10 @@ func TestManageStatistics_ValidateAction(t *testing.T) {
 		client.ValidateStatisticsFn = func(_ context.Context) (map[string][]homeassistant.StatisticValidationIssue, error) {
 			return map[string][]homeassistant.StatisticValidationIssue{
 				"sensor.mcptest_orphaned": {
-					{Type: "no_state", Data: map[string]string{"start": "2026-01-01T00:00:00+00:00"}},
+					{Type: "no_state", Data: map[string]any{"start": "2026-01-01T00:00:00+00:00"}},
 				},
 				"sensor.mcptest_changing": {
-					{Type: "units_changed", Data: map[string]string{"statistic_unit": "kWh", "state_unit": "Wh"}},
+					{Type: "units_changed", Data: map[string]any{"statistic_unit": "kWh", "state_unit": "Wh"}},
 				},
 			}, nil
 		}
@@ -529,10 +529,10 @@ func TestFormatValidateNatural(t *testing.T) {
 
 		issues := map[string][]homeassistant.StatisticValidationIssue{
 			"sensor.mcptest_orphaned": {
-				{Type: "no_state", Data: map[string]string{"start": "2026-01-01T00:00:00+00:00"}},
+				{Type: "no_state", Data: map[string]any{"start": "2026-01-01T00:00:00+00:00"}},
 			},
 			"sensor.mcptest_changing": {
-				{Type: "units_changed", Data: map[string]string{"statistic_unit": "kWh", "state_unit": "Wh"}},
+				{Type: "units_changed", Data: map[string]any{"statistic_unit": "kWh", "state_unit": "Wh"}},
 			},
 		}
 		out := formatValidateNatural(issues)
@@ -571,7 +571,7 @@ func TestFormatValidateJSON(t *testing.T) {
 
 	issues := map[string][]homeassistant.StatisticValidationIssue{
 		"sensor.mcptest_orphaned": {
-			{Type: "no_state", Data: map[string]string{"start": "2026-01-01T00:00:00+00:00"}},
+			{Type: "no_state", Data: map[string]any{"start": "2026-01-01T00:00:00+00:00"}},
 		},
 	}
 	b, err := formatValidateJSON(issues)

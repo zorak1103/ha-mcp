@@ -539,8 +539,8 @@ type StatisticMeta struct {
 // returned by recorder/validate_statistics. Issue type "no_state" marks a
 // statistic whose backing entity no longer exists (an orphaned statistic).
 type StatisticValidationIssue struct {
-	Type string            `json:"type"`
-	Data map[string]string `json:"data,omitempty"`
+	Type string         `json:"type"`
+	Data map[string]any `json:"data,omitempty"`
 }
 
 // Target represents a target specification for entities, devices, areas, and labels.

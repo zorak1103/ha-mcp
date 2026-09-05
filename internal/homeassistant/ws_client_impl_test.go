@@ -3674,3 +3674,20 @@ func TestWSClientImplWithSender_UpdateDeviceRegistryEntry_Error(t *testing.T) {
 		t.Fatal("expected error, got nil")
 	}
 }
+
+func TestWSClientImpl_ValidateStatistics_NonStringData(t *testing.T) {
+	t.Parallel()
+
+	rawJSON := `{"sensor.power": [{"type": "units_changed", "data": {"number_units": 2, "valid": true, "unit_list": ["W", "kW"]}}]}`
+	var issues map[string][]StatisticValidationIssue
+	err := json.Unmarshal([]byte(rawJSON), &issues)
+	if err != nil {
+		t.Fatalf("failed to unmarshal non-string issue data: %v", err)
+	}
+	if len(issues["sensor.power"]) != 1 {
+		t.Fatalf("expected 1 issue, got %d", len(issues["sensor.power"]))
+	}
+	if issues["sensor.power"][0].Data["number_units"] != float64(2) {
+		t.Errorf("number_units = %v, want 2", issues["sensor.power"][0].Data["number_units"])
+	}
+}
