@@ -33,7 +33,7 @@ Choose ha-mcp if you need:
 - Helper management across 41 types, including multi-step config entry flows and template subtypes
 - Deep diagnostics (blast-radius analysis, dependency graphs, cross-configuration reference search)
 - Post-mutation state diffing (Smart Wait confirms `entity: off -> on` inline)
-- Efficient LLM context usage: 41 consolidated tools consume ~3,500 tokens of schema space, compared to 15,000+ tokens for 88 separate tools
+- Efficient LLM context usage: 42 consolidated tools consume ~3,500 tokens of schema space, compared to 15,000+ tokens for 88 separate tools
 - Single static binary with zero runtime dependencies and low memory usage
 
 Choose the official integration if you need basic device control with zero external setup, or strictly rely on Assist Voice exposure settings.

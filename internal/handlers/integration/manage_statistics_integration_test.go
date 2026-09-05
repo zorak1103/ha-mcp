@@ -109,7 +109,6 @@ func (s *ManageStatisticsIntegrationTestSuite) TestManageStatisticsLifecycle() {
 
 	// The statistics metadata should list the new sensor's id shortly after
 	// the entity exists (integration-provided metadata, no DB row needed).
-	found := false
 	s.Eventually(func() bool {
 		metas, err := s.Client().ListStatisticIDs(ctx, "")
 		if err != nil {
@@ -117,13 +116,11 @@ func (s *ManageStatisticsIntegrationTestSuite) TestManageStatisticsLifecycle() {
 		}
 		for _, m := range metas {
 			if m.StatisticID == templateEntityID {
-				found = true
+				return true
 			}
 		}
-		return found
+		return false
 	}, 30*time.Second, time.Second, "template sensor statistic id should appear in list_statistic_ids")
-
-	s.True(found, "expected %s in list_statistic_ids", templateEntityID)
 
 	// clear_statistics must succeed on the test-owned id (HA waits for the
 	// recorder queue acknowledgement before responding).

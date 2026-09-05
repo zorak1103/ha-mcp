@@ -248,7 +248,7 @@ func TestManageStatistics_ListAction(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		content := result.Content[0].Text
-		assertContainsAll(t, content, []string{"sensor.mcptest_battery", "Showing 1 of 2"})
+		assertContainsAll(t, content, []string{"sensor.mcptest_battery", "(showing 1)"})
 		assertNotContainsAny(t, content, []string{"sensor.mcptest_energy"})
 	})
 
@@ -269,7 +269,7 @@ func TestManageStatistics_ListAction(t *testing.T) {
 		}
 		content := result.Content[0].Text
 		assertContainsAll(t, content, []string{"sensor.mcptest_battery", "sensor.mcptest_energy"})
-		assertNotContainsAny(t, content, []string{"Showing"})
+		assertNotContainsAny(t, content, []string{"showing"})
 	})
 
 	t.Run("client error surfaces as IsError", func(t *testing.T) {
