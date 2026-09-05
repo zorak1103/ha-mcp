@@ -122,7 +122,7 @@ func (h *StatisticsHandlers) handleStatisticList(
 		return errorResult(fmt.Sprintf("Error listing statistic ids: %v", err)), nil
 	}
 
-	metas, total := applyStatisticLimit(metas, getInt(args, "limit"))
+	metas, total, _ := applyStatisticLimit(metas, getInt(args, "limit"))
 
 	format := getString(args, "format")
 	if format == formatJSON {
@@ -182,12 +182,12 @@ func (h *StatisticsHandlers) handleStatisticClear(
 }
 
 // applyStatisticLimit truncates the list client-side and reports the total.
-func applyStatisticLimit(metas []homeassistant.StatisticMeta, limit int) ([]homeassistant.StatisticMeta, int) {
+func applyStatisticLimit(metas []homeassistant.StatisticMeta, limit int) ([]homeassistant.StatisticMeta, int, bool) {
 	total := len(metas)
 	if limit > 0 && total > limit {
-		return metas[:limit], total
+		return metas[:limit], total, true
 	}
-	return metas, total
+	return metas, total, false
 }
 
 // statisticCapabilities renders mean/sum capability from whichever HA

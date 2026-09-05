@@ -641,3 +641,36 @@ func TestFormatValidateJSON(t *testing.T) {
 		t.Errorf("missing sensor.mcptest_orphaned key in JSON:\n%s", b)
 	}
 }
+
+func TestApplyStatisticLimit(t *testing.T) {
+	t.Parallel()
+
+	metas := statTestLegacyMeta()
+
+	t.Run("limit less than total truncates", func(t *testing.T) {
+		t.Parallel()
+
+		sliced, total, truncated := applyStatisticLimit(metas, 1)
+		if len(sliced) != 1 || total != 2 || !truncated {
+			t.Errorf("got (%d, %d, %v), want (1, 2, true)", len(sliced), total, truncated)
+		}
+	})
+
+	t.Run("limit equal to total does not truncate", func(t *testing.T) {
+		t.Parallel()
+
+		sliced, total, truncated := applyStatisticLimit(metas, 2)
+		if len(sliced) != 2 || total != 2 || truncated {
+			t.Errorf("got (%d, %d, %v), want (2, 2, false)", len(sliced), total, truncated)
+		}
+	})
+
+	t.Run("limit zero does not truncate", func(t *testing.T) {
+		t.Parallel()
+
+		sliced, total, truncated := applyStatisticLimit(metas, 0)
+		if len(sliced) != 2 || total != 2 || truncated {
+			t.Errorf("got (%d, %d, %v), want (2, 2, false)", len(sliced), total, truncated)
+		}
+	})
+}
