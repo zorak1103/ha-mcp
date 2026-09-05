@@ -78,6 +78,12 @@ func RegisterSystemLogTools(registry *mcp.Registry) {
 	h.RegisterTools(registry)
 }
 
+// RegisterStatisticsTools registers the recorder statistics management tool with the registry.
+func RegisterStatisticsTools(registry *mcp.Registry) {
+	h := NewStatisticsHandlers()
+	h.RegisterTools(registry)
+}
+
 // RegisterConfigTools registers all configuration validation tools with the registry.
 func RegisterConfigTools(registry *mcp.Registry) {
 	h := NewConfigHandlers()
@@ -229,6 +235,7 @@ func registerRemainingTools(registry *mcp.Registry) {
 	RegisterTemplateTools(registry)
 	RegisterLogbookTools(registry)
 	RegisterSystemLogTools(registry)
+	RegisterStatisticsTools(registry)
 	RegisterConfigTools(registry)
 
 	// Config entry tools (for accessing full config including template definitions)

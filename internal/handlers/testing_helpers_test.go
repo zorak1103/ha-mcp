@@ -116,7 +116,10 @@ type UniversalMockClient struct {
 	DeleteDashboardFn    func(ctx context.Context, dashboardID string) error
 
 	// Statistics operations
-	GetStatisticsFn func(ctx context.Context, statIDs []string, period string) ([]homeassistant.StatisticsResult, error)
+	GetStatisticsFn      func(ctx context.Context, statIDs []string, period string) ([]homeassistant.StatisticsResult, error)
+	ListStatisticIDsFn   func(ctx context.Context, statisticType string) ([]homeassistant.StatisticMeta, error)
+	ValidateStatisticsFn func(ctx context.Context) (map[string][]homeassistant.StatisticValidationIssue, error)
+	ClearStatisticsFn    func(ctx context.Context, statisticIDs []string) error
 
 	// Target operations
 	GetTriggersForTargetFn   func(ctx context.Context, target homeassistant.Target, expandGroup *bool) ([]string, error)
@@ -699,6 +702,27 @@ func (m *UniversalMockClient) GetStatistics(ctx context.Context, statIDs []strin
 		return m.GetStatisticsFn(ctx, statIDs, period)
 	}
 	return []homeassistant.StatisticsResult{}, nil
+}
+
+func (m *UniversalMockClient) ListStatisticIDs(ctx context.Context, statisticType string) ([]homeassistant.StatisticMeta, error) {
+	if m.ListStatisticIDsFn != nil {
+		return m.ListStatisticIDsFn(ctx, statisticType)
+	}
+	return []homeassistant.StatisticMeta{}, nil
+}
+
+func (m *UniversalMockClient) ValidateStatistics(ctx context.Context) (map[string][]homeassistant.StatisticValidationIssue, error) {
+	if m.ValidateStatisticsFn != nil {
+		return m.ValidateStatisticsFn(ctx)
+	}
+	return map[string][]homeassistant.StatisticValidationIssue{}, nil
+}
+
+func (m *UniversalMockClient) ClearStatistics(ctx context.Context, statisticIDs []string) error {
+	if m.ClearStatisticsFn != nil {
+		return m.ClearStatisticsFn(ctx, statisticIDs)
+	}
+	return nil
 }
 
 // Target operations implementation

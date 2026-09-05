@@ -170,6 +170,11 @@ type Client interface {
 	// Service call with response
 	CallServiceWithResponse(ctx context.Context, domain, service string, data map[string]any) (map[string]any, error)
 
+	// Recorder statistics operations (WebSocket-only).
+	ListStatisticIDs(ctx context.Context, statisticType string) ([]StatisticMeta, error)
+	ValidateStatistics(ctx context.Context) (map[string][]StatisticValidationIssue, error)
+	ClearStatistics(ctx context.Context, statisticIDs []string) error
+
 	// Calendar operations
 	GetCalendars(ctx context.Context) ([]CalendarEntry, error)
 	GetCalendarEvents(ctx context.Context, entityID, start, end string) ([]CalendarEvent, error)

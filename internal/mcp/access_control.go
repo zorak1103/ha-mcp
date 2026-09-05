@@ -218,6 +218,12 @@ func addSpecialManagementTools(result map[string]ToolClassification) {
 		ParamName: "action",
 		Actions:   map[string]ActionCategory{"list": CategoryRead, "clear": CategoryWrite},
 	}
+	result["manage_statistics"] = ToolClassification{
+		ParamName: "action",
+		Actions: map[string]ActionCategory{
+			"list": CategoryRead, "validate": CategoryRead, "clear": CategoryWrite,
+		},
+	}
 }
 
 // buildQueryTools returns query and analysis tools with mode/type/info parameters.

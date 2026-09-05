@@ -89,16 +89,16 @@ func GetFriendlyName(entityID string, attributes map[string]any) string {
 // rendered list, and parentheses are stripped so a name cannot forge a fake
 // "(entity_id)" suffix that would displace the real one.
 func FormatNameWithID(name, entityID string) string {
-	sanitized := sanitizeDisplayName(name)
+	sanitized := SanitizeDisplayName(name)
 	if sanitized == entityID {
 		return entityID
 	}
 	return sanitized + " (" + entityID + ")"
 }
 
-// sanitizeDisplayName strips characters from a user-controlled display name that could
+// SanitizeDisplayName strips characters from a user-controlled display name that could
 // be used to forge or break the "Name (entity_id)" line shape.
-func sanitizeDisplayName(name string) string {
+func SanitizeDisplayName(name string) string {
 	replacer := strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ", "(", "", ")", "")
 	return replacer.Replace(name)
 }
@@ -150,7 +150,7 @@ func sentenceCaseKey(key string) string {
 }
 
 // maxDetailValueChars/maxDetailListItems/maxDetailValueDepth bound the
-// generic attribute-value renderer (formatDetailValue) used by get_details'
+// generic attribute-value renderer (FormatDetailValue) used by get_details'
 // fallback path for helper domains with no dedicated renderer (climate,
 // humidifier, select, the 15 template_* subtypes). 400 chars keeps
 // legitimately useful full-length values (climate.hvac_modes, select.options,
@@ -165,7 +165,7 @@ const (
 
 // sanitizeDisplayValue collapses newlines/carriage returns in a natural-format
 // attribute value to spaces, so a value cannot forge additional "Key: value"
-// lines in line-oriented output. Unlike sanitizeDisplayName (used for entity
+// lines in line-oriented output. Unlike SanitizeDisplayName (used for entity
 // display names), parentheses are left intact - "(eco)" is a legitimate
 // attribute value, not an attempt to forge an "(entity_id)" suffix.
 func sanitizeDisplayValue(s string) string {
@@ -186,7 +186,7 @@ func truncateRunes(s string, maxRunes int) string {
 
 // renderDetailValue renders v for natural-format display. Only the item-count
 // cap (maxDetailListItems) is applied here, for nested lists at depth > 0;
-// the character-length cap is deliberately deferred to formatDetailValue's
+// the character-length cap is deliberately deferred to FormatDetailValue's
 // top-level handling, since applying it here too would double-truncate:
 // every list element would be pre-truncated before joining, and a long
 // list's "… +N more" suffix could then itself be truncated away.
@@ -252,11 +252,11 @@ func formatDetailListValue(list []any) string {
 	return joined
 }
 
-// formatDetailValue renders an attribute value of unknown shape for natural
+// FormatDetailValue renders an attribute value of unknown shape for natural
 // format: nil renders as "" (callers skip the whole line when this is
 // empty), everything else is rendered via renderDetailValue then sanitized
 // and truncated once at the top level.
-func formatDetailValue(v any) string {
+func FormatDetailValue(v any) string {
 	if v == nil {
 		return ""
 	}

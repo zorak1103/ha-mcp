@@ -276,6 +276,18 @@ func (m *mockClient) CallService(ctx context.Context, domain, service string, da
 func (m *mockClient) CallServiceWithResponse(ctx context.Context, domain, service string, data map[string]any) (map[string]any, error) {
 	return nil, nil
 }
+
+func (m *mockClient) ListStatisticIDs(ctx context.Context, statisticType string) ([]StatisticMeta, error) {
+	return nil, nil
+}
+
+func (m *mockClient) ValidateStatistics(ctx context.Context) (map[string][]StatisticValidationIssue, error) {
+	return nil, nil
+}
+
+func (m *mockClient) ClearStatistics(ctx context.Context, statisticIDs []string) error {
+	return nil
+}
 func (m *mockClient) GetCalendars(ctx context.Context) ([]CalendarEntry, error) {
 	return nil, nil
 }

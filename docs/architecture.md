@@ -146,6 +146,7 @@ ha-mcp/
 │   │   ├── logbook.go           # Logbook access handler (entries/correlation modes)
 │   │   ├── logbook_correlation.go # Logbook correlation analysis
 │   │   ├── system_log.go        # System log handler (manage_system_log: list/clear)
+│   │   ├── statistics.go        # Recorder statistics handler (manage_statistics: list/validate/clear)
 │   │   ├── config.go            # Configuration validation handler
 │   │   ├── hacs.go              # HACS (Community Store) management handler
 │   │   ├── traces.go            # Trace viewing handler (automation/script execution traces)

@@ -1121,7 +1121,7 @@ func (h *ConsolidatedEntityQueryHandlers) handleStatistics(
 	client homeassistant.Client,
 	args map[string]any,
 ) (*mcp.ToolsCallResult, error) {
-	statIDs, err := parseStatisticIDs(args)
+	statIDs, err := parseStatisticIDsLenient(args)
 	if err != nil {
 		return errorResult(err.Error()), nil
 	}
@@ -1328,8 +1328,8 @@ func (h *ConsolidatedEntityQueryHandlers) formatDomainsNatural(
 	}
 }
 
-// parseStatisticIDs extracts and validates statistic_ids from args.
-func parseStatisticIDs(args map[string]any) ([]string, error) {
+// parseStatisticIDsLenient extracts and validates statistic_ids from args.
+func parseStatisticIDsLenient(args map[string]any) ([]string, error) {
 	statIDsRaw, ok := args["statistic_ids"]
 	if !ok {
 		return nil, fmt.Errorf("statistic_ids is required")

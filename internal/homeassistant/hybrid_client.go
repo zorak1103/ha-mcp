@@ -149,6 +149,11 @@ type WSOperations interface {
 	// System log operations (WebSocket-native)
 	GetSystemLog(ctx context.Context) ([]SystemLogEntry, error)
 	ClearSystemLog(ctx context.Context) error
+
+	// Recorder statistics operations (WebSocket-native)
+	ListStatisticIDs(ctx context.Context, statisticType string) ([]StatisticMeta, error)
+	ValidateStatistics(ctx context.Context) (map[string][]StatisticValidationIssue, error)
+	ClearStatistics(ctx context.Context, statisticIDs []string) error
 }
 
 // RESTOperations is an interface for REST client operations.
@@ -1558,6 +1563,21 @@ func (c *HybridClient) DeleteDashboard(ctx context.Context, dashboardID string) 
 // GetStatistics retrieves long-term statistics for entities.
 func (c *HybridClient) GetStatistics(ctx context.Context, statIDs []string, period string) ([]StatisticsResult, error) {
 	return c.ws.GetStatistics(ctx, statIDs, period)
+}
+
+// ListStatisticIDs lists statistics metadata from the recorder database.
+func (c *HybridClient) ListStatisticIDs(ctx context.Context, statisticType string) ([]StatisticMeta, error) {
+	return c.ws.ListStatisticIDs(ctx, statisticType)
+}
+
+// ValidateStatistics validates all statistics and returns issues per id.
+func (c *HybridClient) ValidateStatistics(ctx context.Context) (map[string][]StatisticValidationIssue, error) {
+	return c.ws.ValidateStatistics(ctx)
+}
+
+// ClearStatistics removes statistics data and metadata for the given ids.
+func (c *HybridClient) ClearStatistics(ctx context.Context, statisticIDs []string) error {
+	return c.ws.ClearStatistics(ctx, statisticIDs)
 }
 
 // =============================================================================

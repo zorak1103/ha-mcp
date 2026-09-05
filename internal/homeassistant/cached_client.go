@@ -856,6 +856,21 @@ func (c *CachedClient) CallServiceWithResponse(ctx context.Context, domain, serv
 }
 
 //nolint:revive // Delegated method
+func (c *CachedClient) ListStatisticIDs(ctx context.Context, statisticType string) ([]StatisticMeta, error) {
+	return c.client.ListStatisticIDs(ctx, statisticType)
+}
+
+//nolint:revive // Delegated method
+func (c *CachedClient) ValidateStatistics(ctx context.Context) (map[string][]StatisticValidationIssue, error) {
+	return c.client.ValidateStatistics(ctx)
+}
+
+//nolint:revive // Delegated method
+func (c *CachedClient) ClearStatistics(ctx context.Context, statisticIDs []string) error {
+	return c.client.ClearStatistics(ctx, statisticIDs)
+}
+
+//nolint:revive // Delegated method
 func (c *CachedClient) SignPath(ctx context.Context, path string, expires int) (string, error) {
 	return c.client.SignPath(ctx, path, expires)
 }

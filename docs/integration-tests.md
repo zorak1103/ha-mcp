@@ -136,6 +136,7 @@ go test -tags=integration -v ./internal/handlers/integration/... 2>&1 | tee test
 | `TestUpdateBlueprintIntegration`| list updates (pending filter), release_notes, list blueprints (automation/script)                                                                                              |
 | `TestCameraIntegration`         | list cameras, stream (HLS URL via manage_camera), get_snapshot (binary image data)                                                                                             |
 | `TestSystemLogIntegration`      | GetSystemLog (list), ClearSystemLog (clear + verify empty)                                                                                                                      |
+| `TestManageStatisticsIntegration`| ListStatisticIDs (list, mean/sum filters), ValidateStatistics, ClearStatistics, lifecycle (create statistics-recording sensor → appears in list_statistic_ids → clear)        |
 | `TestConfigEntriesIntegration`  | list, list (filter by domain), get, get (not found), delete (via manage_config_entry tool dispatch, verifies entity + config entry are gone), options discovery                |
 | `TestDatetimeIntegration`       | get_datetime with configured Home Assistant timezone                                                                                                                          |
 
@@ -174,6 +175,7 @@ Every test above calls `homeassistant.Client` methods directly, verifying the cl
 | `TestDashboardsPatchToolDispatch`         | `manage_dashboard` | patch (views, cards, and chips)                                                                                                                                             |
 | `TestPersonToolDispatch`                  | `manage_person`    | list - regression test for the person WS command-prefix and response-shape fixes                                                                                            |
 | `TestZoneToolDispatch`                    | `manage_zone`      | list - regression test for the zone WS command-prefix fix                                                                                                                  |
+| `TestManageStatisticsToolDispatch`        | `manage_statistics`| list (smoke), unknown action rejection, validate (smoke), clear without ids/malformed id rejected, clear with a well-formed unknown id (no error)                           |
 
 Writing these tests uncovered and fixed three further, previously-unknown bugs in the config-entry helper update path (all unreachable until the config-entry helper update routing fix let update calls reach Home Assistant's Options Flow submission for the first time) - see `CLAUDE.md`'s API & Type Gotchas section for `buildConfigEntryUpdateConfig`'s `entity_id` leak, `addExtendedConfigEntryFields`'s `device_class` leak, and `extractOptionsFromSchema`'s nil `suggested_value` propagation.
 

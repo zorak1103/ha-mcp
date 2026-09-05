@@ -518,6 +518,31 @@ func (s StatisticsResult) StartTime() time.Time {
 	return time.Unix(int64(s.Start), 0)
 }
 
+// StatisticMeta is one statistics metadata entry from the recorder's
+// statistics_meta table, as returned by recorder/list_statistic_ids.
+// HA >= 2024.11 returns mean_type (StatisticMeanType: NONE=0, ARITHMETIC=1,
+// CIRCULAR=2) and deprecated has_mean; both are kept optional so old and new
+// HA versions parse into the same struct.
+type StatisticMeta struct {
+	StatisticID    string  `json:"statistic_id"`
+	DisplayUnit    *string `json:"display_unit_of_measurement,omitempty"`
+	StatisticsUnit *string `json:"statistics_unit_of_measurement,omitempty"`
+	UnitClass      *string `json:"unit_class,omitempty"`
+	HasMean        *bool   `json:"has_mean,omitempty"` // pre-2026.4 HA versions
+	MeanType       *int    `json:"mean_type,omitempty"`
+	HasSum         *bool   `json:"has_sum,omitempty"`
+	Name           *string `json:"name,omitempty"`
+	Source         string  `json:"source"`
+}
+
+// StatisticValidationIssue is one recorder statistics validation issue, as
+// returned by recorder/validate_statistics. Issue type "no_state" marks a
+// statistic whose backing entity no longer exists (an orphaned statistic).
+type StatisticValidationIssue struct {
+	Type string         `json:"type"`
+	Data map[string]any `json:"data,omitempty"`
+}
+
 // Target represents a target specification for entities, devices, areas, and labels.
 // This is used for service calls and for querying triggers, conditions, and services.
 type Target struct {

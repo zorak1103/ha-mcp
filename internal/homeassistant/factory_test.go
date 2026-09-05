@@ -243,6 +243,18 @@ func (m *mockNonCloserClient) CallService(_ context.Context, _, _ string, _ map[
 func (m *mockNonCloserClient) CallServiceWithResponse(context.Context, string, string, map[string]any) (map[string]any, error) {
 	return map[string]any{}, nil
 }
+
+func (m *mockNonCloserClient) ListStatisticIDs(context.Context, string) ([]StatisticMeta, error) {
+	return nil, nil
+}
+
+func (m *mockNonCloserClient) ValidateStatistics(context.Context) (map[string][]StatisticValidationIssue, error) {
+	return nil, nil
+}
+
+func (m *mockNonCloserClient) ClearStatistics(context.Context, []string) error {
+	return nil
+}
 func (m *mockNonCloserClient) GetCalendars(context.Context) ([]CalendarEntry, error) {
 	return []CalendarEntry{}, nil
 }

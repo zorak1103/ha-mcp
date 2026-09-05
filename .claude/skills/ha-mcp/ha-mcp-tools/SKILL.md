@@ -49,6 +49,7 @@ description: "Use when choosing which ha-mcp tool or action to call. Examples: \
 | Manage calendar events                               | `manage_calendar`                                                      |
 | Read HA error/warning logs                           | `manage_system_log` action=list                                        |
 | Clear the HA system log buffer                       | `manage_system_log` action=clear                                       |
+| Manage recorder statistics / orphaned stats          | `manage_statistics` action=list/validate/clear                         |
 | Get ha-mcp guidance on a topic                       | `get_skill` action=list / action=read skill=<slug>                     |
 
 ## Consolidated Tool Action Reference
@@ -76,6 +77,7 @@ description: "Use when choosing which ha-mcp tool or action to call. Examples: \
 | `manage_todo`         | list, get_items                                  | add_item, update_item, remove_item              |
 | `manage_calendar`     | list, get_events                                 | create_event, delete_event                      |
 | `manage_system_log`   | list                                             | clear                                           |
+| `manage_statistics`   | list, validate                                   | clear                                           |
 | `get_skill`           | list, read                                       | (none — read-only)                              |
 | `query_entities`      | current, history, statistics, domains, presence, health | (none)                                   |
 | `query_devices`       | health                                           | (none)                                          |

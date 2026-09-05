@@ -284,6 +284,24 @@ Universal tool for runtime helper operations:
 | `list`  | read   | Fetch recent WARNING/ERROR entries (~50 max by default) | `level`, `integration`, `limit`, `include_exception`, `format` |
 | `clear` | write  | Empty the in-memory ring buffer                      | —                                                       |
 
+### Statistics Tools
+
+| Tool                 | Description                                                                                                                                    |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `manage_statistics`  | List, validate, or clear recorder long-term statistics (orphaned statistic ids after entity removal). Uses `recorder/list_statistic_ids`, `recorder/validate_statistics`, and `recorder/clear_statistics` WebSocket commands. |
+
+**Actions:**
+
+| Action     | Access | Description                                                                             | Key params                              |
+| ---------- | ------ | --------------------------------------------------------------------------------------- | ---------------------------------------- |
+| `list`     | read   | Enumerate known statistic ids incl. orphaned ones (Developer Tools → Statistics basis) | `statistic_type` (mean/sum), `limit` (default 100, 0 = unlimited, capped at 1000), `offset`, `cursor`, `format` |
+| `validate` | read   | Validation issue list per statistic id; issue type `no_state` = orphaned statistic     | `limit` (default 100, 0 = unlimited, capped at 1000), `offset`, `cursor`, `format` |
+| `clear`    | write  | Permanently remove statistics data + metadata for the given ids                        | `statistic_ids` (required array), `dry_run` |
+
+Note: `clear` is a write action but is **not** matched by a `manage_*:delete` tool-filter pattern (the action name is `clear`, not `delete`) — block it explicitly via `manage_statistics:clear` if a filter policy needs to exclude it. `clear` cross-checks requested ids against the recorder's known ids and reports which were actually cleared vs. skipped as not present; pass `dry_run: true` to preview that split without purging anything. `dry_run` must be a real boolean — a stringified `"true"` is rejected rather than silently treated as `false`, since it is the only thing standing between a preview and an irreversible purge. An id that doesn't match HA's statistic_id shape no longer hard-fails the whole `clear` call by itself: it is reported back as "not a recognizable statistic id (skipped)" alongside ids the recorder doesn't know, as long as at least one requested id is well-formed.
+
+`list`/`validate` responses include `next_cursor` when more results exist beyond the current page (JSON format); pass it back as `cursor` on the next call to page through a large result set instead of the only prior escape hatch, `limit=0` (unlimited).
+
 ### Guidance Tools
 
 | Tool        | Actions    | Description                                                                                                                                                                                  |
@@ -316,7 +334,7 @@ Most tools support two output formats via the `format` parameter:
 - **`json`**: Structured JSON output for backward compatibility and programmatic access
   - Example: `{"entity_id": "light.living_room", "state": "on", "attributes": {"brightness": 204, ...}}`
 
-**Tools with format support**: `analyze_entity`, `analyze_target`, `call_service`, `find_references`, `get_entity_dependencies`, `get_logbook`, `get_registry`, `get_state`, `manage_area`, `manage_automation`, `manage_blueprint`, `manage_calendar`, `manage_camera`, `manage_config_entry`, `manage_dashboard`, `manage_device`, `manage_entity`, `manage_floor`, `manage_hacs`, `manage_helper`, `manage_label`, `manage_person`, `manage_scene`, `manage_script`, `manage_system_log`, `manage_tag`, `manage_todo`, `manage_trace`, `manage_update`, `manage_zone`, `query_devices`, `query_entities`
+**Tools with format support**: `analyze_entity`, `analyze_target`, `call_service`, `find_references`, `get_entity_dependencies`, `get_logbook`, `get_registry`, `get_state`, `manage_area`, `manage_automation`, `manage_blueprint`, `manage_calendar`, `manage_camera`, `manage_config_entry`, `manage_dashboard`, `manage_device`, `manage_entity`, `manage_floor`, `manage_hacs`, `manage_helper`, `manage_label`, `manage_person`, `manage_scene`, `manage_script`, `manage_statistics`, `manage_system_log`, `manage_tag`, `manage_todo`, `manage_trace`, `manage_update`, `manage_zone`, `query_devices`, `query_entities`
 
 ## Example Requests
 

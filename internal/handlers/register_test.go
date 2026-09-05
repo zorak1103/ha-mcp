@@ -168,6 +168,21 @@ func TestRegisterSkillTools(t *testing.T) {
 	}
 }
 
+func TestRegisterStatisticsTools(t *testing.T) {
+	t.Parallel()
+
+	registry := mcp.NewRegistry()
+	RegisterStatisticsTools(registry)
+
+	tools := registry.ListTools()
+	if len(tools) != 1 {
+		t.Fatalf("RegisterStatisticsTools() registered %d tools, want 1", len(tools))
+	}
+	if tools[0].Name != "manage_statistics" {
+		t.Errorf("registered tool name = %q, want %q", tools[0].Name, "manage_statistics")
+	}
+}
+
 func TestRegisterAllTools(t *testing.T) {
 	t.Parallel()
 
