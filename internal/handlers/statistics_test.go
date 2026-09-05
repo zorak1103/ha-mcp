@@ -54,6 +54,42 @@ func statTestModernMeta() []homeassistant.StatisticMeta {
 	}
 }
 
+// statTestManyMeta generates n distinct StatisticMeta entries, used to
+// exercise the default output cap (issue C1) without hand-writing a large
+// fixture.
+func statTestManyMeta(n int) []homeassistant.StatisticMeta {
+	metas := make([]homeassistant.StatisticMeta, n)
+	for i := range metas {
+		metas[i] = homeassistant.StatisticMeta{
+			StatisticID: fmt.Sprintf("sensor.mcptest_bulk_%03d", i),
+			Source:      "recorder",
+		}
+	}
+	return metas
+}
+
+// statTestManyIssues generates n distinct single-issue validation entries,
+// used to exercise the default output cap (issue C1) for action=validate.
+func statTestManyIssues(n int) map[string][]homeassistant.StatisticValidationIssue {
+	issues := make(map[string][]homeassistant.StatisticValidationIssue, n)
+	for i := 0; i < n; i++ {
+		id := fmt.Sprintf("sensor.mcptest_bulk_%03d", i)
+		issues[id] = []homeassistant.StatisticValidationIssue{{Type: "no_state"}}
+	}
+	return issues
+}
+
+// statTestMetaForIDs returns minimal StatisticMeta entries for the given
+// ids, marking them "known to the recorder" for action=clear's pre-check
+// (resolveKnownStatisticIDs).
+func statTestMetaForIDs(ids ...string) []homeassistant.StatisticMeta {
+	metas := make([]homeassistant.StatisticMeta, 0, len(ids))
+	for _, id := range ids {
+		metas = append(metas, homeassistant.StatisticMeta{StatisticID: id, Source: "recorder"})
+	}
+	return metas
+}
+
 func TestManageStatisticsToolSchema(t *testing.T) {
 	t.Parallel()
 
@@ -63,7 +99,7 @@ func TestManageStatisticsToolSchema(t *testing.T) {
 		ExpectedName:    "manage_statistics",
 		WantDescription: true,
 		RequiredParams:  []string{"action"},
-		OptionalParams:  []string{"statistic_type", "statistic_ids", "limit", "format"},
+		OptionalParams:  []string{"statistic_type", "statistic_ids", "limit", "format", "dry_run"},
 	})
 
 	actionEnum := tool.InputSchema.Properties["action"].Enum
@@ -113,6 +149,14 @@ func TestManageStatisticsToolSchema(t *testing.T) {
 	}
 	if limitProp.Type != "integer" {
 		t.Errorf("limit.Type = %q, want integer", limitProp.Type)
+	}
+
+	dryRunProp, ok := tool.InputSchema.Properties["dry_run"]
+	if !ok {
+		t.Fatal("missing dry_run property in schema")
+	}
+	if dryRunProp.Type != "boolean" {
+		t.Errorf("dry_run.Type = %q, want boolean", dryRunProp.Type)
 	}
 }
 
@@ -342,6 +386,52 @@ func TestManageStatistics_ListAction(t *testing.T) {
 		}
 		assertContainsAll(t, result.Content[0].Text, []string{"ws not connected"})
 	})
+
+	t.Run("no limit arg applies default cap (issue C1)", func(t *testing.T) {
+		t.Parallel()
+
+		client := &UniversalMockClient{}
+		client.ListStatisticIDsFn = func(_ context.Context, _ string) ([]homeassistant.StatisticMeta, error) {
+			return statTestManyMeta(defaultStatisticListLimit + 50), nil
+		}
+
+		result, err := h.handleManageStatistics(context.Background(), client, map[string]any{"action": statActionList})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("unexpected IsError result: %s", result.Content[0].Text)
+		}
+		content := result.Content[0].Text
+		assertContainsAll(t, content, []string{
+			fmt.Sprintf("%d statistic ids", defaultStatisticListLimit+50),
+			fmt.Sprintf("(showing %d)", defaultStatisticListLimit),
+		})
+	})
+
+	t.Run("explicit limit 0 returns everything (issue C1)", func(t *testing.T) {
+		t.Parallel()
+
+		total := defaultStatisticListLimit + 50
+		client := &UniversalMockClient{}
+		client.ListStatisticIDsFn = func(_ context.Context, _ string) ([]homeassistant.StatisticMeta, error) {
+			return statTestManyMeta(total), nil
+		}
+
+		result, err := h.handleManageStatistics(context.Background(), client, map[string]any{
+			"action": statActionList,
+			"limit":  float64(0),
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("unexpected IsError result: %s", result.Content[0].Text)
+		}
+		content := result.Content[0].Text
+		assertContainsAll(t, content, []string{fmt.Sprintf("%d statistic ids", total)})
+		assertNotContainsAny(t, content, []string{"showing"})
+	})
 }
 
 func TestManageStatistics_ClearAction(t *testing.T) {
@@ -352,6 +442,9 @@ func TestManageStatistics_ClearAction(t *testing.T) {
 
 		var gotIDs []string
 		client := &UniversalMockClient{}
+		client.ListStatisticIDsFn = func(_ context.Context, _ string) ([]homeassistant.StatisticMeta, error) {
+			return statTestMetaForIDs("sensor.mcptest_a", "sensor.mcptest_b"), nil
+		}
 		client.ClearStatisticsFn = func(_ context.Context, ids []string) error {
 			gotIDs = ids
 			return nil
@@ -378,6 +471,9 @@ func TestManageStatistics_ClearAction(t *testing.T) {
 
 		var gotIDs []string
 		client := &UniversalMockClient{}
+		client.ListStatisticIDsFn = func(_ context.Context, _ string) ([]homeassistant.StatisticMeta, error) {
+			return statTestMetaForIDs("sensor.mcptest_a", "sensor.mcptest_b"), nil
+		}
 		client.ClearStatisticsFn = func(_ context.Context, ids []string) error {
 			gotIDs = ids
 			return nil
@@ -404,6 +500,9 @@ func TestManageStatistics_ClearAction(t *testing.T) {
 
 		var gotIDs []string
 		client := &UniversalMockClient{}
+		client.ListStatisticIDsFn = func(_ context.Context, _ string) ([]homeassistant.StatisticMeta, error) {
+			return statTestMetaForIDs("sensor.mcptest_a"), nil
+		}
 		client.ClearStatisticsFn = func(_ context.Context, ids []string) error {
 			gotIDs = ids
 			return nil
@@ -426,6 +525,9 @@ func TestManageStatistics_ClearAction(t *testing.T) {
 
 		var gotIDs []string
 		client := &UniversalMockClient{}
+		client.ListStatisticIDsFn = func(_ context.Context, _ string) ([]homeassistant.StatisticMeta, error) {
+			return statTestMetaForIDs("growatt:total_energy"), nil
+		}
 		client.ClearStatisticsFn = func(_ context.Context, ids []string) error {
 			gotIDs = ids
 			return nil
@@ -440,6 +542,34 @@ func TestManageStatistics_ClearAction(t *testing.T) {
 		}
 		if len(gotIDs) != 1 || gotIDs[0] != "growatt:total_energy" {
 			t.Errorf("ClearStatistics called with %v, want [growatt:total_energy]", gotIDs)
+		}
+	})
+
+	t.Run("external statistic id with digit-leading domain accepted (issue N1)", func(t *testing.T) {
+		t.Parallel()
+
+		var gotIDs []string
+		client := &UniversalMockClient{}
+		client.ListStatisticIDsFn = func(_ context.Context, _ string) ([]homeassistant.StatisticMeta, error) {
+			return statTestMetaForIDs("17track:total_distance"), nil
+		}
+		client.ClearStatisticsFn = func(_ context.Context, ids []string) error {
+			gotIDs = ids
+			return nil
+		}
+
+		result, err := (&StatisticsHandlers{}).handleManageStatistics(context.Background(), client, map[string]any{
+			"action":        statActionClear,
+			"statistic_ids": []any{"17track:total_distance"},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("unexpected IsError result: %s", result.Content[0].Text)
+		}
+		if len(gotIDs) != 1 || gotIDs[0] != "17track:total_distance" {
+			t.Errorf("ClearStatistics called with %v, want [17track:total_distance]", gotIDs)
 		}
 	})
 
@@ -462,6 +592,160 @@ func TestManageStatistics_ClearAction(t *testing.T) {
 			t.Fatalf("want IsError, got: %s", result.Content[0].Text)
 		}
 		assertContainsAll(t, result.Content[0].Text, []string{"clear_statistics timed out"})
+	})
+
+	t.Run("unknown ids reported as skipped, not falsely cleared (issue W2)", func(t *testing.T) {
+		t.Parallel()
+
+		var gotIDs []string
+		client := &UniversalMockClient{}
+		client.ListStatisticIDsFn = func(_ context.Context, _ string) ([]homeassistant.StatisticMeta, error) {
+			return statTestMetaForIDs("sensor.mcptest_a"), nil // mcptest_b is not known
+		}
+		client.ClearStatisticsFn = func(_ context.Context, ids []string) error {
+			gotIDs = ids
+			return nil
+		}
+
+		result, err := (&StatisticsHandlers{}).handleManageStatistics(context.Background(), client, map[string]any{
+			"action":        statActionClear,
+			"statistic_ids": []any{"sensor.mcptest_a", "sensor.mcptest_b"},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("unexpected IsError result: %s", result.Content[0].Text)
+		}
+		// Both ids are still forwarded to HA - it does its own filtering -
+		// but the message must distinguish known from unknown.
+		if len(gotIDs) != 2 {
+			t.Errorf("ClearStatistics called with %v, want both requested ids forwarded", gotIDs)
+		}
+		content := result.Content[0].Text
+		assertContainsAll(t, content, []string{
+			"Cleared statistics for 1 statistic id: sensor.mcptest_a",
+			"1 id not present in the recorder database (skipped): sensor.mcptest_b",
+		})
+	})
+
+	t.Run("all ids unknown reports zero cleared without a dangling list", func(t *testing.T) {
+		t.Parallel()
+
+		client := &UniversalMockClient{}
+		client.ListStatisticIDsFn = func(_ context.Context, _ string) ([]homeassistant.StatisticMeta, error) {
+			return []homeassistant.StatisticMeta{}, nil
+		}
+		client.ClearStatisticsFn = func(_ context.Context, _ []string) error {
+			return nil
+		}
+
+		result, err := (&StatisticsHandlers{}).handleManageStatistics(context.Background(), client, map[string]any{
+			"action":        statActionClear,
+			"statistic_ids": []any{"sensor.mcptest_a"},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("unexpected IsError result: %s", result.Content[0].Text)
+		}
+		assertContainsAll(t, result.Content[0].Text, []string{
+			"Cleared statistics for 0 statistic ids: none of the requested ids were present",
+		})
+	})
+
+	t.Run("dry_run previews without clearing (issue W3)", func(t *testing.T) {
+		t.Parallel()
+
+		cleared := false
+		client := &UniversalMockClient{}
+		client.ListStatisticIDsFn = func(_ context.Context, _ string) ([]homeassistant.StatisticMeta, error) {
+			return statTestMetaForIDs("sensor.mcptest_a"), nil
+		}
+		client.ClearStatisticsFn = func(_ context.Context, _ []string) error {
+			cleared = true
+			return nil
+		}
+
+		result, err := (&StatisticsHandlers{}).handleManageStatistics(context.Background(), client, map[string]any{
+			"action":        statActionClear,
+			"statistic_ids": []any{"sensor.mcptest_a", "sensor.mcptest_b"},
+			"dry_run":       true,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("unexpected IsError result: %s", result.Content[0].Text)
+		}
+		if cleared {
+			t.Error("dry_run must not call ClearStatistics")
+		}
+		content := result.Content[0].Text
+		assertContainsAll(t, content, []string{
+			"Would clear statistics for 1 statistic id: sensor.mcptest_a",
+			"1 id not present in the recorder database (skipped): sensor.mcptest_b",
+		})
+	})
+
+	t.Run("pre-check failure degrades clear with a warning (issue W2)", func(t *testing.T) {
+		t.Parallel()
+
+		var gotIDs []string
+		client := &UniversalMockClient{}
+		client.ListStatisticIDsFn = func(_ context.Context, _ string) ([]homeassistant.StatisticMeta, error) {
+			return nil, fmt.Errorf("ws not connected")
+		}
+		client.ClearStatisticsFn = func(_ context.Context, ids []string) error {
+			gotIDs = ids
+			return nil
+		}
+
+		result, err := (&StatisticsHandlers{}).handleManageStatistics(context.Background(), client, map[string]any{
+			"action":        statActionClear,
+			"statistic_ids": []any{"sensor.mcptest_a"},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("unexpected IsError result: %s", result.Content[0].Text)
+		}
+		if len(gotIDs) != 1 || gotIDs[0] != "sensor.mcptest_a" {
+			t.Errorf("ClearStatistics called with %v, want [sensor.mcptest_a]", gotIDs)
+		}
+		assertContainsAll(t, result.Content[0].Text, []string{"Cleared statistics for 1", "WARNING", "could not verify"})
+	})
+
+	t.Run("pre-check failure on dry_run reports a warning without clearing (issue W2+W3)", func(t *testing.T) {
+		t.Parallel()
+
+		cleared := false
+		client := &UniversalMockClient{}
+		client.ListStatisticIDsFn = func(_ context.Context, _ string) ([]homeassistant.StatisticMeta, error) {
+			return nil, fmt.Errorf("ws not connected")
+		}
+		client.ClearStatisticsFn = func(_ context.Context, _ []string) error {
+			cleared = true
+			return nil
+		}
+
+		result, err := (&StatisticsHandlers{}).handleManageStatistics(context.Background(), client, map[string]any{
+			"action":        statActionClear,
+			"statistic_ids": []any{"sensor.mcptest_a"},
+			"dry_run":       true,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("unexpected IsError result: %s", result.Content[0].Text)
+		}
+		if cleared {
+			t.Error("dry_run must not call ClearStatistics even when the pre-check fails")
+		}
+		assertContainsAll(t, result.Content[0].Text, []string{"Would attempt to clear statistics for 1", "WARNING", "could not verify"})
 	})
 }
 
@@ -536,13 +820,17 @@ func TestManageStatistics_ValidateAction(t *testing.T) {
 		assertContainsAll(t, result.Content[0].Text, []string{"recorder not running"})
 	})
 
-	t.Run("limit truncates issue ids with notice", func(t *testing.T) {
+	t.Run("limit truncates issue ids with notice, issue and id counts kept separate (issue W1)", func(t *testing.T) {
 		t.Parallel()
 
 		client := &UniversalMockClient{}
 		client.ValidateStatisticsFn = func(_ context.Context) (map[string][]homeassistant.StatisticValidationIssue, error) {
 			return map[string][]homeassistant.StatisticValidationIssue{
-				"sensor.mcptest_a": {{Type: "no_state", Data: nil}},
+				// sensor.mcptest_a carries 2 issues so the shown-issue count
+				// (2) differs from the shown-id count (1) - a header that
+				// conflated the two populations (issue W1) would misreport
+				// one of them.
+				"sensor.mcptest_a": {{Type: "no_state", Data: nil}, {Type: "units_changed", Data: nil}},
 				"sensor.mcptest_b": {{Type: "no_state", Data: nil}},
 			}, nil
 		}
@@ -558,7 +846,9 @@ func TestManageStatistics_ValidateAction(t *testing.T) {
 			t.Fatalf("unexpected IsError result: %s", result.Content[0].Text)
 		}
 		content := result.Content[0].Text
-		assertContainsAll(t, content, []string{"2 statistic ids", "showing 1", "sensor.mcptest_a"})
+		assertContainsAll(t, content, []string{
+			"3 issues", "2 statistic ids", "showing 2 issues / 1 id", "sensor.mcptest_a",
+		})
 		assertNotContainsAny(t, content, []string{"sensor.mcptest_b"})
 	})
 
@@ -568,7 +858,7 @@ func TestManageStatistics_ValidateAction(t *testing.T) {
 		client := &UniversalMockClient{}
 		client.ValidateStatisticsFn = func(_ context.Context) (map[string][]homeassistant.StatisticValidationIssue, error) {
 			return map[string][]homeassistant.StatisticValidationIssue{
-				"sensor.mcptest_a": {{Type: "no_state", Data: nil}},
+				"sensor.mcptest_a": {{Type: "no_state", Data: nil}, {Type: "units_changed", Data: nil}},
 				"sensor.mcptest_b": {{Type: "no_state", Data: nil}},
 			}, nil
 		}
@@ -590,9 +880,59 @@ func TestManageStatistics_ValidateAction(t *testing.T) {
 			t.Fatalf("output is not the expected JSON shape: %v\n%s", err, result.Content[0].Text)
 		}
 		if parsed.TotalIDs != 2 || parsed.ReturnedIDs != 1 || !parsed.Truncated {
-			t.Errorf("got (total=%d, returned=%d, truncated=%v), want (2, 1, true)",
+			t.Errorf("got (total_ids=%d, returned_ids=%d, truncated=%v), want (2, 1, true)",
 				parsed.TotalIDs, parsed.ReturnedIDs, parsed.Truncated)
 		}
+		if parsed.TotalIssues != 3 || parsed.ReturnedIssues != 2 {
+			t.Errorf("got (total_issues=%d, returned_issues=%d), want (3, 2)",
+				parsed.TotalIssues, parsed.ReturnedIssues)
+		}
+	})
+
+	t.Run("no limit arg applies default cap (issue C1)", func(t *testing.T) {
+		t.Parallel()
+
+		client := &UniversalMockClient{}
+		client.ValidateStatisticsFn = func(_ context.Context) (map[string][]homeassistant.StatisticValidationIssue, error) {
+			return statTestManyIssues(defaultStatisticListLimit + 50), nil
+		}
+
+		result, err := h.handleManageStatistics(context.Background(), client, map[string]any{"action": statActionValidate})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("unexpected IsError result: %s", result.Content[0].Text)
+		}
+		content := result.Content[0].Text
+		assertContainsAll(t, content, []string{
+			fmt.Sprintf("%d statistic ids", defaultStatisticListLimit+50),
+			fmt.Sprintf("showing %d issues / %d ids", defaultStatisticListLimit, defaultStatisticListLimit),
+		})
+	})
+
+	t.Run("explicit limit 0 returns everything (issue C1)", func(t *testing.T) {
+		t.Parallel()
+
+		total := defaultStatisticListLimit + 50
+		client := &UniversalMockClient{}
+		client.ValidateStatisticsFn = func(_ context.Context) (map[string][]homeassistant.StatisticValidationIssue, error) {
+			return statTestManyIssues(total), nil
+		}
+
+		result, err := h.handleManageStatistics(context.Background(), client, map[string]any{
+			"action": statActionValidate,
+			"limit":  float64(0),
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("unexpected IsError result: %s", result.Content[0].Text)
+		}
+		content := result.Content[0].Text
+		assertContainsAll(t, content, []string{fmt.Sprintf("%d statistic ids", total)})
+		assertNotContainsAny(t, content, []string{"showing"})
 	})
 }
 
@@ -823,7 +1163,8 @@ func TestFormatValidateNatural(t *testing.T) {
 				{Type: "units_changed", Data: map[string]any{"statistic_unit": "kWh", "state_unit": "Wh"}},
 			},
 		}
-		out := formatValidateNatural(issues, len(issues), false)
+		_, summary := applyValidateLimit(issues, 0)
+		out := formatValidateNatural(issues, summary)
 		assertContainsAll(t, out, []string{
 			"sensor.mcptest_orphaned",
 			"no_state",
@@ -842,14 +1183,17 @@ func TestFormatValidateNatural(t *testing.T) {
 				{Type: "exotic_issue", Data: nil},
 			},
 		}
-		out := formatValidateNatural(issues, len(issues), false)
+		_, summary := applyValidateLimit(issues, 0)
+		out := formatValidateNatural(issues, summary)
 		assertContainsAll(t, out, []string{"sensor.mcptest_weird", "exotic_issue"})
 	})
 
 	t.Run("empty map", func(t *testing.T) {
 		t.Parallel()
 
-		out := formatValidateNatural(map[string][]homeassistant.StatisticValidationIssue{}, 0, false)
+		issues := map[string][]homeassistant.StatisticValidationIssue{}
+		_, summary := applyValidateLimit(issues, 0)
+		out := formatValidateNatural(issues, summary)
 		assertContainsAll(t, out, []string{"no issues"})
 	})
 
@@ -863,7 +1207,8 @@ func TestFormatValidateNatural(t *testing.T) {
 			},
 		}
 
-		out := formatValidateNatural(issues, len(issues), false)
+		_, summary := applyValidateLimit(issues, 0)
+		out := formatValidateNatural(issues, summary)
 		// Should count 1 id, not 2 ids
 		assertContainsAll(t, out, []string{"unsupported_unit (1 id)", "sensor.duplicate_issues"})
 		if strings.Count(out, "sensor.duplicate_issues") != 1 {
@@ -871,14 +1216,23 @@ func TestFormatValidateNatural(t *testing.T) {
 		}
 	})
 
-	t.Run("truncated header reports total ids and showing count", func(t *testing.T) {
+	t.Run("truncated header separates issue and id counts (issue W1)", func(t *testing.T) {
 		t.Parallel()
 
-		issues := map[string][]homeassistant.StatisticValidationIssue{
-			"sensor.mcptest_a": {{Type: "no_state", Data: nil}},
+		// The shown map has 1 id with 2 issues; the full population has 5
+		// ids and 9 issues. A header that summed issues over the shown map
+		// alone (the pre-fix bug) would report "2 issues across 5 ids"
+		// instead of correctly attributing all 9 issues to all 5 ids.
+		shown := map[string][]homeassistant.StatisticValidationIssue{
+			"sensor.mcptest_a": {{Type: "no_state", Data: nil}, {Type: "units_changed", Data: nil}},
 		}
-		out := formatValidateNatural(issues, 5, true)
-		assertContainsAll(t, out, []string{"5 statistic ids", "showing 1"})
+		summary := validateSummary{
+			ShownIDs: 1, TotalIDs: 5,
+			ShownIssues: 2, TotalIssues: 9,
+			Truncated: true,
+		}
+		out := formatValidateNatural(shown, summary)
+		assertContainsAll(t, out, []string{"9 issues", "5 statistic ids", "showing 2 issues / 1 id"})
 	})
 
 	t.Run("a statistic id containing a newline does not forge an extra line", func(t *testing.T) {
@@ -889,7 +1243,8 @@ func TestFormatValidateNatural(t *testing.T) {
 				{Type: "no_state", Data: nil},
 			},
 		}
-		out := formatValidateNatural(issues, len(issues), false)
+		_, summary := applyValidateLimit(issues, 0)
+		out := formatValidateNatural(issues, summary)
 		if strings.Contains(out, "sensor.thermostat_battery (source: recorder)") {
 			t.Errorf("newline in statistic id forged an extra line:\n%s", out)
 		}
@@ -903,7 +1258,8 @@ func TestFormatValidateNatural(t *testing.T) {
 				{Type: "no_state", Data: map[string]any{"start": "evil\n      fake_key: fake_value"}},
 			},
 		}
-		out := formatValidateNatural(issues, len(issues), false)
+		_, summary := applyValidateLimit(issues, 0)
+		out := formatValidateNatural(issues, summary)
 		// The forged text may still appear (sanitization collapses the
 		// newline to a space, it doesn't remove the value's content) - what
 		// must not happen is it landing on its own indented line.
@@ -925,7 +1281,8 @@ func TestFormatValidateJSON(t *testing.T) {
 			{Type: "no_state", Data: map[string]any{"start": "2026-01-01T00:00:00+00:00"}},
 		},
 	}
-	b, err := formatValidateJSON(issues, len(issues), false)
+	_, summary := applyValidateLimit(issues, 0)
+	b, err := formatValidateJSON(issues, summary)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -940,6 +1297,10 @@ func TestFormatValidateJSON(t *testing.T) {
 	if parsed.TotalIDs != 1 || parsed.ReturnedIDs != 1 || parsed.Truncated {
 		t.Errorf("got (total=%d, returned=%d, truncated=%v), want (1, 1, false)",
 			parsed.TotalIDs, parsed.ReturnedIDs, parsed.Truncated)
+	}
+	if parsed.TotalIssues != 1 || parsed.ReturnedIssues != 1 {
+		t.Errorf("got (total_issues=%d, returned_issues=%d), want (1, 1)",
+			parsed.TotalIssues, parsed.ReturnedIssues)
 	}
 }
 
@@ -983,35 +1344,66 @@ func TestApplyValidateLimit(t *testing.T) {
 
 	issues := map[string][]homeassistant.StatisticValidationIssue{
 		"sensor.mcptest_a": {{Type: "no_state", Data: nil}},
-		"sensor.mcptest_b": {{Type: "no_state", Data: nil}},
+		"sensor.mcptest_b": {{Type: "no_state", Data: nil}, {Type: "units_changed", Data: nil}},
 	}
 
 	t.Run("limit less than total truncates", func(t *testing.T) {
 		t.Parallel()
 
-		limited, total, truncated := applyValidateLimit(issues, 1)
-		if len(limited) != 1 || total != 2 || !truncated {
-			t.Errorf("got (%d, %d, %v), want (1, 2, true)", len(limited), total, truncated)
+		limited, summary := applyValidateLimit(issues, 1)
+		if len(limited) != 1 || summary.TotalIDs != 2 || !summary.Truncated {
+			t.Errorf("got (len=%d, totalIDs=%d, truncated=%v), want (1, 2, true)",
+				len(limited), summary.TotalIDs, summary.Truncated)
+		}
+		if summary.TotalIssues != 3 {
+			t.Errorf("summary.TotalIssues = %d, want 3", summary.TotalIssues)
+		}
+		if summary.ShownIssues != countIssues(limited) {
+			t.Errorf("summary.ShownIssues = %d, want %d (countIssues(limited))", summary.ShownIssues, countIssues(limited))
 		}
 	})
 
 	t.Run("limit equal to total does not truncate", func(t *testing.T) {
 		t.Parallel()
 
-		limited, total, truncated := applyValidateLimit(issues, 2)
-		if len(limited) != 2 || total != 2 || truncated {
-			t.Errorf("got (%d, %d, %v), want (2, 2, false)", len(limited), total, truncated)
+		limited, summary := applyValidateLimit(issues, 2)
+		if len(limited) != 2 || summary.TotalIDs != 2 || summary.Truncated {
+			t.Errorf("got (len=%d, totalIDs=%d, truncated=%v), want (2, 2, false)",
+				len(limited), summary.TotalIDs, summary.Truncated)
+		}
+		if summary.ShownIssues != 3 || summary.TotalIssues != 3 {
+			t.Errorf("got (shownIssues=%d, totalIssues=%d), want (3, 3)", summary.ShownIssues, summary.TotalIssues)
 		}
 	})
 
 	t.Run("limit zero does not truncate", func(t *testing.T) {
 		t.Parallel()
 
-		limited, total, truncated := applyValidateLimit(issues, 0)
-		if len(limited) != 2 || total != 2 || truncated {
-			t.Errorf("got (%d, %d, %v), want (2, 2, false)", len(limited), total, truncated)
+		limited, summary := applyValidateLimit(issues, 0)
+		if len(limited) != 2 || summary.TotalIDs != 2 || summary.Truncated {
+			t.Errorf("got (len=%d, totalIDs=%d, truncated=%v), want (2, 2, false)",
+				len(limited), summary.TotalIDs, summary.Truncated)
 		}
 	})
+}
+
+// TestCountIssues pins countIssues' boundary at an empty map (returns 0, not
+// a nil-map panic) alongside the multi-id summation the other tests already
+// exercise indirectly through applyValidateLimit.
+func TestCountIssues(t *testing.T) {
+	t.Parallel()
+
+	if got := countIssues(map[string][]homeassistant.StatisticValidationIssue{}); got != 0 {
+		t.Errorf("countIssues(empty) = %d, want 0", got)
+	}
+
+	issues := map[string][]homeassistant.StatisticValidationIssue{
+		"sensor.mcptest_a": {{Type: "no_state"}},
+		"sensor.mcptest_b": {{Type: "no_state"}, {Type: "units_changed"}},
+	}
+	if got := countIssues(issues); got != 3 {
+		t.Errorf("countIssues(issues) = %d, want 3", got)
+	}
 }
 
 // TestValidateLimitArg pins the boundary between "no limit" (0, or the key
@@ -1042,6 +1434,112 @@ func TestValidateLimitArg(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestResolveLimitArg pins the C1 fix's key distinction: an absent limit key
+// gets defaultStatisticListLimit, while an explicit 0 keeps meaning
+// "unlimited" (getInt alone can't tell these apart, since it returns 0 for
+// both).
+func TestResolveLimitArg(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		args map[string]any
+		want int
+	}{
+		{name: "key absent gets the default", args: map[string]any{}, want: defaultStatisticListLimit},
+		{name: "explicit zero stays unlimited", args: map[string]any{"limit": float64(0)}, want: 0},
+		{name: "explicit positive value passes through", args: map[string]any{"limit": float64(5)}, want: 5},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := resolveLimitArg(tt.args); got != tt.want {
+				t.Errorf("resolveLimitArg(%v) = %d, want %d", tt.args, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestResolveKnownStatisticIDs covers the known/unknown split action=clear
+// relies on (issue W2), plus the checked=false degradation path on a
+// pre-check fetch failure.
+func TestResolveKnownStatisticIDs(t *testing.T) {
+	t.Parallel()
+
+	t.Run("splits known from unknown", func(t *testing.T) {
+		t.Parallel()
+
+		client := &UniversalMockClient{}
+		client.ListStatisticIDsFn = func(_ context.Context, _ string) ([]homeassistant.StatisticMeta, error) {
+			return statTestMetaForIDs("sensor.mcptest_a"), nil
+		}
+
+		known, unknown, checked := resolveKnownStatisticIDs(context.Background(), client, []string{"sensor.mcptest_a", "sensor.mcptest_b"})
+		if !checked {
+			t.Fatal("checked = false, want true")
+		}
+		if len(known) != 1 || known[0] != "sensor.mcptest_a" {
+			t.Errorf("known = %v, want [sensor.mcptest_a]", known)
+		}
+		if len(unknown) != 1 || unknown[0] != "sensor.mcptest_b" {
+			t.Errorf("unknown = %v, want [sensor.mcptest_b]", unknown)
+		}
+	})
+
+	t.Run("fetch failure reports checked=false", func(t *testing.T) {
+		t.Parallel()
+
+		client := &UniversalMockClient{}
+		client.ListStatisticIDsFn = func(_ context.Context, _ string) ([]homeassistant.StatisticMeta, error) {
+			return nil, fmt.Errorf("ws not connected")
+		}
+
+		known, unknown, checked := resolveKnownStatisticIDs(context.Background(), client, []string{"sensor.mcptest_a"})
+		if checked {
+			t.Fatal("checked = true, want false on fetch failure")
+		}
+		if known != nil || unknown != nil {
+			t.Errorf("got known=%v unknown=%v, want both nil when checked=false", known, unknown)
+		}
+	})
+}
+
+// TestFormatClearMessage pins the three shapes formatClearMessage can
+// produce: all known, a known/unknown mix, and all unknown (which must not
+// leave a dangling "for 0 ids: " with an empty list, issue W2).
+func TestFormatClearMessage(t *testing.T) {
+	t.Parallel()
+
+	t.Run("all known", func(t *testing.T) {
+		t.Parallel()
+
+		got := formatClearMessage("Cleared", []string{"sensor.mcptest_a", "sensor.mcptest_b"}, nil)
+		assertContainsAll(t, got, []string{"Cleared statistics for 2 statistic ids: sensor.mcptest_a, sensor.mcptest_b"})
+		assertNotContainsAny(t, got, []string{"skipped"})
+	})
+
+	t.Run("mixed known and unknown", func(t *testing.T) {
+		t.Parallel()
+
+		got := formatClearMessage("Would clear", []string{"sensor.mcptest_a"}, []string{"sensor.mcptest_b"})
+		assertContainsAll(t, got, []string{
+			"Would clear statistics for 1 statistic id: sensor.mcptest_a",
+			"1 id not present in the recorder database (skipped): sensor.mcptest_b",
+		})
+	})
+
+	t.Run("all unknown", func(t *testing.T) {
+		t.Parallel()
+
+		got := formatClearMessage("Cleared", nil, []string{"sensor.mcptest_a"})
+		assertContainsAll(t, got, []string{
+			"Cleared statistics for 0 statistic ids: none of the requested ids were present in the recorder database.",
+			"1 id not present in the recorder database (skipped): sensor.mcptest_a",
+		})
+	})
 }
 
 // TestParseStatisticIDsStrict_MaxBoundary pins the boundary between an
