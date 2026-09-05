@@ -695,7 +695,7 @@ func TestFormatDetailValue(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := formatDetailValue(tt.v)
+			result := FormatDetailValue(tt.v)
 			if result != tt.expected {
 				t.Errorf("formatDetailValue(%v) = %q, want %q", tt.v, result, tt.expected)
 			}
@@ -724,7 +724,7 @@ func TestFormatDetailValue_ListCapBeforeCharBudget(t *testing.T) {
 		items[i] = strings.Repeat("x", 50)
 	}
 
-	result := formatDetailValue(items)
+	result := FormatDetailValue(items)
 
 	if !strings.Contains(result, "+10 more") {
 		t.Errorf("formatDetailValue(30 long items) = %q, want it to contain the item-count cap marker", result)

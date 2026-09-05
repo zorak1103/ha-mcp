@@ -5,9 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
+	"regexp"
 	"slices"
 	"strings"
 
+	"github.com/zorak1103/ha-mcp/internal/handlers/formatter"
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
@@ -22,6 +25,7 @@ const (
 
 	// StatisticMeanType values (HA >= 2024.11): NONE=0, ARITHMETIC=1,
 	// CIRCULAR=2. has_sum is an independent flag, not mean_type==2.
+	meanTypeNone       = 0
 	meanTypeArithmetic = 1
 	meanTypeCircular   = 2
 )
@@ -73,13 +77,14 @@ func (h *StatisticsHandlers) manageStatisticsTool() mcp.Tool {
 					Description: "Required for action=clear: statistic ids to purge (e.g. sensor.0x00124b002a50e881_battery)",
 				},
 				"limit": {
-					Type:        "integer",
-					Description: "Optional maximum number of statistic ids to return (action=list)",
+					Type: "integer",
+					Description: "Optional maximum number of statistic ids to return for action=list, " +
+						"or statistic ids to include for action=validate; ignored for action=clear",
 				},
 				"format": {
 					Type:        "string",
 					Enum:        []string{formatNatural, formatJSON},
-					Description: "Output format: 'natural' for readable text (default), 'json' for structured JSON",
+					Description: "Output format for action=list/validate: 'natural' for readable text (default), 'json' for structured JSON; ignored for action=clear",
 				},
 			},
 			Required: []string{"action"},
@@ -116,17 +121,20 @@ func (h *StatisticsHandlers) handleStatisticList(
 	if statisticType != "" && statisticType != statTypeMean && statisticType != statTypeSum {
 		return errorResult(fmt.Sprintf("invalid statistic_type %q: must be %q or %q", statisticType, statTypeMean, statTypeSum)), nil
 	}
+	if err := validateLimitArg(args); err != nil {
+		return errorResult(err.Error()), nil
+	}
 
 	metas, err := client.ListStatisticIDs(ctx, statisticType)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Error listing statistic ids: %v", err)), nil
 	}
 
-	metas, total, _ := applyStatisticLimit(metas, getInt(args, "limit"))
+	metas, total, truncated := applyStatisticLimit(metas, getInt(args, "limit"))
 
 	format := getString(args, "format")
 	if format == formatJSON {
-		out, err := formatStatisticListJSON(metas)
+		out, err := formatStatisticListJSON(metas, total, truncated)
 		if err != nil {
 			return errorResult(fmt.Sprintf("Error formatting output: %v", err)), nil
 		}
@@ -142,21 +150,27 @@ func (h *StatisticsHandlers) handleStatisticValidate(
 	client homeassistant.Client,
 	args map[string]any,
 ) (*mcp.ToolsCallResult, error) {
+	if err := validateLimitArg(args); err != nil {
+		return errorResult(err.Error()), nil
+	}
+
 	issues, err := client.ValidateStatistics(ctx)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Error validating statistics: %v", err)), nil
 	}
 
+	issues, totalIDs, truncated := applyValidateLimit(issues, getInt(args, "limit"))
+
 	format := getString(args, "format")
 	if format == formatJSON {
-		out, err := formatValidateJSON(issues)
+		out, err := formatValidateJSON(issues, totalIDs, truncated)
 		if err != nil {
 			return errorResult(fmt.Sprintf("Error formatting output: %v", err)), nil
 		}
 		return successResult(out), nil
 	}
 
-	return successResult(formatValidateNatural(issues)), nil
+	return successResult(formatValidateNatural(issues, totalIDs, truncated)), nil
 }
 
 // handleStatisticClear removes statistics data and metadata for given ids.
@@ -165,7 +179,7 @@ func (h *StatisticsHandlers) handleStatisticClear(
 	client homeassistant.Client,
 	args map[string]any,
 ) (*mcp.ToolsCallResult, error) {
-	statIDs, err := parseStatisticIDs(args)
+	statIDs, err := parseStatisticIDsStrict(args)
 	if err != nil {
 		return errorResult(err.Error()), nil
 	}
@@ -181,6 +195,82 @@ func (h *StatisticsHandlers) handleStatisticClear(
 	)), nil
 }
 
+// maxClearStatisticIDs bounds one clear call's batch size, so a single
+// request can't build an oversized WebSocket frame.
+const maxClearStatisticIDs = 500
+
+// statisticIDPattern matches HA's two statistic_id shapes: an entity-backed
+// id ("domain.object_id") or an integration-provided external statistic id
+// ("domain:key", e.g. "growatt:total_energy").
+var statisticIDPattern = regexp.MustCompile(`^[a-z_][a-z0-9_]*[.:][a-z0-9_]+$`)
+
+// parseStatisticIDsStrict extracts and strictly validates statistic_ids for
+// the destructive clear action. Unlike parseStatisticIDs (used by the
+// read-only get_statistics path, which silently drops malformed elements),
+// clear is irreversible: a silently dropped or malformed id would make the
+// tool's success message misrepresent what was actually purged. Every
+// element must be a well-formed, non-empty statistic id; duplicates are
+// dropped (order-preserving) and the batch is capped.
+func parseStatisticIDsStrict(args map[string]any) ([]string, error) {
+	statIDsRaw, ok := args["statistic_ids"]
+	if !ok {
+		return nil, fmt.Errorf("statistic_ids is required")
+	}
+
+	statIDsSlice, ok := statIDsRaw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("statistic_ids must be an array")
+	}
+
+	if len(statIDsSlice) == 0 {
+		return nil, fmt.Errorf("at least one statistic_id is required")
+	}
+	if len(statIDsSlice) > maxClearStatisticIDs {
+		return nil, fmt.Errorf("too many statistic_ids: got %d, max %d", len(statIDsSlice), maxClearStatisticIDs)
+	}
+
+	seen := make(map[string]bool, len(statIDsSlice))
+	statIDs := make([]string, 0, len(statIDsSlice))
+	for i, raw := range statIDsSlice {
+		s, ok := raw.(string)
+		if !ok {
+			return nil, fmt.Errorf("statistic_ids[%d] must be a string, got %T", i, raw)
+		}
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return nil, fmt.Errorf("statistic_ids[%d] must not be empty", i)
+		}
+		if !statisticIDPattern.MatchString(s) {
+			return nil, fmt.Errorf(
+				"statistic_ids[%d] %q is not a valid statistic id (expected domain.object_id or domain:key)", i, s)
+		}
+		if seen[s] {
+			continue
+		}
+		seen[s] = true
+		statIDs = append(statIDs, s)
+	}
+
+	return statIDs, nil
+}
+
+// validateLimitArg rejects a limit argument that isn't a non-negative
+// integer. getInt silently reads anything non-numeric (a string "10") or
+// negative as "no limit" - explicit validation here mirrors the
+// statistic_type check above it instead of hiding a caller's mistake behind
+// unbounded output.
+func validateLimitArg(args map[string]any) error {
+	raw, ok := args["limit"]
+	if !ok {
+		return nil
+	}
+	limitF, isNum := raw.(float64)
+	if !isNum || limitF < 0 || limitF != math.Trunc(limitF) {
+		return fmt.Errorf("invalid limit %v: must be a non-negative integer", raw)
+	}
+	return nil
+}
+
 // applyStatisticLimit truncates the list client-side and reports the total.
 func applyStatisticLimit(metas []homeassistant.StatisticMeta, limit int) ([]homeassistant.StatisticMeta, int, bool) {
 	total := len(metas)
@@ -188,6 +278,32 @@ func applyStatisticLimit(metas []homeassistant.StatisticMeta, limit int) ([]home
 		return metas[:limit], total, true
 	}
 	return metas, total, false
+}
+
+// applyValidateLimit truncates the validation issue map to at most limit
+// statistic ids, chosen by sorted id for determinism, and reports the total
+// id count and whether truncation occurred. Mirrors applyStatisticLimit for
+// action=validate, which previously had no limit at all.
+func applyValidateLimit(
+	issues map[string][]homeassistant.StatisticValidationIssue,
+	limit int,
+) (map[string][]homeassistant.StatisticValidationIssue, int, bool) {
+	total := len(issues)
+	if limit <= 0 || total <= limit {
+		return issues, total, false
+	}
+
+	ids := make([]string, 0, total)
+	for id := range issues {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+
+	limited := make(map[string][]homeassistant.StatisticValidationIssue, limit)
+	for _, id := range ids[:limit] {
+		limited[id] = issues[id]
+	}
+	return limited, total, true
 }
 
 // statisticCapabilities renders mean/sum capability from whichever HA
@@ -199,6 +315,11 @@ func statisticCapabilities(m homeassistant.StatisticMeta) string {
 		caps = append(caps, statTypeMean)
 	case m.MeanType != nil && *m.MeanType == meanTypeCircular:
 		caps = append(caps, "circular "+statTypeMean)
+	case m.MeanType != nil && *m.MeanType == meanTypeNone:
+		// No mean capability; explicit case so the fallback below doesn't
+		// misrender NONE as an unrecognized mean_type.
+	case m.MeanType != nil:
+		caps = append(caps, fmt.Sprintf("mean_type: %d", *m.MeanType))
 	case m.HasMean != nil && *m.HasMean:
 		caps = append(caps, statTypeMean)
 	}
@@ -224,35 +345,54 @@ func formatStatisticListNatural(metas []homeassistant.StatisticMeta, total int) 
 	}
 
 	for _, m := range metas {
+		statID := formatter.SanitizeDisplayName(m.StatisticID)
+		source := formatter.SanitizeDisplayName(m.Source)
 		namePart := ""
 		if m.Name != nil && *m.Name != "" && *m.Name != m.StatisticID {
-			namePart = fmt.Sprintf(" (%s)", *m.Name)
+			namePart = fmt.Sprintf(" (%s)", formatter.SanitizeDisplayName(*m.Name))
 		}
 		unit := ""
 		if m.StatisticsUnit != nil && *m.StatisticsUnit != "" {
 			unit = *m.StatisticsUnit
-		} else if m.DisplayUnit != nil {
+		} else if m.DisplayUnit != nil && *m.DisplayUnit != "" {
 			unit = *m.DisplayUnit
 		}
 		unitPart := ""
 		if unit != "" {
-			unitPart = fmt.Sprintf(" — unit: %s", unit)
+			unitPart = fmt.Sprintf(" — unit: %s", formatter.SanitizeDisplayName(unit))
 		}
 		capPart := ""
 		if caps := statisticCapabilities(m); caps != "" {
 			capPart = fmt.Sprintf(" — %s", caps)
 		}
-		fmt.Fprintf(&sb, "- %s%s (source: %s)%s%s\n", m.StatisticID, namePart, m.Source, unitPart, capPart)
+		fmt.Fprintf(&sb, "- %s%s (source: %s)%s%s\n", statID, namePart, source, unitPart, capPart)
 	}
 	return sb.String()
 }
 
+// statisticListJSONResponse wraps action=list's JSON output with the
+// truncation metadata the natural-format output already conveys via its
+// "(showing N)" header — without it, limit + format=json would silently
+// hide that more ids exist beyond the returned page.
+type statisticListJSONResponse struct {
+	StatisticIDs []homeassistant.StatisticMeta `json:"statistic_ids"`
+	Total        int                           `json:"total"`
+	Returned     int                           `json:"returned"`
+	Truncated    bool                          `json:"truncated"`
+}
+
 // formatStatisticListJSON serializes the metadata entries as indented JSON.
-func formatStatisticListJSON(metas []homeassistant.StatisticMeta) (string, error) {
+func formatStatisticListJSON(metas []homeassistant.StatisticMeta, total int, truncated bool) (string, error) {
 	if metas == nil {
 		metas = []homeassistant.StatisticMeta{}
 	}
-	b, err := json.MarshalIndent(metas, "", "  ")
+	resp := statisticListJSONResponse{
+		StatisticIDs: metas,
+		Total:        total,
+		Returned:     len(metas),
+		Truncated:    truncated,
+	}
+	b, err := json.MarshalIndent(resp, "", "  ")
 	if err != nil {
 		return "", err
 	}
@@ -262,19 +402,25 @@ func formatStatisticListJSON(metas []homeassistant.StatisticMeta) (string, error
 // formatValidateNatural groups validation issues by type with an orphan
 // hint for no_state. Output is deterministic: types, ids, and data keys are
 // sorted because map iteration order is randomized per range statement.
-func formatValidateNatural(issues map[string][]homeassistant.StatisticValidationIssue) string {
+func formatValidateNatural(issues map[string][]homeassistant.StatisticValidationIssue, totalIDs int, truncated bool) string {
 	if len(issues) == 0 {
 		return "Statistics validation passed: no issues found in the recorder database."
 	}
 
-	total := 0
+	totalIssues := 0
 	for _, list := range issues {
-		total += len(list)
+		totalIssues += len(list)
 	}
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "Statistics validation found %d %s across %d %s:\n",
-		total, pluralize(total, "issue", "issues"),
-		len(issues), pluralize(len(issues), "statistic id", "statistic ids"))
+	if truncated {
+		fmt.Fprintf(&sb, "Statistics validation found %d %s across %d %s (showing %d, ids may have multiple issues):\n",
+			totalIssues, pluralize(totalIssues, "issue", "issues"),
+			totalIDs, pluralize(totalIDs, "statistic id", "statistic ids"), len(issues))
+	} else {
+		fmt.Fprintf(&sb, "Statistics validation found %d %s across %d %s (ids may have multiple issues):\n",
+			totalIssues, pluralize(totalIssues, "issue", "issues"),
+			len(issues), pluralize(len(issues), "statistic id", "statistic ids"))
+	}
 
 	byType := groupIssueIDsByType(issues)
 	types := make([]string, 0, len(byType))
@@ -292,7 +438,7 @@ func formatValidateNatural(issues map[string][]homeassistant.StatisticValidation
 			fmt.Fprintf(&sb, "\n%s (%d %s):\n", t, len(ids), pluralize(len(ids), "id", "ids"))
 		}
 		for _, id := range ids {
-			fmt.Fprintf(&sb, "  - %s\n", id)
+			fmt.Fprintf(&sb, "  - %s\n", formatter.SanitizeDisplayName(id))
 			for _, issue := range issues[id] {
 				if issue.Type == t {
 					sb.WriteString(sortedIssueData(issue))
@@ -333,17 +479,37 @@ func sortedIssueData(issue homeassistant.StatisticValidationIssue) string {
 	slices.Sort(dataKeys)
 	var sb strings.Builder
 	for _, k := range dataKeys {
-		fmt.Fprintf(&sb, "      %s: %v\n", k, issue.Data[k])
+		fmt.Fprintf(&sb, "      %s: %s\n", k, formatter.FormatDetailValue(issue.Data[k]))
 	}
 	return sb.String()
 }
 
+// statisticValidateJSONResponse wraps action=validate's JSON output with the
+// same truncation metadata the natural-format output conveys, so a limited
+// JSON response doesn't silently look like the complete issue list.
+type statisticValidateJSONResponse struct {
+	Issues      map[string][]homeassistant.StatisticValidationIssue `json:"issues"`
+	TotalIDs    int                                                 `json:"total_ids"`
+	ReturnedIDs int                                                 `json:"returned_ids"`
+	Truncated   bool                                                `json:"truncated"`
+}
+
 // formatValidateJSON serializes the issues map as indented JSON.
-func formatValidateJSON(issues map[string][]homeassistant.StatisticValidationIssue) (string, error) {
+func formatValidateJSON(
+	issues map[string][]homeassistant.StatisticValidationIssue,
+	totalIDs int,
+	truncated bool,
+) (string, error) {
 	if issues == nil {
 		issues = map[string][]homeassistant.StatisticValidationIssue{}
 	}
-	b, err := json.MarshalIndent(issues, "", "  ")
+	resp := statisticValidateJSONResponse{
+		Issues:      issues,
+		TotalIDs:    totalIDs,
+		ReturnedIDs: len(issues),
+		Truncated:   truncated,
+	}
+	b, err := json.MarshalIndent(resp, "", "  ")
 	if err != nil {
 		return "", err
 	}

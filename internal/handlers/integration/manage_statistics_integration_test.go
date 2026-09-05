@@ -143,4 +143,31 @@ func (s *ManageStatisticsIntegrationTestSuite) TestManageStatisticsToolDispatch(
 	result = s.CallTool("manage_statistics", map[string]any{"action": "bogus"})
 	s.Require().NotNil(result)
 	s.True(result.IsError, "unknown action should be rejected")
+
+	result = s.CallTool("manage_statistics", map[string]any{"action": "validate"})
+	s.Require().NotNil(result)
+	s.False(result.IsError, "manage_statistics action=validate should not error: %v", result.Content)
+
+	result = s.CallTool("manage_statistics", map[string]any{"action": "clear"})
+	s.Require().NotNil(result)
+	s.True(result.IsError, "clear without statistic_ids should be rejected")
+
+	result = s.CallTool("manage_statistics", map[string]any{
+		"action":        "clear",
+		"statistic_ids": []any{"not-a-valid-id"},
+	})
+	s.Require().NotNil(result)
+	s.True(result.IsError, "clear with a malformed statistic id should be rejected")
+
+	// A well-formed but unknown test-owned id is accepted end to end through
+	// the handler's stricter validation - HA filters clear_statistics to ids
+	// it actually knows, so this exercises the tool dispatch path without
+	// needing a real recorder row.
+	unknownID := BuildEntityID("sensor", GenerateTestID("stats_dispatch_unknown"))
+	result = s.CallTool("manage_statistics", map[string]any{
+		"action":        "clear",
+		"statistic_ids": []any{unknownID},
+	})
+	s.Require().NotNil(result)
+	s.False(result.IsError, "manage_statistics action=clear with a well-formed test id should not error: %v", result.Content)
 }

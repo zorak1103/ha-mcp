@@ -295,7 +295,7 @@ func (f *NaturalHelperFormatter) formatGenericDetail(helperType string, detail m
 		if detail[k] == nil {
 			continue
 		}
-		fmt.Fprintf(&result, "%s: %s\n", sentenceCaseKey(k), formatDetailValue(detail[k]))
+		fmt.Fprintf(&result, "%s: %s\n", sentenceCaseKey(k), FormatDetailValue(detail[k]))
 	}
 
 	return strings.TrimSuffix(result.String(), "\n")

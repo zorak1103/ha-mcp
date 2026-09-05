@@ -89,16 +89,16 @@ func GetFriendlyName(entityID string, attributes map[string]any) string {
 // rendered list, and parentheses are stripped so a name cannot forge a fake
 // "(entity_id)" suffix that would displace the real one.
 func FormatNameWithID(name, entityID string) string {
-	sanitized := sanitizeDisplayName(name)
+	sanitized := SanitizeDisplayName(name)
 	if sanitized == entityID {
 		return entityID
 	}
 	return sanitized + " (" + entityID + ")"
 }
 
-// sanitizeDisplayName strips characters from a user-controlled display name that could
+// SanitizeDisplayName strips characters from a user-controlled display name that could
 // be used to forge or break the "Name (entity_id)" line shape.
-func sanitizeDisplayName(name string) string {
+func SanitizeDisplayName(name string) string {
 	replacer := strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ", "(", "", ")", "")
 	return replacer.Replace(name)
 }
@@ -252,11 +252,11 @@ func formatDetailListValue(list []any) string {
 	return joined
 }
 
-// formatDetailValue renders an attribute value of unknown shape for natural
+// FormatDetailValue renders an attribute value of unknown shape for natural
 // format: nil renders as "" (callers skip the whole line when this is
 // empty), everything else is rendered via renderDetailValue then sanitized
 // and truncated once at the top level.
-func formatDetailValue(v any) string {
+func FormatDetailValue(v any) string {
 	if v == nil {
 		return ""
 	}

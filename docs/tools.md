@@ -295,8 +295,10 @@ Universal tool for runtime helper operations:
 | Action     | Access | Description                                                                             | Key params                              |
 | ---------- | ------ | --------------------------------------------------------------------------------------- | ---------------------------------------- |
 | `list`     | read   | Enumerate known statistic ids incl. orphaned ones (Developer Tools → Statistics basis) | `statistic_type` (mean/sum), `limit`, `format` |
-| `validate` | read   | Validation issue list per statistic id; issue type `no_state` = orphaned statistic     | `format`                                  |
+| `validate` | read   | Validation issue list per statistic id; issue type `no_state` = orphaned statistic     | `limit`, `format`                         |
 | `clear`    | write  | Permanently remove statistics data + metadata for the given ids                        | `statistic_ids` (required array)          |
+
+Note: `clear` is a write action but is **not** matched by a `manage_*:delete` tool-filter pattern (the action name is `clear`, not `delete`) — block it explicitly via `manage_statistics:clear` if a filter policy needs to exclude it.
 
 ### Guidance Tools
 
