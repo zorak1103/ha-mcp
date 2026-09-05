@@ -1742,6 +1742,11 @@ func TestValidateLimitArg(t *testing.T) {
 		{name: "non-numeric is rejected", args: map[string]any{"limit": "10"}, wantErr: true},
 		{name: "bool is rejected", args: map[string]any{"limit": true}, wantErr: true},
 		{name: "nil is rejected", args: map[string]any{"limit": nil}, wantErr: true},
+		// Exactly at the boundary must still be accepted - only a value
+		// strictly greater than math.MaxInt32 is rejected. Pins the "> " vs
+		// ">=" boundary in validateLimitArg.
+		{name: "value exactly at the MaxInt32 boundary is accepted", args: map[string]any{"limit": float64(math.MaxInt32)}, wantErr: false},
+		{name: "value one over the MaxInt32 boundary is rejected", args: map[string]any{"limit": float64(math.MaxInt32) + 1}, wantErr: true},
 		{name: "value overflowing int range is rejected", args: map[string]any{"limit": 1e19}, wantErr: true},
 		{name: "+Inf is rejected", args: map[string]any{"limit": math.Inf(1)}, wantErr: true},
 		{name: "NaN is rejected", args: map[string]any{"limit": math.NaN()}, wantErr: true},
