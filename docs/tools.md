@@ -284,6 +284,20 @@ Universal tool for runtime helper operations:
 | `list`  | read   | Fetch recent WARNING/ERROR entries (~50 max by default) | `level`, `integration`, `limit`, `include_exception`, `format` |
 | `clear` | write  | Empty the in-memory ring buffer                      | —                                                       |
 
+### Statistics Tools
+
+| Tool                 | Description                                                                                                                                    |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `manage_statistics`  | List, validate, or clear recorder long-term statistics (orphaned statistic ids after entity removal). Uses `recorder/list_statistic_ids`, `recorder/validate_statistics`, and `recorder/clear_statistics` WebSocket commands. |
+
+**Actions:**
+
+| Action     | Access | Description                                                                             | Key params                              |
+| ---------- | ------ | --------------------------------------------------------------------------------------- | ---------------------------------------- |
+| `list`     | read   | Enumerate known statistic ids incl. orphaned ones (Developer Tools → Statistics basis) | `statistic_type` (mean/sum), `limit`, `format` |
+| `validate` | read   | Validation issue list per statistic id; issue type `no_state` = orphaned statistic     | `format`                                  |
+| `clear`    | write  | Permanently remove statistics data + metadata for the given ids                        | `statistic_ids` (required array)          |
+
 ### Guidance Tools
 
 | Tool        | Actions    | Description                                                                                                                                                                                  |

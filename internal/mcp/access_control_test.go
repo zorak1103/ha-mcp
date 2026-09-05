@@ -49,6 +49,7 @@ func TestAccessControlMapCompleteness(t *testing.T) {
 		"manage_calendar",
 		"manage_camera",
 		"manage_system_log",
+		"manage_statistics",
 
 		// Media and rendering
 		"render_template",
@@ -106,6 +107,34 @@ func TestPureReadTools(t *testing.T) {
 		if len(classification.Actions) != 0 {
 			t.Errorf("Tool %q should have empty Actions map, got %d entries", toolName, len(classification.Actions))
 		}
+	}
+}
+
+func TestManageStatisticsClassification(t *testing.T) {
+	t.Parallel()
+
+	accessMap := buildAccessControlMap()
+
+	cls, ok := accessMap["manage_statistics"]
+	if !ok {
+		t.Fatal("manage_statistics not found in access control map")
+	}
+
+	if cls.ParamName != "action" {
+		t.Errorf("ParamName = %q, want %q", cls.ParamName, "action")
+	}
+
+	readActions := []string{"list", "validate"}
+	for _, action := range readActions {
+		if got := cls.Actions[action]; got != CategoryRead {
+			t.Errorf("action %q classified as %q, want %q", action, got, CategoryRead)
+		}
+	}
+	if got := cls.Actions["clear"]; got != CategoryWrite {
+		t.Errorf("action clear classified as %q, want %q", got, CategoryWrite)
+	}
+	if len(cls.Actions) != 3 {
+		t.Errorf("classification has %d actions, want 3", len(cls.Actions))
 	}
 }
 

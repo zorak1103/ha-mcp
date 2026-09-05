@@ -627,6 +627,158 @@ func TestWSClientImpl_ZonePersonCommands(t *testing.T) {
 	}
 }
 
+func statStrPtr(s string) *string { return &s }
+func statBoolPtr(b bool) *bool    { return &b }
+
+// TestWSClientImpl_RecorderStatisticsCommands pins the recorder statistics
+// WebSocket command names, params, and response parsing.
+func TestWSClientImpl_RecorderStatisticsCommands(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		wantCmd    string
+		wantParams map[string]any // subset that must be present; nil to skip
+		mockResult any
+		invoke     func(ctx context.Context, c *wsClientImpl) (any, error)
+		verify     func(t *testing.T, gotParams map[string]any, got any)
+	}{
+		{
+			name:    "ListStatisticIDs without filter omits statistic_type",
+			wantCmd: "recorder/list_statistic_ids",
+			mockResult: []StatisticMeta{{
+				StatisticID:    "sensor.battery",
+				Source:         "recorder",
+				StatisticsUnit: statStrPtr("mV"),
+				HasMean:        statBoolPtr(true),
+				HasSum:         statBoolPtr(false),
+			}},
+			invoke: func(ctx context.Context, c *wsClientImpl) (any, error) {
+				return c.ListStatisticIDs(ctx, "")
+			},
+			verify: func(t *testing.T, gotParams map[string]any, got any) {
+				t.Helper()
+				if _, exists := gotParams["statistic_type"]; exists {
+					t.Errorf("params must not contain statistic_type when no filter given, got %v", gotParams)
+				}
+				metas, ok := got.([]StatisticMeta)
+				if !ok {
+					t.Fatalf("result type %T, want []StatisticMeta", got)
+				}
+				if len(metas) != 1 || metas[0].StatisticID != "sensor.battery" || metas[0].Source != "recorder" {
+					t.Errorf("parsed metas = %+v, want one battery entry", metas)
+				}
+			},
+		},
+		{
+			name:       "ListStatisticIDs forwards statistic_type filter",
+			wantCmd:    "recorder/list_statistic_ids",
+			wantParams: map[string]any{"statistic_type": "mean"},
+			mockResult: []StatisticMeta{},
+			invoke: func(ctx context.Context, c *wsClientImpl) (any, error) {
+				return c.ListStatisticIDs(ctx, "mean")
+			},
+			verify: func(t *testing.T, _ map[string]any, got any) {
+				t.Helper()
+				if metas, ok := got.([]StatisticMeta); !ok || len(metas) != 0 {
+					t.Errorf("result = %v, want empty slice", got)
+				}
+			},
+		},
+		{
+			name:    "ValidateStatistics parses issues map",
+			wantCmd: "recorder/validate_statistics",
+			mockResult: map[string]any{
+				"sensor.orphaned": []map[string]any{
+					{"type": "no_state", "data": map[string]any{"start": "2026-01-01T00:00:00+00:00"}},
+				},
+			},
+			invoke: func(ctx context.Context, c *wsClientImpl) (any, error) {
+				return c.ValidateStatistics(ctx)
+			},
+			verify: func(t *testing.T, gotParams map[string]any, got any) {
+				t.Helper()
+				if gotParams != nil {
+					t.Errorf("validate_statistics takes no params, got %v", gotParams)
+				}
+				issues, ok := got.(map[string][]StatisticValidationIssue)
+				if !ok {
+					t.Fatalf("result type %T, want map[string][]StatisticValidationIssue", got)
+				}
+				if len(issues) != 1 {
+					t.Fatalf("got %d entries, want 1", len(issues))
+				}
+				list := issues["sensor.orphaned"]
+				if len(list) != 1 || list[0].Type != "no_state" || list[0].Data["start"] != "2026-01-01T00:00:00+00:00" {
+					t.Errorf("parsed issues = %+v, want one no_state issue", list)
+				}
+			},
+		},
+		{
+			name:       "ClearStatistics sends statistic_ids",
+			wantCmd:    "recorder/clear_statistics",
+			mockResult: map[string]any{},
+			invoke: func(ctx context.Context, c *wsClientImpl) (any, error) {
+				return nil, c.ClearStatistics(ctx, []string{"sensor.a", "sensor.b"})
+			},
+			verify: func(t *testing.T, gotParams map[string]any, _ any) {
+				t.Helper()
+				raw, ok := gotParams["statistic_ids"]
+				if !ok {
+					t.Fatalf("params missing statistic_ids, got %v", gotParams)
+				}
+				ids, ok := raw.([]string)
+				if !ok {
+					t.Fatalf("statistic_ids type %T, want []string", raw)
+				}
+				if len(ids) != 2 || ids[0] != "sensor.a" || ids[1] != "sensor.b" {
+					t.Errorf("statistic_ids = %v, want [sensor.a sensor.b]", ids)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var (
+				gotCmd    string
+				gotParams map[string]any
+			)
+			c := newWSClientImplWithSender(&mockWSClientSender{
+				sendCommandFunc: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
+					gotCmd = cmdType
+					gotParams = params
+					return makeWSResultMsg(tt.mockResult), nil
+				},
+			})
+
+			got, err := tt.invoke(context.Background(), c)
+			if err != nil {
+				t.Fatalf("%s returned error: %v", tt.name, err)
+			}
+
+			if gotCmd != tt.wantCmd {
+				t.Errorf("%s sent command %q, want %q", tt.name, gotCmd, tt.wantCmd)
+			}
+
+			for k, want := range tt.wantParams {
+				got, ok := gotParams[k]
+				if !ok {
+					t.Errorf("%s params missing %q", tt.name, k)
+					continue
+				}
+				if got != want {
+					t.Errorf("%s params[%q] = %v, want %v", tt.name, k, got, want)
+				}
+			}
+
+			tt.verify(t, gotParams, got)
+		})
+	}
+}
+
 func TestWSClientImpl_CreateDashboard_OmitsEmptyIcon(t *testing.T) {
 	t.Parallel()
 

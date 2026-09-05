@@ -8,7 +8,7 @@ Three primary MCP server solutions expose Home Assistant functionality to AI ass
 
 | Project | Description |
 | ------- | ----------- |
-| **ha-mcp** (this project) | Standalone Go binary, 41 consolidated tools, HTTP JSON-RPC transport |
+| **ha-mcp** (this project) | Standalone Go binary, 42 consolidated tools, HTTP JSON-RPC transport |
 | **Community ha-mcp** ([homeassistant-ai/ha-mcp](https://github.com/homeassistant-ai/ha-mcp)) | Python/FastMCP package (v8.4.2), 88 tools, stdio and Streamable HTTP transport |
 | **Official HA MCP Server** (built-in integration) | Home Assistant Core integration (`mcp_server`), ~15 intent tools, Streamable HTTP |
 
@@ -22,7 +22,7 @@ Three primary MCP server solutions expose Home Assistant functionality to AI ass
 | **Deployment**       | Standalone binary, Docker container        | HACS custom component, Add-on, Docker, PyPI  | Built into HA Core (zero setup required)    |
 | **Client Transport** | HTTP JSON-RPC (standard endpoint)          | stdio, Streamable HTTP (`ha-mcp-web`)        | Streamable HTTP (`/api/mcp`), legacy SSE    |
 | **HA Interface**     | WebSocket (primary) + REST (CRUD engine)   | REST + WebSocket (hybrid via httpx/aiohttp)  | Internal Python Assist API (`helpers.llm`)  |
-| **Tool Topology**    | 41 consolidated, action-based tools        | 88 discrete, fine-grained tools              | ~15 intent tools exposed via Assist API     |
+| **Tool Topology**    | 42 consolidated, action-based tools        | 88 discrete, fine-grained tools              | ~15 intent tools exposed via Assist API     |
 | **Authentication**   | Long-Lived Access Token                    | Long-Lived Token, secret path, OAuth 2.1     | OAuth 2.0 (IndieAuth) or Long-Lived Token   |
 | **Caching Layer**    | In-memory singleflight TTL cache           | Short-TTL settings/tool overrides cache      | Direct internal state access                |
 | **State Diffing**    | Smart Wait: polls post-mutation diffs      | Async operation status tracker               | None (fire-and-forget)                      |
@@ -35,7 +35,7 @@ Tool schema size directly affects LLM context window limits and per-request infe
 
 | Metric                   | ha-mcp (this project)                  | Community ha-mcp (homeassistant-ai)    | Official HA MCP Server                     |
 | ------------------------ | -------------------------------------- | -------------------------------------- | ------------------------------------------ |
-| **Tool Count**           | 41 tools                               | 88 tools                               | ~15 tools (Assist intents)                 |
+| **Tool Count**           | 42 tools                               | 88 tools                               | ~15 tools (Assist intents)                 |
 | **Schema Token Burden**  | Low (~3,500 tokens)                    | High (~15,000 to 20,000 tokens)        | Low (~2,000 tokens)                        |
 | **Tool Search Required** | No (fits cleanly into all models)      | Yes (ships optional BM25 tool search)  | No                                         |
 | **Output Formatter**     | Dual: Natural Language (compact) / JSON| Standard JSON                          | TextContent with JSON or YAML string blobs |
@@ -114,7 +114,7 @@ Tool schema size directly affects LLM context window limits and per-request infe
 | Camera & Media           | `manage_camera` (snapshots, HLS stream), `browse_media`, `sign_media_path`| `ha_get_camera_image`                                 | ❌ Not supported                           |
 | Calendar & To-do         | `manage_calendar` (CRUD), `manage_todo` (item CRUD)                       | `ha_config_*_calendar_events`, `ha_*_todo_item`       | `calendar__get_events`, `todo__get_items`  |
 | Update management        | `manage_update` (list, release notes, install, skip)                      | `ha_manage_updates`                                   | ❌ Not supported                           |
-| System administration    | `get_system_info`, `validate_config`, `manage_system_log`                 | `ha_restart`, `ha_reload_core`, `ha_manage_backup`    | ❌ Not supported                           |
+| System administration    | `get_system_info`, `validate_config`, `manage_system_log`, `manage_statistics` | `ha_restart`, `ha_reload_core`, `ha_manage_backup` | ❌ Not supported                          |
 
 ---
 
@@ -137,7 +137,7 @@ Tool schema size directly affects LLM context window limits and per-request infe
 
 ### When to Choose ha-mcp (this project):
 - **High-Performance & Low Footprint**: Runs as a single compiled Go binary (~30 MB) with zero external runtime dependencies and minimal RAM usage.
-- **Token Efficiency**: 41 consolidated tools consume only ~3,500 tokens of schema context, compared to 15,000+ tokens for 88 individual tools.
+- **Token Efficiency**: 42 consolidated tools consume only ~3,500 tokens of schema context, compared to 15,000+ tokens for 88 individual tools.
 - **Surgical Configuration Editing**: Full RFC 6902 and semantic property-based JSON patching for automations, scripts, scenes, and dashboards, avoiding destructive full-file overwrites.
 - **Complex Helper Lifecycle**: Full support for 41 helper types, including multi-step Config Entry flows (`statistics`, `trend`, `filter`, `generic_thermostat`, `generic_hygrostat`) and 17 template subtypes (15 domain-specific subtypes alongside sensor/binary_sensor).
 - **Deep Troubleshooting**: Advanced diagnostic tools including entity blast-radius analysis (`analyze_entity`), dependency graphs, cross-configuration reference search (`find_references`), and unified trace debugging.

@@ -76,6 +76,7 @@ description: "Use when choosing which ha-mcp tool or action to call. Examples: \
 | `manage_todo`         | list, get_items                                  | add_item, update_item, remove_item              |
 | `manage_calendar`     | list, get_events                                 | create_event, delete_event                      |
 | `manage_system_log`   | list                                             | clear                                           |
+| `manage_statistics`   | list, validate                                   | clear                                           |
 | `get_skill`           | list, read                                       | (none — read-only)                              |
 | `query_entities`      | current, history, statistics, domains, presence, health | (none)                                   |
 | `query_devices`       | health                                           | (none)                                          |

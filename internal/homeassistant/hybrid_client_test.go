@@ -546,6 +546,18 @@ func (m *mockWSOperations) CallServiceWithResponse(ctx context.Context, domain, 
 	return nil, nil
 }
 
+func (m *mockWSOperations) ListStatisticIDs(context.Context, string) ([]StatisticMeta, error) {
+	return nil, nil
+}
+
+func (m *mockWSOperations) ValidateStatistics(context.Context) (map[string][]StatisticValidationIssue, error) {
+	return nil, nil
+}
+
+func (m *mockWSOperations) ClearStatistics(context.Context, []string) error {
+	return nil
+}
+
 func (m *mockWSOperations) ListAutomations(ctx context.Context) ([]Automation, error) {
 	if m.listAutomationsFunc != nil {
 		return m.listAutomationsFunc(ctx)

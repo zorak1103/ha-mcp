@@ -131,7 +131,7 @@ See [docs/configuration.md](docs/configuration.md) for Cline, opencode, and othe
 
 ## Available Tools
 
-41 tools organized by domain. Full reference at [docs/tools.md](docs/tools.md).
+42 tools organized by domain. Full reference at [docs/tools.md](docs/tools.md).
 
 Seven guidance topics are also available as MCP resources under `skill://ha-mcp/<slug>` URIs (format-selection, automation-patterns, template-resilience, helper-selection, dashboard-safety, entity-renaming, debugging-workflow).
 
@@ -149,6 +149,7 @@ Seven guidance topics are also available as MCP resources under `skill://ha-mcp/
 | Calendars & Todos | 2     | `manage_calendar`, `manage_todo`                                            |
 | System/Admin      | 7     | `get_system_info`, `validate_config`, `manage_update`, `manage_blueprint`   |
 | Logs              | 1     | `manage_system_log` (list WARN/ERROR entries, clear ring buffer)            |
+| Statistics        | 1     | `manage_statistics` (list, validate, clear recorder long-term statistics)   |
 | HACS              | 1     | `manage_hacs` (list, download, install, custom repos)                       |
 | Guidance          | 1     | `get_skill` (action=list to discover skills, action=read to fetch content)  |
 

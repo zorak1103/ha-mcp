@@ -1527,6 +1527,61 @@ func (c *wsClientImpl) GetStatistics(ctx context.Context, statIDs []string, peri
 	return allStats, nil
 }
 
+// ListStatisticIDs lists statistics metadata from the recorder database,
+// including ids whose backing entity no longer exists (orphaned statistics).
+// statisticType optionally filters to ids supporting "mean" or "sum".
+func (c *wsClientImpl) ListStatisticIDs(ctx context.Context, statisticType string) ([]StatisticMeta, error) {
+	var params map[string]any
+	if statisticType != "" {
+		params = map[string]any{"statistic_type": statisticType}
+	}
+
+	result, err := c.ws.SendCommand(ctx, "recorder/list_statistic_ids", params)
+	if err != nil {
+		return nil, fmt.Errorf("list_statistic_ids failed: %w", err)
+	}
+
+	var metas []StatisticMeta
+	if err := json.Unmarshal(result.Result, &metas); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal statistic ids: %w", err)
+	}
+
+	return metas, nil
+}
+
+// ValidateStatistics validates all statistics in the recorder database and
+// returns issues per statistic_id (e.g. type "no_state" for orphaned
+// statistics). Mirrors Home Assistant's Developer Tools -> Statistics list.
+func (c *wsClientImpl) ValidateStatistics(ctx context.Context) (map[string][]StatisticValidationIssue, error) {
+	result, err := c.ws.SendCommand(ctx, "recorder/validate_statistics", nil)
+	if err != nil {
+		return nil, fmt.Errorf("validate_statistics failed: %w", err)
+	}
+
+	var issues map[string][]StatisticValidationIssue
+	if err := json.Unmarshal(result.Result, &issues); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal validation issues: %w", err)
+	}
+
+	return issues, nil
+}
+
+// ClearStatistics removes long-term statistics data and metadata for the
+// given statistic_ids from the recorder database. HA waits for the recorder
+// queue to acknowledge the removal job (up to ~10s) before responding.
+func (c *wsClientImpl) ClearStatistics(ctx context.Context, statisticIDs []string) error {
+	params := map[string]any{
+		"statistic_ids": statisticIDs,
+	}
+
+	_, err := c.ws.SendCommand(ctx, "recorder/clear_statistics", params)
+	if err != nil {
+		return fmt.Errorf("clear_statistics failed: %w", err)
+	}
+
+	return nil
+}
+
 // =============================================================================
 // Target Operations (WebSocket-only)
 // =============================================================================

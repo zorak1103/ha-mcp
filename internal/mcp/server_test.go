@@ -147,6 +147,18 @@ func (m *mockHAClient) CallServiceWithResponse(context.Context, string, string, 
 	return nil, nil
 }
 
+func (m *mockHAClient) ListStatisticIDs(context.Context, string) ([]homeassistant.StatisticMeta, error) {
+	return nil, nil
+}
+
+func (m *mockHAClient) ValidateStatistics(context.Context) (map[string][]homeassistant.StatisticValidationIssue, error) {
+	return nil, nil
+}
+
+func (m *mockHAClient) ClearStatistics(context.Context, []string) error {
+	return nil
+}
+
 func (m *mockHAClient) GetCalendars(context.Context) ([]homeassistant.CalendarEntry, error) {
 	return nil, nil
 }
