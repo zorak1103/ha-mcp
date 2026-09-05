@@ -12,7 +12,7 @@ import (
 )
 
 // ManageStatisticsIntegrationTestSuite covers the recorder statistics
-// operations backing the manage_statistics tool (issue #234).
+// operations backing the manage_statistics tool.
 type ManageStatisticsIntegrationTestSuite struct {
 	HelperTestSuite
 }
@@ -58,7 +58,7 @@ func (s *ManageStatisticsIntegrationTestSuite) TestValidateStatistics() {
 // TestManageStatisticsLifecycle creates a real statistics-recording sensor
 // (input_number source + template sensor with state_class), verifies it
 // appears in list_statistic_ids, and exercises clear_statistics on it —
-// the find-orphaned-stats -> clean-up workflow from issue #234 against
+// the find-orphaned-stats -> clean-up workflow against
 // test-owned data only.
 //
 // NOTE: long-term statistics rows are only written on the recorder's
