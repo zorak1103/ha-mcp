@@ -72,6 +72,10 @@ func (h *StatisticsHandlers) manageStatisticsTool() mcp.Tool {
 					Items:       &mcp.JSONSchema{Type: "string"},
 					Description: "Required for action=clear: statistic ids to purge (e.g. sensor.0x00124b002a50e881_battery)",
 				},
+				"limit": {
+					Type:        "integer",
+					Description: "Optional maximum number of statistic ids to return (action=list)",
+				},
 				"format": {
 					Type:        "string",
 					Enum:        []string{formatNatural, formatJSON},

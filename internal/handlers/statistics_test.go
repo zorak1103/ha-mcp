@@ -63,7 +63,7 @@ func TestManageStatisticsToolSchema(t *testing.T) {
 		ExpectedName:    "manage_statistics",
 		WantDescription: true,
 		RequiredParams:  []string{"action"},
-		OptionalParams:  []string{"statistic_type", "statistic_ids", "format"},
+		OptionalParams:  []string{"statistic_type", "statistic_ids", "limit", "format"},
 	})
 
 	actionEnum := tool.InputSchema.Properties["action"].Enum
@@ -105,6 +105,14 @@ func TestManageStatisticsToolSchema(t *testing.T) {
 	}
 	if statisticIDsProp.Items == nil || statisticIDsProp.Items.Type != "string" {
 		t.Errorf("statistic_ids.Items missing or not string-typed")
+	}
+
+	limitProp, ok := tool.InputSchema.Properties["limit"]
+	if !ok {
+		t.Fatal("missing limit property in schema")
+	}
+	if limitProp.Type != "integer" {
+		t.Errorf("limit.Type = %q, want integer", limitProp.Type)
 	}
 }
 
