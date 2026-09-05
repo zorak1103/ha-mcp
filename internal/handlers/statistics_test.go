@@ -572,6 +572,24 @@ func TestFormatValidateNatural(t *testing.T) {
 		out := formatValidateNatural(map[string][]homeassistant.StatisticValidationIssue{})
 		assertContainsAll(t, out, []string{"no issues"})
 	})
+
+	t.Run("duplicate issue types on same id are deduplicated in id list", func(t *testing.T) {
+		t.Parallel()
+
+		issues := map[string][]homeassistant.StatisticValidationIssue{
+			"sensor.duplicate_issues": {
+				{Type: "unsupported_unit", Data: map[string]any{"unit": "foo"}},
+				{Type: "unsupported_unit", Data: map[string]any{"unit": "bar"}},
+			},
+		}
+
+		out := formatValidateNatural(issues)
+		// Should count 1 id, not 2 ids
+		assertContainsAll(t, out, []string{"unsupported_unit (1 id)", "sensor.duplicate_issues"})
+		if strings.Count(out, "sensor.duplicate_issues") != 1 {
+			t.Errorf("expected sensor.duplicate_issues to appear once, got output:\n%s", out)
+		}
+	})
 }
 
 func TestFormatValidateJSON(t *testing.T) {

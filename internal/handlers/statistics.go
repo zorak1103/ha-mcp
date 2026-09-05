@@ -302,9 +302,16 @@ func formatValidateNatural(issues map[string][]homeassistant.StatisticValidation
 // type to the statistic ids that have it.
 func groupIssueIDsByType(issues map[string][]homeassistant.StatisticValidationIssue) map[string][]string {
 	byType := map[string][]string{}
+	seen := map[string]map[string]bool{}
 	for id, list := range issues {
 		for _, issue := range list {
-			byType[issue.Type] = append(byType[issue.Type], id)
+			if seen[issue.Type] == nil {
+				seen[issue.Type] = map[string]bool{}
+			}
+			if !seen[issue.Type][id] {
+				seen[issue.Type][id] = true
+				byType[issue.Type] = append(byType[issue.Type], id)
+			}
 		}
 	}
 	return byType
