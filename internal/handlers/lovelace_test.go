@@ -1583,7 +1583,7 @@ func TestHandleManageDashboard_Find(t *testing.T) {
 				}
 			},
 			wantError:    false,
-			wantContains: []string{"Found 1 match", "could not be scanned", "lovelace"},
+			wantContains: []string{"Found 1 match", "could not be scanned: lovelace (ws timeout)"},
 		},
 	}
 

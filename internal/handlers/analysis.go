@@ -132,6 +132,7 @@ type EntityReferences struct {
 	TotalReferences int                       `json:"total_references"`
 	ScannedSources  []string                  `json:"scanned_sources"`
 	FailedSources   []string                  `json:"failed_sources,omitempty"`
+	FailedOutcomes  []ScanOutcome             `json:"-"`
 }
 
 // DashboardReference describes how a dashboard references an entity, directly
@@ -322,15 +323,10 @@ func (h *AnalysisHandlers) buildEntityAnalysis(ctx context.Context, client homea
 	scanned = append(scanned, "groups", "areas")
 	analysis.References.ScannedSources = scanned
 	analysis.References.FailedSources = failed
+	analysis.References.FailedOutcomes = scanFailures(outcomes)
 
 	// Calculate total references
-	analysis.References.TotalReferences = len(analysis.References.Automations) +
-		len(analysis.References.Scripts) +
-		len(analysis.References.Scenes) +
-		len(analysis.References.Groups) +
-		len(analysis.References.AreaReferences) +
-		len(analysis.References.Dashboards) +
-		len(analysis.References.HelperTemplates)
+	analysis.References.TotalReferences = countTotalReferences(analysis.References)
 
 	// Include history if requested
 	if includeHistory {
@@ -340,6 +336,16 @@ func (h *AnalysisHandlers) buildEntityAnalysis(ctx context.Context, client homea
 	analysis.Summary = h.generateEntitySummary(analysis)
 
 	return analysis, nil
+}
+
+func countTotalReferences(refs *EntityReferences) int {
+	return len(refs.Automations) +
+		len(refs.Scripts) +
+		len(refs.Scenes) +
+		len(refs.Groups) +
+		len(refs.AreaReferences) +
+		len(refs.Dashboards) +
+		len(refs.HelperTemplates)
 }
 
 func (h *AnalysisHandlers) findAutomationReferences(ctx context.Context, client homeassistant.Client, entityID string, refs *EntityReferences, verbose bool) error {
@@ -1281,10 +1287,7 @@ func (h *AnalysisHandlers) generateEntitySummary(analysis *EntityAnalysis) strin
 	}
 
 	if len(analysis.References.FailedSources) > 0 {
-		parts = append(parts, fmt.Sprintf(
-			scanFailureWarningFormat,
-			len(analysis.References.FailedSources), strings.Join(analysis.References.FailedSources, ", "),
-		))
+		parts = append(parts, formatScanFailureWarning(analysis.References.FailedOutcomes))
 	}
 
 	// Automation details
@@ -1358,10 +1361,7 @@ func (h *AnalysisHandlers) formatAnalysisNatural(analysis *EntityAnalysis, verbo
 	}
 
 	if len(analysis.References.FailedSources) > 0 {
-		parts = append(parts, fmt.Sprintf(
-			scanFailureWarningFormat,
-			len(analysis.References.FailedSources), strings.Join(analysis.References.FailedSources, ", "),
-		))
+		parts = append(parts, formatScanFailureWarning(analysis.References.FailedOutcomes))
 	}
 
 	// History
