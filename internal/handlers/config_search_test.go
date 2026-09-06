@@ -270,6 +270,58 @@ func TestSplitScanOutcomes_Empty(t *testing.T) {
 	}
 }
 
+func TestScanFailures(t *testing.T) {
+	t.Parallel()
+
+	outcomes := []ScanOutcome{
+		{Source: "automation", Err: nil},
+		{Source: "script", Err: errors.New("timeout")},
+		{Source: "scene", Err: nil},
+		{Source: "dashboard", Err: errors.New("connection reset")},
+	}
+	failed := scanFailures(outcomes)
+	if len(failed) != 2 {
+		t.Fatalf("expected 2 failures, got %d", len(failed))
+	}
+	if failed[0].Source != "script" || failed[0].Err.Error() != "timeout" {
+		t.Errorf("unexpected first failure: %+v", failed[0])
+	}
+	if failed[1].Source != "dashboard" || failed[1].Err.Error() != "connection reset" {
+		t.Errorf("unexpected second failure: %+v", failed[1])
+	}
+
+	if len(scanFailures(nil)) != 0 {
+		t.Errorf("expected empty result for nil input")
+	}
+}
+
+func TestFormatScanFailureWarning(t *testing.T) {
+	t.Parallel()
+
+	if got := formatScanFailureWarning(nil); got != "" {
+		t.Errorf("expected empty string for nil input, got %q", got)
+	}
+
+	failed := []ScanOutcome{
+		{Source: "automation", Err: errors.New("websocket: not connected")},
+		{Source: "script", Err: errors.New("multiline\nerror\ndetails")},
+	}
+	got := formatScanFailureWarning(failed)
+	want := "⚠ 2 source(s) could not be scanned: automation (websocket: not connected), script (multiline error details) — results may be incomplete."
+	if got != want {
+		t.Errorf("formatScanFailureWarning() =\n%q\nwant:\n%q", got, want)
+	}
+
+	single := []ScanOutcome{
+		{Source: "dashboard", Err: errors.New("timeout")},
+	}
+	gotSingle := formatScanFailureWarning(single)
+	wantSingle := "⚠ 1 source(s) could not be scanned: dashboard (timeout) — results may be incomplete."
+	if gotSingle != wantSingle {
+		t.Errorf("formatScanFailureWarning() =\n%q\nwant:\n%q", gotSingle, wantSingle)
+	}
+}
+
 // --- allDashboardURLPaths ---
 
 func TestAllDashboardURLPaths_IncludesDefaultAndListed(t *testing.T) {

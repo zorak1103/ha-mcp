@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 	"github.com/zorak1103/ha-mcp/internal/jsonpatch"
@@ -196,6 +197,35 @@ func splitScanOutcomes(outcomes []ScanOutcome) (scanned, failed []string) {
 		scanned = append(scanned, o.Source)
 	}
 	return scanned, failed
+}
+
+// scanFailures returns only the failed entries from outcomes, preserving order.
+func scanFailures(outcomes []ScanOutcome) []ScanOutcome {
+	var failed []ScanOutcome
+	for _, o := range outcomes {
+		if o.Err != nil {
+			failed = append(failed, o)
+		}
+	}
+	return failed
+}
+
+// formatScanFailureWarning renders the shared "could not be scanned" warning,
+// including each failed source's underlying error so a failure is diagnosable
+// from the tool's own output without needing server-side logs.
+func formatScanFailureWarning(failed []ScanOutcome) string {
+	if len(failed) == 0 {
+		return ""
+	}
+	details := make([]string, 0, len(failed))
+	for _, o := range failed {
+		reason := "unknown error"
+		if o.Err != nil {
+			reason = strings.ReplaceAll(o.Err.Error(), "\n", " ")
+		}
+		details = append(details, fmt.Sprintf("%s (%s)", o.Source, reason))
+	}
+	return fmt.Sprintf(scanFailureWarningFormat, len(failed), strings.Join(details, ", "))
 }
 
 // allDashboardURLPaths returns the url_paths to search for "every dashboard"

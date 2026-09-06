@@ -341,7 +341,7 @@ func TestHandleFindReferences_PartialScanFailureReportedInBothFormats(t *testing
 			wantError: false,
 			wantContains: []string{
 				"No references found",
-				"1 source(s) could not be scanned: dashboard",
+				"1 source(s) could not be scanned: dashboard (connection failed)",
 			},
 		},
 		{

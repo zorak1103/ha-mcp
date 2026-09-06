@@ -417,21 +417,22 @@ func (h *DashboardHandlers) handleFind(ctx context.Context, client homeassistant
 	}
 
 	_, failed := splitScanOutcomes(outcomes)
+	failedDetails := scanFailures(outcomes)
 
 	if len(hits) == 0 {
 		if len(failed) > 0 && len(failed) == len(urlPaths) {
 			return errorResult(fmt.Sprintf("Could not search any dashboard: %s", strings.Join(failed, ", "))), nil
 		}
 		msg := fmt.Sprintf("No matches for %q in any dashboard", search)
-		if len(failed) > 0 {
-			msg += "\n" + fmt.Sprintf(scanFailureWarningFormat, len(failed), strings.Join(failed, ", "))
+		if len(failedDetails) > 0 {
+			msg += "\n" + formatScanFailureWarning(failedDetails)
 		}
 		return successResult(msg), nil
 	}
 
 	summary := fmt.Sprintf("Found %d match(es) for %q", len(hits), search)
-	if len(failed) > 0 {
-		summary += "\n" + fmt.Sprintf(scanFailureWarningFormat, len(failed), strings.Join(failed, ", "))
+	if len(failedDetails) > 0 {
+		summary += "\n" + formatScanFailureWarning(failedDetails)
 	}
 	return formatLovelaceResponse(hits, summary)
 }

@@ -111,7 +111,12 @@ func (h *FindReferencesHandlers) handleFindReferences(ctx context.Context, clien
 		return successResult(formatFindReferencesNatural(search, hits, failed)), nil
 	}
 
-	result := findReferencesResult{Hits: hits, ScannedSources: scanned, FailedSources: failed}
+	failedSources := make([]string, 0, len(failed))
+	for _, f := range failed {
+		failedSources = append(failedSources, f.Source)
+	}
+
+	result := findReferencesResult{Hits: hits, ScannedSources: scanned, FailedSources: failedSources}
 	output, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		return errorResult(fmt.Sprintf("error formatting results: %v", err)), nil
@@ -154,7 +159,7 @@ func buildScannerCalls(ctx context.Context, client homeassistant.Client, types m
 // writes only to its own index in results, so no locking is needed; hits are
 // concatenated in calls order (not completion order) afterward, keeping
 // output deterministic regardless of which scan finishes first.
-func runRequestedScanners(ctx context.Context, client homeassistant.Client, types map[string]bool, match func(string) bool) (hits []ConfigHit, scanned, failed []string) {
+func runRequestedScanners(ctx context.Context, client homeassistant.Client, types map[string]bool, match func(string) bool) (hits []ConfigHit, scanned []string, failed []ScanOutcome) {
 	calls := buildScannerCalls(ctx, client, types, match)
 
 	results := make([]struct {
@@ -178,7 +183,8 @@ func runRequestedScanners(ctx context.Context, client homeassistant.Client, type
 		outcomes = append(outcomes, ScanOutcome{Source: c.source, Err: results[i].err})
 	}
 
-	scanned, failed = splitScanOutcomes(outcomes)
+	scanned, _ = splitScanOutcomes(outcomes)
+	failed = scanFailures(outcomes)
 	return hits, scanned, failed
 }
 
@@ -345,7 +351,7 @@ func configSectionHits(objectType, objectID string, match func(string) bool, sec
 // formatFindReferencesNatural renders hits grouped by type for LLM-friendly
 // output, followed by a warning listing any source that could not be scanned
 // (so an empty-hits result is never mistaken for a confirmed "not used anywhere").
-func formatFindReferencesNatural(search string, hits []ConfigHit, failedSources []string) string {
+func formatFindReferencesNatural(search string, hits []ConfigHit, failedSources []ScanOutcome) string {
 	var parts []string
 
 	if len(hits) == 0 {
@@ -377,10 +383,7 @@ func formatFindReferencesNatural(search string, hits []ConfigHit, failedSources 
 	}
 
 	if len(failedSources) > 0 {
-		parts = append(parts, "", fmt.Sprintf(
-			scanFailureWarningFormat,
-			len(failedSources), strings.Join(failedSources, ", "),
-		))
+		parts = append(parts, "", formatScanFailureWarning(failedSources))
 	}
 
 	return strings.Join(parts, "\n")

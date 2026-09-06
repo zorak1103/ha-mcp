@@ -2694,8 +2694,8 @@ func TestHandleAnalyzeEntity_FailedSourceReportedInFailedSourcesAndWarning(t *te
 	}
 
 	text := result.Content[0].Text
-	if !strings.Contains(text, "could not be scanned: dashboards") {
-		t.Errorf("expected a failed-source warning naming dashboards, got:\n%s", text)
+	if !strings.Contains(text, "could not be scanned: dashboards (connection failed)") {
+		t.Errorf("expected a failed-source warning naming dashboards with error reason, got:\n%s", text)
 	}
 
 	jsonArgs := map[string]any{"entity_id": entityID, "format": "json"}
