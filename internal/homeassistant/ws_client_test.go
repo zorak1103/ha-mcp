@@ -2,9 +2,14 @@ package homeassistant
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
 )
 
 // testError is defined in factory_test.go
@@ -1013,5 +1018,94 @@ func TestWSClient_SendCommand_NotConnected(t *testing.T) {
 	expectedErr := "not connected"
 	if err.Error() != expectedErr {
 		t.Errorf("SendCommand() error = %q, want %q", err.Error(), expectedErr)
+	}
+}
+
+func TestWSClient_Connect_TimeoutDuringAuth(t *testing.T) {
+	t.Parallel()
+
+	// Server that accepts WebSocket connection but never sends any message (auth_required never sent).
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "done")
+		// Block until client disconnects
+		<-r.Context().Done()
+	}))
+	defer s.Close()
+
+	cfg := DefaultWSClientConfig()
+	cfg.ConnectTimeout = 100 * time.Millisecond
+	client := NewWSClientWithConfig(s.URL, "test_token", cfg)
+
+	ctx := context.Background()
+	start := time.Now()
+	err := client.Connect(ctx)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("Connect() expected error, got nil")
+	}
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("Connect() error = %v, want errors.Is(err, context.DeadlineExceeded)", err)
+	}
+
+	// Must fail quickly within bounded time, not hang.
+	if elapsed > 1*time.Second {
+		t.Errorf("Connect() took %v, expected failure within ~100ms", elapsed)
+	}
+}
+
+func TestWSClient_Connect_SuccessWithDefaultTimeout(t *testing.T) {
+	t.Parallel()
+
+	// Server that properly sends auth_required and handles auth_ok
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "done")
+
+		// 1. Send auth_required
+		authReq := map[string]any{"type": "auth_required", "ha_version": "2026.1.0"}
+		data, _ := json.Marshal(authReq)
+		if err := conn.Write(r.Context(), websocket.MessageText, data); err != nil {
+			return
+		}
+
+		// 2. Read auth message
+		_, authData, err := conn.Read(r.Context())
+		if err != nil {
+			return
+		}
+		var msg map[string]any
+		if err := json.Unmarshal(authData, &msg); err != nil || msg["type"] != "auth" {
+			return
+		}
+
+		// 3. Send auth_ok
+		authOk := map[string]any{"type": "auth_ok", "ha_version": "2026.1.0"}
+		okData, _ := json.Marshal(authOk)
+		_ = conn.Write(r.Context(), websocket.MessageText, okData)
+
+		// Stay open until client disconnects
+		<-r.Context().Done()
+	}))
+	defer s.Close()
+
+	client := NewWSClient(s.URL, "test_token")
+	ctx := context.Background()
+	err := client.Connect(ctx)
+	if err != nil {
+		t.Fatalf("Connect() failed: %v", err)
+	}
+	defer client.Close()
+
+	if !client.IsConnected() {
+		t.Error("IsConnected() = false, want true")
 	}
 }
