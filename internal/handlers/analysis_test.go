@@ -2842,6 +2842,28 @@ func TestFindAreaScriptReferences_SkipsScriptsWithoutAreaMatch(t *testing.T) {
 	}
 }
 
+func TestFindAreaReferencesWithSnapshot_UnassignedEntitySkipsScans(t *testing.T) {
+	t.Parallel()
+
+	client := &mockAnalysisClient{
+		ListAutomationsFn: func(context.Context) ([]homeassistant.Automation, error) {
+			t.Fatal("unassigned entities must not scan automations")
+			return nil, nil
+		},
+		ListScriptsFn: func(context.Context) ([]homeassistant.Entity, error) {
+			t.Fatal("unassigned entities must not scan scripts")
+			return nil, nil
+		},
+	}
+
+	err := NewAnalysisHandlers().findAreaReferencesWithSnapshot(
+		context.Background(), client, &AnalysisSnapshot{}, "light.unassigned", &EntityReferences{},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 // TestAnalysisHandlers_FormatAnalysisNatural_NameOrder pins the "Name (entity_id) is
 // state" line shape to match query_entities' natural formatter (internal/handlers/
 // formatter/natural.go), so an LLM reading both tools' output can rely on the same
