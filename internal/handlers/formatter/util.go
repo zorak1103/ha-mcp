@@ -181,8 +181,11 @@ func truncateUTF8Bytes(s string, maxBytes int) string {
 	if len(s) <= maxBytes {
 		return s
 	}
-	if maxBytes <= 3 {
+	switch maxBytes {
+	case 0, 1, 2:
 		return strings.Repeat(".", maxBytes)
+	case 3:
+		return "..."
 	}
 
 	cutoff := maxBytes - 3
