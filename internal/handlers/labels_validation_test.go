@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -109,6 +110,42 @@ func TestUnknownLabelsMessage(t *testing.T) {
 		msg := unknownLabelsMessage(registry, []string{"totally_bogus"})
 		if !strings.Contains(msg, "manage_label") {
 			t.Errorf("expected message to mention manage_label, got: %s", msg)
+		}
+	})
+}
+
+func TestUnknownLabelsMessage_TruncationBoundary(t *testing.T) {
+	t.Parallel()
+
+	makeUnknown := func(n int) []string {
+		ids := make([]string, n)
+		for i := range ids {
+			ids[i] = fmt.Sprintf("bogus_%d", i)
+		}
+		return ids
+	}
+
+	t.Run("fewer than the cap: no truncation marker at all", func(t *testing.T) {
+		t.Parallel()
+		msg := unknownLabelsMessage(nil, []string{"one_bogus_label"})
+		if strings.Contains(msg, "more") {
+			t.Errorf("did not expect a truncation marker for a single unknown label, got: %s", msg)
+		}
+	})
+
+	t.Run("exactly at the cap: still no truncation marker", func(t *testing.T) {
+		t.Parallel()
+		msg := unknownLabelsMessage(nil, makeUnknown(maxUnknownLabelsListed))
+		if strings.Contains(msg, "more") {
+			t.Errorf("expected no truncation at exactly the cap (%d), got: %s", maxUnknownLabelsListed, msg)
+		}
+	})
+
+	t.Run("one over the cap: truncates and reports exactly 1 more", func(t *testing.T) {
+		t.Parallel()
+		msg := unknownLabelsMessage(nil, makeUnknown(maxUnknownLabelsListed+1))
+		if !strings.Contains(msg, "+1 more") {
+			t.Errorf("expected a '+1 more' truncation marker, got: %s", msg)
 		}
 	})
 }

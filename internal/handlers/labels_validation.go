@@ -60,7 +60,13 @@ func findLabelIDByName(labels []homeassistant.LabelRegistryEntry, input string) 
 func unknownLabelsMessage(labels []homeassistant.LabelRegistryEntry, unknown []string) string {
 	shown := unknown
 	more := 0
-	if len(shown) > maxUnknownLabelsListed {
+	// `>` vs `>=` here is a proven-equivalent mutant (verified by hand): at
+	// len(shown) == maxUnknownLabelsListed exactly, shown[:maxUnknownLabelsListed]
+	// is a no-op slice of an already-that-length slice and more computes to 0
+	// either way, so which branch runs makes no observable difference. No test
+	// can kill it - both forms produce byte-identical output for every input.
+	// See BoundedFieldList in internal/homeassistant/field_list.go for the same shape.
+	if len(shown) > maxUnknownLabelsListed { //mutest:skip
 		shown = shown[:maxUnknownLabelsListed]
 		more = len(unknown) - maxUnknownLabelsListed
 	}
