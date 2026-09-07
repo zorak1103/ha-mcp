@@ -196,6 +196,8 @@ func truncateUTF8Bytes(s string, maxBytes int) string {
 	return s + "..."
 }
 
+// TruncateRunes truncates s to at most maxRunes runes, appending "..." if truncated.
+// Rune-safe: counts and slices by rune, not by byte, so a multi-byte rune is never split.
 func TruncateRunes(s string, maxRunes int) string {
 	runes := []rune(s)
 	if len(runes) <= maxRunes {
