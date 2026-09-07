@@ -108,6 +108,7 @@ func TestHandleManageDevice(t *testing.T) {
 		args        map[string]any
 		setupMock   func(*UniversalMockClient)
 		wantErr     bool
+		wantIsError bool
 		wantContain string
 	}
 
@@ -169,6 +170,7 @@ func TestHandleManageDevice(t *testing.T) {
 					return []homeassistant.DeviceRegistryEntry{}, nil
 				}
 			},
+			wantIsError: true,
 			wantContain: "not found",
 		},
 		{
@@ -176,6 +178,7 @@ func TestHandleManageDevice(t *testing.T) {
 			args: map[string]any{
 				"action": "get",
 			},
+			wantIsError: true,
 			wantContain: "device_id is required",
 		},
 		{
@@ -287,6 +290,9 @@ func TestHandleManageDevice(t *testing.T) {
 				"label_mode": arrayModeReplace,
 			},
 			setupMock: func(m *UniversalMockClient) {
+				m.GetLabelRegistryFn = func(context.Context) ([]homeassistant.LabelRegistryEntry, error) {
+					return []homeassistant.LabelRegistryEntry{{LabelID: "smart"}, {LabelID: "hub"}}, nil
+				}
 				m.UpdateDeviceRegistryEntryFn = func(_ context.Context, _ string, config homeassistant.DeviceRegistryUpdateConfig) (*homeassistant.DeviceRegistryEntry, error) {
 					if len(config.Labels) != 2 || config.Labels[0] != "smart" || config.Labels[1] != "hub" {
 						t.Errorf("expected labels ['smart', 'hub'], got %v", config.Labels)
@@ -305,6 +311,7 @@ func TestHandleManageDevice(t *testing.T) {
 				"action":       "update",
 				"name_by_user": "New Name",
 			},
+			wantIsError: true,
 			wantContain: "device_id is required",
 		},
 		{
@@ -313,6 +320,7 @@ func TestHandleManageDevice(t *testing.T) {
 				"action":    "update",
 				"device_id": "abc123",
 			},
+			wantIsError: true,
 			wantContain: "at least one field",
 		},
 		{
@@ -365,6 +373,9 @@ func TestHandleManageDevice(t *testing.T) {
 						{ID: "abc123", Labels: []string{"existing_label"}},
 					}, nil
 				}
+				m.GetLabelRegistryFn = func(context.Context) ([]homeassistant.LabelRegistryEntry, error) {
+					return []homeassistant.LabelRegistryEntry{{LabelID: "new_label"}, {LabelID: "existing_label"}}, nil
+				}
 				m.UpdateDeviceRegistryEntryFn = func(_ context.Context, _ string, config homeassistant.DeviceRegistryUpdateConfig) (*homeassistant.DeviceRegistryEntry, error) {
 					if len(config.Labels) != 2 {
 						t.Errorf("expected 2 labels after add, got %v", config.Labels)
@@ -396,6 +407,22 @@ func TestHandleManageDevice(t *testing.T) {
 				}
 			},
 			wantContain: "keep_me",
+		},
+		{
+			name: "update - unknown label rejected",
+			args: map[string]any{
+				"action":     "update",
+				"device_id":  "abc123",
+				"labels":     []any{"not_a_real_label"},
+				"label_mode": arrayModeReplace,
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetLabelRegistryFn = func(context.Context) ([]homeassistant.LabelRegistryEntry, error) {
+					return []homeassistant.LabelRegistryEntry{{LabelID: "smart"}}, nil
+				}
+			},
+			wantIsError: true,
+			wantContain: "unknown label(s)",
 		},
 		// =========================
 		// Delete Action Tests
@@ -455,6 +482,7 @@ func TestHandleManageDevice(t *testing.T) {
 			args: map[string]any{
 				"action": "delete",
 			},
+			wantIsError: true,
 			wantContain: "device_id is required",
 		},
 		{
@@ -468,6 +496,7 @@ func TestHandleManageDevice(t *testing.T) {
 					return []homeassistant.DeviceRegistryEntry{}, nil
 				}
 			},
+			wantIsError: true,
 			wantContain: "not found",
 		},
 		{
@@ -488,6 +517,7 @@ func TestHandleManageDevice(t *testing.T) {
 					}, nil
 				}
 			},
+			wantIsError: true,
 			wantContain: "does not support device removal",
 		},
 		{
@@ -512,11 +542,13 @@ func TestHandleManageDevice(t *testing.T) {
 			args: map[string]any{
 				"action": "invalid",
 			},
+			wantIsError: true,
 			wantContain: "unsupported action",
 		},
 		{
 			name:        "missing action",
 			args:        map[string]any{},
+			wantIsError: true,
 			wantContain: "action is required",
 		},
 	}
@@ -546,6 +578,10 @@ func TestHandleManageDevice(t *testing.T) {
 
 			if result == nil || len(result.Content) == 0 {
 				t.Fatal("expected result with content")
+			}
+
+			if result.IsError != tc.wantIsError {
+				t.Errorf("result.IsError = %v, want %v", result.IsError, tc.wantIsError)
 			}
 
 			resultText := result.Content[0].Text

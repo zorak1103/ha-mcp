@@ -286,18 +286,14 @@ func (s *EntityManageIntegrationTestSuite) TestEntityUpdateLabels() {
 	entityID := BuildEntityID("input_boolean", testName)
 
 	// Create a test label first (entity labels must exist in label registry)
-	labelName := GenerateTestID("entity_lbl")
-	createdLabel, err := s.Client().CreateLabel(s.Context(), homeassistant.LabelConfig{Name: labelName})
-	s.Require().NoError(err, "failed to create test label")
-	labelID := createdLabel.LabelID
+	labelID := s.CreateTestLabel("entity_lbl")
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteHelper(s.Context(), entityID)
-		_ = s.Client().DeleteLabel(s.Context(), labelID)
 	})
 
 	// Create helper entity
-	err = s.Client().CreateHelper(s.Context(), homeassistant.HelperConfig{
+	err := s.Client().CreateHelper(s.Context(), homeassistant.HelperConfig{
 		Platform: "input_boolean",
 		Config:   map[string]any{"name": testName},
 	})
@@ -330,12 +326,10 @@ func (s *EntityManageIntegrationTestSuite) TestEntityUpdateLabels() {
 
 	// Clear labels (replace with empty — note: omitempty may prevent full clear;
 	// this verifies the API round-trip for the label field)
-	secondLabel, err := s.Client().CreateLabel(s.Context(), homeassistant.LabelConfig{Name: GenerateTestID("entity_lbl2")})
-	s.Require().NoError(err)
-	s.RegisterCleanup(func() { _ = s.Client().DeleteLabel(s.Context(), secondLabel.LabelID) })
+	secondLabelID := s.CreateTestLabel("entity_lbl2")
 
 	_, err = s.Client().UpdateEntityRegistryEntry(s.Context(), entityID, homeassistant.EntityRegistryUpdateConfig{
-		Labels: []string{secondLabel.LabelID},
+		Labels: []string{secondLabelID},
 	})
 	s.Require().NoError(err, "failed to replace labels")
 
@@ -344,7 +338,7 @@ func (s *EntityManageIntegrationTestSuite) TestEntityUpdateLabels() {
 	s.Require().NoError(err)
 	for _, entry := range registry {
 		if entry.EntityID == entityID {
-			s.Contains(entry.Labels, secondLabel.LabelID, "new label should replace old label")
+			s.Contains(entry.Labels, secondLabelID, "new label should replace old label")
 			s.NotContains(entry.Labels, labelID, "old label should be replaced")
 			break
 		}
@@ -353,8 +347,6 @@ func (s *EntityManageIntegrationTestSuite) TestEntityUpdateLabels() {
 	// Cleanup
 	err = s.Client().DeleteHelper(s.Context(), entityID)
 	s.Require().NoError(err)
-	_ = s.Client().DeleteLabel(s.Context(), labelID)
-	_ = s.Client().DeleteLabel(s.Context(), secondLabel.LabelID)
 }
 
 // Helper function to create string pointers

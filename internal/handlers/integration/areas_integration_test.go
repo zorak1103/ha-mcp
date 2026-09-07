@@ -87,7 +87,7 @@ func (s *AreaIntegrationTestSuite) TestAreaLifecycle() {
 func (s *AreaIntegrationTestSuite) TestAreaWithAllFields() {
 	areaName := GenerateTestID("area_full")
 	aliases := []string{"test_alias_1", "test_alias_2"}
-	labels := []string{"test_label_1", "test_label_2"}
+	labels := []string{s.CreateTestLabel("afull_l1"), s.CreateTestLabel("afull_l2")}
 
 	s.RegisterCleanup(func() {
 		areas, _ := s.Client().GetAreaRegistry(s.Context())
@@ -175,6 +175,9 @@ func (s *AreaIntegrationTestSuite) TestAreaUpdatePartial() {
 
 func (s *AreaIntegrationTestSuite) TestAreaLabelAndAliasUpdate() {
 	areaName := GenerateTestID("area_lblalias")
+	labelA := s.CreateTestLabel("area_lbl_a")
+	labelB := s.CreateTestLabel("area_lbl_b")
+	labelC := s.CreateTestLabel("area_lbl_c")
 
 	s.RegisterCleanup(func() {
 		areas, _ := s.Client().GetAreaRegistry(s.Context())
@@ -196,7 +199,7 @@ func (s *AreaIntegrationTestSuite) TestAreaLabelAndAliasUpdate() {
 	time.Sleep(500 * time.Millisecond)
 
 	// Update: set labels and aliases
-	initialLabels := []string{"area_label_a", "area_label_b"}
+	initialLabels := []string{labelA, labelB}
 	initialAliases := []string{"first alias", "second alias"}
 	_, err = s.Client().UpdateArea(s.Context(), areaID, homeassistant.AreaConfig{
 		Labels:  initialLabels,
@@ -211,7 +214,7 @@ func (s *AreaIntegrationTestSuite) TestAreaLabelAndAliasUpdate() {
 	s.ElementsMatch(initialAliases, area.Aliases, "initial aliases should be set")
 
 	// Update: replace labels and aliases with new values
-	newLabels := []string{"area_label_c"}
+	newLabels := []string{labelC}
 	newAliases := []string{"only alias"}
 	_, err = s.Client().UpdateArea(s.Context(), areaID, homeassistant.AreaConfig{
 		Labels:  newLabels,
@@ -291,4 +294,28 @@ func (s *AreaIntegrationTestSuite) TestMultipleAreas() {
 
 	_, err = s.FindAreaByID(area2ID)
 	s.Error(err, "Area 2 should be deleted")
+}
+
+// TestAreaUnknownLabelRejected verifies that manage_area rejects a label id that does not
+// exist in the label registry, rather than silently dropping it the way Home Assistant's
+// config/area_registry/{create,update} APIs do (issue #242).
+func (s *AreaIntegrationTestSuite) TestAreaUnknownLabelRejected() {
+	areaName := GenerateTestID("area_badlbl")
+
+	s.RegisterCleanup(func() {
+		areas, _ := s.Client().GetAreaRegistry(s.Context())
+		for _, area := range areas {
+			if area.Name == areaName {
+				_ = s.Client().DeleteArea(s.Context(), area.AreaID)
+			}
+		}
+	})
+
+	res := s.CallTool("manage_area", map[string]any{
+		"action": "create",
+		"name":   areaName,
+		"labels": []any{"definitely_not_a_real_label_id"},
+	})
+	s.True(res.IsError, "expected manage_area to reject an unknown label")
+	s.Contains(resultText(res), "unknown label(s)")
 }

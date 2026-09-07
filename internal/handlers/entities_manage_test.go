@@ -117,6 +117,7 @@ func TestHandleManageEntity(t *testing.T) {
 		args        map[string]any
 		setupMock   func(*UniversalMockClient)
 		wantErr     bool
+		wantIsError bool
 		wantContain string
 	}
 
@@ -180,6 +181,7 @@ func TestHandleManageEntity(t *testing.T) {
 					return []homeassistant.EntityRegistryEntry{}, nil
 				}
 			},
+			wantIsError: true,
 			wantContain: "not found",
 		},
 		{
@@ -187,6 +189,7 @@ func TestHandleManageEntity(t *testing.T) {
 			args: map[string]any{
 				"action": "get",
 			},
+			wantIsError: true,
 			wantContain: "entity_id is required",
 		},
 		{
@@ -358,6 +361,9 @@ func TestHandleManageEntity(t *testing.T) {
 				"label_mode": arrayModeReplace,
 			},
 			setupMock: func(m *UniversalMockClient) {
+				m.GetLabelRegistryFn = func(context.Context) ([]homeassistant.LabelRegistryEntry, error) {
+					return []homeassistant.LabelRegistryEntry{{LabelID: "bright"}, {LabelID: "smart"}}, nil
+				}
 				m.UpdateEntityRegistryEntryFn = func(_ context.Context, _ string, config homeassistant.EntityRegistryUpdateConfig) (*homeassistant.EntityRegistryEntry, error) {
 					if len(config.Labels) != 2 || config.Labels[0] != "bright" || config.Labels[1] != "smart" {
 						t.Errorf("expected labels ['bright', 'smart'], got %v", config.Labels)
@@ -397,6 +403,7 @@ func TestHandleManageEntity(t *testing.T) {
 				"action": "update",
 				"name":   "New Name",
 			},
+			wantIsError: true,
 			wantContain: "entity_id is required",
 		},
 		{
@@ -405,6 +412,7 @@ func TestHandleManageEntity(t *testing.T) {
 				"action":    "update",
 				"entity_id": "light.living_room",
 			},
+			wantIsError: true,
 			wantContain: "at least one field",
 		},
 		{
@@ -457,6 +465,9 @@ func TestHandleManageEntity(t *testing.T) {
 						{EntityID: "light.living_room", Labels: []string{"existing_label"}},
 					}, nil
 				}
+				m.GetLabelRegistryFn = func(context.Context) ([]homeassistant.LabelRegistryEntry, error) {
+					return []homeassistant.LabelRegistryEntry{{LabelID: "new_label"}, {LabelID: "existing_label"}}, nil
+				}
 				m.UpdateEntityRegistryEntryFn = func(_ context.Context, _ string, config homeassistant.EntityRegistryUpdateConfig) (*homeassistant.EntityRegistryEntry, error) {
 					if len(config.Labels) != 2 {
 						t.Errorf("expected 2 labels after add, got %v", config.Labels)
@@ -488,6 +499,22 @@ func TestHandleManageEntity(t *testing.T) {
 				}
 			},
 			wantContain: "keep_me",
+		},
+		{
+			name: "update - unknown label rejected",
+			args: map[string]any{
+				"action":     "update",
+				"entity_id":  "light.living_room",
+				"labels":     []any{"not_a_real_label"},
+				"label_mode": arrayModeReplace,
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetLabelRegistryFn = func(context.Context) ([]homeassistant.LabelRegistryEntry, error) {
+					return []homeassistant.LabelRegistryEntry{{LabelID: "bright"}}, nil
+				}
+			},
+			wantIsError: true,
+			wantContain: "unknown label(s)",
 		},
 		{
 			name: "update - aliases with add mode merges with existing",
@@ -574,6 +601,7 @@ func TestHandleManageEntity(t *testing.T) {
 				"entity_id":     "light.living_room",
 				"new_entity_id": "invalid_format",
 			},
+			wantIsError: true,
 			wantContain: "must be in format 'domain.object_id'",
 		},
 		{
@@ -583,6 +611,7 @@ func TestHandleManageEntity(t *testing.T) {
 				"entity_id":     "light.living_room",
 				"new_entity_id": "light.UPPERCASE",
 			},
+			wantIsError: true,
 			wantContain: "contains invalid characters",
 		},
 		{
@@ -658,6 +687,7 @@ func TestHandleManageEntity(t *testing.T) {
 			args: map[string]any{
 				"action": "delete",
 			},
+			wantIsError: true,
 			wantContain: "entity_id is required",
 		},
 		{
@@ -682,11 +712,13 @@ func TestHandleManageEntity(t *testing.T) {
 			args: map[string]any{
 				"action": "invalid",
 			},
+			wantIsError: true,
 			wantContain: "unsupported action",
 		},
 		{
 			name:        "missing action",
 			args:        map[string]any{},
+			wantIsError: true,
 			wantContain: "action is required",
 		},
 	}
@@ -716,6 +748,10 @@ func TestHandleManageEntity(t *testing.T) {
 
 			if result == nil || len(result.Content) == 0 {
 				t.Fatal("expected result with content")
+			}
+
+			if result.IsError != tc.wantIsError {
+				t.Errorf("result.IsError = %v, want %v", result.IsError, tc.wantIsError)
 			}
 
 			resultText := result.Content[0].Text

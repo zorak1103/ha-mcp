@@ -242,6 +242,10 @@ func (h *AreaHandlers) handleCreate(ctx context.Context, client homeassistant.Cl
 	config.Aliases = toStringArray(args["aliases"])
 	config.Labels = toStringArray(args["labels"])
 
+	if res := labelWriteGuardError(ctx, client, config.Labels, arrayModeReplace); res != nil {
+		return res, nil
+	}
+
 	entry, err := client.CreateArea(ctx, config)
 	if err != nil {
 		return errorResult(fmt.Sprintf("error creating area: %v", err)), nil
@@ -270,6 +274,9 @@ func (h *AreaHandlers) handleUpdate(ctx context.Context, client homeassistant.Cl
 	// Apply label/alias modes, merging with current values as needed.
 	labelMode := getArrayMode(args, "label_mode")
 	if labels, hasLabels := getStringSlice(args, "labels"); hasLabels {
+		if res := labelWriteGuardError(ctx, client, labels, labelMode); res != nil {
+			return res, nil
+		}
 		config.Labels = applyArrayMode(currentArea.Labels, labels, labelMode)
 	}
 

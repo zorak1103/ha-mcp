@@ -157,6 +157,9 @@ func (h *DeviceManageHandlers) handleUpdateDevice(ctx context.Context, client ho
 	labels, hasLabels := getStringSlice(args, "labels")
 
 	if hasLabels {
+		if res := labelWriteGuardError(ctx, client, labels, labelMode); res != nil {
+			return res, nil
+		}
 		entry, fetchErr := h.fetchDeviceForMerge(ctx, client, deviceID, labelMode)
 		if fetchErr != nil {
 			return errorResult(fetchErr.Error()), nil

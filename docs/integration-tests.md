@@ -116,7 +116,7 @@ go test -tags=integration -v ./internal/handlers/integration/... 2>&1 | tee test
 | `TestAutomationsCoverageIntegration`| coverage analysis of uncovered areas and entities                                                                |
 | `TestScriptIntegration`             | create, update, execute, delete                                                                                  |
 | `TestSceneIntegration`              | create, update, activate, delete                                                                                 |
-| `TestAreasIntegration`              | create, update (with label_mode and alias_mode), delete, multiple areas                                          |
+| `TestAreaIntegration`               | create, update (with label_mode and alias_mode), delete, multiple areas, unknown-label rejection via tool dispatch |
 | `TestLabelsIntegration`             | create, update, delete, multiple labels                                                                          |
 | `TestFloorsIntegration`             | create, update (with alias_mode), delete, multiple floors                                                        |
 | `TestZonesIntegration`              | create, update (partial), delete, multiple zones                                                                 |

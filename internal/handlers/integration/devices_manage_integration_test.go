@@ -170,26 +170,19 @@ func (s *DeviceManageIntegrationTestSuite) TestDeviceUpdateLabels() {
 	originalLabels := device.Labels
 
 	// Create two test labels to use on the device
-	label1Name := GenerateTestID("dev_lbl1")
-	label2Name := GenerateTestID("dev_lbl2")
+	label1ID := s.CreateTestLabel("dev_lbl1")
+	label2ID := s.CreateTestLabel("dev_lbl2")
 
-	label1, err := s.Client().CreateLabel(s.Context(), homeassistant.LabelConfig{Name: label1Name})
-	s.Require().NoError(err, "failed to create label 1")
-	label2, err := s.Client().CreateLabel(s.Context(), homeassistant.LabelConfig{Name: label2Name})
-	s.Require().NoError(err, "failed to create label 2")
-
-	// Restore original labels and delete test labels on cleanup
+	// Restore original labels on cleanup
 	s.RegisterCleanup(func() {
 		_, _ = s.Client().UpdateDeviceRegistryEntry(s.Context(), deviceID,
 			homeassistant.DeviceRegistryUpdateConfig{Labels: originalLabels})
-		_ = s.Client().DeleteLabel(s.Context(), label1.LabelID)
-		_ = s.Client().DeleteLabel(s.Context(), label2.LabelID)
 	})
 
 	time.Sleep(500 * time.Millisecond)
 
 	// Set two labels on the device
-	twoLabels := []string{label1.LabelID, label2.LabelID}
+	twoLabels := []string{label1ID, label2ID}
 	updated, err := s.Client().UpdateDeviceRegistryEntry(s.Context(), deviceID,
 		homeassistant.DeviceRegistryUpdateConfig{Labels: twoLabels})
 	s.Require().NoError(err, "setting labels should succeed")
@@ -204,7 +197,7 @@ func (s *DeviceManageIntegrationTestSuite) TestDeviceUpdateLabels() {
 	}
 
 	// Replace with only one label (replace semantics at API level)
-	oneLabel := []string{label2.LabelID}
+	oneLabel := []string{label2ID}
 	_, err = s.Client().UpdateDeviceRegistryEntry(s.Context(), deviceID,
 		homeassistant.DeviceRegistryUpdateConfig{Labels: oneLabel})
 	s.Require().NoError(err, "replacing labels should succeed")
@@ -213,12 +206,10 @@ func (s *DeviceManageIntegrationTestSuite) TestDeviceUpdateLabels() {
 	d := s.findDeviceByID(deviceID)
 	s.Require().NotNil(d)
 	s.ElementsMatch(oneLabel, d.Labels, "label should be replaced")
-	s.NotContains(d.Labels, label1.LabelID, "first label should no longer be present")
+	s.NotContains(d.Labels, label1ID, "first label should no longer be present")
 
 	// Restore original labels
 	_, err = s.Client().UpdateDeviceRegistryEntry(s.Context(), deviceID,
 		homeassistant.DeviceRegistryUpdateConfig{Labels: originalLabels})
 	s.Require().NoError(err, "restoring labels should succeed")
-	_ = s.Client().DeleteLabel(s.Context(), label1.LabelID)
-	_ = s.Client().DeleteLabel(s.Context(), label2.LabelID)
 }

@@ -88,6 +88,7 @@ func TestHandleManageArea(t *testing.T) {
 		args        map[string]any
 		setupMock   func(*UniversalMockClient)
 		wantErr     bool
+		wantIsError bool
 		wantContain string
 	}
 
@@ -204,6 +205,7 @@ func TestHandleManageArea(t *testing.T) {
 				}
 			},
 			wantErr:     false,
+			wantIsError: true,
 			wantContain: "not found",
 		},
 		{
@@ -213,6 +215,7 @@ func TestHandleManageArea(t *testing.T) {
 				"format": "json",
 			},
 			wantErr:     false,
+			wantIsError: true,
 			wantContain: "required",
 		},
 		{
@@ -273,6 +276,12 @@ func TestHandleManageArea(t *testing.T) {
 				"format":   "json",
 			},
 			setupMock: func(m *UniversalMockClient) {
+				m.GetLabelRegistryFn = func(context.Context) ([]homeassistant.LabelRegistryEntry, error) {
+					return []homeassistant.LabelRegistryEntry{
+						{LabelID: "primary", Name: "Primary"},
+						{LabelID: "sleeping", Name: "Sleeping"},
+					}, nil
+				}
 				m.CreateAreaFn = func(_ context.Context, config homeassistant.AreaConfig) (*homeassistant.AreaRegistryEntry, error) {
 					return &homeassistant.AreaRegistryEntry{
 						AreaID:  "bedroom",
@@ -295,6 +304,7 @@ func TestHandleManageArea(t *testing.T) {
 				"format": "json",
 			},
 			wantErr:     false,
+			wantIsError: true,
 			wantContain: "required",
 		},
 		{
@@ -377,6 +387,7 @@ func TestHandleManageArea(t *testing.T) {
 				"format": "json",
 			},
 			wantErr:     false,
+			wantIsError: true,
 			wantContain: "required",
 		},
 		{
@@ -433,6 +444,7 @@ func TestHandleManageArea(t *testing.T) {
 				"action": "delete",
 			},
 			wantErr:     false,
+			wantIsError: true,
 			wantContain: "required",
 		},
 		{
@@ -452,6 +464,7 @@ func TestHandleManageArea(t *testing.T) {
 				}
 			},
 			wantErr:     false,
+			wantIsError: true,
 			wantContain: "error",
 		},
 
@@ -471,6 +484,12 @@ func TestHandleManageArea(t *testing.T) {
 				m.GetAreaRegistryFn = func(context.Context) ([]homeassistant.AreaRegistryEntry, error) {
 					return []homeassistant.AreaRegistryEntry{
 						{AreaID: "living_room", Name: "Living Room", Labels: []string{"existing_label"}},
+					}, nil
+				}
+				m.GetLabelRegistryFn = func(context.Context) ([]homeassistant.LabelRegistryEntry, error) {
+					return []homeassistant.LabelRegistryEntry{
+						{LabelID: "new_label", Name: "New Label"},
+						{LabelID: "existing_label", Name: "Existing Label"},
 					}, nil
 				}
 				m.UpdateAreaFn = func(_ context.Context, areaID string, config homeassistant.AreaConfig) (*homeassistant.AreaRegistryEntry, error) {
@@ -510,6 +529,76 @@ func TestHandleManageArea(t *testing.T) {
 		},
 
 		// =========================
+		// Label validation tests
+		// =========================
+		{
+			name: "create - unknown label rejected",
+			args: map[string]any{
+				"action": "create",
+				"name":   "Bedroom",
+				"labels": []any{"not_a_real_label"},
+				"format": "json",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetLabelRegistryFn = func(context.Context) ([]homeassistant.LabelRegistryEntry, error) {
+					return []homeassistant.LabelRegistryEntry{{LabelID: "primary", Name: "Primary"}}, nil
+				}
+			},
+			wantErr:     false,
+			wantIsError: true,
+			wantContain: "unknown label(s)",
+		},
+		{
+			name: "update - unknown label suggests label_id by name",
+			args: map[string]any{
+				"action":  "update",
+				"area_id": "living_room",
+				"labels":  []any{"Kitchen Lights"},
+				"format":  "json",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetAreaRegistryFn = func(context.Context) ([]homeassistant.AreaRegistryEntry, error) {
+					return []homeassistant.AreaRegistryEntry{
+						{AreaID: "living_room", Name: "Living Room"},
+					}, nil
+				}
+				m.GetLabelRegistryFn = func(context.Context) ([]homeassistant.LabelRegistryEntry, error) {
+					return []homeassistant.LabelRegistryEntry{{LabelID: "kitchen_lights", Name: "Kitchen Lights"}}, nil
+				}
+			},
+			wantErr:     false,
+			wantIsError: true,
+			wantContain: "kitchen_lights",
+		},
+		{
+			name: "update - label registry error proceeds unchecked",
+			args: map[string]any{
+				"action":  "update",
+				"area_id": "living_room",
+				"labels":  []any{"whatever"},
+				"format":  "json",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetAreaRegistryFn = func(context.Context) ([]homeassistant.AreaRegistryEntry, error) {
+					return []homeassistant.AreaRegistryEntry{
+						{AreaID: "living_room", Name: "Living Room"},
+					}, nil
+				}
+				m.GetLabelRegistryFn = func(context.Context) ([]homeassistant.LabelRegistryEntry, error) {
+					return nil, fmt.Errorf("registry unavailable")
+				}
+				m.UpdateAreaFn = func(_ context.Context, areaID string, config homeassistant.AreaConfig) (*homeassistant.AreaRegistryEntry, error) {
+					if len(config.Labels) != 1 || config.Labels[0] != "whatever" {
+						t.Errorf("expected labels to still be applied despite registry fetch failure, got %v", config.Labels)
+					}
+					return &homeassistant.AreaRegistryEntry{AreaID: areaID, Name: "Living Room", Labels: config.Labels}, nil
+				}
+			},
+			wantErr:     false,
+			wantContain: `"area_id":"living_room"`,
+		},
+
+		// =========================
 		// Invalid Action Test
 		// =========================
 		{
@@ -518,6 +607,7 @@ func TestHandleManageArea(t *testing.T) {
 				"action": "invalid",
 			},
 			wantErr:     false,
+			wantIsError: true,
 			wantContain: "invalid",
 		},
 
@@ -823,6 +913,10 @@ func TestHandleManageArea(t *testing.T) {
 
 			if result == nil {
 				t.Fatal("expected non-nil result")
+			}
+
+			if result.IsError != tt.wantIsError {
+				t.Errorf("result.IsError = %v, want %v", result.IsError, tt.wantIsError)
 			}
 
 			// Extract text from result
