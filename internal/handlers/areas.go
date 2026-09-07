@@ -266,7 +266,7 @@ func (h *AreaHandlers) handleCreate(ctx context.Context, client homeassistant.Cl
 	if formatStr == formatJSON {
 		res, err = h.formatDetailJSON(*entry, 0, 0, nil)
 	} else {
-		res, err = h.formatCreateNatural(*entry)
+		res = h.formatCreateNatural(*entry)
 	}
 	return appendResultWarning(res, labelWarning), err
 }
@@ -322,7 +322,7 @@ func (h *AreaHandlers) handleUpdate(ctx context.Context, client homeassistant.Cl
 	if formatStr == formatJSON {
 		res, err = h.formatDetailJSON(*entry, 0, 0, nil)
 	} else {
-		res, err = h.formatUpdateNatural(*entry)
+		res = h.formatUpdateNatural(*entry)
 	}
 	return appendResultWarning(res, labelWarning), err
 }
@@ -752,10 +752,10 @@ func (h *AreaHandlers) writeEnrichmentNatural(output *strings.Builder, enrichmen
 	}
 }
 
-func (h *AreaHandlers) formatCreateNatural(area homeassistant.AreaRegistryEntry) (*mcp.ToolsCallResult, error) {
-	return successResult(fmt.Sprintf("Area '%s' created successfully (ID: %s)", area.Name, area.AreaID)), nil
+func (h *AreaHandlers) formatCreateNatural(area homeassistant.AreaRegistryEntry) *mcp.ToolsCallResult {
+	return successResult(fmt.Sprintf("Area '%s' created successfully (ID: %s)", area.Name, area.AreaID))
 }
 
-func (h *AreaHandlers) formatUpdateNatural(area homeassistant.AreaRegistryEntry) (*mcp.ToolsCallResult, error) {
-	return successResult(fmt.Sprintf("Area '%s' updated successfully", area.Name)), nil
+func (h *AreaHandlers) formatUpdateNatural(area homeassistant.AreaRegistryEntry) *mcp.ToolsCallResult {
+	return successResult(fmt.Sprintf("Area '%s' updated successfully", area.Name))
 }
