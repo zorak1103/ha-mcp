@@ -2864,6 +2864,29 @@ func TestFindAreaReferencesWithSnapshot_UnassignedEntitySkipsScans(t *testing.T)
 	}
 }
 
+func TestFindAreaReferencesWithSnapshot_ReportsScriptScanFailure(t *testing.T) {
+	t.Parallel()
+
+	client := &mockAnalysisClient{
+		ListAutomationsFn: func(context.Context) ([]homeassistant.Automation, error) {
+			return nil, nil
+		},
+		ListScriptsFn: func(context.Context) ([]homeassistant.Entity, error) {
+			return nil, errors.New("script list unavailable")
+		},
+	}
+	snapshot := &AnalysisSnapshot{
+		EntityRegistry: []homeassistant.EntityRegistryEntry{{EntityID: "light.assigned", AreaID: "living_room"}},
+	}
+
+	err := NewAnalysisHandlers().findAreaReferencesWithSnapshot(
+		context.Background(), client, snapshot, "light.assigned", &EntityReferences{},
+	)
+	if err == nil || !strings.Contains(err.Error(), "listing scripts: script list unavailable") {
+		t.Fatalf("expected script scan failure, got %v", err)
+	}
+}
+
 // TestAnalysisHandlers_FormatAnalysisNatural_NameOrder pins the "Name (entity_id) is
 // state" line shape to match query_entities' natural formatter (internal/handlers/
 // formatter/natural.go), so an LLM reading both tools' output can rely on the same
