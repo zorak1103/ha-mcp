@@ -640,9 +640,14 @@ func TestTruncateUTF8Bytes_Boundaries(t *testing.T) {
 		maxBytes int
 		want     string
 	}{
+		{name: "zero limit", input: "x", maxBytes: 0, want: ""},
+		{name: "one byte limit", input: "xx", maxBytes: 1, want: "."},
+		{name: "three byte limit", input: "xxxx", maxBytes: 3, want: "..."},
 		{name: "under limit", input: "界", maxBytes: 4, want: "界"},
 		{name: "exact limit", input: "界", maxBytes: 3, want: "界"},
 		{name: "ellipsis limit", input: "界界", maxBytes: 3, want: "..."},
+		{name: "cutoff exact", input: "xxxx", maxBytes: 7, want: "xxxx"},
+		{name: "cutoff exceeds", input: "xxxxxxxx", maxBytes: 7, want: "xxxx..."},
 		{name: "multibyte truncation", input: "界界界", maxBytes: 7, want: "界..."},
 	}
 	for _, tt := range tests {
