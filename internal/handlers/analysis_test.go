@@ -2792,6 +2792,56 @@ func TestHandleAnalyzeEntity_AreaScanFailureIsReported(t *testing.T) {
 	}
 }
 
+func TestFindAreaAutomationReferences_ReportsFetchFailureAndSkipsNilConfig(t *testing.T) {
+	t.Parallel()
+
+	client := &mockAnalysisClient{
+		ListAutomationsFn: func(context.Context) ([]homeassistant.Automation, error) {
+			return []homeassistant.Automation{
+				{EntityID: "automation.failed", FriendlyName: "Failed"},
+				{EntityID: "automation.empty", FriendlyName: "Empty"},
+			}, nil
+		},
+		GetAutomationFn: func(_ context.Context, id string) (*homeassistant.Automation, error) {
+			if id == "failed" {
+				return nil, errors.New("automation unavailable")
+			}
+			return &homeassistant.Automation{EntityID: "automation.empty"}, nil
+		},
+	}
+
+	refs := &EntityReferences{}
+	err := NewAnalysisHandlers().findAreaAutomationReferences(context.Background(), client, "living_room", refs)
+	if err == nil || !strings.Contains(err.Error(), "getting automation automation.failed: automation unavailable") {
+		t.Fatalf("expected fetch failure, got %v", err)
+	}
+	if len(refs.AreaReferences) != 0 {
+		t.Fatalf("nil-config automation should not create references: %+v", refs.AreaReferences)
+	}
+}
+
+func TestFindAreaScriptReferences_SkipsScriptsWithoutAreaMatch(t *testing.T) {
+	t.Parallel()
+
+	client := &mockAnalysisClient{
+		ListScriptsFn: func(context.Context) ([]homeassistant.Entity, error) {
+			return []homeassistant.Entity{
+				{EntityID: "script.other", Attributes: map[string]any{"sequence": []any{"kitchen"}}},
+				{EntityID: "script.no_sequence", Attributes: map[string]any{}},
+			}, nil
+		},
+	}
+
+	refs := &EntityReferences{}
+	err := NewAnalysisHandlers().findAreaScriptReferences(context.Background(), client, "living_room", refs)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(refs.AreaReferences) != 0 {
+		t.Fatalf("scripts without an area match should be skipped: %+v", refs.AreaReferences)
+	}
+}
+
 // TestAnalysisHandlers_FormatAnalysisNatural_NameOrder pins the "Name (entity_id) is
 // state" line shape to match query_entities' natural formatter (internal/handlers/
 // formatter/natural.go), so an LLM reading both tools' output can rely on the same
