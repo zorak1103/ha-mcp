@@ -45,6 +45,8 @@ type WSClientConfig struct {
 	// RequestTimeout is the timeout for pending requests. Requests not receiving
 	// a response within this time are cleaned up to prevent memory leaks.
 	RequestTimeout time.Duration
+	// ConnectTimeout is the timeout for establishing connection and completing authentication.
+	ConnectTimeout time.Duration
 	// Logger for structured logging. If nil, a default logger is used.
 	Logger *logging.Logger
 }
@@ -59,6 +61,7 @@ func DefaultWSClientConfig() WSClientConfig {
 		PingTimeout:     10 * time.Second,
 		WriteTimeout:    10 * time.Second,
 		RequestTimeout:  defaultRequestTimeout,
+		ConnectTimeout:  defaultRequestTimeout,
 	}
 }
 
@@ -128,8 +131,16 @@ func (c *WSClient) Connect(ctx context.Context) error {
 	// Create context for connection lifecycle
 	c.ctx, c.cancel = context.WithCancel(ctx)
 
+	// Create a scoped context with timeout for connection and authentication
+	connectCtx := c.ctx
+	if c.config.ConnectTimeout > 0 {
+		var cancel context.CancelFunc
+		connectCtx, cancel = context.WithTimeout(c.ctx, c.config.ConnectTimeout)
+		defer cancel()
+	}
+
 	// Dial WebSocket
-	conn, resp, err := websocket.Dial(c.ctx, wsURL, nil)
+	conn, resp, err := websocket.Dial(connectCtx, wsURL, nil)
 	if resp != nil && resp.Body != nil {
 		_ = resp.Body.Close()
 	}
@@ -143,7 +154,7 @@ func (c *WSClient) Connect(ctx context.Context) error {
 
 	// Perform authentication
 	c.logger.Debug("Starting WebSocket authentication")
-	if err := c.authenticate(); err != nil {
+	if err := c.authenticate(connectCtx); err != nil {
 		c.logger.Error("WebSocket authentication failed", "error", err)
 		_ = c.conn.Close(websocket.StatusProtocolError, "auth failed")
 		return fmt.Errorf("authentication: %w", err)
@@ -294,9 +305,9 @@ func (c *WSClient) buildWSURL() (string, error) {
 }
 
 // authenticate performs the Home Assistant WebSocket authentication flow.
-func (c *WSClient) authenticate() error {
+func (c *WSClient) authenticate(ctx context.Context) error {
 	// Read auth_required message
-	_, data, err := c.conn.Read(c.ctx)
+	_, data, err := c.conn.Read(ctx)
 	if err != nil {
 		return fmt.Errorf("reading auth_required: %w", err)
 	}
@@ -320,12 +331,12 @@ func (c *WSClient) authenticate() error {
 		return fmt.Errorf("marshaling auth message: %w", err)
 	}
 
-	if writeErr := c.conn.Write(c.ctx, websocket.MessageText, authData); writeErr != nil {
+	if writeErr := c.conn.Write(ctx, websocket.MessageText, authData); writeErr != nil {
 		return fmt.Errorf("sending auth message: %w", writeErr)
 	}
 
 	// Read auth response
-	_, data, err = c.conn.Read(c.ctx)
+	_, data, err = c.conn.Read(ctx)
 	if err != nil {
 		return fmt.Errorf("reading auth response: %w", err)
 	}
@@ -489,8 +500,16 @@ func (c *WSClient) connectInternal() error {
 
 	c.logger.Debug("Dialing WebSocket during reconnect")
 
+	// Create a scoped context with timeout for reconnection and authentication
+	connectCtx := c.ctx
+	if c.config.ConnectTimeout > 0 {
+		var cancel context.CancelFunc
+		connectCtx, cancel = context.WithTimeout(c.ctx, c.config.ConnectTimeout)
+		defer cancel()
+	}
+
 	// Dial WebSocket
-	conn, resp, err := websocket.Dial(c.ctx, wsURL, nil)
+	conn, resp, err := websocket.Dial(connectCtx, wsURL, nil)
 	if resp != nil && resp.Body != nil {
 		_ = resp.Body.Close()
 	}
@@ -503,7 +522,7 @@ func (c *WSClient) connectInternal() error {
 	c.conn.SetReadLimit(maxWSMessageSize)
 
 	// Perform authentication
-	if err := c.authenticate(); err != nil {
+	if err := c.authenticate(connectCtx); err != nil {
 		c.logger.Error("Authentication failed during reconnect", "error", err)
 		_ = c.conn.Close(websocket.StatusProtocolError, "auth failed")
 		c.conn = nil

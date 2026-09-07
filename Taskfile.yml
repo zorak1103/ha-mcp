@@ -28,7 +28,7 @@ tasks:
   test:integration:
     desc: Run integration tests (requires HA_INTEGRATION_TEST_URL and HA_INTEGRATION_TEST_TOKEN)
     cmds:
-      - go test -tags=integration -v ./internal/handlers/integration/...
+      - go test -timeout=30m -tags=integration -v ./internal/handlers/integration/...
 
   test:coverage:
     desc: Run tests with race detector, generate coverage, and enforce per-file 80% threshold
