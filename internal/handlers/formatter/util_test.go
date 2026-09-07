@@ -642,6 +642,7 @@ func TestTruncateUTF8Bytes_Boundaries(t *testing.T) {
 	}{
 		{name: "zero limit", input: "x", maxBytes: 0, want: ""},
 		{name: "one byte limit", input: "xx", maxBytes: 1, want: "."},
+		{name: "two byte limit", input: "xxxx", maxBytes: 2, want: ".."},
 		{name: "three byte limit", input: "xxxx", maxBytes: 3, want: "..."},
 		{name: "under limit", input: "界", maxBytes: 4, want: "界"},
 		{name: "exact limit", input: "界", maxBytes: 3, want: "界"},

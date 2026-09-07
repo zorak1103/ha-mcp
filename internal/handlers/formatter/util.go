@@ -175,9 +175,6 @@ func sanitizeDisplayValue(s string) string {
 	return replacer.Replace(s)
 }
 
-// TruncateRunes truncates s to at most maxRunes runes, appending "..." if
-// truncated. Rune-safe: counts and slices by rune, not by byte, so a
-// multi-byte rune is never split.
 // truncateUTF8Bytes truncates s without splitting a UTF-8 sequence and keeps the
 // returned byte length within maxBytes, including the ellipsis.
 func truncateUTF8Bytes(s string, maxBytes int) string {
