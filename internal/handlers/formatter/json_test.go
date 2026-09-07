@@ -163,7 +163,7 @@ func TestJSONFormatter_FormatServiceResponse(t *testing.T) {
 	f := NewJSONFormatter()
 	response := map[string]any{"weather.home": map[string]any{"forecast": []any{"sunny"}}}
 
-	result, err := f.FormatServiceResponse(context.Background(), "weather", "get_forecasts", nil, response)
+	result, err := f.FormatServiceResponse(context.Background(), "weather", "get_forecasts", []string{"weather.home"}, response)
 	if err != nil {
 		t.Fatalf("FormatServiceResponse() error = %v", err)
 	}
@@ -175,8 +175,41 @@ func TestJSONFormatter_FormatServiceResponse(t *testing.T) {
 	if parsed["success"] != true {
 		t.Errorf("success = %v, want true", parsed["success"])
 	}
+	if parsed["affected_entities"] != float64(1) {
+		t.Errorf("affected_entities = %v, want 1", parsed["affected_entities"])
+	}
+	if entityIDs, ok := parsed["entity_ids"].([]any); !ok || len(entityIDs) != 1 || entityIDs[0] != "weather.home" {
+		t.Errorf("entity_ids = %#v, want [weather.home]", parsed["entity_ids"])
+	}
+	if parsed["state_changes_polled"] != false {
+		t.Errorf("state_changes_polled = %v, want false", parsed["state_changes_polled"])
+	}
 	if parsed["response"] == nil {
 		t.Error("response is nil, want payload")
+	}
+}
+
+func TestJSONFormatter_FormatServiceResponse_MarksOversizedPayload(t *testing.T) {
+	f := NewJSONFormatter()
+	response := map[string]any{"weather.home": map[string]any{"forecast": strings.Repeat("x", 10000)}}
+
+	result, err := f.FormatServiceResponse(context.Background(), "weather", "get_forecasts", nil, response)
+	if err != nil {
+		t.Fatalf("FormatServiceResponse() error = %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
+		t.Fatalf("FormatServiceResponse() returned invalid JSON: %v", err)
+	}
+	if parsed["response_complete"] != true {
+		t.Errorf("response_complete = %v, want true", parsed["response_complete"])
+	}
+	if responseBytes, ok := parsed["response_bytes"].(float64); !ok || responseBytes <= 10000 {
+		t.Errorf("response_bytes = %#v, want payload size above 10000", parsed["response_bytes"])
+	}
+	if parsed["response"] == nil {
+		t.Error("response is nil, want complete payload")
 	}
 }
 

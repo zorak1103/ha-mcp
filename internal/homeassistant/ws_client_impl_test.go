@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -3524,6 +3525,65 @@ func TestWSClientImplWithSender_CallService_NoData(t *testing.T) {
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestWSClientImplWithSender_CallServiceWithResponse_NonObject(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		response any
+		want     any
+	}{
+		{name: "list", response: []any{"one", "two"}, want: []any{"one", "two"}},
+		{name: "scalar", response: "done", want: "done"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockWSClientSender{
+				sendCommandFunc: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
+					if cmdType != "call_service" {
+						t.Errorf("unexpected command: %s", cmdType)
+					}
+					if params["return_response"] != true {
+						t.Error("return_response = false, want true")
+					}
+					return makeWSResultMsg(map[string]any{"context": Context{ID: "test"}, "response": tt.response}), nil
+				},
+			}
+
+			client := newWSClientImplWithSender(mock)
+			response, err := client.CallServiceWithResponse(context.Background(), "test", "respond", nil)
+			if err != nil {
+				t.Fatalf("CallServiceWithResponse() error = %v", err)
+			}
+			if responseValue, ok := response["response"]; !ok || !reflect.DeepEqual(responseValue, tt.want) {
+				t.Errorf("response[response] = %#v, want %#v", responseValue, tt.want)
+			}
+		})
+	}
+}
+
+func TestWSClientImplWithSender_CallServiceWithResponse_EmptyResponse(t *testing.T) {
+	t.Parallel()
+
+	mock := &mockWSClientSender{
+		sendCommandFunc: func(_ context.Context, _ string, _ map[string]any) (*WSResultMessage, error) {
+			return makeWSResultMsg(map[string]any{"context": Context{ID: "test"}}), nil
+		},
+	}
+
+	client := newWSClientImplWithSender(mock)
+	response, err := client.CallServiceWithResponse(context.Background(), "test", "respond", nil)
+	if err != nil {
+		t.Fatalf("CallServiceWithResponse() error = %v", err)
+	}
+	if response == nil {
+		t.Fatal("CallServiceWithResponse() returned nil map, want empty map")
+	}
+	if len(response) != 0 {
+		t.Errorf("response = %#v, want empty map", response)
 	}
 }
 

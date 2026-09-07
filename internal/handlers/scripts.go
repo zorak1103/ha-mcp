@@ -155,7 +155,7 @@ func (h *ScriptHandlers) callServiceTool() mcp.Tool {
 				},
 				"return_response": {
 					Type:        "boolean",
-					Description: "Set true for response-type services (e.g., weather.get_forecasts or recorder.get_statistics). Returns the complete response payload and skips state-change polling. Default false. HA rejects true for services without responses and rejects its absence for services that require one.",
+					Description: "Set true for response-type services (e.g., weather.get_forecasts or recorder.get_statistics). Returns the response payload and skips state-change polling; response-type calls may also mutate state, so no state-change confirmation is included. Default false. HA rejects true for services without responses and rejects its absence for services that require one.",
 				},
 			},
 			Required: []string{"domain", "service"},
@@ -776,7 +776,9 @@ func applyPatchedScriptWrite(
 // =============================================================================
 
 // callServiceReturningResponse invokes a response-type service and renders its payload.
-// Smart Wait is skipped because the response is the result of the read-shaped call.
+// Smart Wait is skipped because the response path is intended for read-shaped calls,
+// but HA also permits mutating services to return a response, so callers receive no
+// post-mutation state confirmation on this path.
 func callServiceReturningResponse(ctx context.Context, client homeassistant.Client, domain, service string, data map[string]any, format formatter.Format) (*mcp.ToolsCallResult, error) {
 	targets := extractEntityTargets(data)
 	response, err := client.CallServiceWithResponse(ctx, domain, service, data)

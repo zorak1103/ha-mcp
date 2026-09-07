@@ -461,14 +461,17 @@ func (s *Server) handleToolsCall(ctx context.Context, req *Request, r *http.Requ
 		return NewErrorResponse(req.ID, ToolExecutionErr, fmt.Sprintf("tool execution failed: %s", err.Error()), nil)
 	}
 
-	// Auto-fallback: if format=json response exceeds size threshold, re-run with format=natural
+	// Auto-fallback only applies to ordinary formatting; response-type calls
+	// may mutate state, so invoking the handler again could duplicate effects.
 	if format, _ := params.Arguments["format"].(string); format == formatJSON {
-		if size := resultContentSize(result); size > maxJSONResponseBytes {
-			s.logger.Info("Response too large for json format, falling back to natural",
-				"tool", params.Name, "size_bytes", size)
-			naturalArgs := copyArgsWithFormat(params.Arguments, formatNatural)
-			if naturalResult, naturalErr := handler(ctx, client, naturalArgs); naturalErr == nil {
-				result = prependSizeFallbackNote(naturalResult, size)
+		if returnResponse, _ := params.Arguments["return_response"].(bool); !returnResponse {
+			if size := resultContentSize(result); size > maxJSONResponseBytes {
+				s.logger.Info("Response too large for json format, falling back to natural",
+					"tool", params.Name, "size_bytes", size)
+				naturalArgs := copyArgsWithFormat(params.Arguments, formatNatural)
+				if naturalResult, naturalErr := handler(ctx, client, naturalArgs); naturalErr == nil {
+					result = prependSizeFallbackNote(naturalResult, size)
+				}
 			}
 		}
 	}

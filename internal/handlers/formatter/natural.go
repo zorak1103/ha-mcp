@@ -215,15 +215,21 @@ func (f *NaturalFormatter) FormatServiceResponse(ctx context.Context, domain, se
 	if err != nil {
 		return "", err
 	}
+	stateWaitNote := "\n\n(State changes were not polled for this response-type service call)"
 	if len(response) == 0 {
-		return header + "\n\n(service returned no response data)", nil
+		return header + "\n\n(service returned no response data)" + stateWaitNote, nil
 	}
 
 	payload, err := json.MarshalIndent(response, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal service response: %w", err)
 	}
-	return header + "\n\nResponse:\n" + string(payload), nil
+	if len(payload) > maxServiceResponseChars {
+		truncated := truncateUTF8Bytes(string(payload), maxServiceResponseChars)
+		note := fmt.Sprintf("\n\nResponse truncated from %d bytes; narrow the request with start_time, end_time, or entity_id.", len(payload))
+		return header + "\n\nResponse:\n" + truncated + note + stateWaitNote, nil
+	}
+	return header + "\n\nResponse:\n" + string(payload) + stateWaitNote, nil
 }
 
 // FormatError formats an error response.

@@ -1150,6 +1150,46 @@ func TestServer_HandleToolsCall_SizeFallback(t *testing.T) {
 	})
 }
 
+func TestServer_HandleToolsCall_ResponseTypeDoesNotRetry(t *testing.T) {
+	t.Parallel()
+
+	var calls int
+	registry := NewRegistry()
+	registry.RegisterTool(
+		Tool{Name: "response_tool"},
+		func(_ context.Context, _ homeassistant.Client, args map[string]any) (*ToolsCallResult, error) {
+			calls++
+			if args["format"] == formatJSON {
+				return &ToolsCallResult{Content: []ContentBlock{NewTextContent(strings.Repeat("x", maxJSONResponseBytes+1))}}, nil
+			}
+			return &ToolsCallResult{Content: []ContentBlock{NewTextContent("unexpected retry")}}, nil
+		},
+	)
+
+	s := newTestServer(&mockHAClient{}, registry, 8080, logging.New(logging.LevelOff))
+	params := ToolsCallParams{
+		Name: "response_tool",
+		Arguments: map[string]any{
+			"format":          formatJSON,
+			"return_response": true,
+		},
+	}
+	paramsJSON, _ := json.Marshal(params)
+	reqBodyJSON, _ := json.Marshal(Request{
+		JSONRPC: JSONRPCVersion,
+		ID:      json.RawMessage(`1`),
+		Method:  MethodToolsCall,
+		Params:  paramsJSON,
+	})
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/", bytes.NewReader(reqBodyJSON))
+	w := httptest.NewRecorder()
+
+	s.handleMCP(w, req)
+	if calls != 1 {
+		t.Fatalf("handler calls = %d, want 1", calls)
+	}
+}
+
 func TestServer_HandleResourcesList(t *testing.T) {
 	t.Parallel()
 

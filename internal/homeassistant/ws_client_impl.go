@@ -163,16 +163,28 @@ func (c *wsClientImpl) CallServiceWithResponse(ctx context.Context, domain, serv
 		return nil, fmt.Errorf("call_service with response failed: %w", err)
 	}
 
-	// Response structure: {"context": {...}, "response": {...}}
-	var response struct {
-		Context  Context        `json:"context"`
-		Response map[string]any `json:"response,omitempty"`
+	// HA response-type services may return an object, list, or scalar payload.
+	// Preserve the existing map return type by wrapping non-object payloads.
+	var envelope struct {
+		Response json.RawMessage `json:"response"`
 	}
-	if err := json.Unmarshal(result.Result, &response); err != nil {
+	if err := json.Unmarshal(result.Result, &envelope); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal service response: %w", err)
 	}
+	if len(envelope.Response) == 0 || string(envelope.Response) == "null" {
+		return map[string]any{}, nil
+	}
 
-	return response.Response, nil
+	var response map[string]any
+	if err := json.Unmarshal(envelope.Response, &response); err == nil {
+		return response, nil
+	}
+
+	var value any
+	if err := json.Unmarshal(envelope.Response, &value); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal service response: %w", err)
+	}
+	return map[string]any{"response": value}, nil
 }
 
 // =============================================================================

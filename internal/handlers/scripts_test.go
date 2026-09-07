@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1567,7 +1568,7 @@ func TestScriptHandlers_CallService(t *testing.T) {
 func TestScriptHandlers_CallService_ReturnResponse(t *testing.T) {
 	t.Parallel()
 
-	largeValue := strings.Repeat("x", 401)
+	completeValue := strings.Repeat("x", 401)
 	tests := []struct {
 		name                 string
 		args                 map[string]any
@@ -1591,9 +1592,9 @@ func TestScriptHandlers_CallService_ReturnResponse(t *testing.T) {
 				"data":            map[string]any{"entity_id": "weather.home"},
 			},
 			response: map[string]any{
-				"weather.home": map[string]any{"forecast": largeValue},
+				"weather.home": map[string]any{"forecast": completeValue},
 			},
-			wantContains:         largeValue,
+			wantContains:         completeValue,
 			wantHeaderContains:   "weather.home",
 			wantResponseCall:     true,
 			wantNoStateSnapshots: true,
@@ -1660,11 +1661,25 @@ func TestScriptHandlers_CallService_ReturnResponse(t *testing.T) {
 			var regularCalls int
 			var responseCalls int
 			client := &mockScriptClient{
-				callServiceFn: func(context.Context, string, string, map[string]any) ([]homeassistant.Entity, error) {
+				callServiceFn: func(_ context.Context, domain, service string, data map[string]any) ([]homeassistant.Entity, error) {
+					if domain != tt.args["domain"] || service != tt.args["service"] {
+						t.Errorf("CallService() received %s.%s, want %v.%v", domain, service, tt.args["domain"], tt.args["service"])
+					}
+					wantData, _ := tt.args["data"].(map[string]any)
+					if !reflect.DeepEqual(data, wantData) {
+						t.Errorf("CallService() data = %#v, want %#v", data, wantData)
+					}
 					regularCalls++
 					return nil, nil
 				},
-				callServiceWithResponseFn: func(context.Context, string, string, map[string]any) (map[string]any, error) {
+				callServiceWithResponseFn: func(_ context.Context, domain, service string, data map[string]any) (map[string]any, error) {
+					if domain != tt.args["domain"] || service != tt.args["service"] {
+						t.Errorf("CallServiceWithResponse() received %s.%s, want %v.%v", domain, service, tt.args["domain"], tt.args["service"])
+					}
+					wantData, _ := tt.args["data"].(map[string]any)
+					if !reflect.DeepEqual(data, wantData) {
+						t.Errorf("CallServiceWithResponse() data = %#v, want %#v", data, wantData)
+					}
 					responseCalls++
 					return tt.response, tt.responseErr
 				},

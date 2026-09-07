@@ -534,18 +534,21 @@ func TestNaturalFormatter_FormatServiceSuccess(t *testing.T) {
 
 func TestNaturalFormatter_FormatServiceResponse(t *testing.T) {
 	f := NewNaturalFormatter()
-	completeValue := strings.Repeat("x", 401)
+	largeValue := strings.Repeat("x", 10000)
 
 	result, err := f.FormatServiceResponse(context.Background(), "weather", "get_forecasts", []string{"weather.home"}, map[string]any{
-		"weather.home": map[string]any{"forecast": completeValue},
+		"weather.home": map[string]any{"forecast": largeValue},
 	})
 	if err != nil {
 		t.Fatalf("FormatServiceResponse() error = %v", err)
 	}
-	for _, want := range []string{"OK Called weather.get_forecasts weather.home.", "Response:", completeValue} {
+	for _, want := range []string{"OK Called weather.get_forecasts weather.home.", "Response:", "Response truncated", "State changes were not polled"} {
 		if !strings.Contains(result, want) {
 			t.Errorf("FormatServiceResponse() = %q, want to contain %q", result, want)
 		}
+	}
+	if strings.Contains(result, largeValue) {
+		t.Error("FormatServiceResponse() returned the complete oversized payload")
 	}
 
 	empty, err := f.FormatServiceResponse(context.Background(), "recorder", "get_statistics", nil, nil)
@@ -554,6 +557,32 @@ func TestNaturalFormatter_FormatServiceResponse(t *testing.T) {
 	}
 	if !strings.Contains(empty, "service returned no response data") {
 		t.Errorf("empty response = %q, want no-response message", empty)
+	}
+}
+
+func TestNaturalFormatter_FormatServiceResponse_UnicodePayloadStaysBounded(t *testing.T) {
+	f := NewNaturalFormatter()
+	result, err := f.FormatServiceResponse(context.Background(), "weather", "get_forecasts", nil, map[string]any{
+		"weather.home": strings.Repeat("界", 9000),
+	})
+	if err != nil {
+		t.Fatalf("FormatServiceResponse() error = %v", err)
+	}
+	if len(result) >= maxServiceResponseChars+512 {
+		t.Errorf("FormatServiceResponse() length = %d, want less than %d", len(result), maxServiceResponseChars+512)
+	}
+}
+
+func TestNaturalFormatter_FormatServiceResponse_AlwaysReportsSkippedPolling(t *testing.T) {
+	f := NewNaturalFormatter()
+	result, err := f.FormatServiceResponse(context.Background(), "recorder", "get_statistics", nil, map[string]any{
+		"sensor.temperature": map[string]any{"mean": 21.5},
+	})
+	if err != nil {
+		t.Fatalf("FormatServiceResponse() error = %v", err)
+	}
+	if !strings.Contains(result, "State changes were not polled") {
+		t.Errorf("FormatServiceResponse() = %q, want skipped-polling caveat", result)
 	}
 }
 

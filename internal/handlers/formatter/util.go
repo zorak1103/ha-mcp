@@ -159,8 +159,10 @@ func sentenceCaseKey(key string) string {
 // maxDetailValueDepth bounds recursion into nested list/map values.
 const (
 	maxDetailValueChars = 400
-	maxDetailListItems  = 20
-	maxDetailValueDepth = 4
+	// maxServiceResponseChars bounds response-type service output sent to MCP clients.
+	maxServiceResponseChars = 8000
+	maxDetailListItems      = 20
+	maxDetailValueDepth     = 4
 )
 
 // sanitizeDisplayValue collapses newlines/carriage returns in a natural-format
@@ -176,6 +178,24 @@ func sanitizeDisplayValue(s string) string {
 // TruncateRunes truncates s to at most maxRunes runes, appending "..." if
 // truncated. Rune-safe: counts and slices by rune, not by byte, so a
 // multi-byte rune is never split.
+// truncateUTF8Bytes truncates s without splitting a UTF-8 sequence and keeps the
+// returned byte length within maxBytes, including the ellipsis.
+func truncateUTF8Bytes(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	if maxBytes <= 3 {
+		return strings.Repeat(".", maxBytes)
+	}
+
+	cutoff := maxBytes - 3
+	for len(s) > cutoff {
+		_, size := utf8.DecodeLastRuneInString(s)
+		s = s[:len(s)-size]
+	}
+	return s + "..."
+}
+
 func TruncateRunes(s string, maxRunes int) string {
 	runes := []rune(s)
 	if len(runes) <= maxRunes {

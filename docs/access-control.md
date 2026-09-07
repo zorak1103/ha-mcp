@@ -29,12 +29,16 @@ export HA_MCP_READ_ONLY=true
 - Script execution, scene activation
 - Any operation that modifies Home Assistant state
 
-**Note:** `call_service` remains classified as a write tool even when `return_response: true` is used. Response-type calls are read-shaped, but they remain blocked in read-only mode and by `*:write` filters.
+**What remains available:**
+- All `list` and `get` actions
+
 - State queries (`get_state`, `query_entities`, `query_devices`)
 - History and statistics
 - Analysis tools (`analyze_entity`, `get_entity_dependencies`)
 - Registry queries (`get_registry`)
 - Logbook access
+
+**Note:** `call_service` remains classified as a write tool even when `return_response: true` is used. Response-type calls are read-shaped, but they remain blocked in read-only mode and by `*:write` filters.
 
 ## Tool Filtering
 

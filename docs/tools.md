@@ -334,7 +334,7 @@ Most tools support two output formats via the `format` parameter:
 - **`json`**: Structured JSON output for backward compatibility and programmatic access
   - Example: `{"entity_id": "light.living_room", "state": "on", "attributes": {"brightness": 204, ...}}`
 
-**Tools with format support**: `analyze_entity`, `analyze_target`, `call_service` (response-type payloads are complete in both formats), `find_references`, `get_entity_dependencies`, `get_logbook`, `get_registry`, `get_state`, `manage_area`, `manage_automation`, `manage_blueprint`, `manage_calendar`, `manage_camera`, `manage_config_entry`, `manage_dashboard`, `manage_device`, `manage_entity`, `manage_floor`, `manage_hacs`, `manage_helper`, `manage_label`, `manage_person`, `manage_scene`, `manage_script`, `manage_statistics`, `manage_system_log`, `manage_tag`, `manage_todo`, `manage_trace`, `manage_update`, `manage_zone`, `query_devices`, `query_entities`
+**Tools with format support**: `analyze_entity`, `analyze_target`, `call_service` (response-type payloads are complete in JSON; natural output is bounded with an overflow note), `find_references`, `get_entity_dependencies`, `get_logbook`, `get_registry`, `get_state`, `manage_area`, `manage_automation`, `manage_blueprint`, `manage_calendar`, `manage_camera`, `manage_config_entry`, `manage_dashboard`, `manage_device`, `manage_entity`, `manage_floor`, `manage_hacs`, `manage_helper`, `manage_label`, `manage_person`, `manage_scene`, `manage_script`, `manage_statistics`, `manage_system_log`, `manage_tag`, `manage_todo`, `manage_trace`, `manage_update`, `manage_zone`, `query_devices`, `query_entities`
 
 ## Example Requests
 
@@ -423,7 +423,7 @@ Most tools support two output formats via the `format` parameter:
 
 ### Call a Service
 
-Regular service calls can target entities through `data`. For HA response-type services, set `return_response` to `true`; the result contains the complete service payload and does not run state-change polling.
+Regular service calls can target entities through `data`. For HA response-type services, set `return_response` to `true`; the JSON result contains the complete service payload, while natural output is bounded with an overflow note, and no state-change polling runs.
 
 ```json
 {

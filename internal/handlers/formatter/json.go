@@ -82,12 +82,26 @@ func (f *JSONFormatter) FormatServiceSuccess(_ context.Context, domain, service 
 }
 
 // FormatServiceResponse formats a response-type service call as one JSON document.
-func (f *JSONFormatter) FormatServiceResponse(_ context.Context, domain, service string, _ []string, response map[string]any) (string, error) {
+func (f *JSONFormatter) FormatServiceResponse(_ context.Context, domain, service string, targets []string, response map[string]any) (string, error) {
 	result := map[string]any{
-		"success":  true,
-		"domain":   domain,
-		"service":  service,
-		"response": response,
+		"success":           true,
+		"domain":            domain,
+		"service":           service,
+		"affected_entities": len(targets),
+		"response":          response,
+	}
+	if len(targets) > 0 {
+		result["entity_ids"] = targets
+		result["state_changes_polled"] = false
+	}
+
+	payload, err := json.Marshal(response)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal service response: %w", err)
+	}
+	if len(payload) > maxServiceResponseChars {
+		result["response_bytes"] = len(payload)
+		result["response_complete"] = true
 	}
 
 	output, err := json.MarshalIndent(result, "", "  ")
