@@ -591,3 +591,67 @@ func TestHandleManageDevice(t *testing.T) {
 		})
 	}
 }
+
+// TestHandleManageDevice_LabelWarningPropagation regression-covers the adversarial-review
+// findings on issue #242's label guard: a registry-fetch failure must proceed with a WARNING
+// content block (not silent success), and a malformed labels element must be refused before
+// any write - never silently dropped into a zero-length slice that could wipe existing labels.
+func TestHandleManageDevice_LabelWarningPropagation(t *testing.T) {
+	t.Parallel()
+
+	t.Run("update - registry fetch error still writes but appends a WARNING block", func(t *testing.T) {
+		t.Parallel()
+		mock := &UniversalMockClient{
+			GetLabelRegistryFn: func(context.Context) ([]homeassistant.LabelRegistryEntry, error) {
+				return nil, errors.New("registry unavailable")
+			},
+			UpdateDeviceRegistryEntryFn: func(_ context.Context, _ string, config homeassistant.DeviceRegistryUpdateConfig) (*homeassistant.DeviceRegistryEntry, error) {
+				if len(config.Labels) != 1 || config.Labels[0] != "whatever" {
+					t.Errorf("expected labels to still be applied despite registry fetch failure, got %v", config.Labels)
+				}
+				return &homeassistant.DeviceRegistryEntry{ID: "abc123", Labels: config.Labels}, nil
+			},
+		}
+		handler := NewDeviceManageHandlers()
+
+		result, err := handler.handleManageDevice(context.Background(), mock, map[string]any{
+			"action":     "update",
+			"device_id":  "abc123",
+			"labels":     []any{"whatever"},
+			"label_mode": arrayModeReplace,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("expected success, got error result: %v", result)
+		}
+		if len(result.Content) < 2 || !strings.Contains(result.Content[len(result.Content)-1].Text, "WARNING:") {
+			t.Fatalf("expected a WARNING content block, got: %+v", result.Content)
+		}
+	})
+
+	t.Run("update - malformed labels argument is refused before any write", func(t *testing.T) {
+		t.Parallel()
+		mock := &UniversalMockClient{
+			UpdateDeviceRegistryEntryFn: func(context.Context, string, homeassistant.DeviceRegistryUpdateConfig) (*homeassistant.DeviceRegistryEntry, error) {
+				t.Fatal("UpdateDeviceRegistryEntry must not be called when labels is malformed")
+				return nil, nil
+			},
+		}
+		handler := NewDeviceManageHandlers()
+
+		result, err := handler.handleManageDevice(context.Background(), mock, map[string]any{
+			"action":     "update",
+			"device_id":  "abc123",
+			"labels":     []any{"ok", 42},
+			"label_mode": arrayModeReplace,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !result.IsError || !strings.Contains(result.Content[0].Text, "labels[1]") {
+			t.Fatalf("expected a refusal naming the malformed element, got: %+v", result)
+		}
+	})
+}

@@ -1062,7 +1062,8 @@ func TestWSClient_Connect_TimeoutDuringAuth(t *testing.T) {
 func TestWSClient_Connect_SuccessWithDefaultTimeout(t *testing.T) {
 	t.Parallel()
 
-	// Server that properly sends auth_required and handles auth_ok
+	// Server that properly sends auth_required, handles auth_ok, and then echoes a
+	// successful result for any command it receives.
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := websocket.Accept(w, r, nil)
 		if err != nil {
@@ -1092,8 +1093,26 @@ func TestWSClient_Connect_SuccessWithDefaultTimeout(t *testing.T) {
 		okData, _ := json.Marshal(authOk)
 		_ = conn.Write(r.Context(), websocket.MessageText, okData)
 
-		// Stay open until client disconnects
-		<-r.Context().Done()
+		// 4. Echo a successful result for every command received - proves the
+		// connection is still usable after Connect() returns and the ConnectTimeout's
+		// deferred cancel() has fired, not just that IsConnected() reports true.
+		for {
+			_, cmdData, readErr := conn.Read(r.Context())
+			if readErr != nil {
+				return
+			}
+			var cmd map[string]any
+			if unmarshalErr := json.Unmarshal(cmdData, &cmd); unmarshalErr != nil {
+				return
+			}
+			result := map[string]any{
+				"id": cmd["id"], "type": "result", "success": true, "result": map[string]any{},
+			}
+			resData, _ := json.Marshal(result)
+			if writeErr := conn.Write(r.Context(), websocket.MessageText, resData); writeErr != nil {
+				return
+			}
+		}
 	}))
 	defer s.Close()
 
@@ -1107,6 +1126,14 @@ func TestWSClient_Connect_SuccessWithDefaultTimeout(t *testing.T) {
 
 	if !client.IsConnected() {
 		t.Error("IsConnected() = false, want true")
+	}
+
+	result, err := client.SendCommand(ctx, "get_config", nil)
+	if err != nil {
+		t.Fatalf("SendCommand() after Connect failed (connection may have been torn down by the dial context's deferred cancel): %v", err)
+	}
+	if result == nil || !result.Success {
+		t.Fatalf("expected a successful command result, got: %+v", result)
 	}
 }
 
@@ -1216,7 +1243,27 @@ func TestWSClient_ConnectInternal_TimeoutAndSuccess(t *testing.T) {
 			okData, _ := json.Marshal(authOk)
 			_ = conn.Write(r.Context(), websocket.MessageText, okData)
 
-			<-r.Context().Done()
+			// Echo a successful result for every command received - the read loop is
+			// started manually below since connectInternal() deliberately doesn't
+			// start it (that's the reconnect path's job), so this proves the
+			// connection itself is still usable, not just that IsConnected() is true.
+			for {
+				_, cmdData, readErr := conn.Read(r.Context())
+				if readErr != nil {
+					return
+				}
+				var cmd map[string]any
+				if unmarshalErr := json.Unmarshal(cmdData, &cmd); unmarshalErr != nil {
+					return
+				}
+				result := map[string]any{
+					"id": cmd["id"], "type": "result", "success": true, "result": map[string]any{},
+				}
+				resData, _ := json.Marshal(result)
+				if writeErr := conn.Write(r.Context(), websocket.MessageText, resData); writeErr != nil {
+					return
+				}
+			}
 		}))
 		defer s.Close()
 
@@ -1233,6 +1280,15 @@ func TestWSClient_ConnectInternal_TimeoutAndSuccess(t *testing.T) {
 
 		if !client.IsConnected() {
 			t.Error("client should be connected after successful connectInternal")
+		}
+
+		go client.readLoop()
+		result, err := client.SendCommand(context.Background(), "get_config", nil)
+		if err != nil {
+			t.Fatalf("SendCommand() after connectInternal failed (connection may have been torn down by the dial context's deferred cancel): %v", err)
+		}
+		if result == nil || !result.Success {
+			t.Fatalf("expected a successful command result, got: %+v", result)
 		}
 	})
 }

@@ -153,13 +153,22 @@ func (h *DeviceManageHandlers) handleUpdateDevice(ctx context.Context, client ho
 
 	config, hasFields := h.buildDeviceUpdateConfig(args)
 
-	labelMode := getArrayMode(args, "label_mode")
-	labels, hasLabels := getStringSlice(args, "labels")
+	labelMode, err := getArrayMode(args, "label_mode")
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
+	labels, hasLabels, refusal := parseLabelsArg(args)
+	if refusal != nil {
+		return refusal, nil
+	}
 
+	var labelWarning string
 	if hasLabels {
-		if res := labelWriteGuardError(ctx, client, labels, labelMode); res != nil {
-			return res, nil
+		guard := labelWriteGuardError(ctx, client, labels, labelMode)
+		if guard.Refusal != nil {
+			return guard.Refusal, nil
 		}
+		labelWarning = guard.Warning
 		entry, fetchErr := h.fetchDeviceForMerge(ctx, client, deviceID, labelMode)
 		if fetchErr != nil {
 			return errorResult(fetchErr.Error()), nil
@@ -179,9 +188,10 @@ func (h *DeviceManageHandlers) handleUpdateDevice(ctx context.Context, client ho
 	}
 
 	if format == formatJSON {
-		return h.formatDeviceJSON(updated)
+		res, jsonErr := h.formatDeviceJSON(updated)
+		return appendResultWarning(res, labelWarning), jsonErr
 	}
-	return h.formatDeviceNaturalWithSuccess(updated), nil
+	return appendResultWarning(h.formatDeviceNaturalWithSuccess(updated), labelWarning), nil
 }
 
 func (h *DeviceManageHandlers) handleDeleteDevice(ctx context.Context, client homeassistant.Client, args map[string]any, format string) (*mcp.ToolsCallResult, error) {

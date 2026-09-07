@@ -19,6 +19,7 @@ type mockClient struct {
 	entityRegistryCallCount int
 	deviceRegistryCallCount int
 	areaRegistryCallCount   int
+	labelRegistryCallCount  int
 	createAreaCallCount     int
 	updateAreaCallCount     int
 	deleteAreaCallCount     int
@@ -91,7 +92,10 @@ func (m *mockClient) DeleteArea(ctx context.Context, areaID string) error {
 }
 
 func (m *mockClient) GetLabelRegistry(ctx context.Context) ([]LabelRegistryEntry, error) {
-	return nil, nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.labelRegistryCallCount++
+	return []LabelRegistryEntry{{LabelID: "test"}}, nil
 }
 
 func (m *mockClient) CreateLabel(ctx context.Context, config LabelConfig) (*LabelRegistryEntry, error) {
@@ -901,6 +905,55 @@ func TestCachedClient_InvalidationAfterDeleteArea(t *testing.T) {
 	}
 	if mock.areaRegistryCallCount != 2 {
 		t.Errorf("Expected 2 API calls (cache invalidated), got %d", mock.areaRegistryCallCount)
+	}
+}
+
+// TestCachedClient_InvalidateLabelRegistryCache exercises the exported
+// InvalidateLabelRegistryCache wrapper - added so labelWriteGuardError
+// (internal/handlers/labels_validation.go) can force a fresh read via an optional-capability
+// type assertion instead of widening the Client interface for every implementation.
+func TestCachedClient_InvalidateLabelRegistryCache(t *testing.T) {
+	mock := &mockClient{}
+	cfg := config.CacheConfig{
+		Enabled:         true,
+		ServicesTTLMin:  60,
+		ConfigTTLMin:    30,
+		EntityRegTTLMin: 10,
+		DeviceRegTTLMin: 10,
+		AreaRegTTLMin:   30,
+	}
+	logger := logging.New(logging.LevelError)
+	client := NewCachedClient(mock, cfg, logger)
+
+	cachedClient, ok := client.(*CachedClient)
+	if !ok {
+		t.Fatalf("expected *CachedClient, got %T", client)
+	}
+
+	ctx := context.Background()
+
+	if _, err := client.GetLabelRegistry(ctx); err != nil {
+		t.Fatalf("GetLabelRegistry failed: %v", err)
+	}
+	if mock.labelRegistryCallCount != 1 {
+		t.Errorf("Expected 1 API call, got %d", mock.labelRegistryCallCount)
+	}
+
+	// Cached: a second call must not hit the API again.
+	if _, err := client.GetLabelRegistry(ctx); err != nil {
+		t.Fatalf("GetLabelRegistry failed: %v", err)
+	}
+	if mock.labelRegistryCallCount != 1 {
+		t.Errorf("Expected cache hit (still 1 API call), got %d", mock.labelRegistryCallCount)
+	}
+
+	cachedClient.InvalidateLabelRegistryCache()
+
+	if _, err := client.GetLabelRegistry(ctx); err != nil {
+		t.Fatalf("GetLabelRegistry failed: %v", err)
+	}
+	if mock.labelRegistryCallCount != 2 {
+		t.Errorf("Expected 2 API calls after explicit invalidation, got %d", mock.labelRegistryCallCount)
 	}
 }
 

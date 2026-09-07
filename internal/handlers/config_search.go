@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/zorak1103/ha-mcp/internal/handlers/formatter"
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 	"github.com/zorak1103/ha-mcp/internal/jsonpatch"
 )
@@ -210,6 +211,16 @@ func scanFailures(outcomes []ScanOutcome) []ScanOutcome {
 	return failed
 }
 
+// maxScanErrorReasonChars bounds each failed source's error text embedded in the warning - the
+// underlying error can be server-supplied and unbounded (a WS command failure's Message field,
+// or an HTTP error body), and up to one is embedded per scanned source in a single message.
+const maxScanErrorReasonChars = 200
+
+// scanFailureLineBreaks flattens both newline conventions out of an embedded error's text so a
+// single reason can't forge extra "source (reason)" entries or otherwise break the one-line
+// warning format.
+var scanFailureLineBreaks = strings.NewReplacer("\n", " ", "\r", " ")
+
 // formatScanFailureWarning renders the shared "could not be scanned" warning,
 // including each failed source's underlying error so a failure is diagnosable
 // from the tool's own output without needing server-side logs.
@@ -221,7 +232,7 @@ func formatScanFailureWarning(failed []ScanOutcome) string {
 	for _, o := range failed {
 		reason := "unknown error"
 		if o.Err != nil {
-			reason = strings.ReplaceAll(o.Err.Error(), "\n", " ")
+			reason = formatter.TruncateRunes(scanFailureLineBreaks.Replace(o.Err.Error()), maxScanErrorReasonChars)
 		}
 		details = append(details, fmt.Sprintf("%s (%s)", o.Source, reason))
 	}

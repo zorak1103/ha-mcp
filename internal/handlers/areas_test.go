@@ -1019,3 +1019,97 @@ func TestManageArea_AssignedAutomations(t *testing.T) {
 		t.Errorf("expected automation.referencing in referencing section, got:\n%s", text)
 	}
 }
+
+// TestHandleManageArea_LabelWarningPropagation verifies that a labelWriteGuardError warning
+// (registry fetch degraded, or write proceeded via a retry-succeeded stale cache) actually
+// reaches the caller as a WARNING content block, and that a malformed labels argument is
+// refused before any write is attempted - regression coverage for the adversarial-review
+// findings on issue #242's guard (empty/malformed array wipe, silent degraded-write warning).
+func TestHandleManageArea_LabelWarningPropagation(t *testing.T) {
+	t.Parallel()
+
+	t.Run("create - registry fetch error still writes but appends a WARNING block", func(t *testing.T) {
+		t.Parallel()
+		handlers := NewAreaHandlers()
+		mock := &UniversalMockClient{
+			GetLabelRegistryFn: func(context.Context) ([]homeassistant.LabelRegistryEntry, error) {
+				return nil, fmt.Errorf("registry unavailable")
+			},
+			CreateAreaFn: func(_ context.Context, config homeassistant.AreaConfig) (*homeassistant.AreaRegistryEntry, error) {
+				if len(config.Labels) != 1 || config.Labels[0] != "whatever" {
+					t.Errorf("expected labels to still be applied despite registry fetch failure, got %v", config.Labels)
+				}
+				return &homeassistant.AreaRegistryEntry{AreaID: "bedroom", Name: "Bedroom", Labels: config.Labels}, nil
+			},
+		}
+
+		result, err := handlers.handleCreate(context.Background(), mock, map[string]any{
+			"action": "create",
+			"name":   "Bedroom",
+			"labels": []any{"whatever"},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("expected success, got error result: %v", result)
+		}
+		if len(result.Content) < 2 || !strings.Contains(result.Content[len(result.Content)-1].Text, "WARNING:") {
+			t.Fatalf("expected a WARNING content block, got: %+v", result.Content)
+		}
+	})
+
+	t.Run("update - malformed labels argument is refused before any write", func(t *testing.T) {
+		t.Parallel()
+		mock := &UniversalMockClient{
+			GetAreaRegistryFn: func(context.Context) ([]homeassistant.AreaRegistryEntry, error) {
+				return []homeassistant.AreaRegistryEntry{{AreaID: "living_room", Name: "Living Room"}}, nil
+			},
+			UpdateAreaFn: func(context.Context, string, homeassistant.AreaConfig) (*homeassistant.AreaRegistryEntry, error) {
+				t.Fatal("UpdateArea must not be called when labels is malformed")
+				return nil, nil
+			},
+		}
+		handlers := NewAreaHandlers()
+
+		result, err := handlers.handleUpdate(context.Background(), mock, map[string]any{
+			"action":     "update",
+			"area_id":    "living_room",
+			"labels":     []any{"ok", 42},
+			"label_mode": arrayModeReplace,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !result.IsError || !strings.Contains(result.Content[0].Text, "labels[1]") {
+			t.Fatalf("expected a refusal naming the malformed element, got: %+v", result)
+		}
+	})
+
+	t.Run("update - invalid label_mode is refused, not silently treated as add", func(t *testing.T) {
+		t.Parallel()
+		mock := &UniversalMockClient{
+			GetAreaRegistryFn: func(context.Context) ([]homeassistant.AreaRegistryEntry, error) {
+				return []homeassistant.AreaRegistryEntry{{AreaID: "living_room", Name: "Living Room"}}, nil
+			},
+			UpdateAreaFn: func(context.Context, string, homeassistant.AreaConfig) (*homeassistant.AreaRegistryEntry, error) {
+				t.Fatal("UpdateArea must not be called when label_mode is invalid")
+				return nil, nil
+			},
+		}
+		handlers := NewAreaHandlers()
+
+		result, err := handlers.handleUpdate(context.Background(), mock, map[string]any{
+			"action":     "update",
+			"area_id":    "living_room",
+			"labels":     []any{"whatever"},
+			"label_mode": "Replace",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !result.IsError || !strings.Contains(result.Content[0].Text, "label_mode") {
+			t.Fatalf("expected a refusal naming label_mode, got: %+v", result)
+		}
+	})
+}

@@ -761,3 +761,67 @@ func TestHandleManageEntity(t *testing.T) {
 		})
 	}
 }
+
+// TestHandleManageEntity_LabelWarningPropagation regression-covers the adversarial-review
+// findings on issue #242's label guard: a registry-fetch failure must proceed with a WARNING
+// content block (not silent success), and a malformed labels element must be refused before
+// any write - never silently dropped into a zero-length slice that could wipe existing labels.
+func TestHandleManageEntity_LabelWarningPropagation(t *testing.T) {
+	t.Parallel()
+
+	t.Run("update - registry fetch error still writes but appends a WARNING block", func(t *testing.T) {
+		t.Parallel()
+		mock := &UniversalMockClient{
+			GetLabelRegistryFn: func(context.Context) ([]homeassistant.LabelRegistryEntry, error) {
+				return nil, errors.New("registry unavailable")
+			},
+			UpdateEntityRegistryEntryFn: func(_ context.Context, _ string, config homeassistant.EntityRegistryUpdateConfig) (*homeassistant.EntityRegistryEntry, error) {
+				if len(config.Labels) != 1 || config.Labels[0] != "whatever" {
+					t.Errorf("expected labels to still be applied despite registry fetch failure, got %v", config.Labels)
+				}
+				return &homeassistant.EntityRegistryEntry{EntityID: "light.living_room", Labels: config.Labels}, nil
+			},
+		}
+		handler := NewEntityManageHandlers()
+
+		result, err := handler.handleManageEntity(context.Background(), mock, map[string]any{
+			"action":     "update",
+			"entity_id":  "light.living_room",
+			"labels":     []any{"whatever"},
+			"label_mode": arrayModeReplace,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("expected success, got error result: %v", result)
+		}
+		if len(result.Content) < 2 || !strings.Contains(result.Content[len(result.Content)-1].Text, "WARNING:") {
+			t.Fatalf("expected a WARNING content block, got: %+v", result.Content)
+		}
+	})
+
+	t.Run("update - malformed labels argument is refused before any write", func(t *testing.T) {
+		t.Parallel()
+		mock := &UniversalMockClient{
+			UpdateEntityRegistryEntryFn: func(context.Context, string, homeassistant.EntityRegistryUpdateConfig) (*homeassistant.EntityRegistryEntry, error) {
+				t.Fatal("UpdateEntityRegistryEntry must not be called when labels is malformed")
+				return nil, nil
+			},
+		}
+		handler := NewEntityManageHandlers()
+
+		result, err := handler.handleManageEntity(context.Background(), mock, map[string]any{
+			"action":     "update",
+			"entity_id":  "light.living_room",
+			"labels":     []any{"ok", 42},
+			"label_mode": arrayModeReplace,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !result.IsError || !strings.Contains(result.Content[0].Text, "labels[1]") {
+			t.Fatalf("expected a refusal naming the malformed element, got: %+v", result)
+		}
+	})
+}

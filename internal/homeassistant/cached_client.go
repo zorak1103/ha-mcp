@@ -68,7 +68,9 @@ func NewCachedClient(client Client, cfg config.CacheConfig, logger *logging.Logg
 		"config_ttl_min", cfg.ConfigTTLMin,
 		"entity_reg_ttl_min", cfg.EntityRegTTLMin,
 		"device_reg_ttl_min", cfg.DeviceRegTTLMin,
-		"area_reg_ttl_min", cfg.AreaRegTTLMin)
+		"area_reg_ttl_min", cfg.AreaRegTTLMin,
+		"label_reg_ttl_min (shares area_reg_ttl_min)", cfg.AreaRegTTLMin,
+		"floor_reg_ttl_min (shares area_reg_ttl_min)", cfg.AreaRegTTLMin)
 
 	return &CachedClient{
 		client: client,
@@ -636,6 +638,15 @@ func (c *CachedClient) invalidateLabelRegistryCache() {
 	defer c.mu.Unlock()
 	c.labelRegistryCache = nil
 	c.logger.Debug("Label registry cache invalidated")
+}
+
+// InvalidateLabelRegistryCache forces the next GetLabelRegistry call to re-fetch from Home
+// Assistant. Exported (unlike invalidateLabelRegistryCache) so a caller outside this package -
+// labelWriteGuardError, which must not trust a possibly-stale cache when refusing a write over
+// an "unknown" label id - can force a fresh read via an optional-capability type assertion
+// instead of widening the Client interface for every implementation.
+func (c *CachedClient) InvalidateLabelRegistryCache() {
+	c.invalidateLabelRegistryCache()
 }
 
 // invalidateFloorRegistryCache clears the floor registry cache.

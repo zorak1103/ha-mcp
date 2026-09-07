@@ -237,13 +237,23 @@ func (h *AreaHandlers) handleCreate(ctx context.Context, client homeassistant.Cl
 		return errorResult("name is required for create action"), nil
 	}
 
+	labels, hasLabels, refusal := parseLabelsArg(args)
+	if refusal != nil {
+		return refusal, nil
+	}
+
 	config := h.buildAreaConfig(args)
 	config.Name = name
 	config.Aliases = toStringArray(args["aliases"])
-	config.Labels = toStringArray(args["labels"])
 
-	if res := labelWriteGuardError(ctx, client, config.Labels, arrayModeReplace); res != nil {
-		return res, nil
+	var labelWarning string
+	if hasLabels && len(labels) > 0 {
+		guard := labelWriteGuardError(ctx, client, labels, arrayModeReplace)
+		if guard.Refusal != nil {
+			return guard.Refusal, nil
+		}
+		labelWarning = guard.Warning
+		config.Labels = labels
 	}
 
 	entry, err := client.CreateArea(ctx, config)
@@ -252,10 +262,13 @@ func (h *AreaHandlers) handleCreate(ctx context.Context, client homeassistant.Cl
 	}
 
 	formatStr, _ := args["format"].(string)
+	var res *mcp.ToolsCallResult
 	if formatStr == formatJSON {
-		return h.formatDetailJSON(*entry, 0, 0, nil)
+		res, err = h.formatDetailJSON(*entry, 0, 0, nil)
+	} else {
+		res, err = h.formatCreateNatural(*entry)
 	}
-	return h.formatCreateNatural(*entry)
+	return appendResultWarning(res, labelWarning), err
 }
 
 func (h *AreaHandlers) handleUpdate(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
@@ -269,18 +282,32 @@ func (h *AreaHandlers) handleUpdate(ctx context.Context, client homeassistant.Cl
 		return errorResult(err.Error()), nil
 	}
 
+	labels, hasLabels, refusal := parseLabelsArg(args)
+	if refusal != nil {
+		return refusal, nil
+	}
+
 	config := h.buildAreaConfig(args)
 
 	// Apply label/alias modes, merging with current values as needed.
-	labelMode := getArrayMode(args, "label_mode")
-	if labels, hasLabels := getStringSlice(args, "labels"); hasLabels {
-		if res := labelWriteGuardError(ctx, client, labels, labelMode); res != nil {
-			return res, nil
+	labelMode, err := getArrayMode(args, "label_mode")
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
+	var labelWarning string
+	if hasLabels {
+		guard := labelWriteGuardError(ctx, client, labels, labelMode)
+		if guard.Refusal != nil {
+			return guard.Refusal, nil
 		}
+		labelWarning = guard.Warning
 		config.Labels = applyArrayMode(currentArea.Labels, labels, labelMode)
 	}
 
-	aliasMode := getArrayMode(args, "alias_mode")
+	aliasMode, err := getArrayMode(args, "alias_mode")
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
 	if aliases, hasAliases := getStringSlice(args, "aliases"); hasAliases {
 		config.Aliases = applyArrayMode(currentArea.Aliases, aliases, aliasMode)
 	}
@@ -291,10 +318,13 @@ func (h *AreaHandlers) handleUpdate(ctx context.Context, client homeassistant.Cl
 	}
 
 	formatStr, _ := args["format"].(string)
+	var res *mcp.ToolsCallResult
 	if formatStr == formatJSON {
-		return h.formatDetailJSON(*entry, 0, 0, nil)
+		res, err = h.formatDetailJSON(*entry, 0, 0, nil)
+	} else {
+		res, err = h.formatUpdateNatural(*entry)
 	}
-	return h.formatUpdateNatural(*entry)
+	return appendResultWarning(res, labelWarning), err
 }
 
 func (h *AreaHandlers) handleDelete(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
