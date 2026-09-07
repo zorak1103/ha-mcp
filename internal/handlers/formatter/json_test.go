@@ -213,6 +213,34 @@ func TestJSONFormatter_FormatServiceResponse_MarksOversizedPayload(t *testing.T)
 	}
 }
 
+func TestJSONFormatter_FormatServiceResponse_ExactLimitIsNotMarked(t *testing.T) {
+	f := NewJSONFormatter()
+	response := map[string]any{"value": strings.Repeat("x", maxServiceResponseChars)}
+	var payload []byte
+	for size := 0; size <= maxServiceResponseChars; size++ {
+		response["value"] = strings.Repeat("x", size)
+		var err error
+		payload, err = json.Marshal(response)
+		if err != nil {
+			t.Fatalf("json.Marshal() error = %v", err)
+		}
+		if len(payload) == maxServiceResponseChars {
+			break
+		}
+	}
+	if len(payload) != maxServiceResponseChars {
+		t.Fatalf("could not build exact-limit payload; got %d bytes", len(payload))
+	}
+
+	result, err := f.FormatServiceResponse(context.Background(), "test", "respond", nil, response)
+	if err != nil {
+		t.Fatalf("FormatServiceResponse() error = %v", err)
+	}
+	if strings.Contains(result, "response_bytes") {
+		t.Errorf("FormatServiceResponse() marked exact-limit payload oversized: %s", result)
+	}
+}
+
 func TestJSONFormatter_FormatError(t *testing.T) {
 	f := NewJSONFormatter()
 	err := &testError{msg: "connection refused"}

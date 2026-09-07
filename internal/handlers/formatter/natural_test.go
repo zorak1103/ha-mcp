@@ -2,6 +2,7 @@ package formatter
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -583,6 +584,27 @@ func TestNaturalFormatter_FormatServiceResponse_AlwaysReportsSkippedPolling(t *t
 	}
 	if !strings.Contains(result, "State changes were not polled") {
 		t.Errorf("FormatServiceResponse() = %q, want skipped-polling caveat", result)
+	}
+}
+
+func TestNaturalFormatter_FormatServiceResponse_ExactLimitIsNotTruncated(t *testing.T) {
+	f := NewNaturalFormatter()
+	value := strings.Repeat("x", maxServiceResponseChars-17)
+	response := map[string]any{"value": value}
+	payload, err := json.MarshalIndent(response, "", "  ")
+	if err != nil {
+		t.Fatalf("json.MarshalIndent() error = %v", err)
+	}
+	if len(payload) != maxServiceResponseChars {
+		t.Fatalf("test payload size = %d, want %d", len(payload), maxServiceResponseChars)
+	}
+
+	result, err := f.FormatServiceResponse(context.Background(), "test", "respond", nil, response)
+	if err != nil {
+		t.Fatalf("FormatServiceResponse() error = %v", err)
+	}
+	if strings.Contains(result, "Response truncated") {
+		t.Errorf("FormatServiceResponse() truncated exact-limit payload: %s", result)
 	}
 }
 

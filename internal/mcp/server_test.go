@@ -1190,6 +1190,37 @@ func TestServer_HandleToolsCall_ResponseTypeDoesNotRetry(t *testing.T) {
 	}
 }
 
+func TestServer_HandleToolsCall_SizeFallback_ExactLimit(t *testing.T) {
+	t.Parallel()
+
+	registry := NewRegistry()
+	registry.RegisterTool(
+		Tool{Name: "exact_tool"},
+		func(_ context.Context, _ homeassistant.Client, _ map[string]any) (*ToolsCallResult, error) {
+			return &ToolsCallResult{Content: []ContentBlock{NewTextContent(strings.Repeat("x", maxJSONResponseBytes))}}, nil
+		},
+	)
+	s := newTestServer(&mockHAClient{}, registry, 8080, logging.New(logging.LevelOff))
+	paramsJSON, _ := json.Marshal(ToolsCallParams{Name: "exact_tool", Arguments: map[string]any{"format": formatJSON}})
+	reqBodyJSON, _ := json.Marshal(Request{JSONRPC: JSONRPCVersion, ID: json.RawMessage(`1`), Method: MethodToolsCall, Params: paramsJSON})
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/", bytes.NewReader(reqBodyJSON))
+	w := httptest.NewRecorder()
+	s.handleMCP(w, req)
+
+	var jsonResp Response
+	if err := json.NewDecoder(w.Result().Body).Decode(&jsonResp); err != nil {
+		t.Fatalf("json.Decode() error = %v", err)
+	}
+	var result ToolsCallResult
+	resultJSON, _ := json.Marshal(jsonResp.Result)
+	if err := json.Unmarshal(resultJSON, &result); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if strings.Contains(result.Content[0].Text, "too large for format=json") {
+		t.Error("exact-limit response incorrectly triggered natural fallback")
+	}
+}
+
 func TestServer_HandleResourcesList(t *testing.T) {
 	t.Parallel()
 
