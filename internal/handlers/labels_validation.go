@@ -104,10 +104,14 @@ type labelGuardResult struct {
 // degradedLabelCheckWarning renders the warning appended to a write's success message when the
 // label registry could not be consulted (or re-consulted) to validate caller-supplied labels.
 func degradedLabelCheckWarning(err error) string {
+	reason := "unknown error"
+	if err != nil {
+		reason = formatter.TruncateRunes(scanFailureLineBreaks.Replace(err.Error()), maxScanErrorReasonChars)
+	}
 	return fmt.Sprintf(
-		"could not verify labels against the label registry (%v) - labels were written unchecked; "+
+		"could not verify labels against the label registry (%s) - labels were written unchecked; "+
 			"Home Assistant silently drops any id that turns out not to exist",
-		err,
+		reason,
 	)
 }
 

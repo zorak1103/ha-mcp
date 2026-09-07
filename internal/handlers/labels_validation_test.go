@@ -221,6 +221,25 @@ func TestLabelWriteGuardError(t *testing.T) {
 	}
 }
 
+// TestDegradedLabelCheckWarningBoundsAndSanitizesError verifies that a server-supplied
+// label-registry error cannot create an unbounded or multi-line success warning.
+func TestDegradedLabelCheckWarningBoundsAndSanitizesError(t *testing.T) {
+	t.Parallel()
+
+	err := errors.New(strings.Repeat("x", 5000) + "\nforged warning")
+	warning := degradedLabelCheckWarning(err)
+
+	if strings.ContainsAny(warning, "\r\n") {
+		t.Fatalf("warning contains a line break: %q", warning)
+	}
+	if !strings.Contains(warning, "...") {
+		t.Fatalf("warning should truncate the error reason: %q", warning)
+	}
+	if len([]rune(warning)) > maxScanErrorReasonChars+200 {
+		t.Fatalf("warning is unexpectedly large: %d runes", len([]rune(warning)))
+	}
+}
+
 // noCacheClient wraps a homeassistant.Client through the interface's own (static) method set,
 // so promoted methods are exactly homeassistant.Client's - even if the embedded concrete value
 // also implements InvalidateLabelRegistryCache(), that extra method is not promoted and a type

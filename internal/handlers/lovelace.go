@@ -421,7 +421,7 @@ func (h *DashboardHandlers) handleFind(ctx context.Context, client homeassistant
 
 	if len(hits) == 0 {
 		if len(failed) > 0 && len(failed) == len(urlPaths) {
-			return errorResult(fmt.Sprintf("Could not search any dashboard: %s", strings.Join(failed, ", "))), nil
+			return errorResult(fmt.Sprintf("Could not search any dashboard: %s", formatScanFailureWarning(failedDetails))), nil
 		}
 		msg := fmt.Sprintf("No matches for %q in any dashboard", search)
 		if len(failedDetails) > 0 {

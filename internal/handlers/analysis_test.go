@@ -2754,6 +2754,44 @@ func TestHandleAnalyzeEntity_MultipleFailedSourcesAllReported(t *testing.T) {
 	}
 }
 
+// TestHandleAnalyzeEntity_AreaScanFailureIsReported verifies that area-reference API failures
+// are not presented as a complete scan with missing references.
+func TestHandleAnalyzeEntity_AreaScanFailureIsReported(t *testing.T) {
+	t.Parallel()
+
+	entityID := "light.area_entity"
+	client := &mockAnalysisClient{
+		GetStateFn: func(_ context.Context, id string) (*homeassistant.Entity, error) {
+			return &homeassistant.Entity{EntityID: id, State: "on"}, nil
+		},
+		GetEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+			return []homeassistant.EntityRegistryEntry{{EntityID: entityID, AreaID: "living_room"}}, nil
+		},
+		ListAutomationsFn: func(context.Context) ([]homeassistant.Automation, error) {
+			return nil, errors.New("automation list unavailable")
+		},
+		ListScriptsFn: func(context.Context) ([]homeassistant.Entity, error) {
+			return nil, nil
+		},
+	}
+
+	result, err := NewAnalysisHandlers().handleAnalyzeEntity(context.Background(), client, map[string]any{
+		"entity_id": entityID,
+		"format":    "natural",
+	})
+	if err != nil {
+		t.Fatalf("handleAnalyzeEntity() error = %v", err)
+	}
+
+	text := result.Content[0].Text
+	if !strings.Contains(text, "areas (listing automations: automation list unavailable)") {
+		t.Fatalf("expected area scan failure warning, got:\n%s", text)
+	}
+	if strings.Contains(text, "scanned: scripts, scenes, dashboards, helper_templates, groups, areas") {
+		t.Fatalf("failed area scan was reported as scanned, got:\n%s", text)
+	}
+}
+
 // TestAnalysisHandlers_FormatAnalysisNatural_NameOrder pins the "Name (entity_id) is
 // state" line shape to match query_entities' natural formatter (internal/handlers/
 // formatter/natural.go), so an LLM reading both tools' output can rely on the same
