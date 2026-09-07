@@ -403,24 +403,6 @@ func parseStatisticIDsStrict(args map[string]any) (valid, unrecognized []string,
 	return valid, unrecognized, nil
 }
 
-// parseBoolArg reads an optional boolean arg strictly. A non-bool value is
-// an error, never a silent false: the MCP server performs no schema
-// validation of its own (InputSchema is advisory metadata only), so nothing
-// else stops a stringified "true" from reaching a handler. For action=clear
-// this is the difference between a preview and an irreversible purge
-// (issue C1) - it must fail closed, not open.
-func parseBoolArg(args map[string]any, key string) (bool, error) {
-	raw, ok := args[key]
-	if !ok {
-		return false, nil
-	}
-	b, ok := raw.(bool)
-	if !ok {
-		return false, fmt.Errorf("invalid %s %v: must be a boolean", key, raw)
-	}
-	return b, nil
-}
-
 // validateLimitArg rejects a limit argument that isn't a finite, in-range,
 // non-negative integer. Accepts both float64 (the normal JSON-RPC decoding)
 // and int (a caller reaching the handler without a JSON round-trip, e.g. the

@@ -55,7 +55,7 @@ Whenever the user mentions HA entities, automations, scripts, scenes, helpers, d
 - `helper_action` — runtime operations (toggle, set, increment, start, pause, cancel, …)
 
 **Services**
-- `call_service` — call any HA service (use for device control, not CRUD)
+- `call_service` — call any HA service (use for device control and response-type services, not CRUD; set `return_response: true` when HA requires a response)
 - `list_services` — browse available services with descriptions
 
 **Dashboards / Media / Camera**

@@ -2,6 +2,7 @@ package formatter
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -206,6 +207,23 @@ func (f *NaturalFormatter) FormatServiceSuccess(_ context.Context, domain, servi
 	}
 
 	return fmt.Sprintf("OK %s %d entities.", action, len(targets)), nil
+}
+
+// FormatServiceResponse formats a response-type service call with its complete payload.
+func (f *NaturalFormatter) FormatServiceResponse(ctx context.Context, domain, service string, targets []string, response map[string]any) (string, error) {
+	header, err := f.FormatServiceSuccess(ctx, domain, service, targets, nil)
+	if err != nil {
+		return "", err
+	}
+	if len(response) == 0 {
+		return header + "\n\n(service returned no response data)", nil
+	}
+
+	payload, err := json.MarshalIndent(response, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal service response: %w", err)
+	}
+	return header + "\n\nResponse:\n" + string(payload), nil
 }
 
 // FormatError formats an error response.

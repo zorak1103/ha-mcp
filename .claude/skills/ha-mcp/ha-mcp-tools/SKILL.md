@@ -10,6 +10,7 @@ description: "Use when choosing which ha-mcp tool or action to call. Examples: \
 | User intent                                          | Tool + Action                                                          |
 | ---------------------------------------------------- | ---------------------------------------------------------------------- |
 | Turn on / off / toggle a device                      | `call_service` (domain=light/switch, service=turn_on/turn_off/toggle)  |
+| Call a response-type service                          | `call_service` with `return_response: true`                            |
 | Get a single entity's current state                  | `get_state`                                                            |
 | List entities in an area / by domain / by state      | `query_entities` mode=current                                          |
 | Find unavailable / stale / disabled entities         | `query_entities` mode=health                                           |

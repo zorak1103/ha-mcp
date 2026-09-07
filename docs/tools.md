@@ -215,7 +215,7 @@ Universal tool for runtime helper operations:
 
 | Tool            | Description                                                            |
 | --------------- | ---------------------------------------------------------------------- |
-| `call_service`  | Call any Home Assistant service (format: natural/json)                 |
+| `call_service`  | Call any Home Assistant service, including response-type services via `return_response` (format: natural/json) |
 | `list_services` | List all available services with descriptions (optional domain filter) |
 
 ### System Tools
@@ -334,7 +334,7 @@ Most tools support two output formats via the `format` parameter:
 - **`json`**: Structured JSON output for backward compatibility and programmatic access
   - Example: `{"entity_id": "light.living_room", "state": "on", "attributes": {"brightness": 204, ...}}`
 
-**Tools with format support**: `analyze_entity`, `analyze_target`, `call_service`, `find_references`, `get_entity_dependencies`, `get_logbook`, `get_registry`, `get_state`, `manage_area`, `manage_automation`, `manage_blueprint`, `manage_calendar`, `manage_camera`, `manage_config_entry`, `manage_dashboard`, `manage_device`, `manage_entity`, `manage_floor`, `manage_hacs`, `manage_helper`, `manage_label`, `manage_person`, `manage_scene`, `manage_script`, `manage_statistics`, `manage_system_log`, `manage_tag`, `manage_todo`, `manage_trace`, `manage_update`, `manage_zone`, `query_devices`, `query_entities`
+**Tools with format support**: `analyze_entity`, `analyze_target`, `call_service` (response-type payloads are complete in both formats), `find_references`, `get_entity_dependencies`, `get_logbook`, `get_registry`, `get_state`, `manage_area`, `manage_automation`, `manage_blueprint`, `manage_calendar`, `manage_camera`, `manage_config_entry`, `manage_dashboard`, `manage_device`, `manage_entity`, `manage_floor`, `manage_hacs`, `manage_helper`, `manage_label`, `manage_person`, `manage_scene`, `manage_script`, `manage_statistics`, `manage_system_log`, `manage_tag`, `manage_todo`, `manage_trace`, `manage_update`, `manage_zone`, `query_devices`, `query_entities`
 
 ## Example Requests
 
@@ -423,10 +423,35 @@ Most tools support two output formats via the `format` parameter:
 
 ### Call a Service
 
+Regular service calls can target entities through `data`. For HA response-type services, set `return_response` to `true`; the result contains the complete service payload and does not run state-change polling.
+
 ```json
 {
   "jsonrpc": "2.0",
   "id": 6,
+  "method": "tools/call",
+  "params": {
+    "name": "call_service",
+    "arguments": {
+      "domain": "weather",
+      "service": "get_forecasts",
+      "data": {
+        "entity_id": "weather.home",
+        "type": "daily"
+      },
+      "return_response": true,
+      "format": "json"
+    }
+  }
+}
+```
+
+For a regular mutation, omit `return_response` (or set it to `false`):
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 7,
   "method": "tools/call",
   "params": {
     "name": "call_service",

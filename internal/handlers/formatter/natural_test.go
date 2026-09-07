@@ -532,6 +532,31 @@ func TestNaturalFormatter_FormatServiceSuccess(t *testing.T) {
 	}
 }
 
+func TestNaturalFormatter_FormatServiceResponse(t *testing.T) {
+	f := NewNaturalFormatter()
+	completeValue := strings.Repeat("x", 401)
+
+	result, err := f.FormatServiceResponse(context.Background(), "weather", "get_forecasts", []string{"weather.home"}, map[string]any{
+		"weather.home": map[string]any{"forecast": completeValue},
+	})
+	if err != nil {
+		t.Fatalf("FormatServiceResponse() error = %v", err)
+	}
+	for _, want := range []string{"OK Called weather.get_forecasts weather.home.", "Response:", completeValue} {
+		if !strings.Contains(result, want) {
+			t.Errorf("FormatServiceResponse() = %q, want to contain %q", result, want)
+		}
+	}
+
+	empty, err := f.FormatServiceResponse(context.Background(), "recorder", "get_statistics", nil, nil)
+	if err != nil {
+		t.Fatalf("FormatServiceResponse() empty error = %v", err)
+	}
+	if !strings.Contains(empty, "service returned no response data") {
+		t.Errorf("empty response = %q, want no-response message", empty)
+	}
+}
+
 func TestNaturalFormatter_FormatError(t *testing.T) {
 	f := NewNaturalFormatter()
 	err := &testError{msg: "connection refused"}

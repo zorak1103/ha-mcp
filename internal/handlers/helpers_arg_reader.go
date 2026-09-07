@@ -29,6 +29,21 @@ import (
 // used at the overwhelming majority of call sites; integer/boolean/anySlice
 // are spelled out because an abbreviation (int/bool) would collide with a
 // Go built-in type name at the call site, which reads worse than it saves.
+// parseBoolArg reads an optional boolean argument strictly. A non-boolean
+// value returns an error instead of silently becoming false because the MCP
+// server does not validate tool arguments against its input schema.
+func parseBoolArg(args map[string]any, key string) (bool, error) {
+	raw, ok := args[key]
+	if !ok {
+		return false, nil
+	}
+	b, ok := raw.(bool)
+	if !ok {
+		return false, fmt.Errorf("invalid %s %v: must be a boolean", key, raw)
+	}
+	return b, nil
+}
+
 type argReader struct {
 	config map[string]any
 	args   map[string]any

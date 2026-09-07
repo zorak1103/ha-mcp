@@ -159,6 +159,27 @@ func TestJSONFormatter_FormatServiceSuccess(t *testing.T) {
 	}
 }
 
+func TestJSONFormatter_FormatServiceResponse(t *testing.T) {
+	f := NewJSONFormatter()
+	response := map[string]any{"weather.home": map[string]any{"forecast": []any{"sunny"}}}
+
+	result, err := f.FormatServiceResponse(context.Background(), "weather", "get_forecasts", nil, response)
+	if err != nil {
+		t.Fatalf("FormatServiceResponse() error = %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
+		t.Fatalf("FormatServiceResponse() returned invalid JSON: %v", err)
+	}
+	if parsed["success"] != true {
+		t.Errorf("success = %v, want true", parsed["success"])
+	}
+	if parsed["response"] == nil {
+		t.Error("response is nil, want payload")
+	}
+}
+
 func TestJSONFormatter_FormatError(t *testing.T) {
 	f := NewJSONFormatter()
 	err := &testError{msg: "connection refused"}

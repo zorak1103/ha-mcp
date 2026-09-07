@@ -24,13 +24,12 @@ export HA_MCP_READ_ONLY=true
 
 **What gets blocked in read-only mode:**
 - All `create`, `update`, `delete` actions in `manage_*` tools
-- Service calls (`call_service`)
+- Service calls (`call_service`), including response-type calls made with `return_response: true`
 - Helper actions (`helper_action` - toggle, set, increment, etc.)
 - Script execution, scene activation
 - Any operation that modifies Home Assistant state
 
-**What remains available:**
-- All `list` and `get` actions
+**Note:** `call_service` remains classified as a write tool even when `return_response: true` is used. Response-type calls are read-shaped, but they remain blocked in read-only mode and by `*:write` filters.
 - State queries (`get_state`, `query_entities`, `query_devices`)
 - History and statistics
 - Analysis tools (`analyze_entity`, `get_entity_dependencies`)

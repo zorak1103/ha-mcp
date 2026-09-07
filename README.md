@@ -143,7 +143,7 @@ Seven guidance topics are also available as MCP resources under `skill://ha-mcp/
 | Helpers           | 2     | `manage_helper` (41 types), `helper_action`                                 |
 | Scripts & Scenes  | 2     | `manage_script`, `manage_scene` (CRUD + execute/activate + JSON Patch + semantic patch) |
 | Analysis          | 4     | `analyze_entity`, `get_entity_dependencies`, `analyze_target`, `find_references` |
-| Services          | 2     | `call_service`, `list_services`                                             |
+| Services          | 2     | `call_service`, `list_services` (response-type calls via `return_response`) |
 | History/Logbook   | 2     | `query_entities` modes, `get_logbook` (entries + correlation)               |
 | Dashboards/Media  | 4     | `manage_dashboard` (JSON Patch + semantic patch), `browse_media`, `manage_camera`, `sign_media_path` |
 | Calendars & Todos | 2     | `manage_calendar`, `manage_todo`                                            |
