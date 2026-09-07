@@ -1563,7 +1563,7 @@ func TestHandleManageDashboard_Find(t *testing.T) {
 				}
 			},
 			wantError:    true,
-			wantContains: []string{"Could not search any dashboard", "default", "lovelace"},
+			wantContains: []string{"Could not search any dashboard", "default", "lovelace", "ws timeout"},
 		},
 		{
 			name: "find - some dashboard fetches fail, success message includes warning",

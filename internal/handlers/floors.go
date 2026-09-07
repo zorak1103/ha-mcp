@@ -219,7 +219,10 @@ func (h *FloorHandlers) handleUpdate(ctx context.Context, client homeassistant.C
 	config := h.buildFloorConfig(args)
 
 	// Apply alias mode, merging with current values as needed.
-	aliasMode := getArrayMode(args, "alias_mode")
+	aliasMode, err := getArrayMode(args, "alias_mode")
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
 	if aliases, hasAliases := getStringSlice(args, "aliases"); hasAliases {
 		config.Aliases = applyArrayMode(currentFloor.Aliases, aliases, aliasMode)
 	}

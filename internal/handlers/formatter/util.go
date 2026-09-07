@@ -173,10 +173,10 @@ func sanitizeDisplayValue(s string) string {
 	return replacer.Replace(s)
 }
 
-// truncateRunes truncates s to at most maxRunes runes, appending "..." if
+// TruncateRunes truncates s to at most maxRunes runes, appending "..." if
 // truncated. Rune-safe: counts and slices by rune, not by byte, so a
 // multi-byte rune is never split.
-func truncateRunes(s string, maxRunes int) string {
+func TruncateRunes(s string, maxRunes int) string {
 	runes := []rune(s)
 	if len(runes) <= maxRunes {
 		return s
@@ -245,7 +245,7 @@ func formatDetailListValue(list []any) string {
 	for _, item := range shown {
 		parts = append(parts, renderDetailValue(item, 1))
 	}
-	joined := truncateRunes(sanitizeDisplayValue(strings.Join(parts, ", ")), maxDetailValueChars)
+	joined := TruncateRunes(sanitizeDisplayValue(strings.Join(parts, ", ")), maxDetailValueChars)
 	if more > 0 {
 		joined += fmt.Sprintf(", … +%d more", more)
 	}
@@ -265,7 +265,7 @@ func FormatDetailValue(v any) string {
 	if list, ok := v.([]any); ok {
 		return formatDetailListValue(list)
 	}
-	return truncateRunes(sanitizeDisplayValue(renderDetailValue(v, 0)), maxDetailValueChars)
+	return TruncateRunes(sanitizeDisplayValue(renderDetailValue(v, 0)), maxDetailValueChars)
 }
 
 // ColorTempToDescription converts color temperature in Kelvin to a description.

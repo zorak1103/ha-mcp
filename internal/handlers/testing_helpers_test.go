@@ -70,37 +70,38 @@ type UniversalMockClient struct {
 	GetCameraSnapshotFn func(ctx context.Context, entityID string) ([]byte, string, error)
 
 	// Registry operations
-	GetEntityRegistryFn         func(ctx context.Context) ([]homeassistant.EntityRegistryEntry, error)
-	GetEntityRegistryEntryFn    func(ctx context.Context, entityID string) (*homeassistant.EntityRegistryEntry, error)
-	GetDeviceRegistryFn         func(ctx context.Context) ([]homeassistant.DeviceRegistryEntry, error)
-	GetAreaRegistryFn           func(ctx context.Context) ([]homeassistant.AreaRegistryEntry, error)
-	CreateAreaFn                func(ctx context.Context, config homeassistant.AreaConfig) (*homeassistant.AreaRegistryEntry, error)
-	UpdateAreaFn                func(ctx context.Context, areaID string, config homeassistant.AreaConfig) (*homeassistant.AreaRegistryEntry, error)
-	DeleteAreaFn                func(ctx context.Context, areaID string) error
-	GetLabelRegistryFn          func(ctx context.Context) ([]homeassistant.LabelRegistryEntry, error)
-	CreateLabelFn               func(ctx context.Context, config homeassistant.LabelConfig) (*homeassistant.LabelRegistryEntry, error)
-	UpdateLabelFn               func(ctx context.Context, labelID string, config homeassistant.LabelConfig) (*homeassistant.LabelRegistryEntry, error)
-	DeleteLabelFn               func(ctx context.Context, labelID string) error
-	GetFloorRegistryFn          func(ctx context.Context) ([]homeassistant.FloorRegistryEntry, error)
-	CreateFloorFn               func(ctx context.Context, config homeassistant.FloorConfig) (*homeassistant.FloorRegistryEntry, error)
-	UpdateFloorFn               func(ctx context.Context, floorID string, config homeassistant.FloorConfig) (*homeassistant.FloorRegistryEntry, error)
-	DeleteFloorFn               func(ctx context.Context, floorID string) error
-	GetZonesFn                  func(ctx context.Context) ([]homeassistant.ZoneRegistryEntry, error)
-	CreateZoneFn                func(ctx context.Context, config homeassistant.ZoneConfig) (*homeassistant.ZoneRegistryEntry, error)
-	UpdateZoneFn                func(ctx context.Context, zoneID string, config homeassistant.ZoneConfig) (*homeassistant.ZoneRegistryEntry, error)
-	DeleteZoneFn                func(ctx context.Context, zoneID string) error
-	GetPersonsFn                func(ctx context.Context) ([]homeassistant.PersonRegistryEntry, error)
-	CreatePersonFn              func(ctx context.Context, config homeassistant.PersonConfig) (*homeassistant.PersonRegistryEntry, error)
-	UpdatePersonFn              func(ctx context.Context, personID string, config homeassistant.PersonConfig) (*homeassistant.PersonRegistryEntry, error)
-	DeletePersonFn              func(ctx context.Context, personID string) error
-	GetTagsFn                   func(ctx context.Context) ([]homeassistant.TagRegistryEntry, error)
-	CreateTagFn                 func(ctx context.Context, config homeassistant.TagConfig) (*homeassistant.TagRegistryEntry, error)
-	UpdateTagFn                 func(ctx context.Context, tagID string, config homeassistant.TagConfig) (*homeassistant.TagRegistryEntry, error)
-	DeleteTagFn                 func(ctx context.Context, tagID string) error
-	RemoveEntityRegistryEntryFn func(ctx context.Context, entityID string) error
-	UpdateEntityRegistryEntryFn func(ctx context.Context, entityID string, config homeassistant.EntityRegistryUpdateConfig) (*homeassistant.EntityRegistryEntry, error)
-	RemoveDeviceConfigEntryFn   func(ctx context.Context, deviceID, configEntryID string) error
-	UpdateDeviceRegistryEntryFn func(ctx context.Context, deviceID string, config homeassistant.DeviceRegistryUpdateConfig) (*homeassistant.DeviceRegistryEntry, error)
+	GetEntityRegistryFn            func(ctx context.Context) ([]homeassistant.EntityRegistryEntry, error)
+	GetEntityRegistryEntryFn       func(ctx context.Context, entityID string) (*homeassistant.EntityRegistryEntry, error)
+	GetDeviceRegistryFn            func(ctx context.Context) ([]homeassistant.DeviceRegistryEntry, error)
+	GetAreaRegistryFn              func(ctx context.Context) ([]homeassistant.AreaRegistryEntry, error)
+	CreateAreaFn                   func(ctx context.Context, config homeassistant.AreaConfig) (*homeassistant.AreaRegistryEntry, error)
+	UpdateAreaFn                   func(ctx context.Context, areaID string, config homeassistant.AreaConfig) (*homeassistant.AreaRegistryEntry, error)
+	DeleteAreaFn                   func(ctx context.Context, areaID string) error
+	GetLabelRegistryFn             func(ctx context.Context) ([]homeassistant.LabelRegistryEntry, error)
+	CreateLabelFn                  func(ctx context.Context, config homeassistant.LabelConfig) (*homeassistant.LabelRegistryEntry, error)
+	UpdateLabelFn                  func(ctx context.Context, labelID string, config homeassistant.LabelConfig) (*homeassistant.LabelRegistryEntry, error)
+	DeleteLabelFn                  func(ctx context.Context, labelID string) error
+	InvalidateLabelRegistryCacheFn func()
+	GetFloorRegistryFn             func(ctx context.Context) ([]homeassistant.FloorRegistryEntry, error)
+	CreateFloorFn                  func(ctx context.Context, config homeassistant.FloorConfig) (*homeassistant.FloorRegistryEntry, error)
+	UpdateFloorFn                  func(ctx context.Context, floorID string, config homeassistant.FloorConfig) (*homeassistant.FloorRegistryEntry, error)
+	DeleteFloorFn                  func(ctx context.Context, floorID string) error
+	GetZonesFn                     func(ctx context.Context) ([]homeassistant.ZoneRegistryEntry, error)
+	CreateZoneFn                   func(ctx context.Context, config homeassistant.ZoneConfig) (*homeassistant.ZoneRegistryEntry, error)
+	UpdateZoneFn                   func(ctx context.Context, zoneID string, config homeassistant.ZoneConfig) (*homeassistant.ZoneRegistryEntry, error)
+	DeleteZoneFn                   func(ctx context.Context, zoneID string) error
+	GetPersonsFn                   func(ctx context.Context) ([]homeassistant.PersonRegistryEntry, error)
+	CreatePersonFn                 func(ctx context.Context, config homeassistant.PersonConfig) (*homeassistant.PersonRegistryEntry, error)
+	UpdatePersonFn                 func(ctx context.Context, personID string, config homeassistant.PersonConfig) (*homeassistant.PersonRegistryEntry, error)
+	DeletePersonFn                 func(ctx context.Context, personID string) error
+	GetTagsFn                      func(ctx context.Context) ([]homeassistant.TagRegistryEntry, error)
+	CreateTagFn                    func(ctx context.Context, config homeassistant.TagConfig) (*homeassistant.TagRegistryEntry, error)
+	UpdateTagFn                    func(ctx context.Context, tagID string, config homeassistant.TagConfig) (*homeassistant.TagRegistryEntry, error)
+	DeleteTagFn                    func(ctx context.Context, tagID string) error
+	RemoveEntityRegistryEntryFn    func(ctx context.Context, entityID string) error
+	UpdateEntityRegistryEntryFn    func(ctx context.Context, entityID string, config homeassistant.EntityRegistryUpdateConfig) (*homeassistant.EntityRegistryEntry, error)
+	RemoveDeviceConfigEntryFn      func(ctx context.Context, deviceID, configEntryID string) error
+	UpdateDeviceRegistryEntryFn    func(ctx context.Context, deviceID string, config homeassistant.DeviceRegistryUpdateConfig) (*homeassistant.DeviceRegistryEntry, error)
 
 	// Media operations
 	SignPathFn        func(ctx context.Context, path string, expires int) (string, error)
@@ -486,6 +487,15 @@ func (m *UniversalMockClient) DeleteLabel(ctx context.Context, labelID string) e
 		return m.DeleteLabelFn(ctx, labelID)
 	}
 	return nil
+}
+
+// InvalidateLabelRegistryCache satisfies the optional interface{ InvalidateLabelRegistryCache() }
+// capability that labelWriteGuardError type-asserts for, so tests can simulate a CachedClient
+// without depending on the real one.
+func (m *UniversalMockClient) InvalidateLabelRegistryCache() {
+	if m.InvalidateLabelRegistryCacheFn != nil {
+		m.InvalidateLabelRegistryCacheFn()
+	}
 }
 
 func (m *UniversalMockClient) GetFloorRegistry(ctx context.Context) ([]homeassistant.FloorRegistryEntry, error) {

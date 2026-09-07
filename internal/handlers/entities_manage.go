@@ -194,29 +194,26 @@ func (h *EntityManageHandlers) handleUpdateEntity(ctx context.Context, client ho
 	oldEntityID := entityID
 	config, hasFields := h.buildEntityUpdateConfig(args)
 
-	labelMode := getArrayMode(args, "label_mode")
-	aliasMode := getArrayMode(args, "alias_mode")
-	labels, hasLabels := getStringSlice(args, "labels")
+	labelMode, err := getArrayMode(args, "label_mode")
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
+	aliasMode, err := getArrayMode(args, "alias_mode")
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
+	labels, hasLabels, refusal := parseLabelsArg(args)
+	if refusal != nil {
+		return refusal, nil
+	}
 	aliases, hasAliases := getStringSlice(args, "aliases")
 
-	var currentEntry homeassistant.EntityRegistryEntry
-	if hasLabels || hasAliases {
-		entry, fetchErr := h.fetchEntityForMerge(ctx, client, entityID, labelMode, aliasMode, hasLabels, hasAliases)
-		if fetchErr != nil {
-			return errorResult(fetchErr.Error()), nil
-		}
-		currentEntry = *entry
+	res, updatedLabelsOrAliases, labelWarning := h.applyEntityLabelAndAliasUpdates(
+		ctx, client, entityID, &config, labels, aliases, hasLabels, hasAliases, labelMode, aliasMode)
+	if res != nil {
+		return res, nil
 	}
-
-	if hasLabels {
-		hasFields = true
-		config.Labels = applyArrayMode(currentEntry.Labels, labels, labelMode)
-	}
-
-	if hasAliases {
-		hasFields = true
-		config.Aliases = applyArrayMode(currentEntry.Aliases, aliases, aliasMode)
-	}
+	hasFields = hasFields || updatedLabelsOrAliases
 
 	if !hasFields {
 		return errorResult("at least one field must be provided for update (name, icon, area_id, disabled_by, hidden_by, labels, aliases, new_entity_id)"), nil
@@ -229,9 +226,52 @@ func (h *EntityManageHandlers) handleUpdateEntity(ctx context.Context, client ho
 	}
 
 	if format == formatJSON {
-		return h.formatEntityJSON(updated)
+		jsonRes, jsonErr := h.formatEntityJSON(updated)
+		return appendResultWarning(jsonRes, labelWarning), jsonErr
 	}
-	return h.formatEntityNaturalWithSuccess(updated, oldEntityID), nil
+	return appendResultWarning(h.formatEntityNaturalWithSuccess(updated, oldEntityID), labelWarning), nil
+}
+
+// applyEntityLabelAndAliasUpdates validates caller-supplied labels against the label registry
+// and, if labels or aliases were supplied, fetches the entity's current registry entry to merge
+// add/remove modes onto, writing the merged result into config. Returns a non-nil res to
+// short-circuit the caller on validation or fetch failure; updated reports whether config.Labels
+// or config.Aliases was written (equivalent to the caller's own hasFields flag); warning is
+// non-empty when the label registry couldn't be (re-)verified and the write proceeded unchecked
+// - the caller must surface it rather than reporting bare success.
+func (h *EntityManageHandlers) applyEntityLabelAndAliasUpdates(
+	ctx context.Context,
+	client homeassistant.Client,
+	entityID string,
+	config *homeassistant.EntityRegistryUpdateConfig,
+	labels, aliases []string,
+	hasLabels, hasAliases bool,
+	labelMode, aliasMode string,
+) (res *mcp.ToolsCallResult, updated bool, warning string) {
+	if !hasLabels && !hasAliases {
+		return nil, false, ""
+	}
+
+	if hasLabels {
+		guard := labelWriteGuardError(ctx, client, labels, labelMode)
+		if guard.Refusal != nil {
+			return guard.Refusal, false, ""
+		}
+		warning = guard.Warning
+	}
+
+	entry, fetchErr := h.fetchEntityForMerge(ctx, client, entityID, labelMode, aliasMode, hasLabels, hasAliases)
+	if fetchErr != nil {
+		return errorResult(fetchErr.Error()), false, ""
+	}
+
+	if hasLabels {
+		config.Labels = applyArrayMode(entry.Labels, labels, labelMode)
+	}
+	if hasAliases {
+		config.Aliases = applyArrayMode(entry.Aliases, aliases, aliasMode)
+	}
+	return nil, true, warning
 }
 
 func (h *EntityManageHandlers) handleDeleteEntity(ctx context.Context, client homeassistant.Client, args map[string]any, format string) (*mcp.ToolsCallResult, error) {

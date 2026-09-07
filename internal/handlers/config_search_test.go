@@ -322,6 +322,34 @@ func TestFormatScanFailureWarning(t *testing.T) {
 	}
 }
 
+func TestFormatScanFailureWarning_TruncatesLongReasons(t *testing.T) {
+	t.Parallel()
+
+	longReason := strings.Repeat("x", 5000)
+	failed := []ScanOutcome{{Source: "automation", Err: errors.New(longReason)}}
+
+	got := formatScanFailureWarning(failed)
+
+	if len(got) > 1000 {
+		t.Fatalf("expected the reason to be bounded, got a %d-char message", len(got))
+	}
+	if !strings.Contains(got, "...") {
+		t.Errorf("expected a truncation marker, got: %s", got)
+	}
+}
+
+func TestFormatScanFailureWarning_FlattensCarriageReturns(t *testing.T) {
+	t.Parallel()
+
+	failed := []ScanOutcome{{Source: "automation", Err: errors.New("line1\rline2")}}
+
+	got := formatScanFailureWarning(failed)
+
+	if strings.Contains(got, "\r") {
+		t.Errorf("expected \\r to be flattened, got: %q", got)
+	}
+}
+
 // --- allDashboardURLPaths ---
 
 func TestAllDashboardURLPaths_IncludesDefaultAndListed(t *testing.T) {

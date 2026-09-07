@@ -2754,6 +2754,139 @@ func TestHandleAnalyzeEntity_MultipleFailedSourcesAllReported(t *testing.T) {
 	}
 }
 
+// TestHandleAnalyzeEntity_AreaScanFailureIsReported verifies that area-reference API failures
+// are not presented as a complete scan with missing references.
+func TestHandleAnalyzeEntity_AreaScanFailureIsReported(t *testing.T) {
+	t.Parallel()
+
+	entityID := "light.area_entity"
+	client := &mockAnalysisClient{
+		GetStateFn: func(_ context.Context, id string) (*homeassistant.Entity, error) {
+			return &homeassistant.Entity{EntityID: id, State: "on"}, nil
+		},
+		GetEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+			return []homeassistant.EntityRegistryEntry{{EntityID: entityID, AreaID: "living_room"}}, nil
+		},
+		ListAutomationsFn: func(context.Context) ([]homeassistant.Automation, error) {
+			return nil, errors.New("automation list unavailable")
+		},
+		ListScriptsFn: func(context.Context) ([]homeassistant.Entity, error) {
+			return nil, nil
+		},
+	}
+
+	result, err := NewAnalysisHandlers().handleAnalyzeEntity(context.Background(), client, map[string]any{
+		"entity_id": entityID,
+		"format":    "natural",
+	})
+	if err != nil {
+		t.Fatalf("handleAnalyzeEntity() error = %v", err)
+	}
+
+	text := result.Content[0].Text
+	if !strings.Contains(text, "areas (listing automations: automation list unavailable)") {
+		t.Fatalf("expected area scan failure warning, got:\n%s", text)
+	}
+	if strings.Contains(text, "scanned: scripts, scenes, dashboards, helper_templates, groups, areas") {
+		t.Fatalf("failed area scan was reported as scanned, got:\n%s", text)
+	}
+}
+
+func TestFindAreaAutomationReferences_ReportsFetchFailureAndSkipsNilConfig(t *testing.T) {
+	t.Parallel()
+
+	client := &mockAnalysisClient{
+		ListAutomationsFn: func(context.Context) ([]homeassistant.Automation, error) {
+			return []homeassistant.Automation{
+				{EntityID: "automation.failed", FriendlyName: "Failed"},
+				{EntityID: "automation.empty", FriendlyName: "Empty"},
+			}, nil
+		},
+		GetAutomationFn: func(_ context.Context, id string) (*homeassistant.Automation, error) {
+			if id == "failed" {
+				return nil, errors.New("automation unavailable")
+			}
+			return &homeassistant.Automation{EntityID: "automation.empty"}, nil
+		},
+	}
+
+	refs := &EntityReferences{}
+	err := NewAnalysisHandlers().findAreaAutomationReferences(context.Background(), client, "living_room", refs)
+	if err == nil || !strings.Contains(err.Error(), "getting automation automation.failed: automation unavailable") {
+		t.Fatalf("expected fetch failure, got %v", err)
+	}
+	if len(refs.AreaReferences) != 0 {
+		t.Fatalf("nil-config automation should not create references: %+v", refs.AreaReferences)
+	}
+}
+
+func TestFindAreaScriptReferences_SkipsScriptsWithoutAreaMatch(t *testing.T) {
+	t.Parallel()
+
+	client := &mockAnalysisClient{
+		ListScriptsFn: func(context.Context) ([]homeassistant.Entity, error) {
+			return []homeassistant.Entity{
+				{EntityID: "script.other", Attributes: map[string]any{"sequence": []any{"kitchen"}}},
+				{EntityID: "script.no_sequence", Attributes: map[string]any{}},
+			}, nil
+		},
+	}
+
+	refs := &EntityReferences{}
+	err := NewAnalysisHandlers().findAreaScriptReferences(context.Background(), client, "living_room", refs)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(refs.AreaReferences) != 0 {
+		t.Fatalf("scripts without an area match should be skipped: %+v", refs.AreaReferences)
+	}
+}
+
+func TestFindAreaReferencesWithSnapshot_UnassignedEntitySkipsScans(t *testing.T) {
+	t.Parallel()
+
+	client := &mockAnalysisClient{
+		ListAutomationsFn: func(context.Context) ([]homeassistant.Automation, error) {
+			t.Fatal("unassigned entities must not scan automations")
+			return nil, nil
+		},
+		ListScriptsFn: func(context.Context) ([]homeassistant.Entity, error) {
+			t.Fatal("unassigned entities must not scan scripts")
+			return nil, nil
+		},
+	}
+
+	err := NewAnalysisHandlers().findAreaReferencesWithSnapshot(
+		context.Background(), client, &AnalysisSnapshot{}, "light.unassigned", &EntityReferences{},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestFindAreaReferencesWithSnapshot_ReportsScriptScanFailure(t *testing.T) {
+	t.Parallel()
+
+	client := &mockAnalysisClient{
+		ListAutomationsFn: func(context.Context) ([]homeassistant.Automation, error) {
+			return nil, nil
+		},
+		ListScriptsFn: func(context.Context) ([]homeassistant.Entity, error) {
+			return nil, errors.New("script list unavailable")
+		},
+	}
+	snapshot := &AnalysisSnapshot{
+		EntityRegistry: []homeassistant.EntityRegistryEntry{{EntityID: "light.assigned", AreaID: "living_room"}},
+	}
+
+	err := NewAnalysisHandlers().findAreaReferencesWithSnapshot(
+		context.Background(), client, snapshot, "light.assigned", &EntityReferences{},
+	)
+	if err == nil || !strings.Contains(err.Error(), "listing scripts: script list unavailable") {
+		t.Fatalf("expected script scan failure, got %v", err)
+	}
+}
+
 // TestAnalysisHandlers_FormatAnalysisNatural_NameOrder pins the "Name (entity_id) is
 // state" line shape to match query_entities' natural formatter (internal/handlers/
 // formatter/natural.go), so an LLM reading both tools' output can rely on the same

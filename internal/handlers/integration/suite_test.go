@@ -231,6 +231,18 @@ func (s *IntegrationTestSuite) RegisterCleanup(cleanupFn func()) {
 	s.T().Cleanup(cleanupFn)
 }
 
+// CreateTestLabel creates a label named GenerateTestID(suffix) and registers its deletion as
+// test cleanup. Returns the created label's LabelID - which is what the area/entity/device
+// registries store. Home Assistant silently strips label ids that are absent from the label
+// registry, so a test must never invent a label string.
+func (s *IntegrationTestSuite) CreateTestLabel(suffix string) string {
+	label, err := s.Client().CreateLabel(s.Context(), homeassistant.LabelConfig{Name: GenerateTestID(suffix)})
+	s.Require().NoError(err, "failed to create test label %q", suffix)
+	s.Require().NotNil(label)
+	s.RegisterCleanup(func() { _ = s.Client().DeleteLabel(s.Context(), label.LabelID) })
+	return label.LabelID
+}
+
 // WaitForEntity waits for an entity to appear with a specific state.
 // This is useful after creating entities that take time to initialize.
 func (s *IntegrationTestSuite) WaitForEntity(entityID string, timeout time.Duration) (*homeassistant.Entity, error) {

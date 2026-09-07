@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -304,9 +305,8 @@ func (h *AnalysisHandlers) buildEntityAnalysis(ctx context.Context, client homea
 	}
 	analysis.Registry = h.extractRegistryInfo(snapshot, entityID)
 
-	// Find all references. groups/areas are sourced from the pre-existing
-	// AnalysisSnapshot, which has no per-field error tracking of its own, so
-	// they're not included in outcomes below - see the plan's Global Constraints.
+	// Find all references. Groups come from the pre-existing AnalysisSnapshot,
+	// while area references are tracked as an independent scan outcome.
 	outcomes := []ScanOutcome{
 		{Source: "automations", Err: h.findAutomationReferences(ctx, client, entityID, analysis.References, verbose)},
 		{Source: "scripts", Err: h.findScriptReferences(ctx, client, entityID, analysis.References, verbose)},
@@ -316,11 +316,14 @@ func (h *AnalysisHandlers) buildEntityAnalysis(ctx context.Context, client homea
 	}
 	h.findGroupReferencesWithSnapshot(snapshot, entityID, analysis.References)
 
-	// Find area-based references using snapshot (entity controlled via area_id in automations/scripts)
-	h.findAreaReferencesWithSnapshot(ctx, client, snapshot, entityID, analysis.References)
+	// Find area-based references using snapshot (entity controlled via area_id in automations/scripts).
+	outcomes = append(outcomes, ScanOutcome{
+		Source: "areas",
+		Err:    h.findAreaReferencesWithSnapshot(ctx, client, snapshot, entityID, analysis.References),
+	})
 
 	scanned, failed := splitScanOutcomes(outcomes)
-	scanned = append(scanned, "groups", "areas")
+	scanned = append(scanned, "groups")
 	analysis.References.ScannedSources = scanned
 	analysis.References.FailedSources = failed
 	analysis.References.FailedOutcomes = scanFailures(outcomes)
@@ -523,23 +526,37 @@ func (h *AnalysisHandlers) findGroupReferencesWithSnapshot(snapshot *AnalysisSna
 }
 
 // findAreaReferencesWithSnapshot finds automations and scripts that reference the entity's area using pre-fetched data.
-func (h *AnalysisHandlers) findAreaReferencesWithSnapshot(ctx context.Context, client homeassistant.Client, snapshot *AnalysisSnapshot, entityID string, refs *EntityReferences) {
-	// Get entity's area from snapshot
+func (h *AnalysisHandlers) findAreaReferencesWithSnapshot(ctx context.Context, client homeassistant.Client, snapshot *AnalysisSnapshot, entityID string, refs *EntityReferences) error {
 	entityArea := snapshot.GetEntityArea(entityID)
 	if entityArea == "" {
-		return // Entity is not assigned to any area
+		return nil
 	}
 
-	// Search automations for area-based references
+	var scanErrs []error
+	if err := h.findAreaAutomationReferences(ctx, client, entityArea, refs); err != nil {
+		scanErrs = append(scanErrs, err)
+	}
+	if err := h.findAreaScriptReferences(ctx, client, entityArea, refs); err != nil {
+		scanErrs = append(scanErrs, err)
+	}
+	return errors.Join(scanErrs...)
+}
+
+func (h *AnalysisHandlers) findAreaAutomationReferences(ctx context.Context, client homeassistant.Client, entityArea string, refs *EntityReferences) error {
 	automations, err := client.ListAutomations(ctx)
 	if err != nil {
-		return
+		return fmt.Errorf("listing automations: %w", err)
 	}
 
+	var scanErrs []error
 	for _, auto := range automations {
 		autoID := strings.TrimPrefix(auto.EntityID, "automation.")
 		fullAuto, getErr := client.GetAutomation(ctx, autoID)
-		if getErr != nil || fullAuto.Config == nil {
+		if getErr != nil {
+			scanErrs = append(scanErrs, fmt.Errorf("getting automation %s: %w", auto.EntityID, getErr))
+			continue
+		}
+		if fullAuto.Config == nil {
 			continue
 		}
 
@@ -554,33 +571,34 @@ func (h *AnalysisHandlers) findAreaReferencesWithSnapshot(ctx context.Context, c
 			})
 		}
 	}
+	return errors.Join(scanErrs...)
+}
 
-	// Search scripts for area-based references
+func (h *AnalysisHandlers) findAreaScriptReferences(ctx context.Context, client homeassistant.Client, entityArea string, refs *EntityReferences) error {
 	scripts, err := client.ListScripts(ctx)
 	if err != nil {
-		return
+		return fmt.Errorf("listing scripts: %w", err)
 	}
 
 	for _, script := range scripts {
 		sequence, ok := script.Attributes["sequence"].([]any)
-		if !ok {
+		if !ok || !h.searchAreaInSlice(sequence, entityArea) {
 			continue
 		}
 
-		if h.searchAreaInSlice(sequence, entityArea) {
-			fn := ""
-			if name, ok := script.Attributes["friendly_name"].(string); ok {
-				fn = name
-			}
-			refs.AreaReferences = append(refs.AreaReferences, AreaReference{
-				EntityID: script.EntityID,
-				Alias:    fn,
-				Type:     traceDomainScript,
-				AreaID:   entityArea,
-				UsedIn:   []string{usedInAction},
-			})
+		fn := ""
+		if name, ok := script.Attributes["friendly_name"].(string); ok {
+			fn = name
 		}
+		refs.AreaReferences = append(refs.AreaReferences, AreaReference{
+			EntityID: script.EntityID,
+			Alias:    fn,
+			Type:     traceDomainScript,
+			AreaID:   entityArea,
+			UsedIn:   []string{usedInAction},
+		})
 	}
+	return nil
 }
 
 // findAreaUsageInConfig searches for area usage in automation config.

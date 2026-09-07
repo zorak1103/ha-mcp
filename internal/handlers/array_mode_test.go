@@ -122,10 +122,12 @@ func TestGetArrayMode(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name string
-		args map[string]any
-		key  string
-		want string
+		name        string
+		args        map[string]any
+		key         string
+		want        string
+		wantErr     bool
+		wantErrText string
 	}{
 		{
 			name: "key not present defaults to add",
@@ -157,12 +159,38 @@ func TestGetArrayMode(t *testing.T) {
 			key:  "label_mode",
 			want: arrayModeReplace,
 		},
+		{
+			name:        "unrecognized value is rejected, not silently treated as add",
+			args:        map[string]any{"label_mode": "Replace"},
+			key:         "label_mode",
+			wantErr:     true,
+			wantErrText: "label_mode",
+		},
+		{
+			name:        "non-string value is rejected",
+			args:        map[string]any{"label_mode": 42},
+			key:         "label_mode",
+			wantErr:     true,
+			wantErrText: "label_mode",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := getArrayMode(tt.args, tt.key)
+			got, err := getArrayMode(tt.args, tt.key)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected an error, got mode %q", got)
+				}
+				if tt.wantErrText != "" && !strings.Contains(err.Error(), tt.wantErrText) {
+					t.Errorf("expected error to mention %q, got: %v", tt.wantErrText, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 			if got != tt.want {
 				t.Errorf("getArrayMode() = %q, want %q", got, tt.want)
 			}

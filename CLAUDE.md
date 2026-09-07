@@ -187,8 +187,10 @@ Tool actions and parameters are defined in the handler schemas. Non-obvious aspe
 **Label/Alias Array Mode (manage_entity, manage_device, manage_area, manage_floor):**
 - `label_mode`/`alias_mode` on `update` action: `'add'` (default, append+dedup), `'remove'` (subtract), `'replace'` (full replacement)
 - `add` and `remove` modes fetch the current registry entry to merge; `replace` sets values directly
-- Implemented in `internal/handlers/array_mode.go` (`applyArrayMode`, `getStringSlice`, `getArrayMode`, `arrayModeSchema`)
+- Implemented in `internal/handlers/array_mode.go` (`applyArrayMode`, `getStringSlice`, `getArrayMode`, `arrayModeSchema`). `getArrayMode` returns `(string, error)` and rejects anything outside `add`/`remove`/`replace` - the schema's `Enum` is advisory only, nothing in `internal/mcp` validates it against incoming arguments, so an unrecognized value (a typo'd case like `"Replace"`, or a non-string) would otherwise fall through `applyArrayMode`'s default case and silently execute as `add`.
 - Modes apply only to `update`; `create` always sets initial values directly
+- `manage_floor` has no `labels` field at all (`FloorRegistryEntry` only has `Aliases`) - only `alias_mode` applies to it
+- Caller-supplied `labels` on `manage_area`/`manage_entity`/`manage_device` `create`/`update` must be parsed with `parseLabelsArg` (`internal/handlers/labels_validation.go`), not `getStringSlice`/`toStringArray` - see the "HA silently strips label ids..." gotcha below for why - then validated against the label registry before the write (`labelWriteGuardError`); values merged in from the existing entry via `add`/`remove` are not re-validated, and `remove` mode is exempt entirely. Any handler gaining a `labels` field needs this guard **and** a `GetLabelRegistryFn` mock in every existing test that hits it (an unconsulted mock is otherwise an empty-registry default that rejects every label)
 
 **JSON Patch (RFC 6902) + Semantic Patch:**
 - `manage_automation`, `manage_script`, `manage_scene`, `manage_dashboard` all support `action=patch` with an `operations` array. `manage_dashboard` also supports `action=find` (search a string/entity_id across all views/nested cards)
@@ -272,6 +274,7 @@ Key environment variables:
 
 - **Pagination**: `PaginationMetadata.NextCursor` is `*string` - requires nil check and dereferencing
 - **Person attributes**: `device_trackers` is `[]any` requiring type assertion, not `[]string`
+- **HA silently strips label ids missing from the label registry**: `config/{area,entity,device}_registry/{create,update}` subtract unknown ids from `data["labels"]` and return success, so a bad id is an invisible no-op (issue #242). `labelWriteGuardError()` (`internal/handlers/labels_validation.go`) rejects caller-supplied labels pre-write; it returns a `labelGuardResult{Refusal, Warning}`, not a bare `*mcp.ToolsCallResult` - `Warning` is non-empty when the registry couldn't be (re-)verified and the write proceeded unchecked, and callers must `appendResultWarning` it onto their success result rather than reporting bare success (a silent degrade would recreate the exact invisible-no-op bug #242 fixed). Before refusing, the guard retries once against a freshly-invalidated registry via an optional `interface{ InvalidateLabelRegistryCache() }` type assertion (`CachedClient.InvalidateLabelRegistryCache`, exported for this purpose) - the label registry shares `HA_CACHE_AREA_REG_TTL_MIN` (there is no dedicated label TTL), so a label created moments ago in the HA UI would otherwise be refused as "unknown" for up to that TTL. **`labels` must be parsed with `parseLabelsArg`, never `getStringSlice`/`toStringArray`**: a bare string or an array containing a non-string element must be refused outright, not silently reduced to a zero-length-but-non-nil `[]string` - that zero-length slice bypasses the guard's own `len(supplied)==0` exemption, and on update `ws_client_impl.go` sends `params["labels"]` for any non-nil `config.Labels` (even empty), so a malformed input previously wiped every existing label instead of being rejected. Integration tests must mint real labels via `s.CreateTestLabel()` instead of inventing strings.
 
 - **`buildDeviceIDsInArea`**: must return errors from `GetDeviceRegistry`, not swallow them - a swallowed fetch failure silently narrows `query_entities`'s `area_id` filter instead of failing the query.
 - **Client interface method additions**: touches 12 files - `client.go`, `ws_client_impl.go` (if WS-backed) + `rest_client.go`, `hybrid_client.go`'s `WSOperations`/`RESTOperations` + delegation, `cached_client.go` delegation, and 6 test mock files.
@@ -387,6 +390,8 @@ export HA_INTEGRATION_TEST_TOKEN=<your-token>
 go test -tags=integration -v ./internal/handlers/integration/...
 set -a && source .env.integration && set +a && go test -tags=integration -v ./internal/handlers/integration/...
 ```
+
+**Scope integration test runs to what changed**: the full suite runs against a real, network-reachable HA instance and is extremely slow. When verifying a change, run only the affected test(s) via `-run 'TestSuite/TestCase1|TestSuite/TestCase2|...'` (or the equivalent across suites) rather than the whole package. When in doubt about what counts as "affected," include more test names rather than fewer - a broader `-run` filter is cheap, a missed regression is not. Only run the complete, untargeted integration suite in exceptional cases (e.g. a change that plausibly touches many unrelated handlers/clients, or a final pre-release check) - and say so explicitly when doing it, since it is a deliberate exception to this default.
 
 **Safety:** All test entities use `mcptest_<uuid>_<name>` prefix. Tests are skipped if environment variables are not set.
 

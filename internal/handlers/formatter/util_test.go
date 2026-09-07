@@ -625,7 +625,7 @@ func TestTruncateRunes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := truncateRunes(tt.s, tt.maxRunes)
+			result := TruncateRunes(tt.s, tt.maxRunes)
 			if result != tt.expected {
 				t.Errorf("truncateRunes(%q, %d) = %q, want %q", tt.s, tt.maxRunes, result, tt.expected)
 			}

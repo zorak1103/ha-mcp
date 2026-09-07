@@ -1,6 +1,10 @@
 package handlers
 
-import "github.com/zorak1103/ha-mcp/internal/mcp"
+import (
+	"fmt"
+
+	"github.com/zorak1103/ha-mcp/internal/mcp"
+)
 
 // Array mode constants for label/alias update operations.
 const (
@@ -89,12 +93,30 @@ func getStringSlice(args map[string]any, key string) ([]string, bool) {
 	return result, true
 }
 
-// getArrayMode extracts the mode parameter from args with "add" as default.
-func getArrayMode(args map[string]any, key string) string {
-	if mode, ok := args[key].(string); ok && mode != "" {
-		return mode
+// getArrayMode extracts the mode parameter from args, defaulting to arrayModeAdd when the key
+// is absent, nil, or an empty string. Returns an error for anything else that isn't one of
+// add/remove/replace: the schema's Enum (arrayModeSchema) is advisory only - nothing in
+// internal/mcp validates it against incoming arguments - so an unrecognized value (a typo'd
+// case like "Replace", or a non-string) previously fell through applyArrayMode's default case
+// and silently executed as "add" instead of failing.
+func getArrayMode(args map[string]any, key string) (string, error) {
+	val, exists := args[key]
+	if !exists || val == nil {
+		return arrayModeAdd, nil
 	}
-	return arrayModeAdd
+	mode, ok := val.(string)
+	if !ok {
+		return "", fmt.Errorf("%s must be a string, got %T", key, val)
+	}
+	if mode == "" {
+		return arrayModeAdd, nil
+	}
+	switch mode {
+	case arrayModeAdd, arrayModeRemove, arrayModeReplace:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("%s must be one of %q, %q, %q - got %q", key, arrayModeAdd, arrayModeRemove, arrayModeReplace, mode)
+	}
 }
 
 // arrayModeSchema returns the JSONSchema definition for a mode parameter.
