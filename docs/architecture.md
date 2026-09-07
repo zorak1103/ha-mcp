@@ -123,7 +123,7 @@ ha-mcp/
 │   │   ├── helpers_config_builders.go # Config builders for standard helper types
 │   │   ├── helpers_config_builders_extended.go # Config builders for advanced/multi-step helpers
 │   │   ├── helpers_template_types.go # Template helper subtype definitions and schema tables
-│   │   ├── scripts.go           # Consolidated manage_script tool
+│   │   ├── scripts.go           # manage_script and call_service tools
 │   │   ├── scenes.go            # Consolidated manage_scene tool
 │   │   ├── patch.go             # JSON Patch handler with dry-run support
 │   │   ├── patch_semantic.go    # Semantic property-based patching layer

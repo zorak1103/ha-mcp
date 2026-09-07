@@ -407,6 +407,31 @@ func (s *Server) handleToolsList(req *Request) *Response {
 	return NewSuccessResponse(req.ID, result)
 }
 
+// responseTooLargeForJSON reruns an ordinary tool in natural format when the
+// JSON response exceeds the MCP size threshold. Response-type calls are excluded
+// because rerunning a response-capable service could duplicate side effects.
+func (s *Server) responseTooLargeForJSON(ctx context.Context, handler ToolHandler, client homeassistant.Client, params ToolsCallParams, result *ToolsCallResult) *ToolsCallResult {
+	format, _ := params.Arguments["format"].(string)
+	returnResponse, _ := params.Arguments["return_response"].(bool)
+	if format != formatJSON || returnResponse {
+		return result
+	}
+
+	size := resultContentSize(result)
+	if size <= maxJSONResponseBytes {
+		return result
+	}
+
+	s.logger.Info("Response too large for json format, falling back to natural",
+		"tool", params.Name, "size_bytes", size)
+	naturalArgs := copyArgsWithFormat(params.Arguments, formatNatural)
+	naturalResult, err := handler(ctx, client, naturalArgs)
+	if err != nil {
+		return result
+	}
+	return prependSizeFallbackNote(naturalResult, size)
+}
+
 // handleToolsCall handles tools/call requests.
 func (s *Server) handleToolsCall(ctx context.Context, req *Request, r *http.Request) *Response {
 	var params ToolsCallParams
@@ -416,20 +441,16 @@ func (s *Server) handleToolsCall(ctx context.Context, req *Request, r *http.Requ
 
 	s.logger.Info("Tool call", "tool", params.Name)
 
-	// Get HA client for this request
 	client, err := s.getClientForRequest(ctx, r)
 	if err != nil {
 		s.logger.Error("Failed to get HA client", "tool", params.Name, "error", err)
 		return NewErrorResponse(req.ID, Unauthorized, err.Error(), nil)
 	}
 
-	// DEBUG: Log tool arguments summary
 	if s.logger.IsDebugEnabled() {
 		argSummary := summarizeArguments(params.Arguments)
 		s.logger.Debug("Tool arguments", "summary", argSummary)
 	}
-
-	// TRACE: Log redacted tool-call argument summary (keys + size; never values)
 	if s.logger.IsTraceEnabled() {
 		argsJSON, marshalErr := json.Marshal(params.Arguments)
 		size := 0
@@ -444,35 +465,20 @@ func (s *Server) handleToolsCall(ctx context.Context, req *Request, r *http.Requ
 		s.logger.Warn("Tool not found", "tool", params.Name)
 		return NewErrorResponse(req.ID, ToolNotFound, fmt.Sprintf("tool not found: %s", params.Name), nil)
 	}
-
-	// Check if action is allowed by filter
 	if s.toolFilter != nil && !s.toolFilter.IsActionAllowed(params.Name, params.Arguments) {
 		s.logger.Warn("Tool action blocked by filter", "tool", params.Name)
 		return NewErrorResponse(req.ID, ToolExecutionErr,
 			fmt.Sprintf("action blocked by server filter (tool: %s)", params.Name), nil)
 	}
 
-	// Inject wait config into context so handlers can access polling settings
 	ctx = context.WithValue(ctx, waitContextKey{}, s.waitConfig)
-
 	result, err := handler(ctx, client, params.Arguments)
 	if err != nil {
 		s.logger.Error("Tool execution failed", "tool", params.Name, "error", err)
 		return NewErrorResponse(req.ID, ToolExecutionErr, fmt.Sprintf("tool execution failed: %s", err.Error()), nil)
 	}
 
-	// Auto-fallback: if format=json response exceeds size threshold, re-run with format=natural
-	if format, _ := params.Arguments["format"].(string); format == formatJSON {
-		if size := resultContentSize(result); size > maxJSONResponseBytes {
-			s.logger.Info("Response too large for json format, falling back to natural",
-				"tool", params.Name, "size_bytes", size)
-			naturalArgs := copyArgsWithFormat(params.Arguments, formatNatural)
-			if naturalResult, naturalErr := handler(ctx, client, naturalArgs); naturalErr == nil {
-				result = prependSizeFallbackNote(naturalResult, size)
-			}
-		}
-	}
-
+	result = s.responseTooLargeForJSON(ctx, handler, client, params, result)
 	s.logger.Debug("Tool call successful", "tool", params.Name)
 	return NewSuccessResponse(req.ID, result)
 }

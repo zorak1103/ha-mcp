@@ -85,6 +85,9 @@ type Formatter interface {
 
 	// FormatError formats an error response.
 	FormatError(ctx context.Context, err error) string
+
+	// FormatServiceResponse formats a response-type service call payload.
+	FormatServiceResponse(ctx context.Context, domain, service string, targets []string, response map[string]any) (string, error)
 }
 
 // RegistryFormatter defines the interface for formatting registry responses.

@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +22,7 @@ type mockScriptClient struct {
 	updateScriptFn              func(ctx context.Context, scriptID string, config homeassistant.ScriptConfig) error
 	deleteScriptFn              func(ctx context.Context, scriptID string) error
 	callServiceFn               func(ctx context.Context, domain, service string, data map[string]any) ([]homeassistant.Entity, error)
+	callServiceWithResponseFn   func(ctx context.Context, domain, service string, data map[string]any) (map[string]any, error)
 	getStateFn                  func(ctx context.Context, entityID string) (*homeassistant.Entity, error)
 	getEntityRegistryFn         func(ctx context.Context) ([]homeassistant.EntityRegistryEntry, error)
 	removeEntityRegistryEntryFn func(ctx context.Context, entityID string) error
@@ -135,6 +138,13 @@ func (m *mockScriptClient) CallService(ctx context.Context, domain, service stri
 	m.lastServiceData = data
 	if m.callServiceFn != nil {
 		return m.callServiceFn(ctx, domain, service, data)
+	}
+	return nil, nil
+}
+
+func (m *mockScriptClient) CallServiceWithResponse(ctx context.Context, domain, service string, data map[string]any) (map[string]any, error) {
+	if m.callServiceWithResponseFn != nil {
+		return m.callServiceWithResponseFn(ctx, domain, service, data)
 	}
 	return nil, nil
 }
@@ -1552,6 +1562,186 @@ func TestScriptHandlers_CallService(t *testing.T) {
 				t.Errorf("Content = %q, want to contain %q", content, tt.wantContains)
 			}
 		})
+	}
+}
+
+func TestScriptHandlers_CallService_ReturnResponse(t *testing.T) {
+	t.Parallel()
+
+	completeValue := strings.Repeat("x", 401)
+	tests := []struct {
+		name                 string
+		args                 map[string]any
+		response             map[string]any
+		responseErr          error
+		wantContains         string
+		wantHeaderContains   string
+		wantResponseCall     bool
+		wantRegularCall      bool
+		wantError            bool
+		wantJSONResponseKey  bool
+		wantNoStateSnapshots bool
+	}{
+		{
+			name: "natural formats complete response",
+			args: map[string]any{
+				"domain":          "weather",
+				"service":         "get_forecasts",
+				"format":          "natural",
+				"return_response": true,
+				"data":            map[string]any{"entity_id": "weather.home"},
+			},
+			response: map[string]any{
+				"weather.home": map[string]any{"forecast": completeValue},
+			},
+			wantContains:         completeValue,
+			wantHeaderContains:   "weather.home",
+			wantResponseCall:     true,
+			wantNoStateSnapshots: true,
+		},
+		{
+			name: "json contains complete response",
+			args: map[string]any{
+				"domain":          "recorder",
+				"service":         "get_statistics",
+				"format":          "json",
+				"return_response": true,
+			},
+			response:            map[string]any{"sensor.temperature": map[string]any{"mean": 21.5}},
+			wantResponseCall:    true,
+			wantJSONResponseKey: true,
+		},
+		{
+			name: "empty response is successful",
+			args: map[string]any{
+				"domain":          "recorder",
+				"service":         "get_statistics",
+				"return_response": true,
+			},
+			wantContains:     "service returned no response data",
+			wantResponseCall: true,
+		},
+		{
+			name: "response client error",
+			args: map[string]any{
+				"domain":          "weather",
+				"service":         "get_forecasts",
+				"return_response": true,
+			},
+			responseErr:      errors.New("response call failed"),
+			wantContains:     "Error calling service",
+			wantResponseCall: true,
+			wantError:        true,
+		},
+		{
+			name: "invalid response flag",
+			args: map[string]any{
+				"domain":          "weather",
+				"service":         "get_forecasts",
+				"return_response": "true",
+			},
+			wantContains: "must be a boolean",
+			wantError:    true,
+		},
+		{
+			name: "false uses regular service call",
+			args: map[string]any{
+				"domain":          "light",
+				"service":         "turn_on",
+				"return_response": false,
+			},
+			wantContains:     "OK Turned on",
+			wantResponseCall: false,
+			wantRegularCall:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var regularCalls int
+			var responseCalls int
+			client := &mockScriptClient{
+				callServiceFn: func(_ context.Context, domain, service string, data map[string]any) ([]homeassistant.Entity, error) {
+					if domain != tt.args["domain"] || service != tt.args["service"] {
+						t.Errorf("CallService() received %s.%s, want %v.%v", domain, service, tt.args["domain"], tt.args["service"])
+					}
+					wantData, _ := tt.args["data"].(map[string]any)
+					if !reflect.DeepEqual(data, wantData) {
+						t.Errorf("CallService() data = %#v, want %#v", data, wantData)
+					}
+					regularCalls++
+					return nil, nil
+				},
+				callServiceWithResponseFn: func(_ context.Context, domain, service string, data map[string]any) (map[string]any, error) {
+					if domain != tt.args["domain"] || service != tt.args["service"] {
+						t.Errorf("CallServiceWithResponse() received %s.%s, want %v.%v", domain, service, tt.args["domain"], tt.args["service"])
+					}
+					wantData, _ := tt.args["data"].(map[string]any)
+					if !reflect.DeepEqual(data, wantData) {
+						t.Errorf("CallServiceWithResponse() data = %#v, want %#v", data, wantData)
+					}
+					responseCalls++
+					return tt.response, tt.responseErr
+				},
+			}
+			if tt.wantNoStateSnapshots {
+				client.getStateFn = func(context.Context, string) (*homeassistant.Entity, error) {
+					t.Errorf("GetState called for response-type service")
+					return nil, errors.New("unexpected state snapshot")
+				}
+			}
+
+			result, err := NewScriptHandlers().handleCallService(context.Background(), client, tt.args)
+			if err != nil {
+				t.Fatalf("handleCallService() returned error: %v", err)
+			}
+			if result.IsError != tt.wantError {
+				t.Errorf("IsError = %v, want %v", result.IsError, tt.wantError)
+			}
+			if len(result.Content) == 0 {
+				t.Fatal("Content is empty")
+			}
+			content := result.Content[0].Text
+			if !strings.Contains(content, tt.wantContains) {
+				t.Errorf("Content = %q, want to contain %q", content, tt.wantContains)
+			}
+			if tt.wantHeaderContains != "" && !strings.Contains(content, tt.wantHeaderContains) {
+				t.Errorf("Content = %q, want header to contain %q", content, tt.wantHeaderContains)
+			}
+			if got := responseCalls > 0; got != tt.wantResponseCall {
+				t.Errorf("CallServiceWithResponse called = %v, want %v", got, tt.wantResponseCall)
+			}
+			if got := regularCalls > 0; got != tt.wantRegularCall {
+				t.Errorf("CallService called = %v, want %v", got, tt.wantRegularCall)
+			}
+			if tt.wantJSONResponseKey {
+				var parsed map[string]any
+				if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+					t.Fatalf("response output is invalid JSON: %v", err)
+				}
+				if _, ok := parsed["response"]; !ok {
+					t.Error("response output has no response key")
+				}
+			}
+		})
+	}
+}
+
+func TestCallServiceTool_Schema(t *testing.T) {
+	tool := NewScriptHandlers().callServiceTool()
+
+	if len(tool.InputSchema.Properties) != 5 {
+		t.Fatalf("property count = %d, want 5", len(tool.InputSchema.Properties))
+	}
+	responseSchema, ok := tool.InputSchema.Properties["return_response"]
+	if !ok {
+		t.Fatal("return_response property is missing")
+	}
+	if responseSchema.Type != "boolean" {
+		t.Errorf("return_response type = %q, want boolean", responseSchema.Type)
+	}
+	if len(tool.InputSchema.Required) != 2 || tool.InputSchema.Required[0] != "domain" || tool.InputSchema.Required[1] != "service" {
+		t.Errorf("required = %#v, want [domain service]", tool.InputSchema.Required)
 	}
 }
 

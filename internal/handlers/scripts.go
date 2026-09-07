@@ -153,6 +153,10 @@ func (h *ScriptHandlers) callServiceTool() mcp.Tool {
 					Enum:        []string{"natural", "json"},
 					Description: "Output format: 'natural' (default) for LLM-optimized text, 'json' for structured data",
 				},
+				"return_response": {
+					Type:        "boolean",
+					Description: "Set true for response-type services (e.g., weather.get_forecasts or recorder.get_statistics). Returns the response payload and skips state-change polling; response-type calls may also mutate state, so no state-change confirmation is included. Default false. HA rejects true for services without responses and rejects its absence for services that require one.",
+				},
 			},
 			Required: []string{"domain", "service"},
 		},
@@ -771,6 +775,25 @@ func applyPatchedScriptWrite(
 // call_service Handler (separate tool)
 // =============================================================================
 
+// callServiceReturningResponse invokes a response-type service and renders its payload.
+// Smart Wait is skipped because the response path is intended for read-shaped calls,
+// but HA also permits mutating services to return a response, so callers receive no
+// post-mutation state confirmation on this path.
+func callServiceReturningResponse(ctx context.Context, client homeassistant.Client, domain, service string, data map[string]any, format formatter.Format) (*mcp.ToolsCallResult, error) {
+	targets := extractEntityTargets(data)
+	response, err := client.CallServiceWithResponse(ctx, domain, service, data)
+	if err != nil {
+		return errorResult(fmt.Sprintf("Error calling service: %v", err)), nil
+	}
+
+	f := formatter.New(format)
+	output, err := f.FormatServiceResponse(ctx, domain, service, targets, response)
+	if err != nil {
+		return errorResult(fmt.Sprintf("Error formatting result: %v", err)), nil
+	}
+	return successResult(output), nil
+}
+
 func (h *ScriptHandlers) handleCallService(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
 	domain, ok := args["domain"].(string)
 	if !ok || domain == "" {
@@ -787,11 +810,21 @@ func (h *ScriptHandlers) handleCallService(ctx context.Context, client homeassis
 		data = d
 	}
 
+	returnResponse, err := parseBoolArg(args, "return_response")
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
+
+	format := formatter.ParseFormat(getStringArg(args, "format"))
+	if returnResponse {
+		return callServiceReturningResponse(ctx, client, domain, service, data, format)
+	}
+
 	// Extract targets and snapshot state before calling the service
 	targets := extractEntityTargets(data)
 	snapshots := snapshotEntities(ctx, client, targets)
 
-	_, err := client.CallService(ctx, domain, service, data)
+	_, err = client.CallService(ctx, domain, service, data)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Error calling service: %v", err)), nil
 	}
@@ -800,9 +833,7 @@ func (h *ScriptHandlers) handleCallService(ctx context.Context, client homeassis
 	diffs, allChanged := waitForStateChanges(ctx, client, snapshots)
 	stateSummary := formatStateDiffs(diffs, !allChanged)
 
-	format := formatter.ParseFormat(getStringArg(args, "format"))
 	f := formatter.New(format)
-
 	output, err := f.FormatServiceSuccess(ctx, domain, service, targets, data)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Error formatting result: %v", err)), nil

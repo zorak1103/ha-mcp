@@ -130,6 +130,7 @@ go test -tags=integration -v ./internal/handlers/integration/... 2>&1 | tee test
 | Test Suite                     | Operations Tested                                                                                                                                                              |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `TestDashboardsIntegration`     | create, get, update, save_config, delete, find across nested views and cards                                                                                                   |
+| `TestCallServiceIntegration`    | response-type service call through `s.CallTool` (`return_response: true`, JSON payload) and rejection when the flag is omitted |
 | `TestTodoIntegration`           | list, get_items, add_item, update_item (status), remove_item (full CRUD with status filtering)                                                                                 |
 | `TestCalendarIntegration`       | list, get_events, create_event (datetime + all-day), delete_event (with writable calendar detection)                                                                           |
 | `TestTraceIntegration`          | list automation traces, list script traces (execution history), list filtered by entity_id (verifies unique_id-based item_id resolution against a live HA registry)            |

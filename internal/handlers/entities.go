@@ -60,6 +60,23 @@ func getStringArg(args map[string]any, key string) string {
 	return val
 }
 
+// parseBoolArg reads an optional boolean argument strictly. A non-boolean
+// value returns an error instead of silently becoming false because the MCP
+// server does not validate tool arguments against its input schema. This
+// fail-closed behavior is important for flags such as statistics dry_run,
+// where a malformed value must not trigger an irreversible write.
+func parseBoolArg(args map[string]any, key string) (bool, error) {
+	raw, ok := args[key]
+	if !ok {
+		return false, nil
+	}
+	b, ok := raw.(bool)
+	if !ok {
+		return false, fmt.Errorf("invalid %s %T: must be a boolean", key, raw)
+	}
+	return b, nil
+}
+
 // getBoolArg safely extracts a boolean argument.
 func getBoolArg(args map[string]any, key string) bool {
 	val, _ := args[key].(bool)

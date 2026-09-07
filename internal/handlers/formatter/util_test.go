@@ -633,6 +633,37 @@ func TestTruncateRunes(t *testing.T) {
 	}
 }
 
+func TestTruncateUTF8Bytes_Boundaries(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		maxBytes int
+		want     string
+	}{
+		{name: "zero limit", input: "x", maxBytes: 0, want: ""},
+		{name: "one byte limit", input: "xx", maxBytes: 1, want: "."},
+		{name: "two byte limit", input: "xxxx", maxBytes: 2, want: ".."},
+		{name: "three byte limit", input: "xxxx", maxBytes: 3, want: "..."},
+		{name: "under limit", input: "界", maxBytes: 4, want: "界"},
+		{name: "exact limit", input: "界", maxBytes: 3, want: "界"},
+		{name: "ellipsis limit", input: "界界", maxBytes: 3, want: "..."},
+		{name: "cutoff exact", input: "xxxx", maxBytes: 7, want: "xxxx"},
+		{name: "cutoff exceeds", input: "xxxxxxxx", maxBytes: 7, want: "xxxx..."},
+		{name: "multibyte truncation", input: "界界界", maxBytes: 7, want: "界..."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := truncateUTF8Bytes(tt.input, tt.maxBytes)
+			if got != tt.want {
+				t.Errorf("truncateUTF8Bytes(%q, %d) = %q, want %q", tt.input, tt.maxBytes, got, tt.want)
+			}
+			if len(got) > tt.maxBytes {
+				t.Errorf("truncateUTF8Bytes() length = %d, want <= %d", len(got), tt.maxBytes)
+			}
+		})
+	}
+}
+
 // TestFormatDetailValue pins the generic attribute-value renderer added for
 // issue #216's remediation (findings W1/W2/W3/N2): nil is omitted (empty
 // string, callers check for this to skip the whole line), strings pass
