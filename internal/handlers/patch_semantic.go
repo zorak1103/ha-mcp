@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 
@@ -244,7 +245,7 @@ func findMatchingPaths(node any, prefix string, match map[string]any) []string {
 		for k := range v {
 			keys = append(keys, k)
 		}
-		sort.Strings(keys)
+		slices.Sort(keys)
 		for _, k := range keys {
 			paths = append(paths, findMatchingPaths(v[k], prefix+"/"+jsonpatch.EscapeSegment(k), match)...)
 		}

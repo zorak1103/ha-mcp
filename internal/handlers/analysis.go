@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -1047,7 +1046,7 @@ func (h *AnalysisHandlers) extractServicesFromSlice(items []any) []string {
 	for svc := range seen {
 		result = append(result, svc)
 	}
-	sort.Strings(result)
+	slices.Sort(result)
 	return result
 }
 
@@ -1087,7 +1086,7 @@ func (h *AnalysisHandlers) extractAreasFromSlice(items []any) []string {
 	for area := range seen {
 		result = append(result, area)
 	}
-	sort.Strings(result)
+	slices.Sort(result)
 	return result
 }
 
@@ -1137,7 +1136,7 @@ func (h *AnalysisHandlers) extractDevicesFromSlice(items []any) []string {
 	for device := range seen {
 		result = append(result, device)
 	}
-	sort.Strings(result)
+	slices.Sort(result)
 	return result
 }
 

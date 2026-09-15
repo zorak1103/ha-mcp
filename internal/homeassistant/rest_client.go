@@ -1441,10 +1441,10 @@ func (c *RESTClient) GetCameraSnapshot(ctx context.Context, entityID string) ([]
 
 // GetSystemLog is not supported via REST API.
 func (c *RESTClient) GetSystemLog(_ context.Context) ([]SystemLogEntry, error) {
-	return nil, fmt.Errorf("GetSystemLog not supported via REST API, use WebSocket or HybridClient")
+	return nil, fmt.Errorf("getSystemLog not supported via REST API, use WebSocket or HybridClient")
 }
 
 // ClearSystemLog is not supported via REST API.
 func (c *RESTClient) ClearSystemLog(_ context.Context) error {
-	return fmt.Errorf("ClearSystemLog not supported via REST API, use WebSocket or HybridClient")
+	return fmt.Errorf("clearSystemLog not supported via REST API, use WebSocket or HybridClient")
 }

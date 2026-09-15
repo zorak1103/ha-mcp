@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/zorak1103/ha-mcp/internal/handlers/formatter"
@@ -192,7 +191,7 @@ func sortPresenceResults(
 	slices.SortFunc(*trackersWithoutPerson, func(a, b TrackerInfo) int {
 		return cmp.Compare(a.Name, b.Name)
 	})
-	sort.Strings(*personsWithoutTrackers)
+	slices.Sort(*personsWithoutTrackers)
 }
 
 // calculatePresenceStatistics calculates presence tracking statistics.

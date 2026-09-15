@@ -3,7 +3,7 @@ package mcp
 import (
 	"fmt"
 	"path"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -603,6 +603,6 @@ func validateFilterAction(toolPattern, action string, matchedTools []string, acc
 	for a := range classification.Actions {
 		validActions = append(validActions, a)
 	}
-	sort.Strings(validActions)
+	slices.Sort(validActions)
 	return fmt.Errorf("tool %q has no action %q (valid: %s)", toolName, action, strings.Join(validActions, ", "))
 }

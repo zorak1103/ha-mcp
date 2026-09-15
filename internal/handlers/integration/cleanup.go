@@ -266,7 +266,7 @@ func deleteHelperWithRetry(ctx context.Context, client homeassistant.Client, ent
 	}
 
 	var lastErr error
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if err := client.DeleteHelper(ctx, entityID); err != nil {
 			lastErr = err
 			time.Sleep(time.Duration(i+1) * 100 * time.Millisecond)
@@ -294,7 +294,7 @@ func deleteAutomationWithRetry(ctx context.Context, client homeassistant.Client,
 	}
 
 	var lastErr error
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if err := client.DeleteAutomation(ctx, automationID); err != nil {
 			lastErr = err
 			time.Sleep(time.Duration(i+1) * 100 * time.Millisecond)
@@ -312,7 +312,7 @@ func deleteScriptWithRetry(ctx context.Context, client homeassistant.Client, scr
 	}
 
 	var lastErr error
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if err := client.DeleteScript(ctx, scriptID); err != nil {
 			lastErr = err
 			time.Sleep(time.Duration(i+1) * 100 * time.Millisecond)
@@ -330,7 +330,7 @@ func deleteSceneWithRetry(ctx context.Context, client homeassistant.Client, scen
 	}
 
 	var lastErr error
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if err := client.DeleteScene(ctx, sceneID); err != nil {
 			lastErr = err
 			time.Sleep(time.Duration(i+1) * 100 * time.Millisecond)
@@ -402,7 +402,7 @@ func deleteAreaWithRetry(ctx context.Context, client homeassistant.Client, areaI
 	}
 
 	var lastErr error
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if err := client.DeleteArea(ctx, areaID); err != nil {
 			lastErr = err
 			time.Sleep(time.Duration(i+1) * 100 * time.Millisecond)
@@ -419,7 +419,7 @@ func deleteDashboardWithRetry(ctx context.Context, client homeassistant.Client, 
 	// The validation was done on URLPath in cleanupTestDashboards
 
 	var lastErr error
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if err := client.DeleteDashboard(ctx, dashboardID); err != nil {
 			lastErr = err
 			time.Sleep(time.Duration(i+1) * 100 * time.Millisecond)
@@ -517,7 +517,7 @@ func deleteLabelWithRetry(ctx context.Context, client homeassistant.Client, labe
 	}
 
 	var lastErr error
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if err := client.DeleteLabel(ctx, labelID); err != nil {
 			lastErr = err
 			time.Sleep(time.Duration(i+1) * 100 * time.Millisecond)
@@ -579,7 +579,7 @@ func deleteFloorWithRetry(ctx context.Context, client homeassistant.Client, floo
 	}
 
 	var lastErr error
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if err := client.DeleteFloor(ctx, floorID); err != nil {
 			lastErr = err
 			time.Sleep(time.Duration(i+1) * 100 * time.Millisecond)
@@ -641,7 +641,7 @@ func deleteTagWithRetry(ctx context.Context, client homeassistant.Client, tagID 
 	}
 
 	var lastErr error
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if err := client.DeleteTag(ctx, tagID); err != nil {
 			lastErr = err
 			time.Sleep(time.Duration(i+1) * 100 * time.Millisecond)
@@ -703,7 +703,7 @@ func deleteZoneWithRetry(ctx context.Context, client homeassistant.Client, zoneI
 	}
 
 	var lastErr error
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if err := client.DeleteZone(ctx, zoneID); err != nil {
 			lastErr = err
 			time.Sleep(time.Duration(i+1) * 100 * time.Millisecond)
@@ -765,7 +765,7 @@ func deletePersonWithRetry(ctx context.Context, client homeassistant.Client, per
 	}
 
 	var lastErr error
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if err := client.DeletePerson(ctx, personID); err != nil {
 			lastErr = err
 			time.Sleep(time.Duration(i+1) * 100 * time.Millisecond)

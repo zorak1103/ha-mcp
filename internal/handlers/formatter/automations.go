@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -481,7 +480,7 @@ func (f *NaturalAutomationFormatter) formatUnknownTrigger(platform, entityID str
 	for k := range triggerMap {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	return fmt.Sprintf("trigger (%s)", strings.Join(keys, ", "))
 }
 
@@ -748,7 +747,7 @@ func (f *NaturalAutomationFormatter) extractDataInfo(actionMap map[string]any) s
 	for k, v := range data {
 		attrs = append(attrs, fmt.Sprintf("%s: %v", k, v))
 	}
-	sort.Strings(attrs)
+	slices.Sort(attrs)
 	return " (" + strings.Join(attrs, ", ") + ")"
 }
 
@@ -757,7 +756,7 @@ func formatMapKeys(m map[string]any, prefix string) string {
 	for k := range m {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	return fmt.Sprintf("%s (%s)", prefix, strings.Join(keys, ", "))
 }
 

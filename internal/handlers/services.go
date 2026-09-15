@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
@@ -116,7 +115,7 @@ func (h *ServiceHandlers) handleFilteredDomain(services []homeassistant.Service,
 			for fieldName := range svc.Fields {
 				fields = append(fields, fieldName)
 			}
-			sort.Strings(fields)
+			slices.Sort(fields)
 			detail.Fields = fields
 		}
 
@@ -150,7 +149,7 @@ func (h *ServiceHandlers) handleCompactServices(services []homeassistant.Service
 		for name := range svc.Services {
 			serviceNames = append(serviceNames, name)
 		}
-		sort.Strings(serviceNames)
+		slices.Sort(serviceNames)
 
 		compact = append(compact, compactServiceEntry{
 			Domain:       svc.Domain,

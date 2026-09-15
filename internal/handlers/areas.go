@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
@@ -597,7 +596,7 @@ func findAreaAutomations(ctx context.Context, client homeassistant.Client, entit
 		if len(overlapping) == 0 {
 			continue
 		}
-		sort.Strings(overlapping)
+		slices.Sort(overlapping)
 		matches = append(matches, areaAutomationMatch{
 			EntityID:        auto.EntityID,
 			FriendlyName:    auto.FriendlyName,

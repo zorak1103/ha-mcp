@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -430,7 +429,7 @@ func formatHealthReportNatural(report HealthReport, staleDays int) string {
 	for cat := range stats.ByCategory {
 		categories = append(categories, cat)
 	}
-	sort.Strings(categories)
+	slices.Sort(categories)
 
 	for _, cat := range categories {
 		count := stats.ByCategory[cat]
