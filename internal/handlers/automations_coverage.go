@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/zorak1103/ha-mcp/internal/handlers/formatter"
@@ -324,7 +323,7 @@ func buildCoverageUncoveredByDomain(
 
 	// Sort uncovered entities
 	for domain := range uncoveredByDomain {
-		sort.Strings(uncoveredByDomain[domain])
+		slices.Sort(uncoveredByDomain[domain])
 	}
 
 	return uncoveredByDomain
@@ -357,7 +356,7 @@ func (h *AutomationHandlers) formatCoverageNatural(report CoverageReport) string
 		for domain := range report.UncoveredByDomain {
 			domains = append(domains, domain)
 		}
-		sort.Strings(domains)
+		slices.Sort(domains)
 
 		for _, domain := range domains {
 			entities := report.UncoveredByDomain[domain]

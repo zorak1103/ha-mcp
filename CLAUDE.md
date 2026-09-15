@@ -351,6 +351,10 @@ Key environment variables:
 
 **Minimum Coverage**: 80% test coverage required for all packages, subject to technical feasibility.
 
+**Accepted coverage exceptions** (reviewed 2026-09, function-level profile):
+- `cmd/ha-mcp` (~46%): the uncovered part is `main()`-wiring (`run`, `setupLogger`, `initHomeAssistantClient`, `initMCPServer`, `startMCPServer`) that needs a live HA instance + running server loop; the CLI logic itself (`runInit`, `runConfig`, flags) is ≥93%. These paths are exercised by the integration suite, which does not count toward unit coverage.
+- `internal/homeassistant` (~72%): the gap is dominated by ~160 thin delegation stubs (`cached_client.go`, `hybrid_client.go`, `ws_client_impl.go`, `rest_client.go`) that only forward to the tested layers below; they are executed indirectly by the integration suite. Delegation round-trip tests for them were rejected as low-value boilerplate. Real-logic gaps (health monitor paths, `SendSimpleCommand`) are pinned by `ws_client_health_test.go`.
+
 **Integration Test Coverage**: All MCP tools must be covered by integration tests in `internal/handlers/integration/`, subject to technical feasibility. Integration tests verify:
 - API integration against real Home Assistant instance
 - Response parsing and data mapping

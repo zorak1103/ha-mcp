@@ -82,7 +82,7 @@ func (c *wsClientImpl) SetState(_ context.Context, _ string, _ StateUpdate) (*En
 	// WebSocket API doesn't have a direct set_state equivalent
 	// We use REST API behavior simulation via call_service for some domains
 	// For now, return error as this is primarily a REST API feature
-	return nil, fmt.Errorf("SetState not supported via WebSocket API, use CallService instead")
+	return nil, fmt.Errorf("setState not supported via WebSocket API, use CallService instead")
 }
 
 // GetHistory retrieves historical state changes for an entity.

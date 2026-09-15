@@ -36,7 +36,7 @@ func BoundedFieldList(names []string) string {
 	// to 0 either way, so which branch runs makes no observable difference.
 	// No test can kill it - both forms produce byte-identical output for
 	// every input.
-	if len(shown) > maxEchoedFieldCount { //mutest:skip
+	if len(shown) > maxEchoedFieldCount {
 		omitted = len(shown) - maxEchoedFieldCount
 		shown = shown[:maxEchoedFieldCount]
 	}

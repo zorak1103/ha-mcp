@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/zorak1103/ha-mcp/internal/handlers/formatter"
@@ -534,7 +533,7 @@ func writeCountMap(result *strings.Builder, header string, counts map[string]int
 	for k := range counts {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 
 	result.WriteString(header + "\n")
 	for _, k := range keys {

@@ -3,7 +3,7 @@ package jsonpatch
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -112,7 +112,7 @@ func sortedMapKeys(m map[string]any) []string {
 	for k := range m {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	return keys
 }
 

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
@@ -187,7 +186,7 @@ func (f *NaturalSceneFormatter) writeSceneLine(result *strings.Builder, scene Sc
 			for domain, count := range domainCounts {
 				domainParts = append(domainParts, fmt.Sprintf("%d %s", count, domain))
 			}
-			sort.Strings(domainParts)
+			slices.Sort(domainParts)
 			fmt.Fprintf(result, " (%s)", strings.Join(domainParts, ", "))
 		}
 	}
@@ -223,7 +222,7 @@ func (f *NaturalSceneFormatter) writeEntitiesSection(result *strings.Builder, en
 	for domain := range domainEntities {
 		domains = append(domains, domain)
 	}
-	sort.Strings(domains)
+	slices.Sort(domains)
 
 	for _, domain := range domains {
 		entities := domainEntities[domain]

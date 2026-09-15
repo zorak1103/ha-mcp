@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -853,7 +852,7 @@ func formatAreaGroups(ctx context.Context, areaGroups map[string][]homeassistant
 	for areaName := range areaGroups {
 		areaNames = append(areaNames, areaName)
 	}
-	sort.Strings(areaNames)
+	slices.Sort(areaNames)
 
 	totalCount := 0
 	for _, entities := range areaGroups {
@@ -933,7 +932,7 @@ func (h *ConsolidatedEntityQueryHandlers) formatStatesNaturalByDeviceClass(
 	for dc := range deviceClassGroups {
 		deviceClasses = append(deviceClasses, dc)
 	}
-	sort.Strings(deviceClasses)
+	slices.Sort(deviceClasses)
 
 	// Build output
 	var output strings.Builder
@@ -1002,7 +1001,7 @@ func (h *ConsolidatedEntityQueryHandlers) formatStatesNaturalByIntegration(
 	for p := range platformGroups {
 		platforms = append(platforms, p)
 	}
-	sort.Strings(platforms)
+	slices.Sort(platforms)
 
 	// Build output
 	var output strings.Builder
@@ -1185,7 +1184,7 @@ func (h *ConsolidatedEntityQueryHandlers) formatStatisticsNatural(
 	for id := range groupedStats {
 		statIDs = append(statIDs, id)
 	}
-	sort.Strings(statIDs)
+	slices.Sort(statIDs)
 
 	fmt.Fprintf(&output, "Statistics for %d entities:\n\n", len(statIDs))
 
@@ -1316,7 +1315,7 @@ func (h *ConsolidatedEntityQueryHandlers) formatDomainsNatural(
 	for domain := range domainSet {
 		domains = append(domains, domain)
 	}
-	sort.Strings(domains)
+	slices.Sort(domains)
 
 	for _, domain := range domains {
 		count := domainSet[domain]

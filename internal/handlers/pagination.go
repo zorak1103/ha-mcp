@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"sort"
+	"slices"
 )
 
 const (
@@ -149,7 +149,7 @@ func ComputeFiltersHash(filters map[string]any) string {
 	for k := range filters {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 
 	// Build ordered representation
 	ordered := make([]any, 0, len(filters)*2)

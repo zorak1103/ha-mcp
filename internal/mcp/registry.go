@@ -3,7 +3,7 @@ package mcp
 
 import (
 	"context"
-	"sort"
+	"slices"
 	"sync"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
@@ -184,7 +184,7 @@ func (r *Registry) LogRegisteredTools(logger *logging.Logger) {
 	for name := range r.tools {
 		toolNames = append(toolNames, name)
 	}
-	sort.Strings(toolNames)
+	slices.Sort(toolNames)
 
 	logger.Debug("Registered MCP tools:")
 	for _, name := range toolNames {
@@ -198,7 +198,7 @@ func (r *Registry) LogRegisteredTools(logger *logging.Logger) {
 		for uri := range r.resources {
 			resourceURIs = append(resourceURIs, uri)
 		}
-		sort.Strings(resourceURIs)
+		slices.Sort(resourceURIs)
 
 		logger.Debug("Registered MCP resources:")
 		for _, uri := range resourceURIs {

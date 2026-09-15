@@ -251,7 +251,7 @@ func capDetailList(list []any) (shown []any, more int) {
 	// more computes to 0 either way, so which branch runs makes no
 	// observable difference. No test can kill it - both forms produce
 	// byte-identical output for every input.
-	if len(list) <= maxDetailListItems { //mutest:skip
+	if len(list) <= maxDetailListItems {
 		return list, 0
 	}
 	return list[:maxDetailListItems], len(list) - maxDetailListItems

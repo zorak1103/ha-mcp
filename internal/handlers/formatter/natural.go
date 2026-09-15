@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -182,7 +182,7 @@ func formatHistoryAttributes(attrs map[string]any) string {
 			keys = append(keys, k)
 		}
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	const maxAttrs = 5
 	if len(keys) > maxAttrs {
 		keys = keys[:maxAttrs]
@@ -468,7 +468,7 @@ func (f *NaturalFormatter) buildEntitiesSummary(entities []homeassistant.Entity)
 	for d := range domains {
 		sortedDomains = append(sortedDomains, d)
 	}
-	sort.Strings(sortedDomains)
+	slices.Sort(sortedDomains)
 
 	for _, domain := range sortedDomains {
 		count := domains[domain]
@@ -500,7 +500,7 @@ func (f *NaturalFormatter) formatEntitiesByDomain(entities []homeassistant.Entit
 	for d := range byDomain {
 		sortedDomains = append(sortedDomains, d)
 	}
-	sort.Strings(sortedDomains)
+	slices.Sort(sortedDomains)
 
 	var parts []string
 	for _, domain := range sortedDomains {

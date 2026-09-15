@@ -4,7 +4,7 @@ package handlers
 import (
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -52,7 +52,7 @@ func collectMatchPaths(node any, prefix string, match func(string) bool) []strin
 		for k := range v {
 			keys = append(keys, k)
 		}
-		sort.Strings(keys)
+		slices.Sort(keys)
 
 		var paths []string
 		for _, k := range keys {

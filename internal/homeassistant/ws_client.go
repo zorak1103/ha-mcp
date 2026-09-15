@@ -721,6 +721,11 @@ func (c *WSClient) SetOnReconnect(fn OnReconnectFunc) {
 }
 
 // SetOnDisconnect sets the callback function called when disconnect is detected.
+// Contract: at most once per connection drop. Two independent paths can observe
+// a drop (health monitor ping failure and the read loop's Read error); the pin
+// test TestWSClient_OnDisconnect_CalledOncePerDrop guards that only one of them
+// reports. Pinned by that test, not enforced by a lock - keep it that way if
+// the notification paths are refactored.
 func (c *WSClient) SetOnDisconnect(fn OnDisconnectFunc) {
 	c.config.OnDisconnect = fn
 }
@@ -733,11 +738,6 @@ func (c *WSClient) SetAutoReconnect(enabled bool) {
 // IsConnected returns true if the client is currently connected.
 func (c *WSClient) IsConnected() bool {
 	return c.connected.Load()
-}
-
-// IsReconnecting returns true if the client is currently attempting to reconnect.
-func (c *WSClient) IsReconnecting() bool {
-	return c.reconnecting.Load()
 }
 
 // WaitForConnection waits until the client is connected or the context is canceled.
