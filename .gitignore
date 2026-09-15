@@ -88,3 +88,7 @@ AGENTS.md
 .mcp.json
 .reports/
 
+.devcontainer/.personal
+.pi/sessions
+
+CLAUDE.local.md
