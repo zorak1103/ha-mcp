@@ -45,6 +45,12 @@
       "labels": ["dependencies", "docker", "major"]
     },
     {
+      "description": "devcontainers/go combined tag (image version + pinned Go) needs regex versioning - default docker versioning sees no updates and silently freezes the tag; the Go part (1.27) is pinned by the regex, bumping Go requires editing Dockerfile + regex together",
+      "matchManagers": ["dockerfile"],
+      "matchPackageNames": ["mcr.microsoft.com/devcontainers/go"],
+      "versioning": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)(?:\\.(?<patch>\\d+))?-1\\.27-bookworm$"
+    },
+    {
       "description": "GitHub Actions updates",
       "matchManagers": ["github-actions"],
       "matchUpdateTypes": ["minor", "patch"],
