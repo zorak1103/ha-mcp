@@ -12,8 +12,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
-	"github.com/spf13/viper"
 
 	"github.com/zorak1103/ha-mcp/configs"
 	"github.com/zorak1103/ha-mcp/internal/config"
@@ -21,6 +19,13 @@ import (
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 	"github.com/zorak1103/ha-mcp/internal/logging"
 	"github.com/zorak1103/ha-mcp/internal/mcp"
+)
+
+// Set at build time via goreleaser ldflags (-X main.version=...).
+var (
+	version = "dev"
+	commit  = "unknown"
+	date    = "unknown"
 )
 
 // App holds the CLI application state and dependencies.
@@ -52,7 +57,11 @@ AI agents like Cline and opencode with access to Home Assistant.
 
 It exposes Home Assistant entities, automations, scripts, scenes,
 and helpers through the MCP protocol over HTTP.`,
-		RunE: a.run,
+		Version:       fmt.Sprintf("%s (commit: %s, built: %s)", version, commit, date),
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Args:          cobra.NoArgs,
+		RunE:          a.run,
 	}
 }
 
@@ -63,11 +72,23 @@ func (a *App) setupFlags() {
 	a.rootCmd.PersistentFlags().StringVar(&a.haToken, "ha-token", "", "Home Assistant long-lived access token")
 	a.rootCmd.PersistentFlags().IntVar(&a.port, "port", 0, "MCP server port")
 	a.rootCmd.PersistentFlags().BoolVar(&a.readOnly, "read-only", false, "Enable read-only mode (blocks all write operations)")
+}
 
-	bindPFlag("homeassistant.url", a.rootCmd.PersistentFlags().Lookup("ha-url"))
-	bindPFlag("homeassistant.token", a.rootCmd.PersistentFlags().Lookup("ha-token"))
-	bindPFlag("server.port", a.rootCmd.PersistentFlags().Lookup("port"))
-	bindPFlag("server.read_only", a.rootCmd.PersistentFlags().Lookup("read-only"))
+// applyFlagOverrides applies non-empty CLI flag values on top of the loaded
+// config, preserving the documented priority: CLI flags > ENV > .env > YAML.
+func (a *App) applyFlagOverrides(cfg *config.Config) {
+	if a.haURL != "" {
+		cfg.HomeAssistant.URL = a.haURL
+	}
+	if a.haToken != "" {
+		cfg.HomeAssistant.Token = a.haToken
+	}
+	if a.port != 0 {
+		cfg.Server.Port = a.port
+	}
+	if a.readOnly {
+		cfg.Server.ReadOnly = true
+	}
 }
 
 // addCommands adds subcommands to the root command.
@@ -86,6 +107,7 @@ func (a *App) buildConfigCmd() *cobra.Command {
 This command shows the configuration that would be used if the server were started,
 including values from the config file, environment variables, and CLI flags.
 Sensitive data like tokens are masked for security.`,
+		Args: cobra.NoArgs,
 		RunE: a.runConfig,
 	}
 }
@@ -102,16 +124,17 @@ This command creates:
   - .env: Environment variables file
 
 If files already exist, they will not be overwritten unless --force is specified.`,
+		Args: cobra.NoArgs,
 		RunE: a.runInit,
 	}
 }
 
 // runInit creates configuration files from embedded templates.
-func (a *App) runInit(_ *cobra.Command, _ []string) error {
+func (a *App) runInit(cmd *cobra.Command, _ []string) error {
 	created := 0
 
 	// Create config.yaml
-	wasCreated, err := a.writeConfigFile("config.yaml", configs.ConfigYAML)
+	wasCreated, err := a.writeConfigFile(cmd, "config.yaml", configs.ConfigYAML)
 	if err != nil {
 		return err
 	}
@@ -120,7 +143,7 @@ func (a *App) runInit(_ *cobra.Command, _ []string) error {
 	}
 
 	// Create .env
-	wasCreated, err = a.writeConfigFile(".env", configs.EnvExample)
+	wasCreated, err = a.writeConfigFile(cmd, ".env", configs.EnvExample)
 	if err != nil {
 		return err
 	}
@@ -129,24 +152,24 @@ func (a *App) runInit(_ *cobra.Command, _ []string) error {
 	}
 
 	if created == 0 {
-		fmt.Println("All configuration files already exist. Nothing to do.")
+		cmd.Println("All configuration files already exist. Nothing to do.")
 		return nil
 	}
 
-	fmt.Printf("Created %d configuration file(s) in current directory.\n", created)
-	fmt.Println("\nNext steps:")
-	fmt.Println("  1. Edit config.yaml or .env with your Home Assistant settings")
-	fmt.Println("  2. Run 'ha-mcp config' to verify your configuration")
-	fmt.Println("  3. Run 'ha-mcp' to start the server")
+	cmd.Printf("Created %d configuration file(s) in current directory.\n", created)
+	cmd.Println("\nNext steps:")
+	cmd.Println("  1. Edit config.yaml or .env with your Home Assistant settings")
+	cmd.Println("  2. Run 'ha-mcp config' to verify your configuration")
+	cmd.Println("  3. Run 'ha-mcp' to start the server")
 
 	return nil
 }
 
 // writeConfigFile writes content to a file if it doesn't already exist.
 // Returns true if the file was created, false if it was skipped.
-func (a *App) writeConfigFile(filename string, content []byte) (bool, error) {
+func (a *App) writeConfigFile(cmd *cobra.Command, filename string, content []byte) (bool, error) {
 	if _, err := os.Stat(filename); err == nil {
-		fmt.Printf("Skipping %s (already exists)\n", filename)
+		cmd.Printf("Skipping %s (already exists)\n", filename)
 		return false, nil
 	}
 
@@ -154,46 +177,47 @@ func (a *App) writeConfigFile(filename string, content []byte) (bool, error) {
 		return false, fmt.Errorf("writing %s: %w", filename, err)
 	}
 
-	fmt.Printf("Created %s\n", filename)
+	cmd.Printf("Created %s\n", filename)
 	return true, nil
 }
 
 // runConfig loads and displays the effective configuration with masked sensitive data.
-func (a *App) runConfig(_ *cobra.Command, _ []string) error {
+func (a *App) runConfig(cmd *cobra.Command, _ []string) error {
 	// Load configuration without validation (allow missing token for display)
 	cfg, err := config.LoadForDisplay(a.cfgFile)
 	if err != nil {
 		return fmt.Errorf("loading configuration: %w", err)
 	}
+	a.applyFlagOverrides(cfg)
 
 	// Get masked version for output
 	masked := cfg.MaskedConfig()
 
 	// Output in human-readable format
-	fmt.Println("Effective Configuration")
-	fmt.Println("=======================")
-	fmt.Println()
-	fmt.Println("Home Assistant:")
-	fmt.Printf("  URL:        %s\n", masked.HomeAssistant.URL)
-	fmt.Printf("  Token:      %s\n", masked.HomeAssistant.Token)
-	fmt.Println()
-	fmt.Println("  REST API:")
-	fmt.Printf("    Rate Limit: %.1f req/s\n", masked.HomeAssistant.REST.RateLimit)
-	fmt.Printf("    Rate Burst: %d\n", masked.HomeAssistant.REST.RateBurst)
-	fmt.Printf("    Max Retries: %d\n", masked.HomeAssistant.REST.MaxRetries)
-	fmt.Printf("    Retry Initial Delay: %d ms\n", masked.HomeAssistant.REST.RetryInitialDelayMs)
-	fmt.Printf("    Retry Max Delay: %d ms\n", masked.HomeAssistant.REST.RetryMaxDelayMs)
-	fmt.Println()
-	fmt.Println("  WebSocket:")
-	fmt.Printf("    Max Retries: %d\n", masked.HomeAssistant.WebSocket.MaxRetries)
-	fmt.Printf("    Retry Initial Delay: %d ms\n", masked.HomeAssistant.WebSocket.RetryInitialDelayMs)
-	fmt.Printf("    Retry Max Delay: %d ms\n", masked.HomeAssistant.WebSocket.RetryMaxDelayMs)
-	fmt.Println()
-	fmt.Println("Server:")
-	fmt.Printf("  Port:       %d\n", masked.Server.Port)
-	fmt.Println()
-	fmt.Println("Logging:")
-	fmt.Printf("  Level:      %s\n", masked.Logging.Level)
+	cmd.Println("Effective Configuration")
+	cmd.Println("=======================")
+	cmd.Println()
+	cmd.Println("Home Assistant:")
+	cmd.Printf("  URL:        %s\n", masked.HomeAssistant.URL)
+	cmd.Printf("  Token:      %s\n", masked.HomeAssistant.Token)
+	cmd.Println()
+	cmd.Println("  REST API:")
+	cmd.Printf("    Rate Limit: %.1f req/s\n", masked.HomeAssistant.REST.RateLimit)
+	cmd.Printf("    Rate Burst: %d\n", masked.HomeAssistant.REST.RateBurst)
+	cmd.Printf("    Max Retries: %d\n", masked.HomeAssistant.REST.MaxRetries)
+	cmd.Printf("    Retry Initial Delay: %d ms\n", masked.HomeAssistant.REST.RetryInitialDelayMs)
+	cmd.Printf("    Retry Max Delay: %d ms\n", masked.HomeAssistant.REST.RetryMaxDelayMs)
+	cmd.Println()
+	cmd.Println("  WebSocket:")
+	cmd.Printf("    Max Retries: %d\n", masked.HomeAssistant.WebSocket.MaxRetries)
+	cmd.Printf("    Retry Initial Delay: %d ms\n", masked.HomeAssistant.WebSocket.RetryInitialDelayMs)
+	cmd.Printf("    Retry Max Delay: %d ms\n", masked.HomeAssistant.WebSocket.RetryMaxDelayMs)
+	cmd.Println()
+	cmd.Println("Server:")
+	cmd.Printf("  Port:       %d\n", masked.Server.Port)
+	cmd.Println()
+	cmd.Println("Logging:")
+	cmd.Printf("  Level:      %s\n", masked.Logging.Level)
 
 	return nil
 }
@@ -201,13 +225,6 @@ func (a *App) runConfig(_ *cobra.Command, _ []string) error {
 // Execute runs the CLI application.
 func (a *App) Execute() error {
 	return a.rootCmd.Execute()
-}
-
-// bindPFlag binds a flag to viper and logs an error if binding fails.
-func bindPFlag(key string, flag *pflag.Flag) {
-	if err := viper.BindPFlag(key, flag); err != nil {
-		log.Printf("warning: failed to bind flag %s: %v", key, err)
-	}
 }
 
 func main() {
@@ -224,6 +241,7 @@ func (a *App) run(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("loading configuration: %w", err)
 	}
+	a.applyFlagOverrides(cfg)
 
 	logger := a.setupLogger(cfg)
 	ctx, cancel := a.setupGracefulShutdown(logger)

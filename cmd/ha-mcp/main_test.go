@@ -3,7 +3,6 @@ package main
 
 import (
 	"bytes"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,8 +10,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
-	"github.com/spf13/viper"
+
+	"github.com/zorak1103/ha-mcp/internal/config"
 )
 
 func TestNewApp(t *testing.T) {
@@ -203,7 +202,7 @@ func TestWriteConfigFile(t *testing.T) {
 			}
 
 			app := &App{}
-			created, err := app.writeConfigFile(filename, tt.content)
+			created, err := app.writeConfigFile(&cobra.Command{}, filename, tt.content)
 
 			// Check error
 			if (err != nil) != tt.wantErr {
@@ -233,7 +232,7 @@ func TestWriteConfigFile(t *testing.T) {
 func TestWriteConfigFile_InvalidPath(t *testing.T) {
 	app := &App{}
 	// Use invalid path that cannot be written to
-	_, err := app.writeConfigFile("/nonexistent/path/config.yaml", []byte("content"))
+	_, err := app.writeConfigFile(&cobra.Command{}, "/nonexistent/path/config.yaml", []byte("content"))
 
 	if err == nil {
 		t.Error("expected error for invalid path, got nil")
@@ -258,7 +257,7 @@ func TestRunInit(t *testing.T) {
 	}()
 
 	app := &App{}
-	err = app.runInit(nil, nil)
+	err = app.runInit(&cobra.Command{}, nil)
 
 	if err != nil {
 		t.Errorf("runInit() error = %v", err)
@@ -299,7 +298,7 @@ func TestRunInit_FilesExist(t *testing.T) {
 	}
 
 	app := &App{}
-	err = app.runInit(nil, nil)
+	err = app.runInit(&cobra.Command{}, nil)
 
 	if err != nil {
 		t.Errorf("runInit() error = %v", err)
@@ -312,35 +311,168 @@ func TestRunInit_FilesExist(t *testing.T) {
 	}
 }
 
-func TestBindPFlag(t *testing.T) {
-	// Not parallel: uses global viper instance
-	viper.Reset()
-
-	// Create a flag set and flag
-	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
-	flags.String("test-flag", "default", "test flag")
-
-	flag := flags.Lookup("test-flag")
-	if flag == nil {
-		t.Fatal("failed to create test flag")
+func TestApplyFlagOverrides(t *testing.T) {
+	tests := []struct {
+		name     string
+		haURL    string
+		haToken  string
+		port     int
+		readOnly bool
+		wantURL  string
+		wantTok  string
+		wantPort int
+		wantRO   bool
+	}{
+		{"no flags set keeps config values", "", "", 0, false, "http://yaml:8123", "yaml-token", 8080, false},
+		{"all flags set override config", "http://flag:8123", "flag-token", 9999, true, "http://flag:8123", "flag-token", 9999, true},
+		{"only port set", "", "", 9999, false, "http://yaml:8123", "yaml-token", 9999, false},
+		{"only token set", "", "flag-token", 0, false, "http://yaml:8123", "flag-token", 8080, false},
 	}
 
-	// This should not panic
-	bindPFlag("test.key", flag)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := &App{haURL: tt.haURL, haToken: tt.haToken, port: tt.port, readOnly: tt.readOnly}
+			cfg := &config.Config{}
+			cfg.HomeAssistant.URL = "http://yaml:8123"
+			cfg.HomeAssistant.Token = "yaml-token"
+			cfg.Server.Port = 8080
+			cfg.Server.ReadOnly = false
 
-	// Verify binding works (viper should use the flag value)
-	if err := flags.Set("test-flag", "new-value"); err != nil {
-		t.Fatalf("failed to set flag: %v", err)
+			app.applyFlagOverrides(cfg)
+
+			if cfg.HomeAssistant.URL != tt.wantURL {
+				t.Errorf("URL = %q, want %q", cfg.HomeAssistant.URL, tt.wantURL)
+			}
+			if cfg.HomeAssistant.Token != tt.wantTok {
+				t.Errorf("Token = %q, want %q", cfg.HomeAssistant.Token, tt.wantTok)
+			}
+			if cfg.Server.Port != tt.wantPort {
+				t.Errorf("Port = %d, want %d", cfg.Server.Port, tt.wantPort)
+			}
+			if cfg.Server.ReadOnly != tt.wantRO {
+				t.Errorf("ReadOnly = %v, want %v", cfg.Server.ReadOnly, tt.wantRO)
+			}
+		})
 	}
-
-	// Clean up
-	viper.Reset()
 }
 
-func TestBindPFlag_NilFlag(_ *testing.T) {
-	// Not parallel: uses global viper instance
-	// This should not panic with nil flag
-	bindPFlag("test.key", nil)
+func TestFlagOverridesReachLoadedConfig(t *testing.T) {
+	// End-to-end: CLI flags must override values that came from the config file.
+	// Regression: flags were bound to the global viper instance, which
+	// config.Load never reads, so --port etc. were silently ignored.
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yaml")
+	configContent := `homeassistant:
+  url: "http://yaml.local:8123"
+  token: "yaml-token"
+server:
+  port: 8080
+logging:
+  level: info
+`
+	if err := os.WriteFile(configFile, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfg, err := config.Load(configFile)
+	if err != nil {
+		t.Fatalf("config.Load() error = %v", err)
+	}
+
+	app := &App{haURL: "http://flag.local:8123", port: 9999, readOnly: true}
+	app.applyFlagOverrides(cfg)
+
+	if cfg.HomeAssistant.URL != "http://flag.local:8123" {
+		t.Errorf("URL = %q, want flag value", cfg.HomeAssistant.URL)
+	}
+	if cfg.Server.Port != 9999 {
+		t.Errorf("Port = %d, want 9999", cfg.Server.Port)
+	}
+	if cfg.Server.ReadOnly != true {
+		t.Errorf("ReadOnly = %v, want true", cfg.Server.ReadOnly)
+	}
+	if cfg.HomeAssistant.Token != "yaml-token" {
+		t.Errorf("Token = %q, want config value (flag empty)", cfg.HomeAssistant.Token)
+	}
+}
+
+func TestRootCmdVersion(t *testing.T) {
+	app := NewApp()
+	if app.rootCmd.Version == "" {
+		t.Error("rootCmd.Version should be set for goreleaser ldflags injection")
+	}
+}
+
+func TestRootCmdSilenceUsageAndErrors(t *testing.T) {
+	// Runtime errors (config load, HA connect) must not dump the full usage text.
+	app := NewApp()
+	if !app.rootCmd.SilenceUsage {
+		t.Error("rootCmd.SilenceUsage should be true")
+	}
+	if !app.rootCmd.SilenceErrors {
+		t.Error("rootCmd.SilenceErrors should be true")
+	}
+}
+
+func TestSubcommandsRejectArgs(t *testing.T) {
+	app := NewApp()
+	for _, name := range []string{"config", "init"} {
+		sub, _, err := app.rootCmd.Find([]string{name})
+		if err != nil {
+			t.Fatalf("Find(%q) error = %v", name, err)
+		}
+		if err := sub.Args(sub, []string{"unexpected"}); err == nil {
+			t.Errorf("%q should reject positional args", name)
+		}
+		if err := sub.Args(sub, nil); err != nil {
+			t.Errorf("%q should accept no args: %v", name, err)
+		}
+	}
+}
+
+func TestVersionOutput(t *testing.T) {
+	buf := new(bytes.Buffer)
+	app := NewApp()
+	app.rootCmd.SetOut(buf)
+	app.rootCmd.SetErr(buf)
+	app.rootCmd.SetArgs([]string{"--version"})
+
+	if err := app.Execute(); err != nil {
+		t.Fatalf("Execute(--version) error = %v", err)
+	}
+	if !strings.Contains(buf.String(), version) {
+		t.Errorf("--version output %q should contain version %q", buf.String(), version)
+	}
+}
+
+func TestFlagOverridesShownInConfigOutput(t *testing.T) {
+	// `config` display should reflect CLI flags, not just the config file.
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yaml")
+	configContent := `homeassistant:
+  url: "http://test.local:8123"
+  token: "test-token-12345"
+server:
+  port: 8080
+logging:
+  level: info
+`
+	if err := os.WriteFile(configFile, []byte(configContent), 0o600); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+
+	app := &App{cfgFile: configFile, port: 9999}
+	if err := app.runConfig(cmd, nil); err != nil {
+		t.Fatalf("runConfig() error = %v", err)
+	}
+
+	if !strings.Contains(buf.String(), "Port:       9999") {
+		t.Errorf("output should show flag-overridden port, got: %s", buf.String())
+	}
 }
 
 func TestExecute(t *testing.T) {
@@ -435,7 +567,7 @@ logging:
 	}
 
 	app := &App{}
-	err = app.runConfig(nil, nil)
+	err = app.runConfig(&cobra.Command{}, nil)
 
 	if err != nil {
 		t.Errorf("runConfig() error = %v", err)
@@ -476,24 +608,13 @@ logging:
 		t.Fatalf("failed to create config.yaml: %v", err)
 	}
 
-	// Capture stdout
-	oldStdout := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
 
 	app := &App{cfgFile: configFile}
-	err = app.runConfig(nil, nil)
+	err = app.runConfig(cmd, nil)
 
-	// Restore stdout and read captured output
-	if closeErr := w.Close(); closeErr != nil {
-		t.Errorf("failed to close pipe writer: %v", closeErr)
-	}
-	os.Stdout = oldStdout
-
-	var buf bytes.Buffer
-	if _, copyErr := io.Copy(&buf, r); copyErr != nil {
-		t.Errorf("failed to copy output: %v", copyErr)
-	}
 	output := buf.String()
 
 	if err != nil {
@@ -531,7 +652,7 @@ func TestRunConfig_NoConfig(t *testing.T) {
 
 	app := &App{}
 	// This should still work but with default/empty values
-	err = app.runConfig(nil, nil)
+	err = app.runConfig(&cobra.Command{}, nil)
 
 	// May or may not error depending on config loading behavior
 	// Just ensure it doesn't panic
@@ -561,7 +682,7 @@ func TestRunInit_PartialExisting(t *testing.T) {
 	}
 
 	app := &App{}
-	err = app.runInit(nil, nil)
+	err = app.runInit(&cobra.Command{}, nil)
 
 	if err != nil {
 		t.Errorf("runInit() error = %v", err)
