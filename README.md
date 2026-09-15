@@ -194,6 +194,8 @@ See [docs/troubleshooting.md](docs/troubleshooting.md) for WebSocket connection 
 
 ## Development
 
+A preconfigured dev container is available; see [.devcontainer/README.md](.devcontainer/README.md).
+
 **Prerequisites:** Go 1.27+, golangci-lint v2, Docker (optional)
 
 ```bash
