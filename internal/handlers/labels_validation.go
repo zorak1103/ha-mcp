@@ -66,7 +66,7 @@ func unknownLabelsMessage(labels []homeassistant.LabelRegistryEntry, unknown []s
 	// either way, so which branch runs makes no observable difference. No test
 	// can kill it - both forms produce byte-identical output for every input.
 	// See BoundedFieldList in internal/homeassistant/field_list.go for the same shape.
-	if len(shown) > maxUnknownLabelsListed { //mutest:skip
+	if len(shown) > maxUnknownLabelsListed {
 		shown = shown[:maxUnknownLabelsListed]
 		more = len(unknown) - maxUnknownLabelsListed
 	}
