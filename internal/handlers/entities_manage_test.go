@@ -313,6 +313,36 @@ func TestHandleManageEntity(t *testing.T) {
 			wantContain: "updated successfully",
 		},
 		{
+			// Issue #264: an explicit empty string means "no change" - it must be
+			// omitted from the update so HA's enum validation never sees "".
+			name: "update - empty string disabled_by is omitted",
+			args: map[string]any{
+				"action":      "update",
+				"entity_id":   "light.living_room",
+				"name":        "Renamed",
+				"disabled_by": "",
+				"hidden_by":   "",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.UpdateEntityRegistryEntryFn = func(_ context.Context, _ string, config homeassistant.EntityRegistryUpdateConfig) (*homeassistant.EntityRegistryEntry, error) {
+					if config.DisabledBy != nil {
+						t.Errorf("expected disabled_by to be omitted, got %q", *config.DisabledBy)
+					}
+					if config.HiddenBy != nil {
+						t.Errorf("expected hidden_by to be omitted, got %q", *config.HiddenBy)
+					}
+					if config.Name == nil || *config.Name != "Renamed" {
+						t.Error("expected name to be 'Renamed'")
+					}
+					return &homeassistant.EntityRegistryEntry{
+						EntityID: "light.living_room",
+						Name:     "Renamed",
+					}, nil
+				}
+			},
+			wantContain: "updated successfully",
+		},
+		{
 			name: "update - hide",
 			args: map[string]any{
 				"action":    "update",

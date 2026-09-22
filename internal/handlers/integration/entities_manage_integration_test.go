@@ -128,12 +128,85 @@ func (s *EntityManageIntegrationTestSuite) TestEntityUpdateDisable() {
 	s.Require().NotNil(disabledEntry)
 	s.Equal("user", disabledEntry.DisabledBy, "Entity should be disabled by user")
 
-	// Note: Re-enabling requires removing the disabled_by field entirely, which may not be
-	// supported by all HA versions. Testing disable only is sufficient for validation.
+	// Re-enable via the empty-string clear sentinel (serialized as JSON null,
+	// issue #264) and verify disabled_by is cleared.
+	clearSentinel := ""
+	_, err = s.Client().UpdateEntityRegistryEntry(s.Context(), entityID, homeassistant.EntityRegistryUpdateConfig{
+		DisabledBy: &clearSentinel,
+	})
+	s.Require().NoError(err, "Failed to re-enable entity (disabled_by null)")
+
+	time.Sleep(500 * time.Millisecond)
+	registry, err = s.Client().GetEntityRegistry(s.Context())
+	s.Require().NoError(err)
+	for _, entry := range registry {
+		if entry.EntityID == entityID {
+			s.Empty(entry.DisabledBy, "disabled_by should be cleared after re-enable")
+			break
+		}
+	}
 
 	// Cleanup
 	err = s.Client().DeleteHelper(s.Context(), entityID)
 	s.Require().NoError(err)
+}
+
+// Issue #264: a rename-only update that also carries disabled_by/hidden_by
+// (the empty-string clear sentinels, serialized as JSON null) must succeed -
+// HA previously rejected the whole update with "not a valid value at
+// 'disabled_by'; Got ”" because the sentinels were sent as empty strings.
+func (s *EntityManageIntegrationTestSuite) TestEntityRenameWithEnumSentinels() {
+	testName := GenerateTestID("entity_rename_enum")
+	entityID := BuildEntityID("input_boolean", testName)
+	newTestName := GenerateTestID("entity_renamed_enum")
+	newEntityID := BuildEntityID("input_boolean", newTestName)
+
+	s.RegisterCleanup(func() {
+		_ = s.Client().DeleteHelper(s.Context(), entityID)
+		_ = s.Client().RemoveEntityRegistryEntry(s.Context(), newEntityID)
+	})
+
+	err := s.Client().CreateHelper(s.Context(), homeassistant.HelperConfig{
+		Platform: "input_boolean",
+		Config:   map[string]any{"name": testName},
+	})
+	s.Require().NoError(err, "failed to create helper")
+
+	_, err = s.WaitForEntity(entityID, 5*time.Second)
+	s.Require().NoError(err, "helper did not appear")
+	time.Sleep(500 * time.Millisecond)
+
+	// Rename + clear both enum fields in one call - the exact shape the
+	// issue reported failing.
+	clearSentinel := ""
+	_, err = s.Client().UpdateEntityRegistryEntry(s.Context(), entityID, homeassistant.EntityRegistryUpdateConfig{
+		NewEntityID: &newEntityID,
+		DisabledBy:  &clearSentinel,
+		HiddenBy:    &clearSentinel,
+	})
+	s.Require().NoError(err, "rename-only update with enum sentinels should not be rejected")
+
+	// Metadata-only update with sentinels, no other field present.
+	_, err = s.Client().UpdateEntityRegistryEntry(s.Context(), newEntityID, homeassistant.EntityRegistryUpdateConfig{
+		DisabledBy: &clearSentinel,
+		HiddenBy:   &clearSentinel,
+	})
+	s.Require().NoError(err, "metadata-only update with enum sentinels should not be rejected")
+
+	// Verify the rename landed and the entity is neither disabled nor hidden.
+	time.Sleep(1 * time.Second)
+	registry, err := s.Client().GetEntityRegistry(s.Context())
+	s.Require().NoError(err)
+	var found *homeassistant.EntityRegistryEntry
+	for _, entry := range registry {
+		if entry.EntityID == newEntityID {
+			found = &entry
+			break
+		}
+	}
+	s.Require().NotNil(found, "renamed entity should exist in registry")
+	s.Empty(found.DisabledBy, "disabled_by should be clear")
+	s.Empty(found.HiddenBy, "hidden_by should be clear")
 }
 
 func (s *EntityManageIntegrationTestSuite) TestEntityUpdateAliases() {
