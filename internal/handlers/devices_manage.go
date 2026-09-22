@@ -285,12 +285,20 @@ func (h *DeviceManageHandlers) buildDeviceUpdateConfig(args map[string]any) (hom
 	}
 
 	if disabledBy, ok := args["disabled_by"].(string); ok {
-		// Map "none" to empty string for HA API
-		if disabledBy == "none" {
-			disabledBy = ""
+		switch disabledBy {
+		case "":
+			// Explicit empty string = no change; omit so HA's enum validation
+			// never sees "" (issue #264).
+		case "none":
+			// Clear sentinel: ws_client_impl sends this as JSON null, which is
+			// the only value HA accepts for re-enabling ("" is rejected).
+			disabledClear := ""
+			config.DisabledBy = &disabledClear
+			hasFields = true
+		default:
+			config.DisabledBy = &disabledBy
+			hasFields = true
 		}
-		config.DisabledBy = &disabledBy
-		hasFields = true
 	}
 
 	return config, hasFields

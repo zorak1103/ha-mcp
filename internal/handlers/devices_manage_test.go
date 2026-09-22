@@ -282,6 +282,32 @@ func TestHandleManageDevice(t *testing.T) {
 			wantContain: "updated successfully",
 		},
 		{
+			// Issue #264: an explicit empty string means "no change" - it must be
+			// omitted from the update so HA's enum validation never sees "".
+			name: "update - empty string disabled_by is omitted",
+			args: map[string]any{
+				"action":       "update",
+				"device_id":    "abc123",
+				"name_by_user": "Renamed",
+				"disabled_by":  "",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.UpdateDeviceRegistryEntryFn = func(_ context.Context, _ string, config homeassistant.DeviceRegistryUpdateConfig) (*homeassistant.DeviceRegistryEntry, error) {
+					if config.DisabledBy != nil {
+						t.Errorf("expected disabled_by to be omitted, got %q", *config.DisabledBy)
+					}
+					if config.NameByUser == nil || *config.NameByUser != "Renamed" {
+						t.Error("expected name_by_user to be 'Renamed'")
+					}
+					return &homeassistant.DeviceRegistryEntry{
+						ID:         "abc123",
+						NameByUser: "Renamed",
+					}, nil
+				}
+			},
+			wantContain: "updated successfully",
+		},
+		{
 			name: "update - labels with replace mode",
 			args: map[string]any{
 				"action":     "update",

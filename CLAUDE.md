@@ -290,6 +290,7 @@ Key environment variables:
 - **Trace `item_id` is the `unique_id`, not the `entity_id`**: a wrong key returns an empty list, not an error. `resolveTraceItemID()` resolves this via `GetEntityRegistryEntry` - don't bypass it.
 - **Todo `uid`→`item` API field rename**: user param `uid` maps to `data["item"]` in `todo.update_item`/`remove_item` - never pass `item` directly.
 - **Empty array parameter handling**: create rejects empty required arrays; update allows an empty array to clear a field.
+- **HA registry-update enum fields accept only `null` or the enum value, never `""`**: `config/{entity,device}_registry/update`'s `disabled_by`/`hidden_by` validate `vol.Any(None, "user")` - an empty string fails coercion ("not a valid value at 'disabled_by'; Got ''") and rejects the whole update (issue #264). The tool arg `"none"` maps to an empty-string sentinel that `ws_client_impl.go`'s `enumUpdateValue` serializes as JSON null (clear); a caller-supplied `""` arg is treated as unset and omitted. Keep the sentinel→null translation in `enumUpdateValue`, not in the handlers.
 - **Format parameter constants**: use existing `formatNatural`/`formatJSON` constants, not hardcoded strings (goconst).
 - **MCP Registry API**: `registry.RegisterTool(tool, handler)`, not `registry.AddTool(tool)`.
 - **InputSchema type**: `mcp.JSONSchema` with `Properties: map[string]mcp.JSONSchema`, not `map[string]any`.

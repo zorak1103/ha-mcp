@@ -346,21 +346,35 @@ func (h *EntityManageHandlers) buildEntityUpdateConfig(args map[string]any) (hom
 	}
 
 	if disabledBy, ok := args["disabled_by"].(string); ok {
-		// Map "none" to empty string for HA API
-		if disabledBy == noneValue {
-			disabledBy = ""
+		switch disabledBy {
+		case "":
+			// Explicit empty string = no change; omit so HA's enum validation
+			// never sees "" (issue #264).
+		case noneValue:
+			// Clear sentinel: ws_client_impl sends this as JSON null, which is
+			// the only value HA accepts for re-enabling ("" is rejected).
+			disabledClear := ""
+			config.DisabledBy = &disabledClear
+			hasFields = true
+		default:
+			config.DisabledBy = &disabledBy
+			hasFields = true
 		}
-		config.DisabledBy = &disabledBy
-		hasFields = true
 	}
 
 	if hiddenBy, ok := args["hidden_by"].(string); ok {
-		// Map "none" to empty string for HA API
-		if hiddenBy == noneValue {
-			hiddenBy = ""
+		switch hiddenBy {
+		case "":
+			// Explicit empty string = no change; omit (issue #264).
+		case noneValue:
+			// Clear sentinel: sent as JSON null by ws_client_impl.
+			disabledClear := ""
+			config.HiddenBy = &disabledClear
+			hasFields = true
+		default:
+			config.HiddenBy = &hiddenBy
+			hasFields = true
 		}
-		config.HiddenBy = &hiddenBy
-		hasFields = true
 	}
 
 	if newEntityID, ok := args["new_entity_id"].(string); ok && newEntityID != "" {

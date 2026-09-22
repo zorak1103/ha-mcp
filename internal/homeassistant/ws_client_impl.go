@@ -665,6 +665,22 @@ func (c *wsClientImpl) RemoveEntityRegistryEntry(ctx context.Context, entityID s
 	return nil
 }
 
+// enumUpdateValue serializes an optional enum field for the entity/device
+// registry update commands. HA validates these fields with
+// vol.Any(None, "user"), so an empty string fails with "not a valid value"
+// and rejects the whole update (issue #264). The empty string is the internal
+// clear sentinel (mapped from the tool's "none" arg) and must be sent as JSON
+// null, which HA accepts as "clear the value".
+func enumUpdateValue(v *string) any {
+	if v == nil {
+		return nil // caller must check for nil-ness before including the key
+	}
+	if *v == "" {
+		return nil // clear sentinel → JSON null
+	}
+	return *v
+}
+
 // UpdateEntityRegistryEntry updates an existing entity in the entity registry.
 func (c *wsClientImpl) UpdateEntityRegistryEntry(ctx context.Context, entityID string, config EntityRegistryUpdateConfig) (*EntityRegistryEntry, error) {
 	params := map[string]any{
@@ -682,10 +698,10 @@ func (c *wsClientImpl) UpdateEntityRegistryEntry(ctx context.Context, entityID s
 		params["area_id"] = *config.AreaID
 	}
 	if config.DisabledBy != nil {
-		params["disabled_by"] = *config.DisabledBy
+		params["disabled_by"] = enumUpdateValue(config.DisabledBy)
 	}
 	if config.HiddenBy != nil {
-		params["hidden_by"] = *config.HiddenBy
+		params["hidden_by"] = enumUpdateValue(config.HiddenBy)
 	}
 	if config.Labels != nil {
 		params["labels"] = config.Labels
@@ -740,7 +756,7 @@ func (c *wsClientImpl) UpdateDeviceRegistryEntry(ctx context.Context, deviceID s
 		params["area_id"] = *config.AreaID
 	}
 	if config.DisabledBy != nil {
-		params["disabled_by"] = *config.DisabledBy
+		params["disabled_by"] = enumUpdateValue(config.DisabledBy)
 	}
 	if config.Labels != nil {
 		params["labels"] = config.Labels

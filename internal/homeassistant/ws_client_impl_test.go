@@ -3673,6 +3673,166 @@ func TestWSClientImplWithSender_UpdateEntityRegistryEntry_Error(t *testing.T) {
 	}
 }
 
+// Issue #264: HA's entity/device registry update commands validate
+// disabled_by/hidden_by with vol.Any(None, "user") - an empty string fails
+// enum validation ("not a valid value at 'disabled_by'; Got ”") and rejects
+// the whole update. The empty string is therefore the internal clear sentinel
+// and must serialize as JSON null; an unset field must be omitted entirely.
+func TestWSClientImplWithSender_UpdateEntityRegistryEntry_EnumFieldSerialization(t *testing.T) {
+	t.Parallel()
+
+	empty := ""
+	user := "user"
+	cases := []struct {
+		name       string
+		disabledBy *string
+		hiddenBy   *string
+		check      func(t *testing.T, params map[string]any)
+	}{
+		{
+			name:       "empty string sentinel sends JSON null (clear)",
+			disabledBy: &empty,
+			hiddenBy:   &empty,
+			check: func(t *testing.T, params map[string]any) {
+				t.Helper()
+				v, ok := params["disabled_by"]
+				if !ok {
+					t.Fatal("expected disabled_by key present with null value")
+				}
+				if v != nil {
+					t.Errorf("expected disabled_by null, got %v", v)
+				}
+				v, ok = params["hidden_by"]
+				if !ok {
+					t.Fatal("expected hidden_by key present with null value")
+				}
+				if v != nil {
+					t.Errorf("expected hidden_by null, got %v", v)
+				}
+			},
+		},
+		{
+			name:       "explicit user value forwarded unchanged",
+			disabledBy: &user,
+			hiddenBy:   &user,
+			check: func(t *testing.T, params map[string]any) {
+				t.Helper()
+				if params["disabled_by"] != "user" {
+					t.Errorf("expected disabled_by 'user', got %v", params["disabled_by"])
+				}
+				if params["hidden_by"] != "user" {
+					t.Errorf("expected hidden_by 'user', got %v", params["hidden_by"])
+				}
+			},
+		},
+		{
+			name: "unset fields omitted entirely",
+			check: func(t *testing.T, params map[string]any) {
+				t.Helper()
+				if _, ok := params["disabled_by"]; ok {
+					t.Error("expected disabled_by key to be absent")
+				}
+				if _, ok := params["hidden_by"]; ok {
+					t.Error("expected hidden_by key to be absent")
+				}
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var captured map[string]any
+			mock := &mockWSClientSender{
+				sendCommandFunc: func(_ context.Context, _ string, params map[string]any) (*WSResultMessage, error) {
+					captured = params
+					return makeWSResultMsg(map[string]any{
+						"entity_entry": map[string]any{"entity_id": "light.living_room"},
+					}), nil
+				},
+			}
+			client := newWSClientImplWithSender(mock)
+			_, err := client.UpdateEntityRegistryEntry(context.Background(), "light.living_room", EntityRegistryUpdateConfig{
+				DisabledBy: tc.disabledBy,
+				HiddenBy:   tc.hiddenBy,
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			tc.check(t, captured)
+		})
+	}
+}
+
+func TestWSClientImplWithSender_UpdateDeviceRegistryEntry_DisabledBySerialization(t *testing.T) {
+	t.Parallel()
+
+	empty := ""
+	user := "user"
+	cases := []struct {
+		name       string
+		disabledBy *string
+		check      func(t *testing.T, params map[string]any)
+	}{
+		{
+			name:       "empty string sentinel sends JSON null (clear)",
+			disabledBy: &empty,
+			check: func(t *testing.T, params map[string]any) {
+				t.Helper()
+				v, ok := params["disabled_by"]
+				if !ok {
+					t.Fatal("expected disabled_by key present with null value")
+				}
+				if v != nil {
+					t.Errorf("expected disabled_by null, got %v", v)
+				}
+			},
+		},
+		{
+			name:       "explicit user value forwarded unchanged",
+			disabledBy: &user,
+			check: func(t *testing.T, params map[string]any) {
+				t.Helper()
+				if params["disabled_by"] != "user" {
+					t.Errorf("expected disabled_by 'user', got %v", params["disabled_by"])
+				}
+			},
+		},
+		{
+			name: "unset field omitted entirely",
+			check: func(t *testing.T, params map[string]any) {
+				t.Helper()
+				if _, ok := params["disabled_by"]; ok {
+					t.Error("expected disabled_by key to be absent")
+				}
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var captured map[string]any
+			mock := &mockWSClientSender{
+				sendCommandFunc: func(_ context.Context, _ string, params map[string]any) (*WSResultMessage, error) {
+					captured = params
+					return makeWSResultMsg(map[string]any{
+						"device_entry": map[string]any{"id": "abc123"},
+					}), nil
+				},
+			}
+			client := newWSClientImplWithSender(mock)
+			_, err := client.UpdateDeviceRegistryEntry(context.Background(), "abc123", DeviceRegistryUpdateConfig{
+				DisabledBy: tc.disabledBy,
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			tc.check(t, captured)
+		})
+	}
+}
+
 func TestWSClientImplWithSender_UpdateDeviceRegistryEntry(t *testing.T) {
 	t.Parallel()
 
