@@ -41,7 +41,7 @@ jobs:
 
       - name: Install golangci-lint
         # renovate: datasource=go depName=github.com/golangci/golangci-lint/v2
-        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
 
       - name: Run lint
         run: task lint
@@ -193,6 +193,6 @@ jobs:
 
       - name: TruffleHog Secret Scan
         # renovate: datasource=github-releases depName=trufflesecurity/trufflehog
-        uses: trufflesecurity/trufflehog@a5f3de55cc2065ae4dde8fee24076f137fd62fcf  # v3.97.8
+        uses: trufflesecurity/trufflehog@4dd8831c5f12599465d4d45c3c447b4018a34c85  # v3.97.9
         with:
           extra_args: --only-verified
