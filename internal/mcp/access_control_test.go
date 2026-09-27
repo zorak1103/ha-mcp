@@ -8,7 +8,7 @@ import (
 func TestAccessControlMapCompleteness(t *testing.T) {
 	t.Parallel()
 
-	// Expected tools count based on CLAUDE.md documentation
+	// Expected tools count based on AGENTS.md documentation
 	expectedTools := []string{
 		// State and query
 		"get_state",

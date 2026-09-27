@@ -19,7 +19,7 @@ func TestScriptToolDispatch(t *testing.T) {
 }
 
 // TestScriptUpdateViaTool covers the documented GetScript-vs-GetState gotcha
-// (CLAUDE.md: "GetState returns only state + friendly_name, not full script
+// (AGENTS.md: "GetState returns only state + friendly_name, not full script
 // config") by updating only the description via the real manage_script tool
 // and confirming the sequence (untouched) survives - if the handler ever
 // regressed to building its base config from GetState instead of GetScript,

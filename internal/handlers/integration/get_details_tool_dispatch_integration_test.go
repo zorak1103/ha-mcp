@@ -20,7 +20,7 @@ import (
 // subtype domains). These exercise the real manage_helper tool end-to-end
 // against a live Home Assistant instance - the corresponding unit tests use
 // a mock client and cannot catch a routing or Options Flow regression the
-// way these can (see CLAUDE.md's "Integration test scope").
+// way these can (see AGENTS.md's "Integration test scope").
 type GetDetailsRemediationTestSuite struct {
 	HelperTestSuite
 }

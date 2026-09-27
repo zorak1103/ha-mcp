@@ -145,7 +145,7 @@ go test -tags=integration -v ./internal/handlers/integration/... 2>&1 | tee test
 
 | Tool        | Scope           | Reason                                                                                                                                     |
 | ----------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `get_skill` | Unit tests only | No HA interaction — content is embedded markdown; integration test not technically applicable (documented exception per CLAUDE.md policy). |
+| `get_skill` | Unit tests only | No HA interaction — content is embedded markdown; integration test not technically applicable (documented exception per AGENTS.md policy). |
 
 **Note:** Read-only tests (traces, updates, blueprints, cameras) verify API integration and response parsing. They skip gracefully if no entities exist or features are unavailable.
 
@@ -178,7 +178,7 @@ Every test above calls `homeassistant.Client` methods directly, verifying the cl
 | `TestZoneToolDispatch`                    | `manage_zone`      | list - regression test for the zone WS command-prefix fix                                                                                                                  |
 | `TestManageStatisticsToolDispatch`        | `manage_statistics`| list (smoke), unknown action rejection, validate (smoke), clear without ids/malformed id rejected, clear with a well-formed unknown id (no error)                           |
 
-Writing these tests uncovered and fixed three further, previously-unknown bugs in the config-entry helper update path (all unreachable until the config-entry helper update routing fix let update calls reach Home Assistant's Options Flow submission for the first time) - see `CLAUDE.md`'s API & Type Gotchas section for `buildConfigEntryUpdateConfig`'s `entity_id` leak, `addExtendedConfigEntryFields`'s `device_class` leak, and `extractOptionsFromSchema`'s nil `suggested_value` propagation.
+Writing these tests uncovered and fixed three further, previously-unknown bugs in the config-entry helper update path (all unreachable until the config-entry helper update routing fix let update calls reach Home Assistant's Options Flow submission for the first time) - see `AGENTS.md`'s API & Type Gotchas section for `buildConfigEntryUpdateConfig`'s `entity_id` leak, `addExtendedConfigEntryFields`'s `device_class` leak, and `extractOptionsFromSchema`'s nil `suggested_value` propagation.
 
 `TestFindReferencesToolDispatch` uncovered a further pre-existing bug found only by testing against real Home Assistant: `analyze_entity`'s script-reference lookup (and the equivalent new `find_references` scanner) read `sequence` from a script entity's *state attributes* (via `ListScripts`), but real Home Assistant does not expose `sequence` as a state attribute - only `current`, `friendly_name`, `last_triggered`, `mode`. Every script reference lookup was silently returning zero results. Unit tests never caught this because their mocks set `sequence` directly on `Attributes`. Fixed by fetching the full config via `GetScript` per script, mirroring how `findAutomationReferences` already used `GetAutomation` (`internal/handlers/analysis.go`'s `findScriptReferences`, `internal/handlers/find_references.go`'s `scanScriptsForReferences`).
 

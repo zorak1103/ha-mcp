@@ -72,4 +72,4 @@ If `HA_CACHE_ENABLED=true`, registry reads (`get_registry`, `manage_*:list`) are
 
 ## Source for Maintenance
 
-CLAUDE.md sections "Post-Mutation Async Confirmation (Smart Wait)", "Configuration Priority", "Consolidated Tools".
+AGENTS.md sections "Post-Mutation Async Confirmation (Smart Wait)", "Configuration Priority", "Consolidated Tools".

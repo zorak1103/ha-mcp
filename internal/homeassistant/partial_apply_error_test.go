@@ -31,7 +31,7 @@ func TestPartialApplyError_CreateMessageNamesPlatformAndFields(t *testing.T) {
 
 // TestPartialApplyError_UpdateMessageOmitsPlatform pins the update-side
 // wording: HelperConfig.Platform on the update path is the entity DOMAIN,
-// not the real integration platform (CLAUDE.md's ParseHelperEntityID
+// not the real integration platform (AGENTS.md's ParseHelperEntityID
 // gotcha) - naming it here would be actively misleading, so the update
 // message must not depend on Platform at all.
 func TestPartialApplyError_UpdateMessageOmitsPlatform(t *testing.T) {

@@ -13,7 +13,7 @@ import "testing"
 // returning false to mean "safe to call GetHelperConfig/UpdateHelper" would
 // silently regress. This test only proves the two known maps never overlap;
 // it is not a check that their union is exhaustive (that a new helper type's
-// author is not permitted to forget it) - see CLAUDE.md's "Extending
+// author is not permitted to forget it) - see AGENTS.md's "Extending
 // Consolidated Tools" checklist for the exhaustiveness diligence needed on
 // each new type.
 func TestWSHelperAndConfigEntryPlatforms_AreDisjoint(t *testing.T) {

@@ -48,7 +48,7 @@ func (s *InputNumberToolDispatchTestSuite) TestInputNumberUpdateViaTool() {
 
 	// The action under test: update via the real manage_helper tool.
 	// name is required on every WS helper update, even when unchanged - see
-	// CLAUDE.md's "WebSocket helper updates require ALL mandatory fields".
+	// AGENTS.md's "WebSocket helper updates require ALL mandatory fields".
 	result := s.CallTool("manage_helper", map[string]any{
 		"action":    "update",
 		"entity_id": entityID,

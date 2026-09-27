@@ -16,7 +16,7 @@ import (
 // preflight is a handler-level feature reached only via the manage_helper
 // tool dispatch (handleCreate/handleUpdate) - unlike the other integration
 // suites in this package, which call s.Client().CreateHelper directly and
-// so never exercise it (see CLAUDE.md's "Integration test scope"), every
+// so never exercise it (see AGENTS.md's "Integration test scope"), every
 // helper under test here is created through s.CallTool("manage_helper", ...).
 //
 // This suite exists because an adversarial review found the preflight's

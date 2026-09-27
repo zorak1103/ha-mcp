@@ -19,7 +19,7 @@ func TestAutomationToolDispatch(t *testing.T) {
 }
 
 // TestAutomationUpdateAndPatchViaTool covers the documented config-ID-vs-
-// entity-slug normalization gotcha (CLAUDE.md: "manage_automation update ...
+// entity-slug normalization gotcha (AGENTS.md: "manage_automation update ...
 // UI-created automations have numeric config IDs differing from entity_id
 // suffix") by driving both update and a semantic patch op through the real
 // manage_automation tool.

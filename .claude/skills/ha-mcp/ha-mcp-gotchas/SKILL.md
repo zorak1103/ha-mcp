@@ -61,4 +61,4 @@ Look up by symptom. Fix is actionable.
 
 ## Source for Maintenance
 
-`D:\data\godev\ha-mcp\CLAUDE.md` sections "API & Type Gotchas" and "Pattern Reference".
+`D:\data\godev\ha-mcp\AGENTS.md` sections "API & Type Gotchas" and "Pattern Reference".

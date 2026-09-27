@@ -127,7 +127,7 @@ func buildRandomBinarySensorConfig(config, _ map[string]any) error {
 // question. The "filters" array parameter is deliberately not supported:
 // Home Assistant's config-entry flow for filter takes exactly one filter
 // type per helper and rejects an additional "filters" key outright (see
-// CLAUDE.md's filter gotcha).
+// AGENTS.md's filter gotcha).
 func buildFilterConfig(config, args map[string]any) error {
 	r := newArgReader(config, args)
 	r.strID(attrEntityID)
@@ -186,7 +186,7 @@ func buildSwitchAsXConfig(config, args map[string]any) error {
 	// name is unconditionally seeded by buildHelperConfig for every
 	// config-entry type, but switch_as_x's flow schema has no "name" field
 	// at all - it's simply never claimed by any step (see the
-	// createHelperViaConfigFlow gotcha in CLAUDE.md).
+	// createHelperViaConfigFlow gotcha in AGENTS.md).
 	r.strID(attrEntityID)
 
 	// target_domain is switch_as_x's real (and only) "user"-step field, not
@@ -349,7 +349,7 @@ func addGenericThermostatPresetFields(r *argReader, entityDomain string) {
 
 // updateConfigKeyAliases maps a manage_helper arg name to the config map
 // key it lands under once the update builder runs, for the handful of
-// fields Home Assistant's API renames on write (see CLAUDE.md's "Config
+// fields Home Assistant's API renames on write (see AGENTS.md's "Config
 // Entry API Field Mapping" gotcha). splitAppliedFields
 // (helpers_consolidated.go) uses this to report a renamed field as applied
 // under the caller's own arg name rather than mistaking the rename for the

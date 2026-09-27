@@ -218,7 +218,7 @@ func (f *NaturalHelperFormatter) FormatHelperDetail(
 // renderer. A type absent from this map falls back to formatGenericDetail.
 // Built from a function (not a package-level literal) so its initializer can
 // be ordered correctly relative to other package state - the same pattern
-// CLAUDE.md documents for buildHelperConfigBuildersRegistry: a bare
+// AGENTS.md documents for buildHelperConfigBuildersRegistry: a bare
 // func init() fails the gochecknoinits linter, and a var _ = f() side-effect
 // trick fails unused.
 var dedicatedDetailRenderers = buildDedicatedDetailRenderers()
