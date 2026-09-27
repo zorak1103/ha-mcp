@@ -42,6 +42,7 @@ task install-hooks          # git config core.hooksPath .githooks (pre-commit: a
 # Security & analysis
 task vulncheck              # govulncheck ./...
 task deadcode               # deadcode -test ./...  (install: go install golang.org/x/tools/cmd/deadcode@latest)
+task gremlins               # mutation testing via Docker
 
 # Dev server
 task run                    # go run ./cmd/ha-mcp (set HA_URL and HA_TOKEN env vars)
