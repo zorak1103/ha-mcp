@@ -97,7 +97,7 @@ type helperTypeMetadata struct {
 // apply only to that specific type, because a sibling type sharing the same
 // field name doesn't have the same problem: filter's "filter" field is a
 // create-only selector the update builder never reads on update (see
-// CLAUDE.md's "manage_helper update field docs" gotcha) - not a
+// AGENTS.md's "manage_helper update field docs" gotcha) - not a
 // storage-config gap, since GetHelperConfig's "<platform>/list" does return
 // it; the update builder just never forwards it.
 var perTypeUpdateExcludedFields = buildPerTypeUpdateExcludedFields()
@@ -1503,7 +1503,7 @@ func buildUnknownTypeUpdateConfig(
 }
 
 // buildKnownTypeUpdateConfig builds the update config for a helperType that
-// has an entry in helperTypes. See CLAUDE.md's "Partial update merge" gotcha
+// has an entry in helperTypes. See AGENTS.md's "Partial update merge" gotcha
 // for why the merge gate below is !RequiresConfigEntryFlow(meta.platform)
 // rather than helperTypes key presence (group is a helperTypes key but a
 // Config Entry Flow platform, so it skips the merge).
@@ -1568,7 +1568,7 @@ func buildKnownTypeUpdateConfig(ctx context.Context, client homeassistant.Client
 // it to empty. Filters strictly to updatableFieldNames(typeName).
 //
 // fetchErr is non-nil when the fetch itself failed - the caller must fail
-// the update rather than proceed with a partial payload; see CLAUDE.md's
+// the update rather than proceed with a partial payload; see AGENTS.md's
 // "Merge-fetch failure hard-fails the update" gotcha for why this is NOT
 // the configWriteGuardError "checked=false, proceed anyway" convention.
 func mergeCurrentHelperState(ctx context.Context, client homeassistant.Client, entityID, typeName string, meta helperTypeMetadata, args map[string]any) (merged map[string]any, currentName string, fetchErr error) {
@@ -1700,7 +1700,7 @@ func (h *ConsolidatedHelperHandlers) handleGetDetails(ctx context.Context, clien
 			// fan/lock entities that work today (widenedHelperOnlyDomains
 			// covers more than just the two domains any single review round
 			// has flagged), and would hard-fail a read on a transient entity
-			// registry fetch error. See CLAUDE.md's "API & Type Gotchas".
+			// registry fetch error. See AGENTS.md's "API & Type Gotchas".
 			return h.handleGetDetailsGeneric(ctx, client, args, platform)
 		}
 		return errorResult(fmt.Sprintf("get_details is not supported for helper type: %s", platform)), nil
@@ -2562,7 +2562,7 @@ type configEntryUpdateContext struct {
 // Deliberately never reads "entity_id" - see isUpdateIdentifierField for why
 // it's the tool's own "which helper are we updating" identifier, not a
 // per-platform config value. Forwarding it once silently overwrote e.g. a
-// threshold's monitored entity with the helper's own id (see CLAUDE.md's
+// threshold's monitored entity with the helper's own id (see AGENTS.md's
 // "buildConfigEntryUpdateConfig leaked entity_id" gotcha).
 //
 //nolint:gocyclo // Routing to type-specific builders requires switch over all helper types
@@ -3186,7 +3186,7 @@ func checkUpdateSourceEntityDomain(ctx context.Context, client homeassistant.Cli
 // failure, but silently dropping min_max_type here would report the update
 // as successful while discarding the one field the caller asked to change -
 // the same class of risk mergeCurrentHelperState guards against for
-// WebSocket helpers (see CLAUDE.md's "Merge-fetch failure hard-fails the
+// WebSocket helpers (see AGENTS.md's "Merge-fetch failure hard-fails the
 // update" gotcha).
 func resolveConfigEntryPlatformForMinMaxType(ctx context.Context, client homeassistant.Client, entityID string) (string, error) {
 	entries, err := client.GetEntityRegistry(ctx)

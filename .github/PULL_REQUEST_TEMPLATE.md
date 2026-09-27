@@ -23,4 +23,4 @@ Fixes #
 - [ ] Tests were written before the implementation (TDD) and cover the new behavior
 - [ ] `task fmt:fix` and `task lint` pass
 - [ ] If this adds/changes a tool: integration test added/updated in `internal/handlers/integration/`
-- [ ] If this adds a new tool: docs updated per the Documentation Update Checklist in `CONTRIBUTING.md` (README, `docs/tools.md`, `docs/architecture.md`, `docs/feature-comparison.md`, `CLAUDE.md`, `docs/integration-tests.md`, relevant `.claude/skills/ha-mcp/*/SKILL.md`)
+- [ ] If this adds a new tool: docs updated per the Documentation Update Checklist in `CONTRIBUTING.md` (README, `docs/tools.md`, `docs/architecture.md`, `docs/feature-comparison.md`, `AGENTS.md`, `docs/integration-tests.md`, relevant `.claude/skills/ha-mcp/*/SKILL.md`)

@@ -13,7 +13,7 @@ import (
 // manage_helper args map into a config map, so a value the schema declared
 // but the receiving HA field can't use fails loudly instead of being
 // silently dropped (the root cause of both the input_number "initial" bug
-// and the filter window_size gap - see CLAUDE.md's schema<->builder type
+// and the filter window_size gap - see AGENTS.md's schema<->builder type
 // contract gotcha). Every read is one statement; call err() once all
 // fields for a builder have been read.
 //

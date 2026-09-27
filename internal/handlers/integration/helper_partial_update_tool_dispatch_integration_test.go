@@ -16,7 +16,7 @@ import (
 // realHelperStorageConfig, a hand-transcribed model of which fields HA's
 // "<platform>/list" (GetHelperConfig) actually returns per WS helper type
 // (helpers_consolidated_test.go). Unit tests can only ever check that model
-// against itself - CLAUDE.md documents this exact failure mode already
+// against itself - AGENTS.md documents this exact failure mode already
 // (script entities' "sequence" attribute: correct against mocks, silently
 // wrong against live HA, only caught by a live-HA integration test). Here
 // the blast radius is worse than "returns nothing": an update omitting a

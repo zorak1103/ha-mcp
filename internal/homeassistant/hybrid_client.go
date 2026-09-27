@@ -887,7 +887,7 @@ func (c *HybridClient) submitConfigFlowMenuChoice(ctx context.Context, config He
 // PRESETS_SCHEMA is all-Optional preset-temperature fields (away/eco/...)
 // we don't currently expose as tool parameters. Its schema is
 // PREVENT_EXTRA, so resubmitting the full config there fails with "extra
-// keys not allowed @ data['ac_mode']" etc. (see CLAUDE.md, issue #194). An
+// keys not allowed @ data['ac_mode']" etc. (see AGENTS.md, issue #194). An
 // empty submission is the only valid payload for this step.
 // filterStepFields is the exact key set Home Assistant's filter config-entry
 // flow accepts at each step. Step "user" is DATA_SCHEMA_SETUP; every other
@@ -1691,7 +1691,7 @@ func (c *HybridClient) readAllOptionsFlowSteps(ctx context.Context, result *Opti
 
 // DeleteConfigEntry deletes a config entry and all its associated devices/entities.
 // REST-only: Home Assistant has no reliable config_entries/{delete,remove} WS command,
-// same class of gap as automation/script/scene CRUD (see CLAUDE.md).
+// same class of gap as automation/script/scene CRUD (see AGENTS.md).
 func (c *HybridClient) DeleteConfigEntry(ctx context.Context, entryID string) (bool, error) {
 	return c.rest.DeleteConfigEntry(ctx, entryID)
 }

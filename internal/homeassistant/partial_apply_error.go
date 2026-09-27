@@ -5,7 +5,7 @@ import "fmt"
 // PartialApplyOp distinguishes the create-flow and update-flow wordings of
 // PartialApplyError.Error(). Create's HelperConfig.Platform is the real
 // config-entry platform name and safe to name in the message; update's is
-// the entity DOMAIN (e.g. "climate"), not the platform (see CLAUDE.md's
+// the entity DOMAIN (e.g. "climate"), not the platform (see AGENTS.md's
 // ParseHelperEntityID gotcha - handleUpdate's call site never resolves the
 // real platform before reaching updateHelperViaOptionsFlow), so naming it
 // as if it were the platform would be actively misleading.

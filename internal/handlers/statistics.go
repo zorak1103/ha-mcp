@@ -258,7 +258,7 @@ func (h *StatisticsHandlers) handleStatisticClear(
 // resolveKnownStatisticIDs splits the requested ids into those the recorder
 // currently lists and those it doesn't. recorder/clear_statistics silently
 // filters its input to ids it actually knows (see the manage_statistics:clear
-// gotcha in CLAUDE.md), so echoing the caller's request verbatim as
+// gotcha in AGENTS.md), so echoing the caller's request verbatim as
 // "cleared" would misreport success for an id that was never present -
 // issue W2. checked is false when the lookup itself failed, so the caller
 // can degrade instead of blocking the clear on a read-side error.

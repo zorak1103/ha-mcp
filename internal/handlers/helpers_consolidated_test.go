@@ -704,7 +704,7 @@ func TestManageHelper_Create_SourceDomainMismatch(t *testing.T) {
 // a field literally named "entity_id", which on update IS the tool's own
 // "which helper are we updating" identifier (handleUpdate reads args
 // ["entity_id"] for that) and is never forwarded to HA as a config value
-// (see CLAUDE.md's buildConfigEntryUpdateConfig gotcha) - so there is no
+// (see AGENTS.md's buildConfigEntryUpdateConfig gotcha) - so there is no
 // caller-suppliable value to validate for those four on update.
 func TestManageHelper_Update_SourceDomainMismatch(t *testing.T) {
 	t.Parallel()
@@ -1962,7 +1962,7 @@ func TestManageHelper_Update_SuccessMessageHandlesAPIFieldRenames(t *testing.T) 
 }
 
 // TestManageHelper_Update_SuccessMessageHandlesTemplateSubtypeRenames pins
-// the update-path equivalent of CLAUDE.md's "manage_helper update field
+// the update-path equivalent of AGENTS.md's "manage_helper update field
 // docs" gotcha for the 15 new template_* subtypes (issue #206): each of
 // these renames a caller-facing arg name to a different HA config key only
 // for some subtypes ("set_position"->"set_cover_position" for

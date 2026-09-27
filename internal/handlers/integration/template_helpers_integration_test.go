@@ -458,7 +458,7 @@ func (s *TemplateHelperIntegrationTestSuite) TestTemplateSensorUpdate() {
 func (s *TemplateHelperIntegrationTestSuite) TestTemplateSensorUpdatePartial() {
 	// Test partial update (change device_class + unit_of_measurement together,
 	// preserve state template). A device_class-only update isn't viable here -
-	// see CLAUDE.md's "Template sensor device_class requires a matching
+	// see AGENTS.md's "Template sensor device_class requires a matching
 	// unit_of_measurement" gotcha: HA rejects a device_class change unless the
 	// existing unit is already valid for the new class, so the two fields must
 	// be changed together.

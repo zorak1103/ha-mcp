@@ -27,7 +27,7 @@ task --list          # see all available tasks
    instead of an issue.
 2. Create a feature branch off `main`.
 3. **Write tests first (TDD is required for this project)**: red → green →
-   refactor. See `CLAUDE.md`'s Testing Rules for the coverage bar (80% per file)
+   refactor. See `AGENTS.md`'s Testing Rules for the coverage bar (80% per file)
    and what's exempt.
 4. Implement the change.
 5. Run the checks below locally.
@@ -70,7 +70,7 @@ the prefix helpers (`GenerateTestID`, `BuildEntityID`) when writing new tests.
 
 Some tools genuinely can't be integration-tested (e.g. blueprint `import` needs
 a reachable public URL, or operations that would irreversibly affect a
-production instance) — see CLAUDE.md's Testing Rules for the accepted
+production instance) — see AGENTS.md's Testing Rules for the accepted
 exceptions.
 
 ## Code style / linter rules
@@ -80,16 +80,16 @@ exceptions.
 (extract strings repeated 3+ times to constants), lowercase error messages, and
 a few Go-idiom rules (no shadowing built-ins like `min`/`max`, no shadowing
 imported package names). The full, current list with examples lives in
-`CLAUDE.md`'s **Coding Rules** section — read it before your first PR if you're
+`AGENTS.md`'s **Coding Rules** section — read it before your first PR if you're
 touching handler code; it will save review round-trips.
 
 ## Adding a new tool
 
 New tools have a documentation checklist beyond just code + tests — update all
-of the following if applicable (see `CLAUDE.md`'s Workflow Preferences for the
+of the following if applicable (see `AGENTS.md`'s Workflow Preferences for the
 full list): `README.md` (tool count and summary table), `docs/tools.md`,
 `docs/architecture.md` (if adding a handler file), `docs/feature-comparison.md`,
-`CLAUDE.md` (Key Files / Consolidated Tools sections),
+`AGENTS.md` (Key Files / Consolidated Tools sections),
 `docs/integration-tests.md`, and the relevant
 `.claude/skills/ha-mcp/*/SKILL.md` files.
 

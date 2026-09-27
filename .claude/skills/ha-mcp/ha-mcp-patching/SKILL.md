@@ -159,4 +159,4 @@ so it stays small even for a large dashboard.
 
 ## Source for Maintenance
 
-`internal/jsonpatch/`, `internal/handlers/patch_semantic.go`, CLAUDE.md section "JSON Patch (RFC 6902) + Semantic Patch".
+`internal/jsonpatch/`, `internal/handlers/patch_semantic.go`, AGENTS.md section "JSON Patch (RFC 6902) + Semantic Patch".

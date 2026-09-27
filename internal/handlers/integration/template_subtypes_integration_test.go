@@ -38,7 +38,7 @@ type templateSubtypeCase struct {
 	// resolveTemplateFieldsForDomain, and every haKey rename), so without
 	// this the update path's actual field handling had zero coverage.
 	// Several cases deliberately pick a renamed field (haKey != arg) -
-	// exactly what CLAUDE.md's "manage_helper update field docs" gotcha and
+	// exactly what AGENTS.md's "manage_helper update field docs" gotcha and
 	// this suite's regression target (splitAppliedFields reporting an
 	// applied rename as ignored) are about.
 	updateArg func(actionTargetEntityID string) (name string, value any)
@@ -79,7 +79,7 @@ var templateSubtypeCases = []templateSubtypeCase{
 			}
 		},
 		// "set_position" renames to "set_cover_position" - regression target
-		// for the update-path haKey rename gap (CLAUDE.md's "manage_helper
+		// for the update-path haKey rename gap (AGENTS.md's "manage_helper
 		// update field docs" gotcha).
 		updateArg: func(actionTargetEntityID string) (string, any) {
 			return "set_position", toggleAction(actionTargetEntityID)

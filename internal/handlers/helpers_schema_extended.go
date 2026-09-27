@@ -121,7 +121,7 @@ func buildExtendedHelperProperties() map[string]mcp.JSONSchema {
 		// takes exactly one filter type per helper via this field - there is
 		// no "filters" array parameter to configure multiple filters (HA's
 		// flow rejects a "filters" key outright alongside "filter"; see
-		// CLAUDE.md's filter gotcha).
+		// AGENTS.md's filter gotcha).
 		"filter": {
 			Type: "string",
 			Description: "Filter algorithm (filter, required): outlier, lowpass, range, throttle, " +

@@ -47,4 +47,4 @@ body:
       label: Readiness
       options:
         - label: This is scoped enough to implement directly (not just an idea to discuss).
-        - label: If this adds a new tool, I understand it needs doc updates across README/docs/CLAUDE.md/skills (see CONTRIBUTING.md).
+        - label: If this adds a new tool, I understand it needs doc updates across README/docs/AGENTS.md/skills (see CONTRIBUTING.md).
