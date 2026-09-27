@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to AI coding agents (Claude Code, OpenCode, and others) when working with code in this repository.
 
 ## Project Overview
 
@@ -429,7 +429,7 @@ set -a && source .env.integration && set +a && go test -tags=integration -v ./in
 - `docs/tools.md` - full tool reference table and any new sections
 - `docs/architecture.md` - project structure file listing if adding handler files
 - `docs/feature-comparison.md` - tool count, feature comparison table
-- `CLAUDE.md` - Key Files section, Consolidated Tools section
+- `AGENTS.md` - Key Files section, Consolidated Tools section
 - `docs/integration-tests.md` - Test Categories table with new test suite operations
 - `.claude/skills/ha-mcp/ha-mcp-tools/SKILL.md` - tool/action enum reference (if new tool or action added)
 - `.claude/skills/ha-mcp/ha-mcp-gotchas/SKILL.md` - trap lookup (if new gotcha discovered)
@@ -459,12 +459,12 @@ When adding new modes/actions to consolidated tools (`manage_*`, `query_entities
 4. Update error messages with full list of valid values
 5. Update test schema validation (expected enum count)
 6. Create dedicated file for complex logic (e.g., `*_coverage.go`, `*_presence.go`, `*_correlation.go`)
-7. If adding new tool (not just mode/action): Follow the Documentation Update Checklist above (README.md summary table, docs/tools.md full reference, docs/architecture.md structure, feature-comparison.md, CLAUDE.md, docs/integration-tests.md)
+7. If adding new tool (not just mode/action): Follow the Documentation Update Checklist above (README.md summary table, docs/tools.md full reference, docs/architecture.md structure, feature-comparison.md, AGENTS.md, docs/integration-tests.md)
 
 <!-- ha-mcp-skills:start -->
 # ha-mcp Skills
 
-For procedural guidance on using ha-mcp tools (decision trees, gotcha lookups, patch workflows), this project ships a skill bundle at `.claude/skills/ha-mcp/`. Use these when CLAUDE.md gives you the facts but you need the playbook.
+For procedural guidance on using ha-mcp tools (decision trees, gotcha lookups, patch workflows), this project ships a skill bundle at `.claude/skills/ha-mcp/`. Use these when AGENTS.md gives you the facts but you need the playbook.
 
 | Task                                     | Read this skill                                           |
 | ---------------------------------------- | --------------------------------------------------------- |
