@@ -1589,3 +1589,173 @@ func TestHandleManageDashboard_Find(t *testing.T) {
 
 	runHandlerTestCases(t, tests, h.handleManageDashboard)
 }
+
+// TestHandleManageDashboard_TargetResolution guards against a read/write
+// action silently landing on the default dashboard: dashboard_id must resolve
+// to its url_path, and malformed/unknown/conflicting targets must be refused.
+func TestHandleManageDashboard_TargetResolution(t *testing.T) {
+	t.Parallel()
+
+	h := NewDashboardHandlers()
+
+	listTwo := func(context.Context) ([]homeassistant.DashboardEntry, error) {
+		return []homeassistant.DashboardEntry{
+			{ID: "leak_sensors", URLPath: "leak-sensors"},
+			{ID: "energy_id", URLPath: "energy"},
+		}, nil
+	}
+	baseConfig := func() map[string]any {
+		return map[string]any{"views": []any{map[string]any{"title": "Home", "path": "home"}}}
+	}
+	patchOps := []any{map[string]any{"op": "add", "path": "/title", "value": "X"}}
+
+	// expectTarget returns a mock setup that fails if any config read or write
+	// targets a dashboard other than want, or if a write happens when none is expected.
+	expectTarget := func(want string, wantSave bool) func(*UniversalMockClient) {
+		return func(m *UniversalMockClient) {
+			m.ListDashboardsFn = listTwo
+			m.GetLovelaceConfigFn = func(_ context.Context, urlPath string) (map[string]any, error) {
+				if urlPath != want {
+					t.Errorf("GetLovelaceConfig url_path = %q, want %q", urlPath, want)
+				}
+				return baseConfig(), nil
+			}
+			m.SaveLovelaceConfigFn = func(_ context.Context, urlPath string, _ map[string]any) error {
+				if !wantSave {
+					t.Errorf("SaveLovelaceConfig must not be called")
+				}
+				if urlPath != want {
+					t.Errorf("SaveLovelaceConfig url_path = %q, want %q", urlPath, want)
+				}
+				return nil
+			}
+		}
+	}
+	// refuseAccess fails the test if the handler touches any dashboard config.
+	refuseAccess := func(m *UniversalMockClient) {
+		m.ListDashboardsFn = listTwo
+		m.GetLovelaceConfigFn = func(_ context.Context, urlPath string) (map[string]any, error) {
+			t.Errorf("GetLovelaceConfig must not be called, got url_path %q", urlPath)
+			return baseConfig(), nil
+		}
+		m.SaveLovelaceConfigFn = func(_ context.Context, urlPath string, _ map[string]any) error {
+			t.Errorf("SaveLovelaceConfig must not be called, got url_path %q", urlPath)
+			return nil
+		}
+	}
+
+	tests := []handlerTestCase{
+		{
+			name:         "get - dashboard_id resolves to its url_path",
+			args:         map[string]any{"action": "get", "dashboard_id": "leak_sensors", "verbose": true},
+			setupMock:    expectTarget("leak-sensors", false),
+			wantContains: []string{"Lovelace configuration"},
+		},
+		{
+			name:         "patch - dashboard_id resolves to its url_path",
+			args:         map[string]any{"action": "patch", "dashboard_id": "leak_sensors", "operations": patchOps},
+			setupMock:    expectTarget("leak-sensors", true),
+			wantContains: []string{"dashboard 'leak-sensors'"},
+		},
+		{
+			name:         "patch dry_run - dashboard_id names the resolved dashboard",
+			args:         map[string]any{"action": "patch", "dashboard_id": "leak_sensors", "operations": patchOps, "dry_run": true},
+			setupMock:    expectTarget("leak-sensors", false),
+			wantContains: []string{"leak-sensors"},
+		},
+		{
+			name:         "save_config - dashboard_id resolves to its url_path",
+			args:         map[string]any{"action": "save_config", "dashboard_id": "energy_id", "config": baseConfig()},
+			setupMock:    expectTarget("energy", true),
+			wantContains: []string{"dashboard 'energy'"},
+		},
+		{
+			name: "find - dashboard_id searches only that dashboard",
+			args: map[string]any{"action": "find", "dashboard_id": "leak_sensors", "search": "Home"},
+			setupMock: func(m *UniversalMockClient) {
+				m.ListDashboardsFn = listTwo
+				m.GetLovelaceConfigFn = func(_ context.Context, urlPath string) (map[string]any, error) {
+					if urlPath != "leak-sensors" {
+						t.Errorf("find searched %q, want only leak-sensors", urlPath)
+					}
+					return baseConfig(), nil
+				}
+			},
+			wantContains: []string{"Found 1 match"},
+		},
+		{
+			name:         "get - dashboard_id and matching url_path agree",
+			args:         map[string]any{"action": "get", "dashboard_id": "leak_sensors", "url_path": "leak-sensors", "verbose": true},
+			setupMock:    expectTarget("leak-sensors", false),
+			wantContains: []string{"Lovelace configuration"},
+		},
+		{
+			name:         "patch - unknown dashboard_id is refused, nothing written",
+			args:         map[string]any{"action": "patch", "dashboard_id": "nope", "operations": patchOps},
+			setupMock:    refuseAccess,
+			wantError:    true,
+			wantContains: []string{"nope", "leak_sensors", "leak-sensors"},
+		},
+		{
+			name:         "save_config - conflicting dashboard_id and url_path refused",
+			args:         map[string]any{"action": "save_config", "dashboard_id": "leak_sensors", "url_path": "energy", "config": baseConfig()},
+			setupMock:    refuseAccess,
+			wantError:    true,
+			wantContains: []string{"conflict"},
+		},
+		{
+			name:         "patch - non-string url_path refused instead of defaulting",
+			args:         map[string]any{"action": "patch", "url_path": 123, "operations": patchOps},
+			setupMock:    refuseAccess,
+			wantError:    true,
+			wantContains: []string{"url_path must be a string"},
+		},
+		{
+			name:         "get - null url_path refused instead of defaulting",
+			args:         map[string]any{"action": "get", "url_path": nil},
+			setupMock:    refuseAccess,
+			wantError:    true,
+			wantContains: []string{"url_path must be a string"},
+		},
+		{
+			name:         "get - non-string dashboard_id refused",
+			args:         map[string]any{"action": "get", "dashboard_id": 7},
+			setupMock:    refuseAccess,
+			wantError:    true,
+			wantContains: []string{"dashboard_id must be a non-empty string"},
+		},
+		{
+			name:         "get - empty dashboard_id refused",
+			args:         map[string]any{"action": "get", "dashboard_id": ""},
+			setupMock:    refuseAccess,
+			wantError:    true,
+			wantContains: []string{"dashboard_id must be a non-empty string"},
+		},
+		{
+			name: "patch - ListDashboards failure never degrades to default",
+			args: map[string]any{"action": "patch", "dashboard_id": "leak_sensors", "operations": patchOps},
+			setupMock: func(m *UniversalMockClient) {
+				refuseAccess(m)
+				m.ListDashboardsFn = func(context.Context) ([]homeassistant.DashboardEntry, error) {
+					return nil, fmt.Errorf("connection failed")
+				}
+			},
+			wantError:    true,
+			wantContains: []string{"connection failed"},
+		},
+		{
+			name:         "get - no target still reads the default dashboard",
+			args:         map[string]any{"action": "get", "verbose": true},
+			setupMock:    expectTarget("", false),
+			wantContains: []string{"Lovelace configuration"},
+		},
+		{
+			name:         "patch - no target still patches the default dashboard",
+			args:         map[string]any{"action": "patch", "operations": patchOps},
+			setupMock:    expectTarget("", true),
+			wantContains: []string{"default dashboard"},
+		},
+	}
+
+	runHandlerTestCases(t, tests, h.handleManageDashboard)
+}
