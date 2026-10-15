@@ -238,7 +238,7 @@ func registerRemainingTools(registry *mcp.Registry) {
 	RegisterStatisticsTools(registry)
 	RegisterConfigTools(registry)
 
-	// Config entry tools (for accessing full config including template definitions)
+	// Config entry tools (entry metadata: list/get/delete; options such as template definitions are not returned)
 	RegisterConfigEntryTools(registry)
 
 	// HACS tools (Home Assistant Community Store management)
