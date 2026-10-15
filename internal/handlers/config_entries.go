@@ -36,7 +36,7 @@ func (h *ConfigEntryHandlers) RegisterTools(registry *mcp.Registry) {
 func (h *ConfigEntryHandlers) manageConfigEntryTool() mcp.Tool {
 	return mcp.Tool{
 		Name:        "manage_config_entry",
-		Description: "Manage Home Assistant config entries. Config entries store metadata about integrations and helpers (domain, title, state, entry_id). By default returns natural language format optimized for LLMs. Use 'format=json' for structured data. Note: Template definitions are stored but not exposed through this API.",
+		Description: "Manage Home Assistant config entries. Config entries store metadata about integrations and helpers (domain, title, state, entry_id). By default returns natural language format optimized for LLMs. Use 'format=json' for structured data. Note: HA's config_entries API does not return an entry's options (e.g. template definitions); use manage_helper action=get_details on the template entity to read them.",
 		InputSchema: mcp.JSONSchema{
 			Type:        "object",
 			Description: "Config entry management parameters",
