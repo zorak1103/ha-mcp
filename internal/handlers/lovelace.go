@@ -51,13 +51,13 @@ func (h *DashboardHandlers) manageDashboardTool() mcp.Tool {
 
 Actions:
 - list: List all dashboards
-- get: Get dashboard configuration with optional view filtering (url_path optional)
+- get: Get dashboard configuration with optional view filtering (url_path or dashboard_id optional; omit both = default dashboard)
 - create: Create a new dashboard with modern section-based layout (requires url_path, title, and mode)
 - update: Update an existing dashboard (requires dashboard_id)
 - delete: Delete a dashboard (requires dashboard_id)
-- save_config: Save dashboard configuration (requires config, url_path optional)
-- patch: Apply RFC 6902 JSON Patch operations to dashboard config (requires operations, url_path optional)
-- find: Search for a string/entity_id across a dashboard's views and nested cards without fetching the whole config (requires search; url_path optional, defaults to all dashboards)
+- save_config: Save dashboard configuration (requires config, url_path or dashboard_id optional; omit both = default dashboard)
+- patch: Apply RFC 6902 JSON Patch operations to dashboard config (requires operations, url_path or dashboard_id optional; omit both = default dashboard)
+- find: Search for a string/entity_id across a dashboard's views and nested cards without fetching the whole config (requires search; url_path or dashboard_id optional, defaults to all dashboards)
 
 Note: Newly created dashboards use the modern "sections" layout format instead of the legacy "badges/cards" format.
 For large dashboards where action=get exceeds the response size limit, use action=find to locate content by entity/string, or view=<name> to fetch a single view instead of retrying get with format=natural.`,
@@ -74,11 +74,11 @@ func (h *DashboardHandlers) buildDashboardSchema() mcp.JSONSchema {
 		},
 		"dashboard_id": {
 			Type:        "string",
-			Description: "HA-generated dashboard identifier (e.g., 'lovelace-xxxx'), returned by list/create. Required for update/delete.",
+			Description: "HA-generated dashboard identifier, returned by list/create. Required for update/delete. Also accepted by get/patch/save_config/find as an alternative to url_path (resolved to that dashboard's url_path; conflicting with url_path is an error).",
 		},
 		"url_path": {
 			Type:        "string",
-			Description: "Dashboard URL path (e.g., 'energy', 'leak-sensors'). Use hyphens for multi-word paths. Required for create. Optional for get/save_config (empty = default dashboard). Optional for find (omit to search all dashboards).",
+			Description: "Dashboard URL path (e.g., 'energy', 'leak-sensors'). Use hyphens for multi-word paths. Required for create. Optional for get/save_config/patch (omit both url_path and dashboard_id = default dashboard). Optional for find (omit to search all dashboards).",
 		},
 		"title": {
 			Type:        "string",
@@ -200,12 +200,76 @@ func (h *DashboardHandlers) handleList(
 	return h.formatListNatural(dashboards)
 }
 
+// resolveDashboardTarget determines which dashboard a get/patch/save_config/find
+// call addresses. It accepts url_path directly or dashboard_id (the id returned
+// by list), resolved to its url_path. specified reports whether the caller named
+// a dashboard at all; "" with specified=true is the explicit default dashboard.
+// Malformed, unknown or conflicting targets are refused rather than defaulting,
+// since falling back to the default dashboard would silently read or overwrite
+// the wrong config.
+func resolveDashboardTarget(
+	ctx context.Context,
+	client homeassistant.Client,
+	args map[string]any,
+) (urlPath string, specified bool, errResult *mcp.ToolsCallResult) {
+	rawPath, hasPath := args["url_path"]
+	if hasPath {
+		s, ok := rawPath.(string)
+		if !ok {
+			return "", false, errorResult("url_path must be a string")
+		}
+		urlPath = s
+	}
+
+	rawID, hasID := args["dashboard_id"]
+	if !hasID {
+		return urlPath, hasPath, nil
+	}
+	dashboardID, ok := rawID.(string)
+	if !ok || dashboardID == "" {
+		return "", false, errorResult("dashboard_id must be a non-empty string")
+	}
+
+	dashboards, err := client.ListDashboards(ctx)
+	if err != nil {
+		return "", false, errorResult(fmt.Sprintf("error resolving dashboard_id %q: %v", dashboardID, err))
+	}
+	resolved, found := "", false
+	for _, d := range dashboards {
+		if d.ID == dashboardID {
+			resolved, found = d.URLPath, true
+			break
+		}
+	}
+	if !found {
+		return "", false, errorResult(unknownDashboardIDMessage(dashboardID, dashboards))
+	}
+	if hasPath && urlPath != resolved {
+		return "", false, errorResult(fmt.Sprintf(
+			"dashboard_id %q (url_path %q) conflicts with url_path %q; pass only one", dashboardID, resolved, urlPath))
+	}
+	return resolved, true, nil
+}
+
+func unknownDashboardIDMessage(dashboardID string, dashboards []homeassistant.DashboardEntry) string {
+	pairs := make([]string, 0, len(dashboards))
+	for _, d := range dashboards {
+		pairs = append(pairs, fmt.Sprintf("%s -> %s", d.ID, d.URLPath))
+	}
+	return fmt.Sprintf(
+		"dashboard_id %q not found. Available (id -> url_path): [%s]. Omit both dashboard_id and url_path for the default dashboard.",
+		dashboardID, strings.Join(pairs, ", "))
+}
+
 func (h *DashboardHandlers) handleGet(
 	ctx context.Context,
 	client homeassistant.Client,
 	args map[string]any,
 ) (*mcp.ToolsCallResult, error) {
-	urlPath, _ := args["url_path"].(string)
+	urlPath, _, errResult := resolveDashboardTarget(ctx, client, args)
+	if errResult != nil {
+		return errResult, nil
+	}
 	viewFilter, _ := args["view"].(string)
 	verbose, _ := args["verbose"].(bool)
 
@@ -323,7 +387,10 @@ func (h *DashboardHandlers) handleSaveConfig(
 		return errorResult("config is required for save_config action"), nil
 	}
 
-	urlPath, _ := args["url_path"].(string)
+	urlPath, _, errResult := resolveDashboardTarget(ctx, client, args)
+	if errResult != nil {
+		return errResult, nil
+	}
 
 	err := client.SaveLovelaceConfig(ctx, urlPath, config)
 	if err != nil {
@@ -339,7 +406,10 @@ func (h *DashboardHandlers) handleSaveConfig(
 
 //nolint:funlen // Patch handler
 func (h *DashboardHandlers) handlePatch(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	urlPath, _ := args["url_path"].(string)
+	urlPath, _, targetErr := resolveDashboardTarget(ctx, client, args)
+	if targetErr != nil {
+		return targetErr, nil
+	}
 
 	ops, errResult := parseOperations(args)
 	if errResult != nil {
@@ -396,7 +466,10 @@ func (h *DashboardHandlers) handleFind(ctx context.Context, client homeassistant
 	}
 	match := func(s string) bool { return strings.Contains(s, search) }
 
-	urlPaths, err := h.findTargetURLPaths(ctx, client, args)
+	urlPaths, targetErr, err := h.findTargetURLPaths(ctx, client, args)
+	if targetErr != nil {
+		return targetErr, nil
+	}
 	if err != nil {
 		return errorResult(fmt.Sprintf("error listing dashboards: %v", err)), nil
 	}
@@ -438,15 +511,24 @@ func (h *DashboardHandlers) handleFind(ctx context.Context, client homeassistant
 }
 
 // findTargetURLPaths returns the url_paths to search for handleFind: just the
-// explicitly requested one if url_path was passed (including "" for the default
-// dashboard), or every dashboard plus the default one otherwise.
-func (h *DashboardHandlers) findTargetURLPaths(ctx context.Context, client homeassistant.Client, args map[string]any) ([]string, error) {
-	if _, present := args["url_path"]; present {
-		urlPath, _ := args["url_path"].(string)
-		return []string{urlPath}, nil
+// explicitly requested one if url_path or dashboard_id was passed (including ""
+// for the default dashboard), or every dashboard plus the default one otherwise.
+// A non-nil errResult means the target was malformed, unknown or conflicting.
+func (h *DashboardHandlers) findTargetURLPaths(
+	ctx context.Context,
+	client homeassistant.Client,
+	args map[string]any,
+) (urlPaths []string, errResult *mcp.ToolsCallResult, err error) {
+	urlPath, specified, errResult := resolveDashboardTarget(ctx, client, args)
+	if errResult != nil {
+		return nil, errResult, nil
+	}
+	if specified {
+		return []string{urlPath}, nil, nil
 	}
 
-	return allDashboardURLPaths(ctx, client)
+	urlPaths, err = allDashboardURLPaths(ctx, client)
+	return urlPaths, nil, err
 }
 
 // correctViewOrder reads back the saved config from HA and, if the views array

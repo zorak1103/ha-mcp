@@ -8,8 +8,10 @@ Follow this pattern to work safely.
 Always fetch the current config before modifying it:
 
 ```json
-{ "action": "get", "dashboard_url_path": "lovelace" }
+{ "action": "get", "url_path": "energy" }
 ```
+
+Name the target dashboard with `url_path` (or the `dashboard_id` from `action=list`). Omit both only to address the default dashboard. Any other parameter name is not read, so the call would hit the default dashboard.
 
 Save the returned config. If anything goes wrong, you can restore it with `action=save_config` or `action=update`.
 
@@ -20,7 +22,7 @@ Save the returned config. If anything goes wrong, you can restore it with `actio
 ```json
 {
   "action": "patch",
-  "dashboard_url_path": "lovelace",
+  "url_path": "energy",
   "operations": [
     {
       "op": "replace",

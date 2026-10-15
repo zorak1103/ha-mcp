@@ -192,3 +192,51 @@ func (s *DashboardPatchToolDispatchTestSuite) TestNestedCardPatchDryRunViaTool()
 	s.Require().True(ok, "views[0].cards should be a slice")
 	s.Require().Len(cards, 1, "dry-run must not remove the card from the saved config")
 }
+
+// TestPatchByDashboardIDViaTool is an end-to-end regression test guarding that
+// manage_dashboard's patch action honors dashboard_id (the id returned by
+// list) as an alias for url_path, instead of silently ignoring it and
+// rewriting the default dashboard.
+func (s *DashboardPatchToolDispatchTestSuite) TestPatchByDashboardIDViaTool() {
+	baseline := map[string]any{
+		"views": []any{
+			map[string]any{"title": "Before", "path": "before", "cards": []any{}},
+		},
+	}
+	urlPath := s.createTestDashboardWithConfig("dash-patch-by-id", baseline)
+
+	dashboards, err := s.Client().ListDashboards(s.Context())
+	s.Require().NoError(err, "Failed to list dashboards")
+	var dashboardID string
+	for _, d := range dashboards {
+		if d.URLPath == urlPath {
+			dashboardID = d.ID
+		}
+	}
+	s.Require().NotEmpty(dashboardID, "test dashboard should appear in list")
+
+	defaultBefore, err := s.Client().GetLovelaceConfig(s.Context(), "")
+	s.Require().NoError(err, "Failed to read default dashboard before patch")
+
+	result := s.CallTool("manage_dashboard", map[string]any{
+		"action":       "patch",
+		"dashboard_id": dashboardID,
+		"operations": []any{
+			map[string]any{"op": "replace", "path": "/views/0/title", "value": "After"},
+		},
+	})
+	s.Require().False(result.IsError, "patch by dashboard_id should succeed, got: %s", resultText(result))
+	s.Contains(resultText(result), urlPath, "success message should name the resolved dashboard")
+
+	time.Sleep(500 * time.Millisecond)
+
+	after, err := s.Client().GetLovelaceConfig(s.Context(), urlPath)
+	s.Require().NoError(err, "Failed to retrieve patched config")
+	views, ok := after["views"].([]any)
+	s.Require().True(ok, "views should be a slice")
+	s.Equal("After", views[0].(map[string]any)["title"], "patch must land on the dashboard named by dashboard_id")
+
+	defaultAfter, err := s.Client().GetLovelaceConfig(s.Context(), "")
+	s.Require().NoError(err, "Failed to read default dashboard after patch")
+	s.Equal(defaultBefore, defaultAfter, "default dashboard must be untouched")
+}
