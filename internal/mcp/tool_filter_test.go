@@ -286,6 +286,37 @@ func TestToolFilterEngine_Whitelist(t *testing.T) {
 	}
 }
 
+// TestToolFilterEngine_Whitelist_WholeActionTool verifies that whitelisting an
+// action-based tool by bare name allows every one of its actions (read and write),
+// while leaving other tools blocked, and that it composes with a specific-action
+// entry for another tool.
+func TestToolFilterEngine_Whitelist_WholeActionTool(t *testing.T) {
+	t.Parallel()
+
+	cfg := ToolFilterConfig{
+		Whitelist: []string{"manage_automation", "manage_script:list"},
+	}
+	filter := NewToolFilterEngine(cfg, false)
+
+	for _, action := range []string{"list", "get", "create", "update", "delete"} {
+		if !filter.IsActionAllowed("manage_automation", map[string]any{"action": action}) {
+			t.Errorf("manage_automation:%s should be allowed (whole tool whitelisted)", action)
+		}
+	}
+
+	if !filter.IsActionAllowed("manage_script", map[string]any{"action": "list"}) {
+		t.Error("manage_script:list should be allowed (whitelisted)")
+	}
+
+	if filter.IsActionAllowed("manage_script", map[string]any{"action": "delete"}) {
+		t.Error("manage_script:delete should be blocked (only list whitelisted)")
+	}
+
+	if filter.IsActionAllowed("manage_scene", map[string]any{"action": "list"}) {
+		t.Error("manage_scene should be blocked (not whitelisted)")
+	}
+}
+
 // TestToolFilterEngine_ReadOnly_Composition verifies read-only + user blacklist composition.
 func TestToolFilterEngine_ReadOnly_Composition(t *testing.T) {
 	t.Parallel()
