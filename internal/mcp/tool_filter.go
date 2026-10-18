@@ -63,32 +63,41 @@ func (f *ToolFilterEngine) buildAllowedActionsMap(whitelist, blacklist []string)
 // buildFromWhitelist creates allowed actions from whitelist entries.
 func (f *ToolFilterEngine) buildFromWhitelist(whitelist []string) {
 	for _, entry := range whitelist {
-		matches := f.expandFilterEntry(entry)
-		for toolName, actions := range matches {
-			if _, exists := f.allowedActions[toolName]; !exists {
-				f.allowedActions[toolName] = make(map[string]bool)
-			}
-
-			// If actions is nil, entire tool is allowed
-			if actions == nil {
-				// Mark all actions as allowed for this tool
-				classification := f.accessMap[toolName]
-				if classification.ParamName == "" {
-					// Pure tool - entire tool allowed
-					f.allowedActions[toolName] = nil
-				} else {
-					// Action-based tool - allow all actions
-					for action := range classification.Actions {
-						f.allowedActions[toolName][action] = true
-					}
-				}
-			} else {
-				// Specific actions
-				for action := range actions {
-					f.allowedActions[toolName][action] = true
-				}
-			}
+		for toolName, actions := range f.expandFilterEntry(entry) {
+			f.allowWhitelistMatch(toolName, actions)
 		}
+	}
+}
+
+// allowWhitelistMatch marks a single whitelist match as allowed.
+// A nil actions map means the entire tool was whitelisted.
+func (f *ToolFilterEngine) allowWhitelistMatch(toolName string, actions map[string]bool) {
+	if _, exists := f.allowedActions[toolName]; !exists {
+		f.allowedActions[toolName] = make(map[string]bool)
+	}
+
+	if actions == nil {
+		f.allowEntireTool(toolName)
+		return
+	}
+
+	for action := range actions {
+		f.allowedActions[toolName][action] = true
+	}
+}
+
+// allowEntireTool allows every action of a whitelisted tool.
+func (f *ToolFilterEngine) allowEntireTool(toolName string) {
+	classification := f.accessMap[toolName]
+	if classification.ParamName == "" {
+		// Pure tool - entire tool allowed
+		f.allowedActions[toolName] = nil
+		return
+	}
+
+	// Action-based tool - allow all actions
+	for action := range classification.Actions {
+		f.allowedActions[toolName][action] = true
 	}
 }
 
