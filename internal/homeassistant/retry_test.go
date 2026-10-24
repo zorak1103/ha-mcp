@@ -3,6 +3,7 @@ package homeassistant
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"sync/atomic"
@@ -86,6 +87,36 @@ func TestIsRetryableError(t *testing.T) {
 				t.Errorf("IsRetryableError(%v) = %v, want %v", tt.err, result, tt.retryable)
 			}
 		})
+	}
+}
+
+func TestIsRetryableError_NotSent(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		err       error
+		retryable bool
+	}{
+		{"not connected", newNotSentError(errors.New("not connected")), true},
+		{"write timeout", newNotSentError(fmt.Errorf("sending command: %w", context.DeadlineExceeded)), true},
+		{"wrapped twice", fmt.Errorf("attempt: %w", newNotSentError(errors.New("x"))), true},
+		{"plain deadline", context.DeadlineExceeded, false},
+		{"id_reuse", errors.New("command failed: id_reuse - Identifier values have to increase"), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := IsRetryableError(tt.err); got != tt.retryable {
+				t.Errorf("IsRetryableError(%v) = %v, want %v", tt.err, got, tt.retryable)
+			}
+		})
+	}
+
+	// The message is preserved so existing string assertions keep working.
+	if got := newNotSentError(errors.New("not connected")).Error(); got != "not connected" {
+		t.Errorf("Error() = %q, want %q", got, "not connected")
 	}
 }
 
