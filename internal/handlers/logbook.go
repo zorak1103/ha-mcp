@@ -181,15 +181,9 @@ func (h *LogbookHandlers) handleGetLogbook(
 	client homeassistant.Client,
 	args map[string]any,
 ) (*mcp.ToolsCallResult, error) {
-	mode := getString(args, "mode")
-	if mode == "" {
-		mode = logbookModeEntries
-	}
-
-	switch mode {
-	case logbookModeEntries, logbookModeCorrelation:
-	default:
-		return errorResult(fmt.Sprintf("Invalid mode %q. Must be one of: %s, %s", mode, logbookModeEntries, logbookModeCorrelation)), nil
+	mode, bad := parseModeArg(args, "mode", logbookModeEntries, []string{logbookModeEntries, logbookModeCorrelation})
+	if bad != nil {
+		return bad, nil
 	}
 
 	if rejected := rejectInapplicableArgs(args, "mode", mode, logbookArgModes, ""); rejected != nil {

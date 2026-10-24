@@ -196,6 +196,30 @@ func TestLogbookHandlers_ModeValidation(t *testing.T) {
 			wantContains: []string{"entity_id (only for mode=entries)"},
 		},
 		{
+			name:         "numeric mode",
+			args:         map[string]any{"mode": 5.0},
+			wantError:    true,
+			wantContains: []string{"Invalid mode: expected a string, got float64. Must be one of: entries, correlation"},
+		},
+		{
+			name:         "boolean mode",
+			args:         map[string]any{"mode": true},
+			wantError:    true,
+			wantContains: []string{"Invalid mode: expected a string, got bool. Must be one of: entries, correlation"},
+		},
+		{
+			name:         "array mode",
+			args:         map[string]any{"mode": []any{"correlation"}},
+			wantError:    true,
+			wantContains: []string{"Invalid mode: expected a string, got []interface {}. Must be one of: entries, correlation"},
+		},
+		{
+			name:         "nil mode means entries",
+			args:         map[string]any{"mode": nil},
+			wantCall:     true,
+			wantContains: []string{"Found 0 logbook entries"},
+		},
+		{
 			name:         "empty mode means entries",
 			args:         map[string]any{"mode": ""},
 			wantCall:     true,

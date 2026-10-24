@@ -24,6 +24,26 @@ func isAbsentArg(v any) bool {
 	}
 }
 
+// parseModeArg reads the selector argument key (e.g. "mode") from args and
+// validates it against validModes. An absent value (see isAbsentArg) yields
+// defaultMode; a non-string value or a string outside validModes yields an
+// error result instead of being silently coerced or ignored.
+func parseModeArg(args map[string]any, key, defaultMode string, validModes []string) (string, *mcp.ToolsCallResult) {
+	value, present := args[key]
+	if !present || isAbsentArg(value) {
+		return defaultMode, nil
+	}
+	valid := strings.Join(validModes, ", ")
+	text, ok := value.(string)
+	if !ok {
+		return "", errorResult(fmt.Sprintf("Invalid %s: expected a string, got %T. Must be one of: %s", key, value, valid))
+	}
+	if !slices.Contains(validModes, text) {
+		return "", errorResult(fmt.Sprintf("Invalid %s %q. Must be one of: %s", key, text, valid))
+	}
+	return text, nil
+}
+
 // rejectInapplicableArgs returns an error result when args holds a supplied
 // (non-absent, see isAbsentArg) argument that onlyFor restricts to modes other
 // than active; selector names the argument that selects the mode (e.g. "mode").

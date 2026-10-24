@@ -4,6 +4,47 @@ import (
 	"testing"
 )
 
+func TestParseModeArg(t *testing.T) {
+	t.Parallel()
+
+	valid := []string{"entries", "correlation"}
+	tests := []struct {
+		name     string
+		args     map[string]any
+		want     string
+		wantText string // empty means no error expected
+	}{
+		{name: "valid string", args: map[string]any{"mode": "correlation"}, want: "correlation"},
+		{name: "missing key", args: map[string]any{}, want: "entries"},
+		{name: "nil", args: map[string]any{"mode": nil}, want: "entries"},
+		{name: "empty string", args: map[string]any{"mode": ""}, want: "entries"},
+		{name: "empty array placeholder", args: map[string]any{"mode": []any{}}, want: "entries"},
+		{name: "unknown string", args: map[string]any{"mode": "bogus"}, wantText: `Invalid mode "bogus". Must be one of: entries, correlation`},
+		{name: "number", args: map[string]any{"mode": 5.0}, wantText: "Invalid mode: expected a string, got float64. Must be one of: entries, correlation"},
+		{name: "bool", args: map[string]any{"mode": false}, wantText: "Invalid mode: expected a string, got bool. Must be one of: entries, correlation"},
+		{name: "non-empty array", args: map[string]any{"mode": []any{"entries"}}, wantText: "Invalid mode: expected a string, got []interface {}. Must be one of: entries, correlation"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, res := parseModeArg(tt.args, "mode", "entries", valid)
+			if tt.wantText != "" {
+				if res == nil || !res.IsError || res.Content[0].Text != tt.wantText {
+					t.Fatalf("result = %+v, want error %q", res, tt.wantText)
+				}
+				return
+			}
+			if res != nil {
+				t.Fatalf("unexpected error result %+v", res)
+			}
+			if got != tt.want {
+				t.Errorf("mode = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRejectInapplicableArgs(t *testing.T) {
 	t.Parallel()
 
