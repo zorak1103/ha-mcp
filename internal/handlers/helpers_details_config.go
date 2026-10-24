@@ -111,9 +111,8 @@ func shownAtTopLevel(details map[string]any, key string, value any) bool {
 // under details[formatter.DetailKeyConfiguration], keeping raw HA keys (it is
 // its own namespace, so it deliberately bypasses putDetail's renames). Keys in
 // consumed or configurationSkipKeys, nil values and values already shown at
-// top level are left out; nothing is stored when none remain. A state
-// attribute literally named "configuration" is first moved aside via
-// putDetail so it is not overwritten.
+// top level are left out; nothing is stored when none remain. Callers run
+// moveConfigurationAttributeAside first, so the key is free.
 func attachConfigurationBlock(cfg, details map[string]any, consumed map[string]bool) {
 	block := map[string]any{}
 	for k, v := range cfg {
@@ -125,16 +124,28 @@ func attachConfigurationBlock(cfg, details map[string]any, consumed map[string]b
 	if len(block) == 0 {
 		return
 	}
-	if existing, ok := details[formatter.DetailKeyConfiguration]; ok {
-		putDetail(details, formatter.DetailKeyConfiguration, existing)
-	}
 	details[formatter.DetailKeyConfiguration] = block
+}
+
+// moveConfigurationAttributeAside renames a detail literally keyed
+// "configuration" (a state attribute of that name) via putDetail's collision
+// policy (-> attr_configuration), whether or not a block is attached later.
+// Afterwards details[formatter.DetailKeyConfiguration] can only ever be the
+// stored-configuration block, which the renderers treat specially.
+func moveConfigurationAttributeAside(details map[string]any) {
+	existing, ok := details[formatter.DetailKeyConfiguration]
+	if !ok {
+		return
+	}
+	putDetail(details, formatter.DetailKeyConfiguration, existing)
+	delete(details, formatter.DetailKeyConfiguration)
 }
 
 // attachHelperConfiguration fetches the helper's stored configuration and
 // attaches it to details. A fetch failure never fails get_details: the
 // returned warning (empty on success) is appended to the result instead.
 func attachHelperConfiguration(ctx context.Context, client homeassistant.Client, entityID, entityDomain string, details map[string]any) string {
+	moveConfigurationAttributeAside(details)
 	src, err := fetchHelperSourceConfig(ctx, client, entityID, entityDomain)
 	if err != nil {
 		return configurationFetchWarning(err)
@@ -166,6 +177,7 @@ var scheduleWeekdays = []string{"monday", "tuesday", "wednesday", "thursday", "f
 // the schedule section renders them (an empty day is simply absent there).
 // It returns the warning for a fetch error other than YAML-defined.
 func attachScheduleConfiguration(cfg map[string]any, fetchErr error, details map[string]any) string {
+	moveConfigurationAttributeAside(details)
 	if errors.Is(fetchErr, homeassistant.ErrHelperNotFoundInStorage) {
 		return ""
 	}

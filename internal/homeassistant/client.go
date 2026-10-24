@@ -148,8 +148,9 @@ type Client interface {
 	GetConfigEntry(ctx context.Context, entryID string) (*ConfigEntryFull, error)
 	// GetConfigEntryOptions returns the entry's current option values as a single
 	// flat map: children of HA expandable sections are lifted to top-level keys;
-	// a child whose name collides with a top-level key is kept as
-	// "<section>.<child>".
+	// a child whose name collides with a top-level key of its step, or with a
+	// key already merged from an earlier step or section, is kept as
+	// "<section>.<child>". A later step's top-level key overwrites an earlier one.
 	GetConfigEntryOptions(ctx context.Context, entryID string) (map[string]any, error)
 	DeleteConfigEntry(ctx context.Context, entryID string) (requireRestart bool, err error)
 

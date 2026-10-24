@@ -375,6 +375,81 @@ func TestGetDetails_ScheduleStorageErrors(t *testing.T) {
 	}
 }
 
+// TestGetDetails_ConfigurationAttributeWithoutStoredConfig pins that a state
+// attribute literally named "configuration" stays visible (as
+// attr_configuration) even when no configuration block is attached - e.g. a
+// non-helper entity or a YAML helper - instead of vanishing from natural
+// output (string value) or masquerading as the block (map value).
+func TestGetDetails_ConfigurationAttributeWithoutStoredConfig(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		attr     any
+		wantLine string
+	}{
+		{"string attribute", "attr-value", "Attr configuration: attr-value"},
+		{"map attribute", map[string]any{"mode": "eco"}, "Attr configuration: "},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			newMock := func() *UniversalMockClient {
+				return &UniversalMockClient{
+					GetStateFn: stateFn("heat", map[string]any{"friendly_name": "Thermo", "configuration": tt.attr}),
+					GetEntityRegistryFn: registryFn(homeassistant.EntityRegistryEntry{
+						EntityID: "climate.thermo", Platform: "zha", ConfigEntryID: "z",
+					}),
+				}
+			}
+
+			out := runGetDetails(t, newMock(), "climate.thermo", "natural").Content[0].Text
+			if !strings.Contains(out, tt.wantLine) {
+				t.Errorf("natural output missing %q:\n%s", tt.wantLine, out)
+			}
+			if strings.Contains(out, "\nConfiguration:") {
+				t.Errorf("attribute rendered under the configuration block heading:\n%s", out)
+			}
+
+			decoded, _ := getDetailsJSON(t, newMock(), "climate.thermo")
+			if _, found := decoded["configuration"]; found {
+				t.Errorf("configuration key present without a stored config: %v", decoded["configuration"])
+			}
+			if !reflect.DeepEqual(decoded["attr_configuration"], tt.attr) {
+				t.Errorf("attr_configuration = %v, want %v", decoded["attr_configuration"], tt.attr)
+			}
+		})
+	}
+}
+
+// TestGetDetails_MultiStepOptionsReadFailure_Warns pins the handler side of a
+// truncated options walk: the client error becomes the single WARNING block.
+func TestGetDetails_MultiStepOptionsReadFailure_Warns(t *testing.T) {
+	t.Parallel()
+
+	m := &UniversalMockClient{
+		GetStateFn: stateFn("heat", map[string]any{"friendly_name": "Thermo"}),
+		GetEntityRegistryFn: registryFn(homeassistant.EntityRegistryEntry{
+			EntityID: "climate.thermo", Platform: "generic_thermostat", ConfigEntryID: "ce",
+		}),
+		GetConfigEntryOptionsFn: func(context.Context, string) (map[string]any, error) {
+			return nil, fmt.Errorf("submit options flow step %q: %w", "presets", context.DeadlineExceeded)
+		},
+	}
+
+	result := runGetDetails(t, m, "climate.thermo", "natural")
+	if len(result.Content) != 2 {
+		t.Fatalf("len(Content) = %d, want 2: %+v", len(result.Content), result.Content)
+	}
+	want := `WARNING: configuration could not be read: submit options flow step "presets": context deadline exceeded`
+	if result.Content[1].Text != want {
+		t.Errorf("warning = %q, want %q", result.Content[1].Text, want)
+	}
+	if strings.Contains(result.Content[0].Text, "Configuration:") {
+		t.Errorf("no configuration block expected on a failed read:\n%s", result.Content[0].Text)
+	}
+}
+
 func templateConsumedMock() *UniversalMockClient {
 	return &UniversalMockClient{
 		GetStateFn: stateFn("1", map[string]any{"friendly_name": "Tpl", "unit_of_measurement": "W"}),

@@ -1633,8 +1633,10 @@ func (c *HybridClient) GetConfigEntry(ctx context.Context, entryID string) (*Con
 //
 // The result is a single flat map: children of HA "expandable" sections
 // (e.g. a template helper's availability/delay_on/delay_off) are lifted to
-// top-level keys; a child whose name collides with a top-level key is kept
-// as "<section>.<child>".
+// top-level keys; a child whose name collides with a top-level key of its
+// step, or with a key already merged from an earlier step or section, is kept
+// as "<section>.<child>". A later step's top-level key overwrites an earlier
+// one. A submit failure while walking the steps is returned as an error.
 func (c *HybridClient) GetConfigEntryOptions(ctx context.Context, entryID string) (map[string]any, error) {
 	// Initialize the options flow
 	result, err := c.rest.InitConfigEntryOptionsFlow(ctx, entryID)
@@ -1665,7 +1667,9 @@ func (c *HybridClient) GetConfigEntryOptions(ctx context.Context, entryID string
 // of an options flow, merging each step's current values into a single
 // flat result: children of HA "expandable" sections are lifted to top-level
 // keys (flattenStepValues), and a child whose name collides with a
-// top-level key is kept as "<section>.<child>". Flattening applies to the
+// top-level key of its step, or with a key already merged from an earlier
+// step or section, is kept as "<section>.<child>" (a later step's top-level
+// key overwrites an earlier one). Flattening applies to the
 // returned map only - the submission that advances the walk stays nested
 // exactly as HA serialized the step, because HA's
 // _update_and_remove_omitted_optional_keys would otherwise pop the omitted

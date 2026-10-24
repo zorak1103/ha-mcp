@@ -803,7 +803,7 @@ Actions:
 - create: Create a new helper (requires type, id, name)
 - update: Update an existing helper (requires entity_id; supports all helper types including Config Entry helpers via Options Flow). icon is accepted on every type. Other fields accepted per type:` + updatableFieldsDescription() + `
 - delete: Delete an existing helper (requires entity_id)
-- get_details: Get helper details (requires entity_id)`,
+- get_details: Get helper details (requires entity_id); also returns a 'configuration' block with every stored option/storage field not shown elsewhere`,
 		InputSchema: mcp.JSONSchema{
 			Type:        "object",
 			Description: "Helper management operation",
