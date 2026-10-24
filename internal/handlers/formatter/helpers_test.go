@@ -458,6 +458,42 @@ func TestNaturalHelperFormatter_DetailRenderers_IncludeEntityID(t *testing.T) {
 	}
 }
 
+// TestNaturalHelperFormatter_BinarySensorTemplateConfig pins the template
+// configuration lines: delays render as HH:MM:SS (never Go map syntax) under
+// their user-facing labels, and the device id is shown.
+func TestNaturalHelperFormatter_BinarySensorTemplateConfig(t *testing.T) {
+	t.Parallel()
+
+	f := NewNaturalHelperFormatter()
+	detail := map[string]any{
+		"entity_id":         "binary_sensor.t",
+		"state":             "on",
+		"friendly_name":     "T",
+		"config_entry_type": "template",
+		"delay_on":          "00:00:05",
+		"delay_off":         map[string]any{"hours": 0.0, "minutes": 3.0, "seconds": 0.0},
+		"device_id":         "dev1",
+	}
+
+	result, err := f.FormatHelperDetail(context.Background(), "binary_sensor", detail)
+	if err != nil {
+		t.Fatalf("FormatHelperDetail(binary_sensor) error = %v, want nil", err)
+	}
+
+	for _, want := range []string{
+		"Delay before turning on: 00:00:05",
+		"Delay before turning off: 00:03:00",
+		"Device: dev1",
+	} {
+		if !strings.Contains(result, want) {
+			t.Errorf("result = %q, want it to contain %q", result, want)
+		}
+	}
+	if strings.Contains(result, "map[") {
+		t.Errorf("result = %q, must not contain Go map syntax", result)
+	}
+}
+
 // TestNaturalHelperFormatter_FormatHelperDetail_GenericFallback pins the
 // fallback renderer added for issue #216: domains with no dedicated case
 // (climate, humidifier, select, and the 15 template_* subtypes) must render
@@ -1028,5 +1064,59 @@ func TestHelperFormatter_AllHelperTypes(t *testing.T) {
 	// Should have 12 helpers
 	if !strings.Contains(result, "12 helpers") {
 		t.Errorf("FormatList() should show 12 helpers, got:\n%s", result)
+	}
+}
+
+func TestNaturalHelperFormatter_ConfigurationSectionOnEveryRenderer(t *testing.T) {
+	t.Parallel()
+
+	f := NewNaturalHelperFormatter()
+	ctx := context.Background()
+
+	newDetail := func(entityID string) map[string]any {
+		return map[string]any{
+			"entity_id":            entityID,
+			"state":                "on",
+			"friendly_name":        "Thing",
+			DetailKeyConfiguration: map[string]any{"restore": true},
+		}
+	}
+
+	tests := []struct {
+		name   string
+		render func() (string, error)
+	}{
+		{"sensor (dedicated)", func() (string, error) {
+			return f.FormatHelperDetail(ctx, "sensor", newDetail("sensor.thing"))
+		}},
+		{"climate (generic)", func() (string, error) {
+			return f.FormatHelperDetail(ctx, "climate", newDetail("climate.thing"))
+		}},
+		{"counter", func() (string, error) {
+			return f.FormatCounterDetail(ctx, newDetail("counter.thing"))
+		}},
+		{"timer", func() (string, error) {
+			return f.FormatTimerDetail(ctx, newDetail("timer.thing"))
+		}},
+		{"schedule", func() (string, error) {
+			return f.FormatScheduleDetail(ctx, newDetail("schedule.thing"))
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			out, err := tt.render()
+			if err != nil {
+				t.Fatalf("render error = %v, want nil", err)
+			}
+			if !strings.Contains(out, "\n\nConfiguration:\nRestore: true") {
+				t.Errorf("output lacks configuration section:\n%s", out)
+			}
+			if n := strings.Count(out, "Configuration:"); n != 1 {
+				t.Errorf("\"Configuration:\" occurs %d times, want 1:\n%s", n, out)
+			}
+		})
 	}
 }

@@ -4483,3 +4483,257 @@ func TestHybridClient_DeleteConfigEntry(t *testing.T) {
 		t.Error("expected requireRestart to be forwarded from REST client, got false")
 	}
 }
+
+// templateBinarySensorOptionsStep builds the options-flow step HA serves for
+// a template binary_sensor: top-level state/device_id plus the expandable
+// additional_options section holding availability and both delays.
+func templateBinarySensorOptionsStep(lastStep *bool) *OptionsFlowResult {
+	return &OptionsFlowResult{
+		FlowID:   "flow-tpl",
+		Type:     flowTypeForm,
+		StepID:   "binary_sensor",
+		LastStep: lastStep,
+		DataSchema: []OptionsFlowField{
+			{Name: "state", Description: map[string]any{"suggested_value": "{{ is_state('input_boolean.x','on') }}"}},
+			{Name: "device_id", Description: map[string]any{"suggested_value": "dev1"}},
+			{
+				Name: "additional_options",
+				Type: "expandable",
+				Schema: []OptionsFlowField{
+					{Name: "availability", Description: map[string]any{"suggested_value": "{{ true }}"}},
+					{Name: "delay_on", Description: map[string]any{"suggested_value": map[string]any{"hours": 0.0, "minutes": 0.0, "seconds": 5.0}}},
+					{Name: "delay_off", Description: map[string]any{"suggested_value": map[string]any{"hours": 0.0, "minutes": 3.0, "seconds": 0.0}}},
+				},
+			},
+		},
+	}
+}
+
+func flatTemplateBinarySensorOptions() map[string]any {
+	return map[string]any{
+		"state":        "{{ is_state('input_boolean.x','on') }}",
+		"device_id":    "dev1",
+		"availability": "{{ true }}",
+		"delay_on":     map[string]any{"hours": 0.0, "minutes": 0.0, "seconds": 5.0},
+		"delay_off":    map[string]any{"hours": 0.0, "minutes": 3.0, "seconds": 0.0},
+	}
+}
+
+func TestGetConfigEntryOptions_FlattensTemplateAdditionalOptions(t *testing.T) {
+	t.Parallel()
+
+	trueVal := true
+	submitCount := 0
+	abortCount := 0
+	mockREST := &mockRESTOperations{
+		initConfigEntryOptionsFlowFunc: func(context.Context, string) (*OptionsFlowResult, error) {
+			return templateBinarySensorOptionsStep(&trueVal), nil
+		},
+		submitConfigEntryOptionsFlowStepFunc: func(context.Context, string, map[string]any) (*OptionsFlowResult, error) {
+			submitCount++
+			return &OptionsFlowResult{FlowID: "flow-tpl", Type: flowTypeCreateEntry}, nil
+		},
+		abortConfigEntryOptionsFlowFunc: func(context.Context, string) error {
+			abortCount++
+			return nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(&mockWSOperations{}, mockREST)
+	options, err := client.GetConfigEntryOptions(context.Background(), "config-tpl")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !reflect.DeepEqual(options, flatTemplateBinarySensorOptions()) {
+		t.Errorf("GetConfigEntryOptions() = %v, want %v", options, flatTemplateBinarySensorOptions())
+	}
+	if _, found := options["additional_options"]; found {
+		t.Errorf("options still carry the additional_options section key: %v", options)
+	}
+	if submitCount != 0 {
+		t.Errorf("submit called %d times, want 0 on a last_step form", submitCount)
+	}
+	if abortCount != 1 {
+		t.Errorf("abort called %d times, want 1", abortCount)
+	}
+}
+
+// TestGetConfigEntryOptions_AdvanceSubmitsNestedSection pins that flattening
+// applies only to the returned options. The submission that advances the read
+// walk must stay nested exactly as HA serialized it: HA's
+// _update_and_remove_omitted_optional_keys would pop a missing
+// additional_options on the no-op commit, deleting availability and delays.
+func TestGetConfigEntryOptions_AdvanceSubmitsNestedSection(t *testing.T) {
+	t.Parallel()
+
+	var captured map[string]any
+	mockREST := &mockRESTOperations{
+		initConfigEntryOptionsFlowFunc: func(context.Context, string) (*OptionsFlowResult, error) {
+			return templateBinarySensorOptionsStep(nil), nil
+		},
+		submitConfigEntryOptionsFlowStepFunc: func(_ context.Context, _ string, data map[string]any) (*OptionsFlowResult, error) {
+			captured = data
+			return &OptionsFlowResult{FlowID: "flow-tpl", Type: flowTypeCreateEntry}, nil
+		},
+		abortConfigEntryOptionsFlowFunc: func(context.Context, string) error { return nil },
+	}
+
+	client := NewHybridClientWithInterfaces(&mockWSOperations{}, mockREST)
+	options, err := client.GetConfigEntryOptions(context.Background(), "config-tpl")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	section, ok := captured["additional_options"].(map[string]any)
+	if !ok {
+		t.Fatalf("submitted payload additional_options = %v (%T), want a nested map", captured["additional_options"], captured["additional_options"])
+	}
+	if section["availability"] != "{{ true }}" {
+		t.Errorf("submitted additional_options.availability = %v, want %q", section["availability"], "{{ true }}")
+	}
+	if _, found := captured["availability"]; found {
+		t.Errorf("submitted payload has a top-level availability; the advance submission must stay nested: %v", captured)
+	}
+	if !reflect.DeepEqual(options, flatTemplateBinarySensorOptions()) {
+		t.Errorf("GetConfigEntryOptions() = %v, want flat %v", options, flatTemplateBinarySensorOptions())
+	}
+}
+
+// TestGetConfigEntryOptions_MenuNavigationFailureAbortsInitFlow pins that a
+// failed menu navigation neither panics (the deferred abort once read the
+// reassigned, nil result) nor leaves the flow dangling in HA: the abort runs
+// with the flow id the init call returned.
+func TestGetConfigEntryOptions_MenuNavigationFailureAbortsInitFlow(t *testing.T) {
+	t.Parallel()
+
+	var abortedFlowID string
+	mockWS := &mockWSOperations{
+		getConfigEntryFunc: func(context.Context, string) (*ConfigEntryFull, error) {
+			return nil, errors.New("ws down")
+		},
+	}
+	mockREST := &mockRESTOperations{
+		initConfigEntryOptionsFlowFunc: func(context.Context, string) (*OptionsFlowResult, error) {
+			return &OptionsFlowResult{
+				FlowID:      "flow-menu",
+				Type:        flowTypeMenu,
+				MenuOptions: []string{"sensor", "binary_sensor"},
+			}, nil
+		},
+		abortConfigEntryOptionsFlowFunc: func(_ context.Context, flowID string) error {
+			abortedFlowID = flowID
+			return nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	options, err := client.GetConfigEntryOptions(context.Background(), "config-menu")
+
+	if err == nil || !strings.Contains(err.Error(), "ws down") {
+		t.Errorf("GetConfigEntryOptions() error = %v, want the menu navigation error", err)
+	}
+	if options != nil {
+		t.Errorf("GetConfigEntryOptions() = %v, want nil on error", options)
+	}
+	if abortedFlowID != "flow-menu" {
+		t.Errorf("aborted flow id = %q, want %q", abortedFlowID, "flow-menu")
+	}
+}
+
+// TestGetConfigEntryOptions_SubmitFailureMidWalkReturnsError pins that a
+// genuine submit failure while walking the steps (transport error, HA error
+// response, context expiry) is reported instead of silently returning the
+// partial merge of the steps read so far - and the flow is still aborted.
+func TestGetConfigEntryOptions_SubmitFailureMidWalkReturnsError(t *testing.T) {
+	t.Parallel()
+
+	var abortedFlowID string
+	submits := 0
+	mockWS := &mockWSOperations{}
+	mockREST := &mockRESTOperations{
+		initConfigEntryOptionsFlowFunc: func(context.Context, string) (*OptionsFlowResult, error) {
+			return &OptionsFlowResult{
+				FlowID: "flow-walk",
+				Type:   flowTypeForm,
+				StepID: "init",
+				DataSchema: []OptionsFlowField{
+					{Name: "heater", Description: map[string]any{"suggested_value": "switch.heater"}},
+				},
+			}, nil
+		},
+		submitConfigEntryOptionsFlowStepFunc: func(context.Context, string, map[string]any) (*OptionsFlowResult, error) {
+			submits++
+			if submits == 1 {
+				return &OptionsFlowResult{
+					FlowID: "flow-walk",
+					Type:   flowTypeForm,
+					StepID: "presets",
+					DataSchema: []OptionsFlowField{
+						{Name: "away_temp", Description: map[string]any{"suggested_value": 16.0}},
+					},
+				}, nil
+			}
+			return nil, context.DeadlineExceeded
+		},
+		abortConfigEntryOptionsFlowFunc: func(_ context.Context, flowID string) error {
+			abortedFlowID = flowID
+			return nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	options, err := client.GetConfigEntryOptions(context.Background(), "config-walk")
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("GetConfigEntryOptions() error = %v, want wrapped context.DeadlineExceeded", err)
+	}
+	if err != nil && !strings.Contains(err.Error(), "presets") {
+		t.Errorf("error %q should name the step whose submission failed", err)
+	}
+	if options != nil {
+		t.Errorf("GetConfigEntryOptions() = %v, want nil (no silent partial result)", options)
+	}
+	if abortedFlowID != "flow-walk" {
+		t.Errorf("aborted flow id = %q, want %q", abortedFlowID, "flow-walk")
+	}
+}
+
+// TestGetConfigEntryOptions_BenignWalkEndingsReturnMergedOptions pins that a
+// flow which finishes on submit (create_entry or abort) is the normal end of
+// the walk, not a failure.
+func TestGetConfigEntryOptions_BenignWalkEndingsReturnMergedOptions(t *testing.T) {
+	t.Parallel()
+
+	for _, endType := range []string{flowTypeCreateEntry, "abort"} {
+		t.Run(endType, func(t *testing.T) {
+			t.Parallel()
+			mockREST := &mockRESTOperations{
+				initConfigEntryOptionsFlowFunc: func(context.Context, string) (*OptionsFlowResult, error) {
+					return &OptionsFlowResult{
+						FlowID: "flow-end",
+						Type:   flowTypeForm,
+						StepID: "init",
+						DataSchema: []OptionsFlowField{
+							{Name: "sampling_size", Description: map[string]any{"suggested_value": 20.0}},
+						},
+					}, nil
+				},
+				submitConfigEntryOptionsFlowStepFunc: func(context.Context, string, map[string]any) (*OptionsFlowResult, error) {
+					return &OptionsFlowResult{FlowID: "flow-end", Type: endType}, nil
+				},
+				abortConfigEntryOptionsFlowFunc: func(context.Context, string) error { return nil },
+			}
+
+			client := NewHybridClientWithInterfaces(&mockWSOperations{}, mockREST)
+			options, err := client.GetConfigEntryOptions(context.Background(), "config-end")
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			want := map[string]any{"sampling_size": 20.0}
+			if !reflect.DeepEqual(options, want) {
+				t.Errorf("GetConfigEntryOptions() = %v, want %v", options, want)
+			}
+		})
+	}
+}

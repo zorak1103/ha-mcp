@@ -713,6 +713,16 @@ func TestFormatDetailValue(t *testing.T) {
 			expected: `{"a":1}`,
 		},
 		{
+			name:     "duration dict renders as HH:MM:SS",
+			v:        map[string]any{"hours": 0.0, "minutes": 3.0, "seconds": 0.0},
+			expected: "00:03:00",
+		},
+		{
+			name:     "non-duration map stays compact JSON",
+			v:        map[string]any{"a": 1.0},
+			expected: `{"a":1}`,
+		},
+		{
 			name:     "long list capped by item count",
 			v:        longList,
 			expected: joinIntsWithMore(20, 10),
@@ -729,6 +739,45 @@ func TestFormatDetailValue(t *testing.T) {
 			result := FormatDetailValue(tt.v)
 			if result != tt.expected {
 				t.Errorf("FormatDetailValue(%v) = %q, want %q", tt.v, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestFormatDuration pins the HA duration-dict rendering: only maps whose keys
+// are all duration units and whose values are all numbers qualify.
+func TestFormatDuration(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		in     any
+		want   string
+		wantOK bool
+	}{
+		{"hms dict", map[string]any{"hours": 0.0, "minutes": 3.0, "seconds": 0.0}, "00:03:00", true},
+		{"days hours minutes seconds", map[string]any{"days": 1.0, "hours": 2.0, "minutes": 3.0, "seconds": 4.0}, "1d 02:03:04", true},
+		{"25 hours rolls into a day", map[string]any{"hours": 25.0}, "1d 01:00:00", true},
+		{"90 seconds", map[string]any{"seconds": 90.0}, "00:01:30", true},
+		{"fractional seconds", map[string]any{"seconds": 1.5}, "00:00:01.500", true},
+		{"milliseconds", map[string]any{"milliseconds": 250.0}, "00:00:00.250", true},
+		{"negative", map[string]any{"minutes": -5.0}, "-00:05:00", true},
+		{"int value", map[string]any{"hours": 1}, "01:00:00", true},
+		{"string passthrough", "00:00:05", "00:00:05", true},
+		{"empty map", map[string]any{}, "", false},
+		{"unknown key", map[string]any{"hours": 1.0, "foo": 2.0}, "", false},
+		{"non-numeric value", map[string]any{"hours": "1"}, "", false},
+		{"bare number", 30.0, "", false},
+		{"nil", nil, "", false},
+		{"total beyond the render bound", map[string]any{"days": 1e15}, "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, ok := FormatDuration(tt.in)
+			if got != tt.want || ok != tt.wantOK {
+				t.Errorf("FormatDuration(%v) = (%q, %v), want (%q, %v)", tt.in, got, ok, tt.want, tt.wantOK)
 			}
 		})
 	}

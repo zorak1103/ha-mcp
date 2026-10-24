@@ -273,6 +273,48 @@ func TestHandleFindReferences_ConcurrentScannersPreserveRequestOrder(t *testing.
 	}
 }
 
+// TestFindReferences_HelperTemplateOptionsFailureIsReported verifies that a
+// template helper whose options cannot be read is reported as a failed scan
+// instead of silently looking like a complete one, while the hits from the
+// helpers that could be read are still returned.
+func TestFindReferences_HelperTemplateOptionsFailureIsReported(t *testing.T) {
+	t.Parallel()
+
+	h := NewFindReferencesHandlers()
+	client := &UniversalMockClient{
+		GetEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+			return []homeassistant.EntityRegistryEntry{
+				{EntityID: "sensor.ok", Platform: "template", ConfigEntryID: "ce-ok"},
+				{EntityID: "sensor.bad", Platform: "template", ConfigEntryID: "ce-bad"},
+			}, nil
+		},
+		GetConfigEntryOptionsFn: func(_ context.Context, entryID string) (map[string]any, error) {
+			if entryID == "ce-bad" {
+				return nil, errors.New("flow aborted")
+			}
+			return map[string]any{"state": "{{ states('sensor.src') }}"}, nil
+		},
+	}
+
+	result, err := h.handleFindReferences(context.Background(), client, map[string]any{
+		"search": "sensor.src",
+		"types":  []any{"helper_template"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].Text
+	if !strings.Contains(text, "sensor.ok") {
+		t.Errorf("expected the readable helper's hit in the output, got:\n%s", text)
+	}
+	if !strings.Contains(text, "could not be scanned") || !strings.Contains(text, "helper_template") {
+		t.Errorf("expected a could-not-be-scanned warning naming helper_template, got:\n%s", text)
+	}
+	if !strings.Contains(text, "sensor.bad") {
+		t.Errorf("expected the warning to name the unreadable helper, got:\n%s", text)
+	}
+}
+
 func TestSearchMatchFunc(t *testing.T) {
 	t.Parallel()
 

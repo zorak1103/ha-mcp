@@ -221,8 +221,75 @@ func (s *TemplateHelperIntegrationTestSuite) TestTemplateSensorWithStateClass() 
 	_ = s.Client().DeleteHelper(s.Context(), sourceEntityID)
 }
 
-// Note: TestTemplateBinarySensorWithDelay removed because delay_on/delay_off
-// are not supported by the Config Entry Flow API (only available in YAML config)
+// TestTemplateBinarySensorDelayRoundTrip pins issue #292: a template
+// binary_sensor's delay_on/delay_off are settable through manage_helper, live
+// inside an HA "expandable" options-flow section, and must be visible again in
+// get_details. It also checks, against real Home Assistant, the section layout
+// the flattening in GetConfigEntryOptions relies on.
+func (s *TemplateHelperIntegrationTestSuite) TestTemplateBinarySensorDelayRoundTrip() {
+	name := GenerateTestID("tmpl_bin_delay")
+	entityID := BuildEntityID("binary_sensor", name)
+
+	createResult := s.CallTool("manage_helper", map[string]any{
+		"action": "create",
+		"type":   "template_binary_sensor",
+		"id":     name,
+		"name":   name,
+		"state":  "{{ true }}",
+	})
+	s.Require().False(createResult.IsError, "create template_binary_sensor should succeed, got: %s", resultText(createResult))
+	s.RegisterCleanup(func() { _ = s.Client().DeleteHelper(s.Context(), entityID) })
+
+	_, err := s.WaitForEntity(entityID, 5*time.Second)
+	s.Require().NoError(err, "template binary sensor did not appear")
+
+	updateResult := s.CallTool("manage_helper", map[string]any{
+		"action":    "update",
+		"entity_id": entityID,
+		"delay_off": "00:03:00",
+	})
+	s.Require().False(updateResult.IsError, "update delay_off should succeed, got: %s", resultText(updateResult))
+
+	// Live section check: HA nests delay_on/delay_off/availability under an
+	// "expandable" additional_options section in the options flow schema.
+	// GetConfigEntryOptions must hand them back flat, with the duration still
+	// in HA's {hours, minutes, seconds} dict shape.
+	regEntry, err := s.Client().GetEntityRegistryEntry(s.Context(), entityID)
+	s.Require().NoError(err, "Failed to get entity registry entry")
+	s.Require().NotEmpty(regEntry.ConfigEntryID, "template binary sensor should have a config_entry_id")
+
+	// Poll briefly so a residual gap between the options-flow update and the
+	// stored entry becoming readable cannot flake the test; the assertions
+	// below run on the last options map either way.
+	var options map[string]any
+	optionsDeadline := time.Now().Add(10 * time.Second)
+	for {
+		options, err = s.Client().GetConfigEntryOptions(s.Context(), regEntry.ConfigEntryID)
+		s.Require().NoError(err, "Failed to get template config entry options")
+		if delay, isMap := options["delay_off"].(map[string]any); isMap {
+			if minutes, isNum := delay["minutes"].(float64); isNum && minutes >= 3 {
+				break
+			}
+		}
+		if time.Now().After(optionsDeadline) {
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	s.T().Logf("template_binary_sensor options: %+v", options)
+
+	delayOff, ok := options["delay_off"].(map[string]any)
+	s.Require().True(ok, "delay_off should be a flat duration dict, got %T: %v (all options: %+v)", options["delay_off"], options["delay_off"], options)
+	s.InDelta(3.0, delayOff["minutes"], 0.001, "delay_off should be 3 minutes (all options: %+v)", options)
+	s.NotContains(options, "additional_options", "the expandable section must be flattened away (all options: %+v)", options)
+
+	// The action under test: get_details shows the stored delay in both formats.
+	naturalText := s.getDetailsEventually(entityID, "natural", "Delay before turning off: 00:03:00")
+	s.Contains(naturalText, "Delay before turning off: 00:03:00", "the stored delay_off must be visible in get_details")
+
+	jsonText := s.getDetailsEventually(entityID, "json", `"delay_off"`)
+	s.Contains(jsonText, `"delay_off"`, "the stored delay_off must be a key of the JSON output")
+}
 
 func (s *TemplateHelperIntegrationTestSuite) TestTemplateSensorWithIcon() {
 	// Test that icons are correctly set for Config Entry Flow helpers

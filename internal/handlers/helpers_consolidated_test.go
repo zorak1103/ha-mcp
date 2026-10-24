@@ -3,8 +3,10 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"strings"
@@ -3776,15 +3778,46 @@ func TestManageHelper_GetDetails(t *testing.T) {
 					}, nil
 				}
 				m.GetConfigEntryOptionsFn = func(context.Context, string) (map[string]any, error) {
-					return map[string]any{
-						"state":     "{{ states('binary_sensor.source') }}",
-						"delay_on":  map[string]any{"seconds": 5},
-						"delay_off": map[string]any{"seconds": 10},
+					return templateBinarySensorFlatOptions(), nil
+				}
+			},
+			wantError: false,
+			wantContains: []string{
+				"Binary Sensor: Template Binary", "Template Configuration:",
+				"Delay before turning on: 00:00:05", "Delay before turning off: 00:03:00",
+				"Availability template: {{ true }}", "Device: dev123",
+			},
+		},
+		{
+			name: "get_details for template binary_sensor with delays (json)",
+			args: map[string]any{
+				"action":    "get_details",
+				"entity_id": "binary_sensor.template_test",
+				"format":    "json",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetStateFn = func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+					return &homeassistant.Entity{
+						EntityID:   entityID,
+						State:      "on",
+						Attributes: map[string]any{"friendly_name": "Template Binary"},
 					}, nil
+				}
+				m.GetEntityRegistryFn = func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+					return []homeassistant.EntityRegistryEntry{
+						{
+							EntityID:      "binary_sensor.template_test",
+							Platform:      "template",
+							ConfigEntryID: "config456",
+						},
+					}, nil
+				}
+				m.GetConfigEntryOptionsFn = func(context.Context, string) (map[string]any, error) {
+					return templateBinarySensorFlatOptions(), nil
 				}
 			},
 			wantError:    false,
-			wantContains: []string{"Binary Sensor: Template Binary", "Template Configuration:", "Delay on:", "Delay off:"},
+			wantContains: []string{"\"delay_off\"", "\"minutes\": 3", "\"device_id\": \"dev123\""},
 		},
 		{
 			name: "get_details for non-template sensor (no enrichment)",
@@ -3993,10 +4026,86 @@ func TestManageHelper_GetDetails_TemplateSubtypeDomains(t *testing.T) {
 			wantContains:    []string{"Light", "My Light (light.my_light)", "State: on", "Brightness: 128"},
 			wantNotContains: []string{"unsupported helper type", "get_details is not supported for helper type"},
 		},
+		{
+			name: "get_details for template light reads availability and device from options",
+			args: map[string]any{
+				"action":    "get_details",
+				"entity_id": "light.tpl",
+				"format":    "json",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetStateFn = func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+					return &homeassistant.Entity{
+						EntityID:   entityID,
+						State:      "off",
+						Attributes: map[string]any{"friendly_name": "Tpl Light"},
+					}, nil
+				}
+				m.GetEntityRegistryFn = func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+					return []homeassistant.EntityRegistryEntry{
+						{EntityID: "light.tpl", Platform: "template", ConfigEntryID: "ce"},
+					}, nil
+				}
+				m.GetConfigEntryOptionsFn = func(context.Context, string) (map[string]any, error) {
+					return map[string]any{
+						"state":        "{{ 'off' }}",
+						"availability": "{{ true }}",
+						"device_id":    "dev1",
+					}, nil
+				}
+			},
+			wantError:    false,
+			wantContains: []string{"\"availability_template\": \"{{ true }}\"", "\"device_id\": \"dev1\"", "\"state\": \"off\""},
+		},
 	}
 
 	h := NewConsolidatedHelperHandlers()
 	runHandlerTestCases(t, tests, h.handleManageHelper)
+}
+
+// templateBinarySensorFlatOptions is the realistic FLAT options shape a
+// template binary_sensor yields after GetConfigEntryOptions lifts the
+// "additional_options" section children to the top level.
+func templateBinarySensorFlatOptions() map[string]any {
+	return map[string]any{
+		"state":        "{{ states('binary_sensor.source') }}",
+		"availability": "{{ true }}",
+		"device_id":    "dev123",
+		"delay_on":     map[string]any{"hours": 0.0, "minutes": 0.0, "seconds": 5.0},
+		"delay_off":    map[string]any{"hours": 0.0, "minutes": 3.0, "seconds": 0.0},
+	}
+}
+
+// TestAddTemplateSubtypeOptionsToDetails_ReturnsConsumedKeys pins that the
+// subtype reader reports exactly the option keys it rendered (domain fields
+// plus the universal availability/device_id), so the generic configuration
+// block can omit them.
+func TestAddTemplateSubtypeOptionsToDetails_ReturnsConsumedKeys(t *testing.T) {
+	t.Parallel()
+
+	details := map[string]any{}
+	options := map[string]any{
+		"value_template": "x",
+		"turn_on":        map[string]any{"action": "switch.turn_on"},
+		"availability":   "y",
+		"unrelated":      1.0,
+	}
+
+	consumed := addTemplateSubtypeOptionsToDetails("switch", options, details)
+
+	want := map[string]bool{"value_template": true, "turn_on": true, "availability": true}
+	if !reflect.DeepEqual(want, consumed) {
+		t.Errorf("consumed keys = %v, want %v", consumed, want)
+	}
+	if details["state_template"] != "x" {
+		t.Errorf("state_template = %v, want x", details["state_template"])
+	}
+	if details["availability_template"] != "y" {
+		t.Errorf("availability_template = %v, want y", details["availability_template"])
+	}
+	if _, found := details["unrelated"]; found {
+		t.Errorf("unrelated option leaked into details: %v", details)
+	}
 }
 
 // TestManageHelper_GetDetails_ClimateHumidifierSelectNaturalFormat pins the
@@ -5496,32 +5605,208 @@ func TestUpdatableFields_AreActuallyReadByUpdatePath(t *testing.T) {
 				args[field] = updatableFieldSentinel(name, field)
 			}
 
-			var config map[string]any
-			if homeassistant.RequiresConfigEntryFlow(meta.platform) {
-				// Mirrors handleUpdate: buildConfigEntryUpdateConfig is called
-				// with the entity DOMAIN (meta.entityPrefix), not the
-				// helperTypes map key - that distinction matters for the
-				// platform=="humidifier" device_class default gate. meta.platform
-				// is passed as the resolved min_max_type platform too - it's the
-				// real integration platform for every entry here, same as what
-				// resolveConfigEntryPlatformForMinMaxType would return.
-				var err error
-				config, err = buildConfigEntryUpdateConfig(configEntryUpdateContext{entityDomain: meta.entityPrefix, minMaxPlatform: meta.platform}, args)
-				if err != nil {
-					t.Fatalf("buildConfigEntryUpdateConfig(%q, ...) returned error: %v", name, err)
-				}
-			} else {
-				var err error
-				config, err = buildHelperConfig(name, "Test Name", args)
-				if err != nil {
-					t.Fatalf("buildHelperConfig(%q, ...) returned error: %v", name, err)
-				}
-			}
+			config := updateBuilderConfig(t, name, meta, args)
 
 			for _, field := range fields {
 				key := configKeyFor(name, field)
 				if _, present := config[key]; !present {
 					t.Errorf("field %q (config key %q) is listed as updatable for %q but was not read by the update builder - add it to perTypeUpdateExcludedFields or fix the builder", field, key, name)
+				}
+			}
+		})
+	}
+}
+
+// updateBuilderConfig runs args through the real update builder for helper
+// type name (buildConfigEntryUpdateConfig for Config Entry platforms,
+// buildHelperConfig for WS storage helpers) and returns the config it builds.
+func updateBuilderConfig(t *testing.T, name string, meta helperTypeMetadata, args map[string]any) map[string]any {
+	t.Helper()
+
+	if homeassistant.RequiresConfigEntryFlow(meta.platform) {
+		// Mirrors handleUpdate: buildConfigEntryUpdateConfig is called
+		// with the entity DOMAIN (meta.entityPrefix), not the
+		// helperTypes map key - that distinction matters for the
+		// platform=="humidifier" device_class default gate. meta.platform
+		// is passed as the resolved min_max_type platform too - it's the
+		// real integration platform for every entry here, same as what
+		// resolveConfigEntryPlatformForMinMaxType would return.
+		config, err := buildConfigEntryUpdateConfig(configEntryUpdateContext{entityDomain: meta.entityPrefix, minMaxPlatform: meta.platform}, args)
+		if err != nil {
+			t.Fatalf("buildConfigEntryUpdateConfig(%q, ...) returned error: %v", name, err)
+		}
+		return config
+	}
+
+	config, err := buildHelperConfig(name, "Test Name", args)
+	if err != nil {
+		t.Fatalf("buildHelperConfig(%q, ...) returned error: %v", name, err)
+	}
+	return config
+}
+
+// getDetailsShowsConfigKey reports whether the get_details JSON (details)
+// shows the stored-config key for a helper of entityDomain with the stored
+// value want: under the key itself or its "_template" form (the template
+// readers render value templates that way), as friendly_name for "name",
+// under the tool-facing arg name of a template field that maps to key, or -
+// for a schedule weekday - inside details["schedule"]. Each candidate is
+// searched at top level and inside details["configuration"]. Presence alone
+// is not enough: buildHelperDetails always seeds entity_id, state and
+// friendly_name, so a candidate only counts when its value renders (via
+// fmt.Sprint, since builders store numbers as strings and JSON decodes
+// numbers as float64) the same as want.
+func getDetailsShowsConfigKey(details map[string]any, entityDomain, key string, want any) bool {
+	wantText := fmt.Sprint(want)
+	candidates := []string{key, key + "_template"}
+	if key == "name" {
+		candidates = append(candidates, "friendly_name")
+	}
+	fields := append(slices.Clone(resolveTemplateFieldsForDomain(entityDomain)), templateUniversalFields...)
+	for _, f := range fields {
+		if f.configKey() == key {
+			candidates = append(candidates, f.arg, f.arg+"_template")
+		}
+	}
+
+	scopes := []map[string]any{details}
+	if cfg, ok := details["configuration"].(map[string]any); ok {
+		scopes = append(scopes, cfg)
+	}
+	for _, scope := range scopes {
+		for _, c := range candidates {
+			if got, ok := scope[c]; ok && fmt.Sprint(got) == wantText {
+				return true
+			}
+		}
+	}
+
+	if schedule, ok := details["schedule"].(map[string]any); ok && slices.Contains(scheduleWeekdays, key) {
+		got, shown := schedule[key]
+		return shown && fmt.Sprint(got) == wantText
+	}
+	return false
+}
+
+// pinGetDetailsExemptions lists (helper type -> updatable field) pairs that
+// are intentionally NOT visible in get_details, each with its reason. It is
+// empty on purpose: the property is that every field update can write is
+// readable back, so an entry here must justify why a field is write-only.
+var pinGetDetailsExemptions = map[string]map[string]string{}
+
+// pinScheduleBlock is a well-formed schedule time block: the sentinel
+// []any{"probe"} is not one, and get_details renders only parseable blocks.
+func pinScheduleBlock() []any {
+	return []any{map[string]any{"from": "09:00:00", "to": "17:00:00"}}
+}
+
+// pinHelperMock builds the mock client for a get_details pin run: the helper
+// entity's state plus its stored config - config-entry platforms serve cfg as
+// the (flat) options with icon in the entity registry entry, WS storage
+// helpers serve cfg (plus its storage id) from GetHelperConfig.
+func pinHelperMock(meta helperTypeMetadata, entityID string, cfg map[string]any) *UniversalMockClient {
+	m := &UniversalMockClient{}
+	// HA derives an entity's friendly_name from its stored name, so the mock
+	// state carries the stored name (the "name" field is shown as
+	// friendly_name). State stays "x", which no sentinel equals, so a state
+	// template can't match the seeded top-level state by coincidence.
+	friendlyName := "Test Name"
+	if n, ok := cfg["name"].(string); ok {
+		friendlyName = n
+	}
+	m.GetStateFn = func(context.Context, string) (*homeassistant.Entity, error) {
+		return &homeassistant.Entity{
+			EntityID:   entityID,
+			State:      "x",
+			Attributes: map[string]any{"friendly_name": friendlyName},
+		}, nil
+	}
+
+	stored := make(map[string]any, len(cfg)+1)
+	maps.Copy(stored, cfg)
+	if homeassistant.RequiresConfigEntryFlow(meta.platform) {
+		entry := homeassistant.EntityRegistryEntry{EntityID: entityID, Platform: meta.platform, ConfigEntryID: "pin"}
+		if icon, ok := stored["icon"].(string); ok {
+			entry.Icon = icon
+			delete(stored, "icon")
+		}
+		m.GetEntityRegistryFn = func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+			return []homeassistant.EntityRegistryEntry{entry}, nil
+		}
+		m.GetConfigEntryOptionsFn = func(context.Context, string) (map[string]any, error) {
+			return stored, nil
+		}
+		return m
+	}
+
+	stored["id"] = "pin_test"
+	for _, day := range scheduleWeekdays {
+		if _, ok := stored[day]; ok {
+			stored[day] = pinScheduleBlock()
+		}
+	}
+	m.GetHelperConfigFn = func(context.Context, string, string) (map[string]any, error) {
+		return stored, nil
+	}
+	return m
+}
+
+// TestUpdatableFields_AreVisibleInGetDetails is issue #292's regression pin:
+// for every helper type, each field manage_helper update can write must be
+// readable back through get_details. It feeds the update builder's config back
+// as the helper's stored config and asserts every updatable field shows up in
+// the JSON output, so a field that update can write but get_details hides
+// (like a template binary_sensor's delay_on inside an options section) fails
+// here by name.
+func TestUpdatableFields_AreVisibleInGetDetails(t *testing.T) {
+	t.Parallel()
+
+	for name, meta := range helperTypes {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			fields := updatableFieldNames(name)
+			if len(fields) == 0 {
+				t.Fatalf("helper type %q has no updatable fields, so the pin would pass vacuously", name)
+			}
+			args := make(map[string]any, len(fields))
+			for _, field := range fields {
+				args[field] = updatableFieldSentinel(name, field)
+			}
+			cfg := updateBuilderConfig(t, name, meta, args)
+
+			entityID := meta.entityPrefix + ".pin_test"
+			client := pinHelperMock(meta, entityID, cfg)
+
+			h := NewConsolidatedHelperHandlers()
+			result, err := h.handleManageHelper(context.Background(), client, map[string]any{
+				"action":    "get_details",
+				"entity_id": entityID,
+				"format":    "json",
+			})
+			if err != nil {
+				t.Fatalf("handleManageHelper(get_details) returned error: %v", err)
+			}
+			if result.IsError {
+				t.Fatalf("handleManageHelper(get_details) returned an error result: %s", result.Content[0].Text)
+			}
+			var details map[string]any
+			if err := json.Unmarshal([]byte(result.Content[0].Text), &details); err != nil {
+				t.Fatalf("get_details JSON output is not an object: %v\n%s", err, result.Content[0].Text)
+			}
+
+			for _, field := range fields {
+				if reason, exempt := pinGetDetailsExemptions[name][field]; exempt {
+					t.Logf("field %q of %q exempt: %s", field, name, reason)
+					continue
+				}
+				key := configKeyFor(name, field)
+				want := cfg[key]
+				if !homeassistant.RequiresConfigEntryFlow(meta.platform) && slices.Contains(scheduleWeekdays, key) {
+					want = pinScheduleBlock() // pinHelperMock swapped in a parseable block
+				}
+				if !getDetailsShowsConfigKey(details, meta.entityPrefix, key, want) {
+					t.Errorf("field %q (config key %q) is writable for %q but not visible in get_details JSON", field, key, name)
 				}
 			}
 		})

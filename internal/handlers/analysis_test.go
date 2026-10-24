@@ -2641,6 +2641,37 @@ func TestHandleAnalyzeEntity_FindsHelperTemplateOnlyReference(t *testing.T) {
 	}
 }
 
+// TestFindHelperTemplateReferences_PartialFailureKeepsHits verifies that a helper
+// whose options cannot be read does not discard the references found in the
+// helpers that could be read: the error is returned alongside the partial refs.
+func TestFindHelperTemplateReferences_PartialFailureKeepsHits(t *testing.T) {
+	t.Parallel()
+
+	client := &mockAnalysisClient{
+		GetEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+			return []homeassistant.EntityRegistryEntry{
+				{EntityID: "sensor.ok", Platform: "template", ConfigEntryID: "ce-ok"},
+				{EntityID: "sensor.bad", Platform: "template", ConfigEntryID: "ce-bad"},
+			}, nil
+		},
+		GetConfigEntryOptionsFn: func(_ context.Context, entryID string) (map[string]any, error) {
+			if entryID == "ce-bad" {
+				return nil, errors.New("flow aborted")
+			}
+			return map[string]any{"state": "{{ states('sensor.src') }}"}, nil
+		},
+	}
+
+	refs := &EntityReferences{}
+	err := NewAnalysisHandlers().findHelperTemplateReferences(context.Background(), client, "sensor.src", refs)
+	if err == nil {
+		t.Fatal("expected an error for the unreadable helper, got nil")
+	}
+	if len(refs.HelperTemplates) != 1 || refs.HelperTemplates[0].EntityID != "sensor.ok" {
+		t.Errorf("HelperTemplates = %+v, want the sensor.ok reference kept", refs.HelperTemplates)
+	}
+}
+
 // TestHandleAnalyzeEntity_NoReferencesListsScannedSources verifies that when no
 // references exist, the output states which sources were scanned so the
 // "no references" result can be trusted.

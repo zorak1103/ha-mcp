@@ -128,26 +128,42 @@ func buildCardContext(cardType, entity string) string {
 	}
 }
 
-// scanHelperTemplates scans every template-helper's Jinja templates (state and
-// availability) for text satisfying match. Entities that are not template
-// helpers, and registry/options-flow lookup failures, are skipped rather than
-// treated as errors - a helper without a config_entry_id simply isn't scanned.
+// scanHelperTemplates scans every template-helper's Jinja template fields
+// (templateScanFields: state/availability, or the subtype's own template
+// fields) for text satisfying match. Entities that are not template helpers
+// (or have no config_entry_id) are skipped. A registry fetch failure returns
+// no hits. A failure to read one helper's options does not abort the scan: it
+// finishes, then returns every successful helper's hits together with an
+// error naming the number of unreadable helpers and the first one, so callers
+// can report the scan as incomplete without discarding the partial results.
 func scanHelperTemplates(ctx context.Context, client homeassistant.Client, match func(string) bool) ([]ConfigHit, error) {
 	entries, err := client.GetEntityRegistry(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	var hits []ConfigHit
+	var (
+		hits          []ConfigHit
+		failed        int
+		firstEntityID string
+		firstErr      error
+	)
 	for _, entry := range entries {
 		if entry.Platform != platformTemplate || entry.ConfigEntryID == "" {
 			continue
 		}
-		options, err := client.GetConfigEntryOptions(ctx, entry.ConfigEntryID)
-		if err != nil {
+		options, optErr := client.GetConfigEntryOptions(ctx, entry.ConfigEntryID)
+		if optErr != nil {
+			if failed == 0 {
+				firstEntityID, firstErr = entry.EntityID, optErr
+			}
+			failed++
 			continue
 		}
 		hits = append(hits, templateOptionHits(entry.EntityID, options, match)...)
+	}
+	if failed > 0 {
+		return hits, fmt.Errorf("could not read options for %d template helper(s) (first: %s: %w)", failed, firstEntityID, firstErr)
 	}
 	return hits, nil
 }
@@ -160,11 +176,43 @@ func scanHelperTemplates(ctx context.Context, client homeassistant.Client, match
 // package-level const (golangci-lint's `unused` check would fail on that).
 const scanFailureWarningFormat = "⚠ %d source(s) could not be scanned: %s — results may be incomplete."
 
-// templateOptionHits checks the state/availability template fields of a single
-// template helper's config-entry options against match.
+// templateScanFields returns the sorted option keys that hold Jinja template
+// strings for a template helper of the given entity domain. A domain with its
+// own templateSubtypes entry scans that subtype's tplTemplate fields under
+// their HA config key (e.g. template_switch's value_template, template_cover's
+// position) plus availability; action fields are deliberately not scanned.
+// template_sensor/template_binary_sensor have no subtype entry and keep
+// state + availability. The domain's own entry is used on purpose - not
+// resolveTemplateFieldsForDomain, which also returns other subtypes' fallback
+// fields that this domain's options can never contain.
+func templateScanFields(entityDomain string) []string {
+	subtype, ok := templateSubtypes["template_"+entityDomain]
+	if !ok {
+		return []string{templateKeyAvailability, templateKeyState}
+	}
+	fields := []string{templateKeyAvailability}
+	for _, f := range subtype.fields {
+		if f.kind == tplTemplate {
+			fields = append(fields, f.configKey())
+		}
+	}
+	slices.Sort(fields)
+	return slices.Compact(fields)
+}
+
+// Option keys scanned for every template helper domain.
+const (
+	templateKeyAvailability = "availability"
+	templateKeyState        = "state"
+)
+
+// templateOptionHits checks every template-string field of a single template
+// helper's flat config-entry options (see templateScanFields) against match.
+// Each hit's Context is the option key the match was found in.
 func templateOptionHits(entityID string, options map[string]any, match func(string) bool) []ConfigHit {
+	domain, _, _ := strings.Cut(entityID, ".")
 	var hits []ConfigHit
-	for _, field := range []string{"state", "availability"} {
+	for _, field := range templateScanFields(domain) {
 		tmpl, ok := options[field].(string)
 		if !ok || tmpl == "" || !match(tmpl) {
 			continue

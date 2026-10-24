@@ -803,7 +803,7 @@ Actions:
 - create: Create a new helper (requires type, id, name)
 - update: Update an existing helper (requires entity_id; supports all helper types including Config Entry helpers via Options Flow). icon is accepted on every type. Other fields accepted per type:` + updatableFieldsDescription() + `
 - delete: Delete an existing helper (requires entity_id)
-- get_details: Get helper details (requires entity_id)`,
+- get_details: Get helper details (requires entity_id); also returns a 'configuration' block with every stored option/storage field not shown elsewhere`,
 		InputSchema: mcp.JSONSchema{
 			Type:        "object",
 			Description: "Helper management operation",
@@ -1722,6 +1722,7 @@ func (h *ConsolidatedHelperHandlers) handleGetDetailsSchedule(ctx context.Contex
 
 	timeBlocks := parseTimeBlocks(config)
 	details := buildScheduleDetails(state, timeBlocks)
+	warning := attachScheduleConfiguration(config, configErr, details)
 
 	formatStr, _ := args["format"].(string)
 	format := formatter.ParseFormat(formatStr)
@@ -1732,7 +1733,7 @@ func (h *ConsolidatedHelperHandlers) handleGetDetailsSchedule(ctx context.Contex
 		return errorResult(fmt.Sprintf("Error formatting schedule: %v", err)), nil
 	}
 
-	return successResult(output), nil
+	return appendResultWarning(successResult(output), warning), nil
 }
 
 func (h *ConsolidatedHelperHandlers) handleGetDetailsCounter(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
@@ -1762,6 +1763,7 @@ func (h *ConsolidatedHelperHandlers) handleGetDetailsCounter(ctx context.Context
 	if step, ok := state.Attributes["step"]; ok {
 		details["step"] = fmt.Sprintf("%v", step)
 	}
+	warning := attachHelperConfiguration(ctx, client, entityID, platformCounter, details)
 
 	formatStr, _ := args["format"].(string)
 	format := formatter.ParseFormat(formatStr)
@@ -1772,7 +1774,7 @@ func (h *ConsolidatedHelperHandlers) handleGetDetailsCounter(ctx context.Context
 		return errorResult(fmt.Sprintf("Error formatting counter: %v", err)), nil
 	}
 
-	return successResult(output), nil
+	return appendResultWarning(successResult(output), warning), nil
 }
 
 func (h *ConsolidatedHelperHandlers) handleGetDetailsTimer(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
@@ -1799,6 +1801,7 @@ func (h *ConsolidatedHelperHandlers) handleGetDetailsTimer(ctx context.Context, 
 	if finishesAt, ok := state.Attributes["finishes_at"]; ok {
 		details["finishes_at"] = fmt.Sprintf("%v", finishesAt)
 	}
+	warning := attachHelperConfiguration(ctx, client, entityID, platformTimer, details)
 
 	formatStr, _ := args["format"].(string)
 	format := formatter.ParseFormat(formatStr)
@@ -1809,7 +1812,7 @@ func (h *ConsolidatedHelperHandlers) handleGetDetailsTimer(ctx context.Context, 
 		return errorResult(fmt.Sprintf("Error formatting timer: %v", err)), nil
 	}
 
-	return successResult(output), nil
+	return appendResultWarning(successResult(output), warning), nil
 }
 
 func (h *ConsolidatedHelperHandlers) handleGetDetailsGeneric(ctx context.Context, client homeassistant.Client, args map[string]any, helperType string) (*mcp.ToolsCallResult, error) {
@@ -1822,13 +1825,10 @@ func (h *ConsolidatedHelperHandlers) handleGetDetailsGeneric(ctx context.Context
 
 	details := buildHelperDetails(state, helperType)
 
-	// Enrich with template config for template sensors/binary_sensors, plus
-	// the 15 template_* subtype domains from issue #206 (finding W5: without
-	// this, get_details on e.g. a template_light returned only its runtime
-	// attributes, not how it's actually configured).
-	if helperType == platformSensorEntity || helperType == platformBinarySensorEntity || templateSubtypeDomains[helperType] {
-		enrichConfigEntryOptions(ctx, client, entityID, helperType, details)
-	}
+	// Attach the helper's stored configuration (storage config or config
+	// entry options) so get_details shows every field update can write;
+	// template helpers additionally get their dedicated template lines.
+	warning := attachHelperConfiguration(ctx, client, entityID, helperType, details)
 
 	formatStr, _ := args["format"].(string)
 	format := formatter.ParseFormat(formatStr)
@@ -1839,7 +1839,7 @@ func (h *ConsolidatedHelperHandlers) handleGetDetailsGeneric(ctx context.Context
 		return errorResult(fmt.Sprintf("Error formatting helper: %v", err)), nil
 	}
 
-	return successResult(output), nil
+	return appendResultWarning(successResult(output), warning), nil
 }
 
 func buildHelperDetails(state *homeassistant.Entity, helperType string) map[string]any {
@@ -2079,75 +2079,38 @@ func addBinarySensorDetails(details map[string]any, state *homeassistant.Entity)
 	}
 }
 
-// enrichConfigEntryOptions enriches details with config entry options for template helpers.
-// Gracefully degrades: if registry lookup fails or entity is not template-based, returns silently.
-func enrichConfigEntryOptions(ctx context.Context, client homeassistant.Client, entityID, helperType string, details map[string]any) {
-	// Look up entity in registry
-	registry, err := client.GetEntityRegistry(ctx)
-	if err != nil {
-		return // Graceful degradation
-	}
-
-	// Find the entity entry
-	var entry *homeassistant.EntityRegistryEntry
-	for i := range registry {
-		if registry[i].EntityID == entityID {
-			entry = &registry[i]
-			break
-		}
-	}
-
-	if entry == nil || entry.Platform != platformTemplate || entry.ConfigEntryID == "" {
-		return // Not a template entity or no config entry
-	}
-
-	// Fetch config entry options via Options Flow REST API
-	// (WebSocket GetConfigEntry does not populate Options field)
-	options, err := client.GetConfigEntryOptions(ctx, entry.ConfigEntryID)
-	if err != nil {
-		return // Graceful degradation
-	}
-	if len(options) == 0 {
-		return
-	}
-
-	// templateSubtypeDomains and {sensor, binary_sensor} are disjoint (the
-	// 15 template_* subtypes from issue #206 own alarm_control_panel/button/
-	// cover/device_tracker/event/fan/image/light/lock/number/select/switch/
-	// update/vacuum/weather - never sensor or binary_sensor), so this is an
-	// either/or, not an ordering-sensitive check.
-	if templateSubtypeDomains[helperType] {
-		addTemplateSubtypeOptionsToDetails(helperType, options, details)
-		return
-	}
-	addTemplateOptionsToDetails(options, details)
+// templateSensorStringOptions maps the string-valued options of a
+// template sensor/binary_sensor (flat options) to their detail key. Empty
+// strings are skipped.
+var templateSensorStringOptions = []struct{ option, detail string }{
+	{"state", "state_template"},
+	{"availability", "availability_template"},
+	{"unit_of_measurement", "unit_of_measurement"},
+	{"device_class", "device_class"},
+	{"state_class", "state_class"},
+	{"device_id", "device_id"},
 }
 
-// addTemplateOptionsToDetails extracts template options from config entry Options.
-func addTemplateOptionsToDetails(options, details map[string]any) {
+// addTemplateOptionsToDetails extracts template sensor/binary_sensor options
+// from the flat config entry options and returns the set of option keys it
+// rendered, so a caller can leave those out of any generic options dump.
+func addTemplateOptionsToDetails(options, details map[string]any) map[string]bool {
 	details["config_entry_type"] = platformTemplate
+	consumed := map[string]bool{}
 
-	if state, ok := options["state"].(string); ok && state != "" {
-		details["state_template"] = state
+	for _, m := range templateSensorStringOptions {
+		if v, ok := options[m.option].(string); ok && v != "" {
+			details[m.detail] = v
+			consumed[m.option] = true
+		}
 	}
-	if availability, ok := options["availability"].(string); ok && availability != "" {
-		details["availability_template"] = availability
+	for _, key := range []string{"delay_on", "delay_off"} {
+		if v, ok := options[key]; ok && v != nil {
+			details[key] = v
+			consumed[key] = true
+		}
 	}
-	if unit, ok := options["unit_of_measurement"].(string); ok && unit != "" {
-		details["unit_of_measurement"] = unit
-	}
-	if deviceClass, ok := options["device_class"].(string); ok && deviceClass != "" {
-		details["device_class"] = deviceClass
-	}
-	if stateClass, ok := options["state_class"].(string); ok && stateClass != "" {
-		details["state_class"] = stateClass
-	}
-	if delayOn, ok := options["delay_on"]; ok && delayOn != nil {
-		details["delay_on"] = delayOn
-	}
-	if delayOff, ok := options["delay_off"]; ok && delayOff != nil {
-		details["delay_off"] = delayOff
-	}
+	return consumed
 }
 
 // addTemplateSubtypeOptionsToDetails copies a template_* subtype's (issue
@@ -2161,20 +2124,29 @@ func addTemplateOptionsToDetails(options, details map[string]any) {
 // entity's real runtime state with a template string - issue #216's C1
 // collision, reintroduced inside this very fix. Every write goes through
 // putDetail as a safety net for any other, non-state collision.
-func addTemplateSubtypeOptionsToDetails(entityDomain string, options, details map[string]any) {
+//
+// The universal fields (availability, device_id) are read too. The returned
+// set holds the config keys that were rendered.
+func addTemplateSubtypeOptionsToDetails(entityDomain string, options, details map[string]any) map[string]bool {
 	putDetail(details, "config_entry_type", platformTemplate)
+	consumed := map[string]bool{}
 
-	for _, field := range resolveTemplateFieldsForDomain(entityDomain) {
-		val, ok := options[field.configKey()]
-		if !ok || val == nil {
-			continue
+	// resolveTemplateFieldsForDomain returns a shared slice: read-only.
+	for _, fields := range [][]templateField{resolveTemplateFieldsForDomain(entityDomain), templateUniversalFields} {
+		for _, field := range fields {
+			val, ok := options[field.configKey()]
+			if !ok || val == nil {
+				continue
+			}
+			key := field.arg
+			if field.kind == tplTemplate {
+				key += "_template"
+			}
+			putDetail(details, key, val)
+			consumed[field.configKey()] = true
 		}
-		key := field.arg
-		if field.kind == tplTemplate {
-			key += "_template"
-		}
-		putDetail(details, key, val)
 	}
+	return consumed
 }
 
 // =============================================================================

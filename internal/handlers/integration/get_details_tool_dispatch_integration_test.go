@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -27,6 +28,37 @@ type GetDetailsRemediationTestSuite struct {
 
 func TestGetDetailsRemediation(t *testing.T) {
 	suite.Run(t, new(GetDetailsRemediationTestSuite))
+}
+
+// getDetailsEventually calls manage_helper get_details until the response
+// contains every wanted fragment or the deadline passes, and returns the last
+// response text. The options-flow read behind get_details can lag a just-made
+// create/update by a moment on a live Home Assistant, so a single immediate
+// call would be flaky; callers assert on the returned text so a timeout still
+// fails with the actual content in the message.
+func (s *HelperTestSuite) getDetailsEventually(entityID, format string, want ...string) string {
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		result := s.CallTool("manage_helper", map[string]any{
+			"action":    "get_details",
+			"entity_id": entityID,
+			"format":    format,
+		})
+		text := resultText(result)
+		s.Require().False(result.IsError, "get_details(%s) on %s should succeed, got: %s", format, entityID, text)
+
+		complete := true
+		for _, fragment := range want {
+			if !strings.Contains(text, fragment) {
+				complete = false
+				break
+			}
+		}
+		if complete || time.Now().After(deadline) {
+			return text
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
 }
 
 // createTemplateSwitchWrapper creates an input_boolean plus a template
@@ -179,6 +211,68 @@ func (s *GetDetailsRemediationTestSuite) TestGetDetailsTemplateLight() {
 	s.Require().False(jsonResult.IsError, "get_details(json) on template_light should succeed, got: %s", jsonText)
 	s.Contains(jsonText, `"state": "off"`, "the entity's real runtime state must survive in JSON too")
 	s.Contains(jsonText, `"state_template"`, "the configured state template should be surfaced separately in JSON")
+}
+
+// TestGetDetailsStatisticsMaxAge pins issue #292: get_details must show every
+// stored option of a Config Entry helper, not just the few a hand-written
+// per-type renderer knew about. A statistics helper's max_age and
+// sampling_size are exactly such fields - they were writable via update but
+// invisible in get_details. The helper's options come from a real Options
+// Flow read, which a mock-based unit test cannot exercise.
+func (s *GetDetailsRemediationTestSuite) TestGetDetailsStatisticsMaxAge() {
+	// statistics accepts sensor.* or binary_sensor.* sources, so wrap an
+	// input_number in a template sensor (same shape as
+	// FilterToolDispatchTestSuite.createSourceSensor).
+	inputName := GenerateTestID("gd_stats_input")
+	inputEntityID := BuildEntityID("input_number", inputName)
+	err := s.Client().CreateHelper(s.Context(), homeassistant.HelperConfig{
+		Platform: "input_number",
+		Config:   map[string]any{"name": inputName, "min": 0.0, "max": 1000.0, "initial": 42.0},
+	})
+	s.Require().NoError(err, "Failed to create source input_number")
+	s.RegisterCleanup(func() { _ = s.Client().DeleteHelper(s.Context(), inputEntityID) })
+	_, err = s.WaitForEntity(inputEntityID, 5*time.Second)
+	s.Require().NoError(err, "source input_number did not appear")
+
+	sensorName := GenerateTestID("gd_stats_sensor")
+	sensorEntityID := BuildEntityID("sensor", sensorName)
+	err = s.Client().CreateHelper(s.Context(), homeassistant.HelperConfig{
+		Platform: "template",
+		Config: map[string]any{
+			"name":  sensorName,
+			"state": "{{ states('" + inputEntityID + "') | float }}",
+		},
+	})
+	s.Require().NoError(err, "Failed to create template sensor wrapper")
+	s.RegisterCleanup(func() { _ = s.Client().DeleteHelper(s.Context(), sensorEntityID) })
+	_, err = s.WaitForEntity(sensorEntityID, 5*time.Second)
+	s.Require().NoError(err, "template sensor wrapper did not appear")
+
+	statsName := GenerateTestID("gd_stats")
+	statsEntityID := BuildEntityID("sensor", statsName)
+	createResult := s.CallTool("manage_helper", map[string]any{
+		"action":               "create",
+		"type":                 "statistics",
+		"id":                   statsName,
+		"name":                 statsName,
+		"entity_id":            sensorEntityID,
+		"state_characteristic": "mean",
+		"max_age":              "00:10:00",
+		"sampling_size":        20,
+	})
+	s.Require().False(createResult.IsError, "create statistics should succeed, got: %s", resultText(createResult))
+	s.RegisterCleanup(func() { _ = s.Client().DeleteHelper(s.Context(), statsEntityID) })
+	_, err = s.WaitForEntity(statsEntityID, 5*time.Second)
+	s.Require().NoError(err, "statistics helper did not appear")
+
+	// The action under test: get_details, both formats.
+	naturalText := s.getDetailsEventually(statsEntityID, "natural", "Max age: 00:10:00", "Sampling size: 20")
+	s.Contains(naturalText, "Max age: 00:10:00", "the stored max_age must be visible in get_details")
+	s.Contains(naturalText, "Sampling size: 20", "the stored sampling_size must be visible in get_details")
+
+	jsonText := s.getDetailsEventually(statsEntityID, "json", `"configuration"`, `"max_age"`)
+	s.Contains(jsonText, `"configuration"`, "stored options belong in the configuration block")
+	s.Contains(jsonText, `"max_age"`, "the stored max_age must be a key of the JSON output")
 }
 
 // TestGetDetailsGroupEntityIDCollision pins finding C1 against real Home

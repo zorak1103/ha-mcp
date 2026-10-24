@@ -1630,6 +1630,13 @@ func (c *HybridClient) GetConfigEntry(ctx context.Context, entryID string) (*Con
 // GetConfigEntryOptions retrieves the current option values for a config entry
 // using the Options Flow REST API. This is necessary because the WebSocket API's
 // config_entries/get_single command does not populate the Options field.
+//
+// The result is a single flat map: children of HA "expandable" sections
+// (e.g. a template helper's availability/delay_on/delay_off) are lifted to
+// top-level keys; a child whose name collides with a top-level key of its
+// step, or with a key already merged from an earlier step or section, is kept
+// as "<section>.<child>". A later step's top-level key overwrites an earlier
+// one. A submit failure while walking the steps is returned as an error.
 func (c *HybridClient) GetConfigEntryOptions(ctx context.Context, entryID string) (map[string]any, error) {
 	// Initialize the options flow
 	result, err := c.rest.InitConfigEntryOptionsFlow(ctx, entryID)
@@ -1637,9 +1644,11 @@ func (c *HybridClient) GetConfigEntryOptions(ctx context.Context, entryID string
 		return nil, fmt.Errorf("init options flow: %w", err)
 	}
 
-	// Always abort the flow when we're done (cleanup)
+	// Always abort the flow when we're done (cleanup). The id is captured
+	// now: result is reassigned below and is nil on a navigation error.
+	flowID := result.FlowID
 	defer func() {
-		_ = c.rest.AbortConfigEntryOptionsFlow(context.Background(), result.FlowID)
+		_ = c.rest.AbortConfigEntryOptionsFlow(context.Background(), flowID)
 	}()
 
 	// If the response is a menu (e.g., template helpers show sensor/binary_sensor menu),
@@ -1651,16 +1660,23 @@ func (c *HybridClient) GetConfigEntryOptions(ctx context.Context, entryID string
 		}
 	}
 
-	return c.readAllOptionsFlowSteps(ctx, result), nil
+	return c.readAllOptionsFlowSteps(ctx, result)
 }
 
 // readAllOptionsFlowSteps walks forward through every remaining form step
 // of an options flow, merging each step's current values into a single
-// flat result (section values nested under their section key, the same
-// shape a single step's own submission would have). It never sends real
-// user input - buildStepSubmission in update mode round-trips each step's
-// own suggested_value fields, so submitting the result back to HA (done
-// only to discover what step comes next) is a no-op.
+// flat result: children of HA "expandable" sections are lifted to top-level
+// keys (flattenStepValues), and a child whose name collides with a
+// top-level key of its step, or with a key already merged from an earlier
+// step or section, is kept as "<section>.<child>" (a later step's top-level
+// key overwrites an earlier one). Flattening applies to the
+// returned map only - the submission that advances the walk stays nested
+// exactly as HA serialized the step, because HA's
+// _update_and_remove_omitted_optional_keys would otherwise pop the omitted
+// section on the no-op commit and delete its stored values. It never sends
+// real user input - buildStepSubmission in update mode round-trips each
+// step's own suggested_value fields, so submitting the result back to HA
+// (done only to discover what step comes next) is a no-op.
 //
 // When a step's own response reports last_step:true, its values are read
 // directly from that response without submitting it - submitting the
@@ -1669,24 +1685,29 @@ func (c *HybridClient) GetConfigEntryOptions(ctx context.Context, entryID string
 // it), the walk falls back to submitting anyway to find out whether
 // there's a successor; the resulting no-op commit is harmless since only
 // round-tripped values are ever sent.
-func (c *HybridClient) readAllOptionsFlowSteps(ctx context.Context, result *OptionsFlowResult) map[string]any {
+//
+// The walk ends normally when a step reports last_step:true or a submit
+// returns a non-form result (create_entry/abort: the flow is finished). A
+// submit error (transport, HA error response, context expiry) is a genuine
+// failure and is returned rather than a silently partial map, since the
+// unread steps' values would otherwise just be missing.
+func (c *HybridClient) readAllOptionsFlowSteps(ctx context.Context, result *OptionsFlowResult) (map[string]any, error) {
 	merged := make(map[string]any)
 	const maxReadSteps = 8
-	for i := 0; i < maxReadSteps && result.Type == flowTypeForm; i++ {
-		stepValues := buildStepSubmission(flowModeUpdate, indexStepSchema(result.DataSchema), map[string]any{}, map[string]bool{}, result.StepID)
-		for k, v := range stepValues {
-			merged[k] = v
-		}
+	for i := 0; i < maxReadSteps && result != nil && result.Type == flowTypeForm; i++ {
+		ix := indexStepSchema(result.DataSchema)
+		stepValues := buildStepSubmission(flowModeUpdate, ix, map[string]any{}, map[string]bool{}, result.StepID)
+		flattenStepValues(ix, stepValues, merged)
 		if result.LastStep != nil && *result.LastStep {
 			break
 		}
 		next, err := c.rest.SubmitConfigEntryOptionsFlowStep(ctx, result.FlowID, stepValues)
 		if err != nil {
-			break
+			return nil, fmt.Errorf("submit options flow step %q: %w", result.StepID, err)
 		}
 		result = next
 	}
-	return merged
+	return merged, nil
 }
 
 // DeleteConfigEntry deletes a config entry and all its associated devices/entities.

@@ -1,6 +1,9 @@
 package homeassistant
 
-import "slices"
+import (
+	"maps"
+	"slices"
+)
 
 // flowMode distinguishes the create-path and update-path submission
 // semantics for buildStepSubmission. Home Assistant's
@@ -186,6 +189,45 @@ func buildStepSubmission(mode flowMode, ix stepSchemaIndex, userConfig map[strin
 	}
 
 	return base
+}
+
+// flattenStepValues merges one step's values (as buildStepSubmission shapes
+// them: section children nested under their section key) into dst as a flat
+// map. The step's own schema decides what is a section - a duration value
+// ({"minutes": 10}) is a map too and must stay intact.
+//
+// A section child is lifted to a top-level key. A child whose name collides
+// with one of the step's top-level fields, or with a key dst already holds
+// (e.g. from an earlier step), is kept as "<section>.<child>" so neither
+// value is lost. The section key itself never reaches dst, including an
+// empty section. With an empty index (schema could not be inspected) every
+// key is copied as-is. Sections and children are visited in sorted order so
+// the result does not depend on Go's randomized map iteration.
+func flattenStepValues(ix stepSchemaIndex, stepValues, dst map[string]any) {
+	if ix.empty {
+		maps.Copy(dst, stepValues)
+		return
+	}
+	for key, val := range stepValues {
+		if _, isSection := ix.sections[key]; !isSection {
+			dst[key] = val
+		}
+	}
+	for _, sectionName := range slices.Sorted(maps.Keys(ix.sections)) {
+		children, ok := stepValues[sectionName].(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, child := range slices.Sorted(maps.Keys(children)) {
+			_, onTop := ix.top[child]
+			_, inDst := dst[child]
+			if onTop || inDst {
+				dst[sectionName+"."+child] = children[child]
+				continue
+			}
+			dst[child] = children[child]
+		}
+	}
 }
 
 func assignSuggestedValue(dst map[string]any, name string, f OptionsFlowField) {

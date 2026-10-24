@@ -228,6 +228,99 @@ func TestScanHelperTemplates_RegistryErrorReturnsError(t *testing.T) {
 	}
 }
 
+// --- templateScanFields ---
+
+// TestTemplateScanFields pins the scanned template fields per entity domain.
+// The expected lists are derived from templateSubtypes: only tplTemplate
+// fields (never actions) under their HA config key, plus availability.
+func TestTemplateScanFields(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		domain string
+		want   []string
+	}{
+		{"sensor", []string{"availability", "state"}},
+		{"binary_sensor", []string{"availability", "state"}},
+		{"switch", []string{"availability", "value_template"}},
+		{"cover", []string{"availability", "position", "state"}},
+		{"light", []string{"availability", "hs", "level", "state", "temperature"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.domain, func(t *testing.T) {
+			t.Parallel()
+
+			got := templateScanFields(tt.domain)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("templateScanFields(%q) = %v, want %v", tt.domain, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestScanHelperTemplates_MatchesSubtypeTemplateField(t *testing.T) {
+	t.Parallel()
+
+	mock := &UniversalMockClient{
+		GetEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+			return []homeassistant.EntityRegistryEntry{
+				{EntityID: "switch.tpl", Platform: "template", ConfigEntryID: "ce"},
+			}, nil
+		},
+		GetConfigEntryOptionsFn: func(context.Context, string) (map[string]any, error) {
+			return map[string]any{"value_template": "{{ is_state('input_boolean.src','on') }}"}, nil
+		},
+	}
+
+	hits, err := scanHelperTemplates(context.Background(), mock, func(s string) bool {
+		return strings.Contains(s, "input_boolean.src")
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("expected 1 hit, got %d: %+v", len(hits), hits)
+	}
+	if hits[0].ObjectID != "switch.tpl" || hits[0].Context != "value_template" {
+		t.Errorf("unexpected hit: %+v", hits[0])
+	}
+}
+
+func TestScanHelperTemplates_OptionsErrorReportedWithPartialHits(t *testing.T) {
+	t.Parallel()
+
+	mock := &UniversalMockClient{
+		GetEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+			return []homeassistant.EntityRegistryEntry{
+				{EntityID: "sensor.ok", Platform: "template", ConfigEntryID: "ce-ok"},
+				{EntityID: "sensor.bad", Platform: "template", ConfigEntryID: "ce-bad"},
+			}, nil
+		},
+		GetConfigEntryOptionsFn: func(_ context.Context, entryID string) (map[string]any, error) {
+			if entryID == "ce-bad" {
+				return nil, errors.New("flow aborted")
+			}
+			return map[string]any{"state": "{{ states('sensor.src') }}"}, nil
+		},
+	}
+
+	hits, err := scanHelperTemplates(context.Background(), mock, func(s string) bool {
+		return strings.Contains(s, "sensor.src")
+	})
+	if err == nil {
+		t.Fatal("expected an error for the unreadable helper, got nil")
+	}
+	if !strings.Contains(err.Error(), "sensor.bad") || !strings.Contains(err.Error(), "flow aborted") {
+		t.Errorf("error should name the failing helper and cause, got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "1 template helper") {
+		t.Errorf("error should report the failure count, got %q", err.Error())
+	}
+	if len(hits) != 1 || hits[0].ObjectID != "sensor.ok" {
+		t.Errorf("hits = %+v, want exactly the sensor.ok hit", hits)
+	}
+}
+
 // --- splitScanOutcomes ---
 
 func TestSplitScanOutcomes_AllSucceed(t *testing.T) {

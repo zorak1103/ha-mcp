@@ -128,7 +128,7 @@ func (f *NaturalHelperFormatter) FormatScheduleDetail(
 		f.writeScheduleBlocks(&result, schedule)
 	}
 
-	return strings.TrimSuffix(result.String(), "\n"), nil
+	return appendConfigurationSection(strings.TrimSuffix(result.String(), "\n"), detail), nil
 }
 
 // FormatCounterDetail formats counter details in natural language.
@@ -163,7 +163,7 @@ func (f *NaturalHelperFormatter) FormatCounterDetail(
 		fmt.Fprintf(&result, "Step: %s", step)
 	}
 
-	return strings.TrimSuffix(result.String(), "\n"), nil
+	return appendConfigurationSection(strings.TrimSuffix(result.String(), "\n"), detail), nil
 }
 
 // FormatTimerDetail formats timer details in natural language.
@@ -199,7 +199,7 @@ func (f *NaturalHelperFormatter) FormatTimerDetail(
 		}
 	}
 
-	return strings.TrimSuffix(result.String(), "\n"), nil
+	return appendConfigurationSection(strings.TrimSuffix(result.String(), "\n"), detail), nil
 }
 
 // FormatHelperDetail formats helper details for all other helper types in natural language.
@@ -209,9 +209,9 @@ func (f *NaturalHelperFormatter) FormatHelperDetail(
 	detail map[string]any,
 ) (string, error) {
 	if renderer, ok := dedicatedDetailRenderers[helperType]; ok {
-		return renderer(f, detail), nil
+		return appendConfigurationSection(renderer(f, detail), detail), nil
 	}
-	return f.formatGenericDetail(helperType, detail), nil
+	return appendConfigurationSection(f.formatGenericDetail(helperType, detail), detail), nil
 }
 
 // dedicatedDetailRenderers maps a helper type to its hand-tuned natural-format
@@ -259,9 +259,10 @@ func DedicatedDetailTypes() []string {
 // the detail map, while this one skips a detail key already shown elsewhere
 // in this renderer's own output.
 var genericDetailHeaderKeys = map[string]bool{
-	"entity_id":     true,
-	"friendly_name": true,
-	"state":         true,
+	"entity_id":            true,
+	"friendly_name":        true,
+	"state":                true,
+	DetailKeyConfiguration: true, // rendered as its own section by appendConfigurationSection
 }
 
 // formatGenericDetail renders natural-format output for helper types with no
@@ -451,6 +452,10 @@ func (f *NaturalHelperFormatter) formatInputButtonDetail(detail map[string]any) 
 	fmt.Fprintf(&result, "Button: %s\n", name)
 	fmt.Fprintf(&result, "Last pressed: %s", state)
 
+	if icon := f.getDetailString(detail, "icon"); icon != "" {
+		fmt.Fprintf(&result, "\nIcon: %s", icon)
+	}
+
 	return result.String()
 }
 
@@ -538,6 +543,10 @@ func (f *NaturalHelperFormatter) formatBinarySensorDetail(detail map[string]any)
 		fmt.Fprintf(&result, "Device class: %s\n", deviceClass)
 	}
 
+	if hysteresis := detail["hysteresis"]; hysteresis != nil && FormatDetailValue(hysteresis) != "" {
+		fmt.Fprintf(&result, "Hysteresis: %s\n", FormatDetailValue(hysteresis))
+	}
+
 	if source := f.getDetailString(detail, "source_entity"); source != "" {
 		fmt.Fprintf(&result, "Source entity: %s", source)
 	}
@@ -565,11 +574,15 @@ func (f *NaturalHelperFormatter) writeTemplateConfig(result *strings.Builder, de
 	}
 
 	if delayOn := detail["delay_on"]; delayOn != nil {
-		fmt.Fprintf(result, "\nDelay on: %v", delayOn)
+		fmt.Fprintf(result, "\nDelay before turning on: %s", FormatDetailValue(delayOn))
 	}
 
 	if delayOff := detail["delay_off"]; delayOff != nil {
-		fmt.Fprintf(result, "\nDelay off: %v", delayOff)
+		fmt.Fprintf(result, "\nDelay before turning off: %s", FormatDetailValue(delayOff))
+	}
+
+	if deviceID := f.getDetailString(detail, "device_id"); deviceID != "" {
+		fmt.Fprintf(result, "\nDevice: %s", deviceID)
 	}
 }
 

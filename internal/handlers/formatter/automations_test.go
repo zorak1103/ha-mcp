@@ -313,7 +313,7 @@ func TestNaturalAutomationFormatter_ImprovedTriggerFormatting(t *testing.T) {
 				"below":     float64(100),
 				"for":       map[string]any{"hours": float64(0), "minutes": float64(5), "seconds": float64(0)},
 			},
-			wantText: []string{"below 100", "for 0:05:00"},
+			wantText: []string{"below 100", "for 00:05:00"},
 		},
 		{
 			name: "numeric_state trigger with template threshold",
@@ -332,7 +332,7 @@ func TestNaturalAutomationFormatter_ImprovedTriggerFormatting(t *testing.T) {
 				"to":        "off",
 				"for":       map[string]any{"hours": float64(0), "minutes": float64(10), "seconds": float64(0)},
 			},
-			wantText: []string{"state: binary_sensor.motion", "to: off", "for: 0:10:00"},
+			wantText: []string{"state: binary_sensor.motion", "to: off", "for: 00:10:00"},
 		},
 	}
 
