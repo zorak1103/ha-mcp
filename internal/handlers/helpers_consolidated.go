@@ -1722,6 +1722,7 @@ func (h *ConsolidatedHelperHandlers) handleGetDetailsSchedule(ctx context.Contex
 
 	timeBlocks := parseTimeBlocks(config)
 	details := buildScheduleDetails(state, timeBlocks)
+	warning := attachScheduleConfiguration(config, configErr, details)
 
 	formatStr, _ := args["format"].(string)
 	format := formatter.ParseFormat(formatStr)
@@ -1732,7 +1733,7 @@ func (h *ConsolidatedHelperHandlers) handleGetDetailsSchedule(ctx context.Contex
 		return errorResult(fmt.Sprintf("Error formatting schedule: %v", err)), nil
 	}
 
-	return successResult(output), nil
+	return appendResultWarning(successResult(output), warning), nil
 }
 
 func (h *ConsolidatedHelperHandlers) handleGetDetailsCounter(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
@@ -1762,6 +1763,7 @@ func (h *ConsolidatedHelperHandlers) handleGetDetailsCounter(ctx context.Context
 	if step, ok := state.Attributes["step"]; ok {
 		details["step"] = fmt.Sprintf("%v", step)
 	}
+	warning := attachHelperConfiguration(ctx, client, entityID, platformCounter, details)
 
 	formatStr, _ := args["format"].(string)
 	format := formatter.ParseFormat(formatStr)
@@ -1772,7 +1774,7 @@ func (h *ConsolidatedHelperHandlers) handleGetDetailsCounter(ctx context.Context
 		return errorResult(fmt.Sprintf("Error formatting counter: %v", err)), nil
 	}
 
-	return successResult(output), nil
+	return appendResultWarning(successResult(output), warning), nil
 }
 
 func (h *ConsolidatedHelperHandlers) handleGetDetailsTimer(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
@@ -1799,6 +1801,7 @@ func (h *ConsolidatedHelperHandlers) handleGetDetailsTimer(ctx context.Context, 
 	if finishesAt, ok := state.Attributes["finishes_at"]; ok {
 		details["finishes_at"] = fmt.Sprintf("%v", finishesAt)
 	}
+	warning := attachHelperConfiguration(ctx, client, entityID, platformTimer, details)
 
 	formatStr, _ := args["format"].(string)
 	format := formatter.ParseFormat(formatStr)
@@ -1809,7 +1812,7 @@ func (h *ConsolidatedHelperHandlers) handleGetDetailsTimer(ctx context.Context, 
 		return errorResult(fmt.Sprintf("Error formatting timer: %v", err)), nil
 	}
 
-	return successResult(output), nil
+	return appendResultWarning(successResult(output), warning), nil
 }
 
 func (h *ConsolidatedHelperHandlers) handleGetDetailsGeneric(ctx context.Context, client homeassistant.Client, args map[string]any, helperType string) (*mcp.ToolsCallResult, error) {
@@ -1822,13 +1825,10 @@ func (h *ConsolidatedHelperHandlers) handleGetDetailsGeneric(ctx context.Context
 
 	details := buildHelperDetails(state, helperType)
 
-	// Enrich with template config for template sensors/binary_sensors, plus
-	// the 15 template_* subtype domains from issue #206 (finding W5: without
-	// this, get_details on e.g. a template_light returned only its runtime
-	// attributes, not how it's actually configured).
-	if helperType == platformSensorEntity || helperType == platformBinarySensorEntity || templateSubtypeDomains[helperType] {
-		enrichConfigEntryOptions(ctx, client, entityID, helperType, details)
-	}
+	// Attach the helper's stored configuration (storage config or config
+	// entry options) so get_details shows every field update can write;
+	// template helpers additionally get their dedicated template lines.
+	warning := attachHelperConfiguration(ctx, client, entityID, helperType, details)
 
 	formatStr, _ := args["format"].(string)
 	format := formatter.ParseFormat(formatStr)
@@ -1839,7 +1839,7 @@ func (h *ConsolidatedHelperHandlers) handleGetDetailsGeneric(ctx context.Context
 		return errorResult(fmt.Sprintf("Error formatting helper: %v", err)), nil
 	}
 
-	return successResult(output), nil
+	return appendResultWarning(successResult(output), warning), nil
 }
 
 func buildHelperDetails(state *homeassistant.Entity, helperType string) map[string]any {
@@ -2077,51 +2077,6 @@ func addBinarySensorDetails(details map[string]any, state *homeassistant.Entity)
 	if sensorValue, ok := state.Attributes["sensor_value"]; ok {
 		details["sensor_value"] = sensorValue
 	}
-}
-
-// enrichConfigEntryOptions enriches details with config entry options for template helpers.
-// Gracefully degrades: if registry lookup fails or entity is not template-based, returns silently.
-func enrichConfigEntryOptions(ctx context.Context, client homeassistant.Client, entityID, helperType string, details map[string]any) {
-	// Look up entity in registry
-	registry, err := client.GetEntityRegistry(ctx)
-	if err != nil {
-		return // Graceful degradation
-	}
-
-	// Find the entity entry
-	var entry *homeassistant.EntityRegistryEntry
-	for i := range registry {
-		if registry[i].EntityID == entityID {
-			entry = &registry[i]
-			break
-		}
-	}
-
-	if entry == nil || entry.Platform != platformTemplate || entry.ConfigEntryID == "" {
-		return // Not a template entity or no config entry
-	}
-
-	// Fetch config entry options via Options Flow REST API
-	// (WebSocket GetConfigEntry does not populate Options field)
-	options, err := client.GetConfigEntryOptions(ctx, entry.ConfigEntryID)
-	if err != nil {
-		return // Graceful degradation
-	}
-	if len(options) == 0 {
-		return
-	}
-
-	// templateSubtypeDomains and {sensor, binary_sensor} are disjoint (the
-	// 15 template_* subtypes from issue #206 own alarm_control_panel/button/
-	// cover/device_tracker/event/fan/image/light/lock/number/select/switch/
-	// update/vacuum/weather - never sensor or binary_sensor), so this is an
-	// either/or, not an ordering-sensitive check.
-	if templateSubtypeDomains[helperType] {
-		// Task 5 replaces this function; the consumed-key sets are not used yet.
-		_ = addTemplateSubtypeOptionsToDetails(helperType, options, details)
-		return
-	}
-	_ = addTemplateOptionsToDetails(options, details)
 }
 
 // templateSensorStringOptions maps the string-valued options of a
