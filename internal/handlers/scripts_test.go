@@ -2769,3 +2769,195 @@ func TestIsNotFoundError(t *testing.T) {
 		})
 	}
 }
+
+// =============================================================================
+// Issue #311: patch preserves key order (scripts)
+// =============================================================================
+
+// issue311ScriptJSON is a script as HA returns it. "fields" (and each field's
+// own keys) and the sequence's variables action are deliberately not sorted:
+// HA's script editor shows fields in this order, and variables render
+// sequentially ("alpha" references "zeta").
+const issue311ScriptJSON = `{
+	"alias": "Heat",
+	"description": "old",
+	"mode": "single",
+	"fields": {
+		"zone": {"selector": {"text": {}}, "name": "Zone"},
+		"temp": {"required": true, "name": "Temp"}
+	},
+	"sequence": [
+		{"variables": {"zeta": "1", "alpha": "{{ zeta }}"}},
+		{"action": "light.turn_on", "target": {"entity_id": "light.a"}},
+		{"action": "light.turn_on", "target": {"entity_id": "light.b"}}
+	]
+}`
+
+// orderedScriptPatch mirrors orderedAutomationPatch for manage_script.
+func orderedScriptPatch(t *testing.T, cfgJSON, rawArgs string, withOrder bool) (*mcp.ToolsCallResult, []string) {
+	t.Helper()
+	var writes []string
+	client := &UniversalMockClient{}
+	client.GetScriptFn = func(context.Context, string) (*homeassistant.Script, error) {
+		var cfg homeassistant.ScriptConfig
+		if err := json.Unmarshal([]byte(cfgJSON), &cfg); err != nil {
+			return nil, err
+		}
+		return &homeassistant.Script{EntityID: "script.heat", Config: &cfg}, nil
+	}
+	client.UpdateScriptFn = func(_ context.Context, _ string, cfg homeassistant.ScriptConfig) error {
+		b, err := json.Marshal(cfg)
+		if err != nil {
+			t.Errorf("marshaling written config: %v", err)
+		}
+		writes = append(writes, string(b))
+		return nil
+	}
+	client.GetEntityRegistryFn = storageManagedRegistry("script.heat")
+
+	ctx := mcp.WithWaitConfig(context.Background(), mcp.WaitConfig{Timeout: 50 * time.Millisecond, PollInterval: 5 * time.Millisecond})
+	orderedCtx, args := ctxWithRawArgs(t, ctx, rawArgs)
+	if withOrder {
+		ctx = orderedCtx
+	}
+	result, err := (&ScriptHandlers{}).handleManageScript(ctx, client, args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got error: %s", result.Content[0].Text)
+	}
+	return result, writes
+}
+
+// TestScriptPatch_Issue311_KeepsFieldsAndVariablesOrder pins Review Focus trap
+// 1 for scripts: KeyOrder is reassigned after mapToStruct.
+func TestScriptPatch_Issue311_KeepsFieldsAndVariablesOrder(t *testing.T) {
+	t.Parallel()
+
+	raw := `{"action":"patch","script_id":"heat","operations":[{"op":"replace","path":"/description","value":"new"}]}`
+	for _, withOrder := range []bool{true, false} {
+		_, writes := orderedScriptPatch(t, issue311ScriptJSON, raw, withOrder)
+		got := singleWrite(t, writes)
+		want := compactJSON(t, strings.Replace(issue311ScriptJSON, `"old"`, `"new"`, 1))
+		if got != want {
+			t.Errorf("withOrder=%v: written config lost HA's key order\n got: %s\nwant: %s", withOrder, got, want)
+		}
+	}
+}
+
+// TestScriptPatch_CallerOrderOnAddVariables: a variables action appended by
+// the caller keeps the caller's key order.
+func TestScriptPatch_CallerOrderOnAddVariables(t *testing.T) {
+	t.Parallel()
+
+	raw := `{"action":"patch","script_id":"heat","operations":[` +
+		`{"op":"add","path":"/sequence/1","value":{"variables":{"zz":"1","mm":"{{ zz }}","aa":"{{ mm }}"}}}]}`
+	_, writes := orderedScriptPatch(t, issue311ScriptJSON, raw, true)
+	got := singleWrite(t, writes)
+	want := `"sequence":[{"variables":{"zeta":"1","alpha":"{{ zeta }}"}},` +
+		`{"variables":{"zz":"1","mm":"{{ zz }}","aa":"{{ mm }}"}},` +
+		`{"action":"light.turn_on","target":{"entity_id":"light.a"}},` +
+		`{"action":"light.turn_on","target":{"entity_id":"light.b"}}]`
+	if !strings.Contains(got, want) {
+		t.Errorf("sequence order after insert is wrong\n got: %s\nwant substring: %s", got, want)
+	}
+}
+
+// TestScriptPatch_SemanticReplaceSharesCallerOrder: one semantic op matching
+// two sequence steps writes the caller's value order into both.
+func TestScriptPatch_SemanticReplaceSharesCallerOrder(t *testing.T) {
+	t.Parallel()
+
+	raw := `{"action":"patch","script_id":"heat","operations":[` +
+		`{"op":"replace","match":{"action":"light.turn_on"},"section":"sequence","field":"target",` +
+		`"value":{"entity_id":"light.c","area_id":"kitchen"}}]}`
+	_, writes := orderedScriptPatch(t, issue311ScriptJSON, raw, true)
+	got := singleWrite(t, writes)
+	if n := strings.Count(got, `"target":{"entity_id":"light.c","area_id":"kitchen"}`); n != 2 {
+		t.Errorf("expected both matched steps in caller order, found %d\n got: %s", n, got)
+	}
+}
+
+// TestScriptPatch_ReorderOnlyReplaceWrites pins Review Focus trap 2 for
+// scripts: a replace that only restores the order of fields must write.
+func TestScriptPatch_ReorderOnlyReplaceWrites(t *testing.T) {
+	t.Parallel()
+
+	sorted := strings.Replace(issue311ScriptJSON,
+		`"zone": {"selector": {"text": {}}, "name": "Zone"},
+		"temp": {"required": true, "name": "Temp"}`,
+		`"temp": {"name": "Temp", "required": true},
+		"zone": {"name": "Zone", "selector": {"text": {}}}`, 1)
+	if sorted == issue311ScriptJSON {
+		t.Fatal("test setup: fields replacement did not apply")
+	}
+	raw := `{"action":"patch","script_id":"heat","operations":[` +
+		`{"op":"replace","path":"/fields","value":{"zone":{"selector":{"text":{}},"name":"Zone"},"temp":{"required":true,"name":"Temp"}}}]}`
+	result, writes := orderedScriptPatch(t, sorted, raw, true)
+	got := singleWrite(t, writes)
+	if want := `"fields":{"zone":{"selector":{"text":{}},"name":"Zone"},"temp":{"required":true,"name":"Temp"}}`; !strings.Contains(got, want) {
+		t.Errorf("reorder-only replace did not write the caller's order\n got: %s\nwant substring: %s", got, want)
+	}
+	if !strings.Contains(result.Content[0].Text, "patched successfully") {
+		t.Errorf("expected success message, got: %s", result.Content[0].Text)
+	}
+}
+
+// TestScriptPatch_IdenticalPatchSkipsWrite: content and order unchanged -> no
+// write and no reload.
+func TestScriptPatch_IdenticalPatchSkipsWrite(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		raw       string
+		withOrder bool
+	}{
+		{
+			name: "replace fields with same content and same caller order",
+			raw: `{"action":"patch","script_id":"heat","operations":[` +
+				`{"op":"replace","path":"/fields","value":{"zone":{"selector":{"text":{}},"name":"Zone"},"temp":{"required":true,"name":"Temp"}}}]}`,
+			withOrder: true,
+		},
+		{
+			name:      "replace scalar with same value, no argument order",
+			raw:       `{"action":"patch","script_id":"heat","operations":[{"op":"replace","path":"/description","value":"old"}]}`,
+			withOrder: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			result, writes := orderedScriptPatch(t, issue311ScriptJSON, tt.raw, tt.withOrder)
+			if len(writes) != 0 {
+				t.Errorf("identical patch must not write, got %d writes: %v", len(writes), writes)
+			}
+			if !strings.Contains(result.Content[0].Text, "no changes") {
+				t.Errorf("expected 'no changes', got: %s", result.Content[0].Text)
+			}
+		})
+	}
+}
+
+// TestScriptPatch_DryRunOutputUnchangedByOrder: dry-run renders the same
+// compact diff with or without argument order, and never writes.
+func TestScriptPatch_DryRunOutputUnchangedByOrder(t *testing.T) {
+	t.Parallel()
+
+	raw := `{"action":"patch","script_id":"heat","dry_run":true,"operations":[` +
+		`{"op":"replace","path":"/sequence/0/variables","value":{"zz":"1","aa":"2"}}]}`
+	want := "Dry-run result for script 'heat' (1 operations, NOT saved):\n" +
+		"1. replace /sequence/0/variables\n" +
+		"   before: {\"alpha\":\"{{ zeta }}\",\"zeta\":\"1\"}\n" +
+		"   after:  {\"aa\":\"2\",\"zz\":\"1\"}\n"
+	for _, withOrder := range []bool{true, false} {
+		result, writes := orderedScriptPatch(t, issue311ScriptJSON, raw, withOrder)
+		if len(writes) != 0 {
+			t.Errorf("withOrder=%v: dry-run must not write, got %v", withOrder, writes)
+		}
+		if got := result.Content[0].Text; got != want {
+			t.Errorf("withOrder=%v: dry-run output changed\n got: %q\nwant: %q", withOrder, got, want)
+		}
+	}
+}

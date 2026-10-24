@@ -174,6 +174,8 @@ func resolveOneSemanticOp(doc map[string]any, op SemanticOperation, opIdx int) (
 				Op:    op.Op,
 				Path:  fullPath,
 				Value: op.Value,
+				// Shared by every expanded op; ApplyWithOrder clones it per insert.
+				ValueOrder: op.ValueOrder,
 			},
 		}
 		// Annotate remove ops for later global sort

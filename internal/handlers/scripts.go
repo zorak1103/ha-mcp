@@ -2,15 +2,17 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"reflect"
 	"strings"
 
 	"github.com/zorak1103/ha-mcp/internal/handlers/formatter"
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
+	"github.com/zorak1103/ha-mcp/internal/jsonorder"
 	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
 
@@ -485,6 +487,7 @@ func (h *ScriptHandlers) handleCreate(ctx context.Context, client homeassistant.
 	if fields, ok := args["fields"].(map[string]any); ok {
 		config.Fields = fields
 	}
+	config.KeyOrder = scriptArgsOrder(nil, mcp.ArgumentOrderFromContext(ctx), args)
 
 	if err := client.CreateScript(ctx, scriptID, config); err != nil {
 		return errorResult(fmt.Sprintf("Error creating script: %v", err)), nil
@@ -497,6 +500,33 @@ func (h *ScriptHandlers) handleCreate(ctx context.Context, client homeassistant.
 	}
 
 	return successResult(successMsg), nil
+}
+
+// scriptArgsOrder composes the key order of a script config after fields or
+// sequence were replaced from args (see automationArgsOrder): a replaced
+// subtree takes the caller's order or none, never HA's previous order. The
+// script "variables" argument is execute-only service data and is not part of
+// the config. base is never modified.
+func scriptArgsOrder(base, argOrder *jsonorder.Order, args map[string]any) *jsonorder.Order {
+	order := base
+	if _, ok := args["sequence"].([]any); ok {
+		order = withFieldOrder(order, "sequence", argOrder.Field("sequence"))
+	}
+	if _, ok := args["fields"].(map[string]any); ok {
+		order = withFieldOrder(order, "fields", argOrder.Field("fields"))
+	}
+	return order
+}
+
+// applyScriptUpdateOrdered applies args to config, composes its key order
+// copy-on-write (config may share KeyOrder with the fetched script) and
+// reports whether the ordered JSON encoding changed.
+func applyScriptUpdateOrdered(ctx context.Context, config *homeassistant.ScriptConfig, args map[string]any) bool {
+	before, errBefore := json.Marshal(*config)
+	applyScriptConfigUpdates(config, args)
+	config.KeyOrder = scriptArgsOrder(config.KeyOrder, mcp.ArgumentOrderFromContext(ctx), args)
+	after, errAfter := json.Marshal(*config)
+	return errBefore != nil || errAfter != nil || !bytes.Equal(before, after)
 }
 
 // applyScriptConfigUpdates overrides config fields with any values present in args, leaving
@@ -544,12 +574,9 @@ func (h *ScriptHandlers) handleUpdate(ctx context.Context, client homeassistant.
 	}
 	config := *current.Config
 
-	// Snapshot config before mutation so we can detect no-op updates.
-	// No-op writes cause a needless script.reload.
-	beforeMap, _ := configToMap(config)
-	applyScriptConfigUpdates(&config, args)
-	afterMap, _ := configToMap(config)
-	if reflect.DeepEqual(beforeMap, afterMap) {
+	// Detect no-op updates on the ordered encoding: no-op writes cause a
+	// needless script.reload.
+	if !applyScriptUpdateOrdered(ctx, &config, args) {
 		return successResult(fmt.Sprintf("Script %s: no changes detected, skipping write (reload avoided)", target)), nil
 	}
 
@@ -701,6 +728,7 @@ func (h *ScriptHandlers) handlePatch(ctx context.Context, client homeassistant.C
 	if errResult != nil {
 		return errResult, nil
 	}
+	attachValueOrders(ops, mcp.ArgumentOrderFromContext(ctx).Field("operations"))
 
 	entityID, configID, current, err := h.resolveScriptForWrite(ctx, client, scriptID)
 	if err != nil {
@@ -717,7 +745,8 @@ func (h *ScriptHandlers) handlePatch(ctx context.Context, client homeassistant.C
 		return errorResult(fmt.Sprintf("error processing script config: %v", err)), nil
 	}
 
-	patchedMap, resolvedOps, patchErr := applyPatchWithSemantics(configMap, ops)
+	configOrder := current.Config.KeyOrder
+	patchedMap, patchedOrder, resolvedOps, patchErr := applyPatchWithSemanticsOrdered(configMap, configOrder, ops)
 	if patchErr != nil {
 		return errorResult(fmt.Sprintf("error applying patch: %v", patchErr)), nil
 	}
@@ -730,23 +759,26 @@ func (h *ScriptHandlers) handlePatch(ctx context.Context, client homeassistant.C
 	// matched a different entity than a bare entityID guess).
 	checkEntityID := resolveWriteCheckEntityID(entityID, current.EntityID)
 
-	return applyPatchedScriptWrite(ctx, client, scriptID, checkEntityID, configID, configMap, patchedMap, len(ops))
+	return applyPatchedScriptWrite(ctx, client, scriptID, checkEntityID, configID,
+		configMap, patchedMap, configOrder, patchedOrder, len(ops))
 }
 
 // applyPatchedScriptWrite writes the patched config to HA and returns the success result. It
-// skips the write entirely when configMap and patchedMap are deep-equal — otherwise every no-op
-// patch would trigger a needless script.reload — and refuses to write a script whose id is
-// absent from scripts.yaml, which the config API would otherwise silently duplicate into an
-// orphan entity. Mirrors applyPatchedAutomationWrite in automations.go.
+// skips the write entirely when configMap and patchedMap encode to the same bytes in their key
+// orders (configOrder, patchedOrder) — otherwise every no-op patch would trigger a needless
+// script.reload; a pure key reorder is a real change (issue #311) — and refuses to write a
+// script whose id is absent from scripts.yaml, which the config API would otherwise silently
+// duplicate into an orphan entity. Mirrors applyPatchedAutomationWrite in automations.go.
 func applyPatchedScriptWrite(
 	ctx context.Context,
 	client homeassistant.Client,
 	scriptID, entityID, configID string,
 	configMap, patchedMap map[string]any,
+	configOrder, patchedOrder *jsonorder.Order,
 	numOps int,
 ) (*mcp.ToolsCallResult, error) {
 	target := describeScriptTarget(scriptID, entityID)
-	if reflect.DeepEqual(configMap, patchedMap) {
+	if orderedConfigEqual(configMap, configOrder, patchedMap, patchedOrder) {
 		return successResult(fmt.Sprintf("Script %s: no changes detected, skipping write (reload avoided)", target)), nil
 	}
 
@@ -758,6 +790,9 @@ func applyPatchedScriptWrite(
 	if err := mapToStruct(patchedMap, &newConfig); err != nil {
 		return errorResult(fmt.Sprintf("error parsing patched config: %v", err)), nil
 	}
+	// mapToStruct round-trips through json.Marshal(map), so UnmarshalJSON captured
+	// the SORTED key order; restore the patched document order before writing.
+	newConfig.KeyOrder = patchedOrder
 
 	if err := client.UpdateScript(ctx, configID, newConfig); err != nil {
 		msg := fmt.Sprintf("error saving patched script: %v", err)

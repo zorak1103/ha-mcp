@@ -1,9 +1,13 @@
 package handlers
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+
+	"github.com/zorak1103/ha-mcp/internal/jsonorder"
 	"github.com/zorak1103/ha-mcp/internal/jsonpatch"
 )
 
@@ -1131,6 +1135,228 @@ func TestParseOperations_SemanticFields(t *testing.T) {
 				}
 			} else if op.MatchIndex != nil {
 				t.Errorf("MatchIndex = %v, want nil", op.MatchIndex)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// Key order (issue #311)
+// =============================================================================
+
+// TestAttachValueOrders: ops[i] takes the order of the raw operation i's
+// "value"; anything missing yields nil, and a stale ValueOrder is cleared.
+func TestAttachValueOrders(t *testing.T) {
+	t.Parallel()
+
+	rawOps := `[{"op":"add","value":{"b":1,"a":2}},{"op":"replace","value":"x"},{"op":"add","value":[{"z":1,"y":2}]}]`
+	opsOrder, err := jsonorder.Capture([]byte(rawOps))
+	if err != nil {
+		t.Fatalf("Capture: %v", err)
+	}
+	stale := &jsonorder.Order{Keys: []string{"stale"}}
+
+	tests := []struct {
+		name     string
+		opsOrder *jsonorder.Order
+		numOps   int
+		want     []*jsonorder.Order
+	}{
+		{
+			name:     "nil order leaves every op unordered",
+			opsOrder: nil,
+			numOps:   2,
+			want:     []*jsonorder.Order{nil, nil},
+		},
+		{
+			name:     "object, scalar, array values and an op beyond the recorded items",
+			opsOrder: opsOrder,
+			numOps:   4,
+			want: []*jsonorder.Order{
+				{Keys: []string{"b", "a"}},
+				nil,
+				{Items: []*jsonorder.Order{{Keys: []string{"z", "y"}}}},
+				nil,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ops := make([]SemanticOperation, tt.numOps)
+			for i := range ops {
+				ops[i].ValueOrder = stale
+			}
+			attachValueOrders(ops, tt.opsOrder)
+			got := make([]*jsonorder.Order, len(ops))
+			for i := range ops {
+				got[i] = ops[i].ValueOrder
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("ValueOrders mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// TestResolveSemanticOps_CopiesValueOrder: every op expanded from one semantic
+// op carries that op's ValueOrder; standard ops keep their own.
+func TestResolveSemanticOps_CopiesValueOrder(t *testing.T) {
+	t.Parallel()
+
+	doc := map[string]any{
+		"triggers": []any{
+			map[string]any{"trigger": "state", "for": "1"},
+			map[string]any{"trigger": "time"},
+			map[string]any{"trigger": "state", "for": "2"},
+		},
+	}
+	semOrder := &jsonorder.Order{Keys: []string{"minutes", "hours"}}
+	stdOrder := &jsonorder.Order{Keys: []string{"b", "a"}}
+	ops := []SemanticOperation{
+		{
+			Operation: jsonpatch.Operation{Op: "replace", Value: map[string]any{"minutes": 1.0, "hours": 2.0}, ValueOrder: semOrder},
+			Match:     map[string]any{"trigger": "state"},
+			Section:   "triggers",
+			Field:     "for",
+		},
+		{Operation: jsonpatch.Operation{Op: "add", Path: "/variables", Value: map[string]any{"b": 1.0, "a": 2.0}, ValueOrder: stdOrder}},
+	}
+
+	resolved, err := resolveSemanticOps(doc, ops)
+	if err != nil {
+		t.Fatalf("resolveSemanticOps: %v", err)
+	}
+	wantPaths := []string{"/triggers/0/for", "/triggers/2/for", "/variables"}
+	wantOrders := []*jsonorder.Order{semOrder, semOrder, stdOrder}
+	if len(resolved) != len(wantPaths) {
+		t.Fatalf("got %d resolved ops, want %d: %+v", len(resolved), len(wantPaths), resolved)
+	}
+	for i, op := range resolved {
+		if op.Path != wantPaths[i] {
+			t.Errorf("op %d path = %q, want %q", i, op.Path, wantPaths[i])
+		}
+		if op.ValueOrder != wantOrders[i] {
+			t.Errorf("op %d ValueOrder = %+v, want %+v", i, op.ValueOrder, wantOrders[i])
+		}
+	}
+}
+
+// TestApplyPatchWithSemanticsOrdered: the patched order carries the caller's
+// value order into every matched element (each an independent copy), keeps
+// the document's recorded order elsewhere, and leaves the input order intact.
+func TestApplyPatchWithSemanticsOrdered(t *testing.T) {
+	t.Parallel()
+
+	raw := `{"mode":"single","triggers":[{"trigger":"state","for":"1"},{"trigger":"state","for":"2"}],"alias":"x"}`
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+		t.Fatal(err)
+	}
+	docOrder, err := jsonorder.Capture([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := docOrder.Clone()
+	ops := []SemanticOperation{{
+		Operation: jsonpatch.Operation{
+			Op: "replace", Value: map[string]any{"minutes": 1.0, "hours": 2.0},
+			ValueOrder: &jsonorder.Order{Keys: []string{"minutes", "hours"}},
+		},
+		Match: map[string]any{"trigger": "state"}, Section: "triggers", Field: "for",
+	}}
+
+	patched, patchedOrder, resolved, err := applyPatchWithSemanticsOrdered(doc, docOrder, ops)
+	if err != nil {
+		t.Fatalf("applyPatchWithSemanticsOrdered: %v", err)
+	}
+	if len(resolved) != 2 {
+		t.Errorf("expected 2 resolved ops, got %d", len(resolved))
+	}
+	got, err := jsonorder.Marshal(patched, patchedOrder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"mode":"single","triggers":[{"trigger":"state","for":{"minutes":1,"hours":2}},` +
+		`{"trigger":"state","for":{"minutes":1,"hours":2}}],"alias":"x"}`
+	if string(got) != want {
+		t.Errorf("ordered output mismatch\n got: %s\nwant: %s", got, want)
+	}
+	first := patchedOrder.Field("triggers").Item(0).Field("for")
+	second := patchedOrder.Field("triggers").Item(1).Field("for")
+	if first == nil || first == second || first == ops[0].ValueOrder {
+		t.Errorf("matched elements must hold independent copies of the value order (first=%p second=%p op=%p)",
+			first, second, ops[0].ValueOrder)
+	}
+	if diff := cmp.Diff(before, docOrder); diff != "" {
+		t.Errorf("input order was modified (-before +after):\n%s", diff)
+	}
+}
+
+// TestOrderedConfigEqual: equality is byte equality in key order, so a pure
+// reorder is a change; an unencodable value never counts as "unchanged".
+func TestOrderedConfigEqual(t *testing.T) {
+	t.Parallel()
+
+	m := map[string]any{"b": "1", "a": "2"}
+	ba := &jsonorder.Order{Keys: []string{"b", "a"}}
+	tests := []struct {
+		name   string
+		a, b   map[string]any
+		ao, bo *jsonorder.Order
+		want   bool
+	}{
+		{name: "same content, both unordered", a: m, b: map[string]any{"a": "2", "b": "1"}, want: true},
+		{name: "same content, same order", a: m, ao: ba, b: m, bo: ba.Clone(), want: true},
+		{name: "same content, different order", a: m, ao: ba, b: m, bo: nil, want: false},
+		{name: "different content", a: m, b: map[string]any{"a": "2"}, want: false},
+		{name: "unencodable value", a: map[string]any{"x": make(chan int)}, b: map[string]any{"x": make(chan int)}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := orderedConfigEqual(tt.a, tt.ao, tt.b, tt.bo); got != tt.want {
+				t.Errorf("orderedConfigEqual() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestApplyPatchWithSemanticsOrdered_Errors covers the three failure paths.
+func TestApplyPatchWithSemanticsOrdered_Errors(t *testing.T) {
+	t.Parallel()
+
+	doc := map[string]any{"triggers": []any{map[string]any{"trigger": "state"}}}
+	tests := []struct {
+		name    string
+		ops     []SemanticOperation
+		wantErr string
+	}{
+		{
+			name: "semantic resolution fails",
+			ops: []SemanticOperation{{
+				Operation: jsonpatch.Operation{Op: "replace", Value: "x"},
+				Match:     map[string]any{"trigger": "none"}, Section: "triggers", Field: "for",
+			}},
+			wantErr: "no elements",
+		},
+		{
+			name:    "patch application fails",
+			ops:     []SemanticOperation{{Operation: jsonpatch.Operation{Op: "remove", Path: "/missing"}}},
+			wantErr: "missing",
+		},
+		{
+			name:    "result is not an object",
+			ops:     []SemanticOperation{{Operation: jsonpatch.Operation{Op: "replace", Path: "", Value: "scalar"}}},
+			wantErr: "must be an object",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, _, _, err := applyPatchWithSemanticsOrdered(doc, nil, tt.ops)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("error = %v, want substring %q", err, tt.wantErr)
 			}
 		})
 	}
