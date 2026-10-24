@@ -428,10 +428,9 @@ func formatForDuration(m map[string]any) string {
 		return s
 	}
 	if dm, ok := m["for"].(map[string]any); ok {
-		h, _ := dm["hours"].(float64)
-		mins, _ := dm["minutes"].(float64)
-		sec, _ := dm["seconds"].(float64)
-		return fmt.Sprintf("%d:%02d:%02d", int(h), int(mins), int(sec))
+		if s, ok := FormatDuration(dm); ok {
+			return s
+		}
 	}
 	return ""
 }

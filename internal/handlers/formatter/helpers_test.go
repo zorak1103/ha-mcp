@@ -458,6 +458,42 @@ func TestNaturalHelperFormatter_DetailRenderers_IncludeEntityID(t *testing.T) {
 	}
 }
 
+// TestNaturalHelperFormatter_BinarySensorTemplateConfig pins the template
+// configuration lines: delays render as HH:MM:SS (never Go map syntax) under
+// their user-facing labels, and the device id is shown.
+func TestNaturalHelperFormatter_BinarySensorTemplateConfig(t *testing.T) {
+	t.Parallel()
+
+	f := NewNaturalHelperFormatter()
+	detail := map[string]any{
+		"entity_id":         "binary_sensor.t",
+		"state":             "on",
+		"friendly_name":     "T",
+		"config_entry_type": "template",
+		"delay_on":          "00:00:05",
+		"delay_off":         map[string]any{"hours": 0.0, "minutes": 3.0, "seconds": 0.0},
+		"device_id":         "dev1",
+	}
+
+	result, err := f.FormatHelperDetail(context.Background(), "binary_sensor", detail)
+	if err != nil {
+		t.Fatalf("FormatHelperDetail(binary_sensor) error = %v, want nil", err)
+	}
+
+	for _, want := range []string{
+		"Delay before turning on: 00:00:05",
+		"Delay before turning off: 00:03:00",
+		"Device: dev1",
+	} {
+		if !strings.Contains(result, want) {
+			t.Errorf("result = %q, want it to contain %q", result, want)
+		}
+	}
+	if strings.Contains(result, "map[") {
+		t.Errorf("result = %q, must not contain Go map syntax", result)
+	}
+}
+
 // TestNaturalHelperFormatter_FormatHelperDetail_GenericFallback pins the
 // fallback renderer added for issue #216: domains with no dedicated case
 // (climate, humidifier, select, and the 15 template_* subtypes) must render

@@ -565,11 +565,15 @@ func (f *NaturalHelperFormatter) writeTemplateConfig(result *strings.Builder, de
 	}
 
 	if delayOn := detail["delay_on"]; delayOn != nil {
-		fmt.Fprintf(result, "\nDelay on: %v", delayOn)
+		fmt.Fprintf(result, "\nDelay before turning on: %s", FormatDetailValue(delayOn))
 	}
 
 	if delayOff := detail["delay_off"]; delayOff != nil {
-		fmt.Fprintf(result, "\nDelay off: %v", delayOff)
+		fmt.Fprintf(result, "\nDelay before turning off: %s", FormatDetailValue(delayOff))
+	}
+
+	if deviceID := f.getDetailString(detail, "device_id"); deviceID != "" {
+		fmt.Fprintf(result, "\nDevice: %s", deviceID)
 	}
 }
 

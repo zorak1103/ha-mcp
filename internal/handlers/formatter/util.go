@@ -3,6 +3,7 @@ package formatter
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -282,12 +283,96 @@ func FormatDetailValue(v any) string {
 	if v == nil {
 		return ""
 	}
+	if m, isMap := v.(map[string]any); isMap {
+		if s, ok := FormatDuration(m); ok {
+			return TruncateRunes(sanitizeDisplayValue(s), maxDetailValueChars)
+		}
+	}
 	// See formatDetailListValue's doc comment for why the "… +N more" suffix
 	// must be appended after truncation, not before.
 	if list, ok := v.([]any); ok {
 		return formatDetailListValue(list)
 	}
 	return TruncateRunes(sanitizeDisplayValue(renderDetailValue(v, 0)), maxDetailValueChars)
+}
+
+// durationUnitMillis maps the keys of a Home Assistant duration dict to their
+// length in milliseconds.
+var durationUnitMillis = map[string]float64{
+	"days":         24 * 60 * 60 * 1000,
+	"hours":        60 * 60 * 1000,
+	"minutes":      60 * 1000,
+	"seconds":      1000,
+	"milliseconds": 1,
+}
+
+// maxDurationMillis bounds the total a duration dict may render. It keeps the
+// float-to-int conversion below well defined; larger or non-finite totals are
+// not durations worth pretty-printing and fall through to the caller's
+// generic rendering.
+const maxDurationMillis = 1e15
+
+// FormatDuration renders a Home Assistant duration value. A string passes
+// through unchanged. A map[string]any qualifies only when it has at least one
+// key, every key is a duration unit (days, hours, minutes, seconds,
+// milliseconds) and every value is a float64 or int; it renders as
+// "[-][Nd ]HH:MM:SS[.mmm]". Anything else reports ok == false.
+func FormatDuration(v any) (string, bool) {
+	if s, isString := v.(string); isString {
+		return s, true
+	}
+	m, isMap := v.(map[string]any)
+	if !isMap || len(m) == 0 {
+		return "", false
+	}
+	var total float64
+	for key, val := range m {
+		unit, known := durationUnitMillis[key]
+		if !known {
+			return "", false
+		}
+		switch n := val.(type) {
+		case float64:
+			total += n * unit
+		case int:
+			total += float64(n) * unit
+		default:
+			return "", false
+		}
+	}
+	if math.IsNaN(total) || math.Abs(total) > maxDurationMillis {
+		return "", false
+	}
+	return renderDurationMillis(int64(math.Round(total))), true
+}
+
+// renderDurationMillis formats a millisecond total as
+// "[-][Nd ]HH:MM:SS[.mmm]".
+func renderDurationMillis(totalMillis int64) string {
+	sign := ""
+	if totalMillis < 0 {
+		sign = "-"
+		totalMillis = -totalMillis
+	}
+	millis := totalMillis % 1000
+	totalSeconds := totalMillis / 1000
+	seconds := totalSeconds % 60
+	totalMinutes := totalSeconds / 60
+	minutes := totalMinutes % 60
+	totalHours := totalMinutes / 60
+	hours := totalHours % 24
+	days := totalHours / 24
+
+	var b strings.Builder
+	b.WriteString(sign)
+	if days > 0 {
+		fmt.Fprintf(&b, "%dd ", days)
+	}
+	fmt.Fprintf(&b, "%02d:%02d:%02d", hours, minutes, seconds)
+	if millis != 0 {
+		fmt.Fprintf(&b, ".%03d", millis)
+	}
+	return b.String()
 }
 
 // ColorTempToDescription converts color temperature in Kelvin to a description.
