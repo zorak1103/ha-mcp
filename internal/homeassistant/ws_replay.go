@@ -35,6 +35,8 @@ var replaySafeWSCommands = map[string]struct{}{
 	"hacs/repository/info":              {},
 	"hacs/repository/releases":          {},
 	"hacs/repository/release_notes":     {},
+	"trace/get":                         {},
+	"update/release_notes":              {},
 }
 
 // isReplaySafeWSCommand reports whether msgType only reads state and may be

@@ -545,11 +545,13 @@ var ErrRequestTimeout = errors.New("request timeout: no response received")
 
 // SendCommand sends a command to Home Assistant and waits for a response.
 //
-// Failures before the command was written (not connected, waiting for a
-// reconnect) are retried for every command. Once the command was written, only
-// replay-safe (read-only) commands are re-sent after a transient failure; a
-// state-changing command whose connection drops returns an error wrapping
-// errOutcomeUnknown, since Home Assistant may already have applied it.
+// Failures before the command was written that are marked notSentError (e.g.
+// not connected) are retried for every command; a reconnect wait that ends in
+// ErrMaxReconnectAttempts, a context error or errClientClosed is not. Once the
+// command was written, only replay-safe (read-only) commands are re-sent after
+// a transient failure; a state-changing command whose connection drops returns
+// an error wrapping errOutcomeUnknown, since Home Assistant may already have
+// applied it.
 func (c *WSClient) SendCommand(ctx context.Context, msgType string, payload map[string]any) (*WSResultMessage, error) {
 	var result *WSResultMessage
 
