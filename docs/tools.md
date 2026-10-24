@@ -94,13 +94,13 @@ ha-mcp provides comprehensive support for all 41 Home Assistant helper types thr
 
 Universal tool for helper lifecycle management:
 
-| Action        | Description                                                                                          |
-| ------------- | ---------------------------------------------------------------------------------------------------- |
-| `list`        | List all helpers with optional format (natural/json) and verbose mode                                |
-| `create`      | Create a new helper (requires `type`, `id`, `name`)                                                  |
-| `update`      | Update an existing helper (requires `entity_id`); icon works on all types, other fields vary by type |
-| `delete`      | Delete an existing helper (requires `entity_id`)                                                     |
-| `get_details` | Get detailed configuration for any helper type (requires `entity_id`; format: natural/json)          |
+| Action        | Description                                                                                                                                                                               |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `list`        | List all helpers with optional format (natural/json) and verbose mode                                                                                                                     |
+| `create`      | Create a new helper (requires `type`, `id`, `name`)                                                                                                                                       |
+| `update`      | Update an existing helper (requires `entity_id`); icon works on all types, other fields vary by type                                                                                      |
+| `delete`      | Delete an existing helper (requires `entity_id`)                                                                                                                                          |
+| `get_details` | Get detailed configuration for any helper type, including a `configuration` block with every stored option/storage field not shown elsewhere (requires `entity_id`; format: natural/json) |
 
 **Supported helper types (41 total):**
 - **Input helpers:** `input_boolean`, `input_number`, `input_text`, `input_select`, `input_datetime`, `input_button`

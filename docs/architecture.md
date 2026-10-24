@@ -95,7 +95,8 @@ ha-mcp/
 │   │   │   ├── automations.go   # Automation list/get formatters
 │   │   │   ├── scripts.go       # Script list/get formatters
 │   │   │   ├── scenes.go        # Scene list/get formatters
-│   │   │   └── helpers.go       # Helper list/get_details formatters
+│   │   │   ├── helpers.go       # Helper list/get_details formatters
+│   │   │   └── helper_configuration.go # Natural "Configuration:" section for get_details
 │   │   ├── integration/         # Integration tests (build tag: integration)
 │   │   │   ├── helpers.go       # Test ID generation, validation
 │   │   │   ├── cleanup.go       # Cleanup utilities
@@ -123,6 +124,7 @@ ha-mcp/
 │   │   ├── helpers_config_builders.go # Config builders for standard helper types
 │   │   ├── helpers_config_builders_extended.go # Config builders for advanced/multi-step helpers
 │   │   ├── helpers_template_types.go # Template helper subtype definitions and schema tables
+│   │   ├── helpers_details_config.go # get_details: stored helper configuration (options flow / WS storage)
 │   │   ├── scripts.go           # manage_script and call_service tools
 │   │   ├── scenes.go            # Consolidated manage_scene tool
 │   │   ├── patch.go             # JSON Patch handler with dry-run support
