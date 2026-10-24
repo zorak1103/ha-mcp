@@ -148,6 +148,18 @@ so it stays small even for a large dashboard.
   safe to submit multiple removes (including nested ones) without index shifting.
 - For standard `path`-based removes, sort descending manually when issuing multiple removes in one call.
 
+## Key Order (automations and scripts)
+
+- A patch keeps the existing key order of the config, including `variables` (HA renders them
+  top to bottom, so a later entry may reference an earlier one but not the reverse).
+- New keys added by `add` go **last** in their object; to place one earlier, `replace` the
+  whole parent object (e.g. `/variables`) with the keys in the order you need.
+- A `replace` value keeps the key order you send it in.
+- Re-sending identical content in a different key order is a real change and is written
+  (it is how an automation sorted by an older build is repaired). Unchanged content is still
+  skipped as a no-op.
+- Dashboards and scenes are not covered; their key order is cosmetic.
+
 ## Anti-Patterns
 
 | Instead of…                                          | Do this                                                |
