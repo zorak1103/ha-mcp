@@ -5646,13 +5646,18 @@ func updateBuilderConfig(t *testing.T, name string, meta helperTypeMetadata, arg
 }
 
 // getDetailsShowsConfigKey reports whether the get_details JSON (details)
-// shows the stored-config key for a helper of entityDomain: under the key
-// itself or its "_template" form (the template readers render value
-// templates that way), as friendly_name for "name", under the tool-facing
-// arg name of a template field that maps to key, or - for a schedule
-// weekday - inside details["schedule"]. Each candidate is searched at top
-// level and inside details["configuration"].
-func getDetailsShowsConfigKey(details map[string]any, entityDomain, key string) bool {
+// shows the stored-config key for a helper of entityDomain with the stored
+// value want: under the key itself or its "_template" form (the template
+// readers render value templates that way), as friendly_name for "name",
+// under the tool-facing arg name of a template field that maps to key, or -
+// for a schedule weekday - inside details["schedule"]. Each candidate is
+// searched at top level and inside details["configuration"]. Presence alone
+// is not enough: buildHelperDetails always seeds entity_id, state and
+// friendly_name, so a candidate only counts when its value renders (via
+// fmt.Sprint, since builders store numbers as strings and JSON decodes
+// numbers as float64) the same as want.
+func getDetailsShowsConfigKey(details map[string]any, entityDomain, key string, want any) bool {
+	wantText := fmt.Sprint(want)
 	candidates := []string{key, key + "_template"}
 	if key == "name" {
 		candidates = append(candidates, "friendly_name")
@@ -5670,15 +5675,15 @@ func getDetailsShowsConfigKey(details map[string]any, entityDomain, key string) 
 	}
 	for _, scope := range scopes {
 		for _, c := range candidates {
-			if _, ok := scope[c]; ok {
+			if got, ok := scope[c]; ok && fmt.Sprint(got) == wantText {
 				return true
 			}
 		}
 	}
 
 	if schedule, ok := details["schedule"].(map[string]any); ok && slices.Contains(scheduleWeekdays, key) {
-		_, shown := schedule[key]
-		return shown
+		got, shown := schedule[key]
+		return shown && fmt.Sprint(got) == wantText
 	}
 	return false
 }
@@ -5701,11 +5706,19 @@ func pinScheduleBlock() []any {
 // helpers serve cfg (plus its storage id) from GetHelperConfig.
 func pinHelperMock(meta helperTypeMetadata, entityID string, cfg map[string]any) *UniversalMockClient {
 	m := &UniversalMockClient{}
+	// HA derives an entity's friendly_name from its stored name, so the mock
+	// state carries the stored name (the "name" field is shown as
+	// friendly_name). State stays "x", which no sentinel equals, so a state
+	// template can't match the seeded top-level state by coincidence.
+	friendlyName := "Test Name"
+	if n, ok := cfg["name"].(string); ok {
+		friendlyName = n
+	}
 	m.GetStateFn = func(context.Context, string) (*homeassistant.Entity, error) {
 		return &homeassistant.Entity{
 			EntityID:   entityID,
 			State:      "x",
-			Attributes: map[string]any{"friendly_name": "Test Name"},
+			Attributes: map[string]any{"friendly_name": friendlyName},
 		}, nil
 	}
 
@@ -5753,6 +5766,9 @@ func TestUpdatableFields_AreVisibleInGetDetails(t *testing.T) {
 			t.Parallel()
 
 			fields := updatableFieldNames(name)
+			if len(fields) == 0 {
+				t.Fatalf("helper type %q has no updatable fields, so the pin would pass vacuously", name)
+			}
 			args := make(map[string]any, len(fields))
 			for _, field := range fields {
 				args[field] = updatableFieldSentinel(name, field)
@@ -5785,7 +5801,11 @@ func TestUpdatableFields_AreVisibleInGetDetails(t *testing.T) {
 					continue
 				}
 				key := configKeyFor(name, field)
-				if !getDetailsShowsConfigKey(details, meta.entityPrefix, key) {
+				want := cfg[key]
+				if !homeassistant.RequiresConfigEntryFlow(meta.platform) && slices.Contains(scheduleWeekdays, key) {
+					want = pinScheduleBlock() // pinHelperMock swapped in a parseable block
+				}
+				if !getDetailsShowsConfigKey(details, meta.entityPrefix, key, want) {
 					t.Errorf("field %q (config key %q) is writable for %q but not visible in get_details JSON", field, key, name)
 				}
 			}
