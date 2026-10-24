@@ -54,6 +54,7 @@ Some Home Assistant operations have limitations:
 ha-mcp/
 ├── cmd/
 │   └── ha-mcp/
+│       ├── client_config.go     # Builds WS/REST client configs (incl. retry) from config
 │       └── main.go              # Application entry point
 ├── internal/
 │   ├── config/

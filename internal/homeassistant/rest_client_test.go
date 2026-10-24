@@ -209,7 +209,7 @@ func TestRESTClient_DeleteAutomation(t *testing.T) {
 			},
 			wantErr:     true,
 			wantErrType: "*homeassistant.APIError",
-			wantErrMsg:  "internal error", // After retry exhaustion, message is just the body
+			wantErrMsg:  "internal error", // Non-idempotent request: returned unretried
 		},
 	}
 

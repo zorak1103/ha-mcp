@@ -56,6 +56,12 @@ func NewRetryManager(config RetryConfig, logger *logging.Logger) *RetryManager {
 // It will retry up to MaxRetries times for retryable errors, using exponential backoff.
 // Non-retryable errors are returned immediately without retry.
 func (r *RetryManager) Retry(ctx context.Context, operation func() error) error {
+	return r.RetryIf(ctx, operation, IsRetryableError)
+}
+
+// RetryIf is Retry with a caller-supplied retry predicate: an error is retried
+// only when retryable(err) returns true. retryable must be non-nil.
+func (r *RetryManager) RetryIf(ctx context.Context, operation func() error, retryable func(error) bool) error {
 	if r.config.MaxRetries <= 0 {
 		// No retries configured, execute once
 		return operation()
@@ -81,7 +87,7 @@ func (r *RetryManager) Retry(ctx context.Context, operation func() error) error 
 		lastErr = err
 
 		// Check if error is retryable
-		if !IsRetryableError(err) {
+		if !retryable(err) {
 			r.logger.Debug("Non-retryable error, stopping retries", "error", err)
 			return err
 		}
@@ -165,11 +171,12 @@ func IsRetryableError(err error) bool {
 		return IsRetryableHTTPStatus(apiErr.StatusCode)
 	}
 
-	// Check for network errors (timeout, connection refused, etc.)
+	// A timeout is retryable. Any other net.Error (e.g. a *url.Error or
+	// *net.OpError wrapping "connection refused") falls through to the message
+	// list below instead of being rejected outright.
 	var netErr net.Error
-	if errors.As(err, &netErr) {
-		// Timeout errors are retryable
-		return netErr.Timeout()
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
 	}
 
 	// Check for specific error messages that indicate transient failures
@@ -211,4 +218,28 @@ func IsRetryableHTTPStatus(statusCode int) bool {
 	default:
 		return false
 	}
+}
+
+// isRetryableRESTError decides whether a failed REST request may be re-sent.
+// Idempotent requests (GET, HEAD, or an empty method) retry on any transient
+// failure. Every other method retries only in two cases: a 429, which means
+// the request was rejected before processing, or a failed dial (nothing was
+// sent).
+func isRetryableRESTError(method string, err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+
+	switch method {
+	case "", http.MethodGet, http.MethodHead:
+		return IsRetryableError(err)
+	}
+
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.StatusCode == http.StatusTooManyRequests
+	}
+
+	var opErr *net.OpError
+	return errors.As(err, &opErr) && opErr.Op == "dial"
 }

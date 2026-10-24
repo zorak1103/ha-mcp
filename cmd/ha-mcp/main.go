@@ -248,11 +248,7 @@ func (a *App) run(_ *cobra.Command, _ []string) error {
 	defer cancel()
 
 	// Create client pool (always required for per-request auth)
-	restConfig := &homeassistant.RESTClientConfig{
-		RateLimit: cfg.HomeAssistant.REST.RateLimit,
-		RateBurst: cfg.HomeAssistant.REST.RateBurst,
-	}
-	clientPool := homeassistant.NewClientPoolWithFullConfig(cfg.HomeAssistant.URL, 30*time.Minute, 100, restConfig, nil, logger)
+	clientPool := newClientPool(cfg, logger)
 	defer func() {
 		logger.Info("Closing client pool...")
 		if closeErr := clientPool.Close(); closeErr != nil {
@@ -332,11 +328,10 @@ func (a *App) initHomeAssistantClient(
 ) (homeassistant.Client, error) {
 	logger.Info("Connecting to Home Assistant WebSocket API...")
 
-	restConfig := &homeassistant.RESTClientConfig{
-		RateLimit: cfg.HomeAssistant.REST.RateLimit,
-		RateBurst: cfg.HomeAssistant.REST.RateBurst,
-	}
-	haClient, err := homeassistant.NewConnectedClient(ctx, cfg.HomeAssistant.URL, cfg.HomeAssistant.Token, nil, restConfig)
+	haClient, err := homeassistant.NewConnectedClient(
+		ctx, cfg.HomeAssistant.URL, cfg.HomeAssistant.Token,
+		buildWSClientConfig(cfg), buildRESTClientConfig(cfg),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to Home Assistant: %w", err)
 	}
