@@ -471,16 +471,16 @@ func (h *AnalysisHandlers) findDashboardReferences(ctx context.Context, client h
 	return nil
 }
 
-// findHelperTemplateReferences scans template-helper state/availability Jinja
-// templates for entity references. These were previously unscanned, so an
-// entity referenced only inside a helper template's Jinja was invisible to
-// analyze_entity.
+// findHelperTemplateReferences scans template-helper Jinja template fields
+// (state/availability, or each template subtype's own template fields) for
+// entity references. These were previously unscanned, so an entity referenced
+// only inside a helper template's Jinja was invisible to analyze_entity.
+// References found in helpers that could be read are recorded even when
+// scanHelperTemplates also reports an error (some helper's options could not
+// be read); that error is returned after the refs are appended.
 func (h *AnalysisHandlers) findHelperTemplateReferences(ctx context.Context, client homeassistant.Client, entityID string, refs *EntityReferences) error {
 	match := func(s string) bool { return strings.Contains(s, entityID) }
-	hits, err := scanHelperTemplates(ctx, client, match)
-	if err != nil {
-		return err
-	}
+	hits, scanErr := scanHelperTemplates(ctx, client, match)
 
 	fieldsByEntity := make(map[string][]string)
 	var order []string
@@ -496,7 +496,7 @@ func (h *AnalysisHandlers) findHelperTemplateReferences(ctx context.Context, cli
 			Fields:   fieldsByEntity[id],
 		})
 	}
-	return nil
+	return scanErr
 }
 
 // findGroupReferencesWithSnapshot finds groups that contain the entity using pre-fetched data.
