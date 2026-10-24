@@ -76,7 +76,8 @@ ha-mcp/
 │   │   ├── ws_client.go         # WebSocket connection management
 │   │   ├── ws_client_impl.go    # WebSocket Client implementation
 │   │   ├── ws_messages.go       # WebSocket message types
-│   │   └── ws_reconnect.go      # Reconnection logic
+│   │   ├── ws_reconnect.go      # Reconnection logic
+│   │   └── ws_replay.go         # Replay-safe (read-only) WS command classifier
 │   ├── jsonpatch/
 │   │   ├── jsonpatch.go         # RFC 6902 JSON Patch implementation
 │   │   └── pointer.go           # RFC 6901 JSON Pointer navigation
