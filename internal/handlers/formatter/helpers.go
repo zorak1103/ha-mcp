@@ -452,6 +452,10 @@ func (f *NaturalHelperFormatter) formatInputButtonDetail(detail map[string]any) 
 	fmt.Fprintf(&result, "Button: %s\n", name)
 	fmt.Fprintf(&result, "Last pressed: %s", state)
 
+	if icon := f.getDetailString(detail, "icon"); icon != "" {
+		fmt.Fprintf(&result, "\nIcon: %s", icon)
+	}
+
 	return result.String()
 }
 
@@ -537,6 +541,10 @@ func (f *NaturalHelperFormatter) formatBinarySensorDetail(detail map[string]any)
 
 	if deviceClass := f.getDetailString(detail, "device_class"); deviceClass != "" {
 		fmt.Fprintf(&result, "Device class: %s\n", deviceClass)
+	}
+
+	if hysteresis := detail["hysteresis"]; hysteresis != nil && FormatDetailValue(hysteresis) != "" {
+		fmt.Fprintf(&result, "Hysteresis: %s\n", FormatDetailValue(hysteresis))
 	}
 
 	if source := f.getDetailString(detail, "source_entity"); source != "" {
