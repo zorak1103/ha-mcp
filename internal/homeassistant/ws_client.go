@@ -24,6 +24,17 @@ const maxWSMessageSize = 16 * 1024 * 1024
 // Requests not receiving a response within this time are cleaned up.
 const defaultRequestTimeout = 30 * time.Second
 
+// defaultWriteTimeout bounds a single command write when WriteTimeout is unset.
+const defaultWriteTimeout = 10 * time.Second
+
+// wsErrCodeIDReuse is HA's error code for a message id that did not exceed
+// the previous one on the connection. With ordered sends it signals a bug.
+const wsErrCodeIDReuse = "id_reuse"
+
+// errClientClosed is returned by SendCommand and WaitForConnection after
+// Close. It is deliberately not retryable.
+var errClientClosed = errors.New("websocket client closed")
+
 // WSClientConfig holds configuration options for WSClient.
 type WSClientConfig struct {
 	// ReconnectConfig configures automatic reconnection behavior.
@@ -66,32 +77,45 @@ func DefaultWSClientConfig() WSClientConfig {
 }
 
 // WSClient manages a WebSocket connection to Home Assistant.
+//
+// Each authenticated connection is a wsSession; the client swaps sessions on
+// reconnect. The client's lifetime (lifeCtx) is independent of any caller's
+// context: only Close ends it.
 type WSClient struct {
-	baseURL   string
-	token     string
-	conn      *websocket.Conn
-	msgID     atomic.Int64
-	pendingMu sync.RWMutex
-	pending   map[int64]chan *WSResultMessage
-	ctx       context.Context
-	cancel    context.CancelFunc
-	connected atomic.Bool
+	baseURL string
+	token   string
 
-	// Reconnection fields
+	// msgID is only incremented while holding sendSem, in the same step as
+	// the wire write, so ids reach HA strictly increasing.
+	msgID atomic.Int64
+	// sendSem (capacity 1) serializes id allocation + write.
+	sendSem chan struct{}
+
+	// session is the live connection, nil while disconnected.
+	session    atomic.Pointer[wsSession]
+	lifeCtx    context.Context
+	lifeCancel context.CancelFunc
+
+	// mu guards closed, session install, the reconnect start/exit decision
+	// and every wg.Add. It is never held during network I/O or while a user
+	// callback runs.
+	mu     sync.Mutex
+	closed bool
+	// wg tracks read loops, health loops and the reconnect loop.
+	wg sync.WaitGroup
+
+	// connected and reconnecting are written only under mu, read lock-free.
+	connected    atomic.Bool
+	reconnecting atomic.Bool
+
 	config       WSClientConfig
 	reconnectMgr *ReconnectManager
-	reconnectMu  sync.Mutex
-	reconnecting atomic.Bool
 
 	// Retry manager for transient failures
 	retryManager *RetryManager
 
-	// Health monitoring fields
-	pingCancel context.CancelFunc
-	pingWg     sync.WaitGroup // Tracks active health monitor goroutine
-	lastPong   atomic.Value   // time.Time
+	lastPong atomic.Value // time.Time
 
-	// Logging
 	logger *logging.Logger
 }
 
@@ -107,10 +131,13 @@ func NewWSClientWithConfig(baseURL, token string, config WSClientConfig) *WSClie
 		logger = logging.New(logging.LevelInfo)
 	}
 
+	lifeCtx, lifeCancel := context.WithCancel(context.Background())
 	return &WSClient{
 		baseURL:      baseURL,
 		token:        token,
-		pending:      make(map[int64]chan *WSResultMessage),
+		sendSem:      make(chan struct{}, 1),
+		lifeCtx:      lifeCtx,
+		lifeCancel:   lifeCancel,
 		config:       config,
 		reconnectMgr: NewReconnectManager(config.ReconnectConfig),
 		retryManager: NewRetryManager(config.RetryConfig, logger),
@@ -118,92 +145,89 @@ func NewWSClientWithConfig(baseURL, token string, config WSClientConfig) *WSClie
 	}
 }
 
-// Connect establishes a WebSocket connection to Home Assistant.
+// Connect establishes a WebSocket connection to Home Assistant. ctx bounds
+// only the dial and authentication; the connection lives until Close.
 func (c *WSClient) Connect(ctx context.Context) error {
-	// Build WebSocket URL
+	if err := c.dialSession(ctx); err != nil {
+		return err
+	}
+	c.reconnectMgr.Reset()
+	c.logger.Info("WebSocket connected successfully")
+	return nil
+}
+
+// dialSession dials and authenticates a new connection (without mu) and
+// installs it as the current session.
+func (c *WSClient) dialSession(dialCtx context.Context) error {
+	conn, err := c.dialAndAuthenticate(dialCtx)
+	if err != nil {
+		return err
+	}
+	return c.installSession(conn)
+}
+
+// dialAndAuthenticate opens and authenticates a connection, bounded by
+// dialCtx plus ConnectTimeout.
+func (c *WSClient) dialAndAuthenticate(dialCtx context.Context) (*websocket.Conn, error) {
 	wsURL, err := c.buildWSURL()
 	if err != nil {
-		return fmt.Errorf("building WebSocket URL: %w", err)
+		return nil, fmt.Errorf("building WebSocket URL: %w", err)
 	}
 
 	c.logger.Debug("Connecting to WebSocket", "url", sanitizeURL(wsURL))
 
-	// Create context for connection lifecycle
-	c.ctx, c.cancel = context.WithCancel(ctx)
-
-	// Create a scoped context with timeout for connection and authentication
-	connectCtx := c.ctx
+	connectCtx := dialCtx
 	if c.config.ConnectTimeout > 0 {
 		var cancel context.CancelFunc
-		connectCtx, cancel = context.WithTimeout(c.ctx, c.config.ConnectTimeout)
+		connectCtx, cancel = context.WithTimeout(dialCtx, c.config.ConnectTimeout)
 		defer cancel()
 	}
 
-	// Dial WebSocket
 	conn, resp, err := websocket.Dial(connectCtx, wsURL, nil)
 	if resp != nil && resp.Body != nil {
 		_ = resp.Body.Close()
 	}
 	if err != nil {
-		c.logger.Error("WebSocket dial failed", "error", err)
-		return fmt.Errorf("dialing WebSocket: %w", err)
+		c.logger.Warn("WebSocket dial failed", "error", err)
+		return nil, fmt.Errorf("dialing WebSocket: %w", err)
 	}
-	c.conn = conn
+	conn.SetReadLimit(maxWSMessageSize)
 
-	c.conn.SetReadLimit(maxWSMessageSize)
-
-	// Perform authentication
 	c.logger.Debug("Starting WebSocket authentication")
-	if err := c.authenticate(connectCtx); err != nil {
+	if err := c.authenticate(connectCtx, conn); err != nil {
 		c.logger.Error("WebSocket authentication failed", "error", err)
-		_ = c.conn.Close(websocket.StatusProtocolError, "auth failed")
-		return fmt.Errorf("authentication: %w", err)
+		_ = conn.Close(websocket.StatusProtocolError, "auth failed")
+		return nil, fmt.Errorf("authentication: %w", err)
 	}
+	return conn, nil
+}
 
-	// Mark as connected and start read loop
+// installSession makes conn the current session and starts its loops. After
+// Close it closes conn instead and returns errClientClosed.
+func (c *WSClient) installSession(conn *websocket.Conn) error {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		_ = conn.Close(websocket.StatusNormalClosure, "client closing")
+		return errClientClosed
+	}
+	s := newWSSession(c.lifeCtx, conn)
+	c.session.Store(s)
 	c.connected.Store(true)
-
-	// Reset reconnection manager on successful connection
-	c.reconnectMgr.Reset()
-
-	go c.readLoop()
-
-	// Start health monitoring if enabled
+	c.wg.Add(1)
+	go c.readLoop(s)
 	if c.config.PingInterval > 0 {
-		c.startHealthMonitor()
-		c.logger.Debug("Health monitoring started", "interval", c.config.PingInterval)
+		c.lastPong.Store(time.Now())
+		c.wg.Add(1)
+		go c.healthLoop(s)
 	}
-
-	c.logger.Info("WebSocket connected successfully")
+	c.mu.Unlock()
 	return nil
 }
 
-// startHealthMonitor starts the periodic ping goroutine.
-// It ensures any previous health monitor is stopped before starting a new one.
-func (c *WSClient) startHealthMonitor() {
-	// Stop any existing health monitor to prevent goroutine leaks
-	c.stopHealthMonitor()
-
-	ctx, cancel := context.WithCancel(c.ctx)
-	c.pingCancel = cancel
-	c.lastPong.Store(time.Now())
-
-	c.pingWg.Add(1)
-	go c.healthLoop(ctx)
-}
-
-// stopHealthMonitor stops the health monitor goroutine and waits for it to exit.
-func (c *WSClient) stopHealthMonitor() {
-	if c.pingCancel != nil {
-		c.pingCancel()
-		c.pingCancel = nil
-	}
-	c.pingWg.Wait()
-}
-
-// healthLoop periodically sends pings to check connection health.
-func (c *WSClient) healthLoop(ctx context.Context) {
-	defer c.pingWg.Done()
+// healthLoop periodically pings the session; it ends with the session.
+func (c *WSClient) healthLoop(s *wsSession) {
+	defer c.wg.Done()
 
 	c.logger.Trace("Health monitor loop started")
 	ticker := time.NewTicker(c.config.PingInterval)
@@ -211,11 +235,11 @@ func (c *WSClient) healthLoop(ctx context.Context) {
 
 	for {
 		select {
-		case <-ctx.Done():
+		case <-s.ctx.Done():
 			c.logger.Debug("Health monitor stopped")
 			return
 		case <-ticker.C:
-			if shouldExit := c.performHealthCheck(ctx); shouldExit {
+			if shouldExit := c.performHealthCheck(s.ctx); shouldExit {
 				return
 			}
 		}
@@ -225,7 +249,8 @@ func (c *WSClient) healthLoop(ctx context.Context) {
 // performHealthCheck executes a single health check cycle.
 // Returns true if the health loop should exit.
 func (c *WSClient) performHealthCheck(ctx context.Context) bool {
-	if !c.connected.Load() {
+	s := c.session.Load()
+	if s == nil {
 		return false
 	}
 
@@ -236,9 +261,9 @@ func (c *WSClient) performHealthCheck(ctx context.Context) bool {
 		return true
 	}
 
-	if err := c.sendPing(ctx); err != nil {
+	if err := c.sendPing(ctx, s.conn); err != nil {
 		if ctx.Err() != nil {
-			return true // Context canceled, clean shutdown
+			return true // Session ended, clean shutdown
 		}
 		c.logger.Error("Ping failed", "error", err)
 		c.handleConnectionFailure(fmt.Errorf("ping failed: %w", err))
@@ -259,25 +284,18 @@ func (c *WSClient) isPongTimeout() bool {
 	return time.Since(lastPong) > c.config.PingInterval+c.config.PingTimeout
 }
 
-// sendPing sends a ping to the WebSocket connection with timeout.
-func (c *WSClient) sendPing(ctx context.Context) error {
+// sendPing sends a ping on conn with timeout.
+func (c *WSClient) sendPing(ctx context.Context, conn *websocket.Conn) error {
 	pingCtx, pingCancel := context.WithTimeout(ctx, c.config.PingTimeout)
 	defer pingCancel()
-	return c.conn.Ping(pingCtx)
+	return conn.Ping(pingCtx)
 }
 
-// handleConnectionFailure notifies disconnect callback and triggers reconnection.
+// handleConnectionFailure ends the current session after a health failure.
 func (c *WSClient) handleConnectionFailure(err error) {
 	c.logger.Error("Connection failure detected", "error", err)
-	if c.config.OnDisconnect != nil {
-		c.logger.Debug("Invoking disconnect callback")
-		c.config.OnDisconnect(err)
-	}
-	if c.config.AutoReconnect {
-		c.logger.Info("Triggering automatic reconnection")
-		go func() {
-			_ = c.reconnect()
-		}()
+	if s := c.session.Load(); s != nil {
+		c.endSession(s, err)
 	}
 }
 
@@ -304,10 +322,10 @@ func (c *WSClient) buildWSURL() (string, error) {
 	return u.String(), nil
 }
 
-// authenticate performs the Home Assistant WebSocket authentication flow.
-func (c *WSClient) authenticate(ctx context.Context) error {
+// authenticate performs the Home Assistant WebSocket authentication flow on conn.
+func (c *WSClient) authenticate(ctx context.Context, conn *websocket.Conn) error {
 	// Read auth_required message
-	_, data, err := c.conn.Read(ctx)
+	_, data, err := conn.Read(ctx)
 	if err != nil {
 		return fmt.Errorf("reading auth_required: %w", err)
 	}
@@ -331,12 +349,12 @@ func (c *WSClient) authenticate(ctx context.Context) error {
 		return fmt.Errorf("marshaling auth message: %w", err)
 	}
 
-	if writeErr := c.conn.Write(ctx, websocket.MessageText, authData); writeErr != nil {
+	if writeErr := conn.Write(ctx, websocket.MessageText, authData); writeErr != nil {
 		return fmt.Errorf("sending auth message: %w", writeErr)
 	}
 
 	// Read auth response
-	_, data, err = c.conn.Read(ctx)
+	_, data, err = conn.Read(ctx)
 	if err != nil {
 		return fmt.Errorf("reading auth response: %w", err)
 	}
@@ -360,238 +378,148 @@ func (c *WSClient) authenticate(ctx context.Context) error {
 	}
 }
 
-// readLoop continuously reads messages from the WebSocket connection.
-func (c *WSClient) readLoop() {
-	defer func() {
-		c.connected.Store(false)
-		c.closePendingChannels()
-	}()
+// readLoop reads messages from s until its connection fails. It never
+// reconnects itself; endSession decides that.
+func (c *WSClient) readLoop(s *wsSession) {
+	defer c.wg.Done()
 
 	for {
-		select {
-		case <-c.ctx.Done():
-			return
-		default:
-		}
-
-		_, data, err := c.conn.Read(c.ctx)
+		_, data, err := s.conn.Read(s.ctx)
 		if err != nil {
-			// Connection closed or error
-			if c.ctx.Err() != nil {
-				// Context canceled, clean shutdown
-				return
-			}
-
-			// Notify disconnect callback
-			if c.config.OnDisconnect != nil {
-				c.config.OnDisconnect(err)
-			}
-
-			// Attempt reconnection if enabled
-			if c.config.AutoReconnect {
-				if reconnectErr := c.reconnect(); reconnectErr != nil {
-					// Reconnection failed, exit read loop
-					return
-				}
-				// Reconnection successful, continue read loop
-				continue
-			}
-
-			// Auto-reconnect disabled, exit
+			c.endSession(s, err)
 			return
 		}
 
-		// Parse message type
 		msgType, err := ParseMessageType(data)
 		if err != nil {
 			continue // Skip malformed messages
 		}
-
-		switch msgType {
-		case "result":
-			c.handleResultMessage(data)
-		case "event", "pong":
-			// Events and pong responses are handled by their respective subsystems
+		// Events and pong responses are handled by their respective subsystems.
+		if msgType == "result" {
+			s.handleResultMessage(data)
 		}
 	}
 }
 
-// reconnect attempts to re-establish the WebSocket connection with exponential backoff.
-// It is idempotent: concurrent calls are serialized via the reconnecting atomic flag.
-// Pending requests will fail during reconnection; callers should retry on connection errors.
-func (c *WSClient) reconnect() error {
-	// Prevent concurrent reconnection attempts
-	if !c.reconnecting.CompareAndSwap(false, true) {
-		// Another goroutine is already reconnecting
-		return nil
+// endSession is the only path that reacts to a dropped connection (read
+// error, write error, ping failure or timeout). s.end returns true exactly
+// once per session, so OnDisconnect fires and a reconnect starts at most once
+// per drop no matter how many paths observe it.
+func (c *WSClient) endSession(s *wsSession, cause error) {
+	if !s.end(websocket.StatusGoingAway, "connection lost") {
+		return
 	}
-	defer c.reconnecting.Store(false)
 
-	c.reconnectMu.Lock()
-	defer c.reconnectMu.Unlock()
+	c.mu.Lock()
+	if !c.session.CompareAndSwap(s, nil) && c.session.Load() != nil {
+		// A newer session is already live; this one was stale.
+		c.mu.Unlock()
+		return
+	}
+	if c.closed {
+		c.connected.Store(false)
+		c.mu.Unlock()
+		return
+	}
+	if c.config.AutoReconnect && !c.reconnecting.Load() {
+		// reconnecting goes true before connected goes false, so IsUsable
+		// never reports a false gap.
+		c.reconnecting.Store(true)
+		c.connected.Store(false)
+		c.wg.Add(1)
+		go c.reconnectLoop()
+	} else {
+		c.connected.Store(false)
+	}
+	c.mu.Unlock()
+
+	c.logger.Warn("WebSocket connection lost", "error", cause)
+	if cb := c.config.OnDisconnect; cb != nil {
+		go cb(cause)
+	}
+}
+
+// reconnectLoop re-establishes the connection with exponential backoff until
+// it succeeds with a live session, gives up, or the client is closed.
+func (c *WSClient) reconnectLoop() {
+	defer c.wg.Done()
 
 	c.logger.Warn("Connection lost, initiating reconnection")
-	c.connected.Store(false)
-
-	// Close existing connection if still open
-	if c.conn != nil {
-		_ = c.conn.Close(websocket.StatusGoingAway, "reconnecting")
-		c.conn = nil
+	for {
+		dialed := c.reconnectUntilDialed() == nil
+		if c.finishReconnect(dialed) {
+			return
+		}
+		c.logger.Warn("Reconnected session dropped immediately, reconnecting again")
 	}
+}
 
-	for c.reconnectMgr.ShouldReconnect() {
+// reconnectUntilDialed runs backoff + dial attempts until one dial succeeds
+// (nil), attempts are exhausted, or the client is closed.
+func (c *WSClient) reconnectUntilDialed() error {
+	for {
 		attempt := c.reconnectMgr.GetAttempts() + 1
 		delay := c.reconnectMgr.GetCurrentDelay()
 		c.logger.Debug("Waiting for reconnect backoff", "attempt", attempt, "delay", delay)
 
-		// Wait for backoff duration
-		if err := c.reconnectMgr.WaitForReconnect(c.ctx); err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		if err := c.reconnectMgr.WaitForReconnect(c.lifeCtx); err != nil {
+			if errors.Is(err, ErrMaxReconnectAttempts) {
+				c.logger.Error("Max reconnection attempts reached, giving up")
+				return err
+			}
+			if c.lifeCtx.Err() != nil {
 				c.logger.Debug("Reconnection canceled", "error", err)
 				return err
 			}
-			if errors.Is(err, ErrMaxReconnectAttempts) {
-				c.logger.Error("Max reconnection attempts reached")
-				return err
-			}
-			// Other errors, continue trying
+			// Wait interrupted by a Reset/Stop while the client is still
+			// alive: try again.
 			continue
 		}
 
-		// Attempt to reconnect
 		c.logger.Debug("Attempting reconnection", "attempt", attempt)
-		if err := c.connectInternal(); err != nil {
-			c.logger.Warn("Reconnection attempt failed", "attempt", attempt, "error", err)
-			// Connection failed, will retry
-			continue
+		err := c.dialSession(c.lifeCtx)
+		if err == nil {
+			return nil
 		}
+		c.logger.Warn("Reconnection attempt failed", "attempt", attempt, "error", err)
+		if errors.Is(err, errClientClosed) {
+			return err
+		}
+	}
+}
 
-		// Reconnection successful
-		attempts := c.reconnectMgr.GetAttempts()
+// finishReconnect makes the reconnect loop's exit decision under mu. It
+// returns false when the loop must go on: the dial succeeded but that session
+// already died, and its endSession saw reconnecting=true and so started no
+// loop of its own.
+func (c *WSClient) finishReconnect(dialed bool) bool {
+	c.mu.Lock()
+	if dialed && !c.closed && c.session.Load() == nil {
+		c.mu.Unlock()
+		return false
+	}
+	success := dialed && !c.closed
+	attempts := 0
+	if success {
+		// Reset under mu: a session drop after unlock starts a new loop whose
+		// backoff wait a later Reset would otherwise cancel.
+		attempts = c.reconnectMgr.GetAttempts()
 		c.reconnectMgr.Reset()
+	}
+	c.reconnecting.Store(false)
+	c.mu.Unlock()
 
-		// Restart health monitoring
-		if c.config.PingInterval > 0 {
-			c.startHealthMonitor()
-		}
-
+	if success {
 		c.logger.Info("Successfully reconnected", "totalAttempts", attempts)
-
-		// Notify reconnect callback
-		if c.config.OnReconnect != nil {
-			c.config.OnReconnect(attempts)
-		}
-
-		return nil
-	}
-
-	c.logger.Error("Max reconnection attempts reached, giving up")
-	return ErrMaxReconnectAttempts
-}
-
-// connectInternal performs the actual connection without starting readLoop.
-// The caller (readLoop during reconnection) continues to handle message reading.
-func (c *WSClient) connectInternal() error {
-	// Build WebSocket URL
-	wsURL, err := c.buildWSURL()
-	if err != nil {
-		return fmt.Errorf("building WebSocket URL: %w", err)
-	}
-
-	c.logger.Debug("Dialing WebSocket during reconnect")
-
-	// Create a scoped context with timeout for reconnection and authentication
-	connectCtx := c.ctx
-	if c.config.ConnectTimeout > 0 {
-		var cancel context.CancelFunc
-		connectCtx, cancel = context.WithTimeout(c.ctx, c.config.ConnectTimeout)
-		defer cancel()
-	}
-
-	// Dial WebSocket
-	conn, resp, err := websocket.Dial(connectCtx, wsURL, nil)
-	if resp != nil && resp.Body != nil {
-		_ = resp.Body.Close()
-	}
-	if err != nil {
-		c.logger.Warn("WebSocket dial failed during reconnect", "error", err)
-		return fmt.Errorf("dialing WebSocket: %w", err)
-	}
-	c.conn = conn
-
-	c.conn.SetReadLimit(maxWSMessageSize)
-
-	// Perform authentication
-	if err := c.authenticate(connectCtx); err != nil {
-		c.logger.Error("Authentication failed during reconnect", "error", err)
-		_ = c.conn.Close(websocket.StatusProtocolError, "auth failed")
-		c.conn = nil
-		return fmt.Errorf("authentication: %w", err)
-	}
-
-	// Mark as connected
-	c.connected.Store(true)
-
-	return nil
-}
-
-// handleResultMessage routes a result message to the appropriate pending channel.
-func (c *WSClient) handleResultMessage(data []byte) {
-	msgID, err := ParseMessageID(data)
-	if err != nil {
-		return
-	}
-
-	var result WSResultMessage
-	if err := json.Unmarshal(data, &result); err != nil {
-		return
-	}
-
-	c.pendingMu.RLock()
-	ch, ok := c.pending[msgID]
-	c.pendingMu.RUnlock()
-
-	if ok {
-		select {
-		case ch <- &result:
-		default:
-			// Channel full or closed, skip
+		if cb := c.config.OnReconnect; cb != nil {
+			go cb(attempts)
 		}
 	}
-}
-
-// closePendingChannels closes all pending response channels on disconnect.
-func (c *WSClient) closePendingChannels() {
-	c.pendingMu.Lock()
-	defer c.pendingMu.Unlock()
-
-	for id, ch := range c.pending {
-		close(ch)
-		delete(c.pending, id)
-	}
+	return true
 }
 
 // ErrRequestTimeout is returned when a request times out waiting for a response.
 var ErrRequestTimeout = errors.New("request timeout: no response received")
-
-// pendingRequest tracks a pending command awaiting response.
-type pendingRequest struct {
-	id           int64
-	responseChan chan *WSResultMessage
-	timer        *time.Timer
-	cleaned      bool
-}
-
-// cleanup removes the pending request from the map.
-func (p *pendingRequest) cleanup(c *WSClient) {
-	if p.cleaned {
-		return
-	}
-	p.cleaned = true
-	c.pendingMu.Lock()
-	delete(c.pending, p.id)
-	c.pendingMu.Unlock()
-}
 
 // SendCommand sends a command to Home Assistant and waits for a response.
 // It retries on transient failures like connection issues, waiting for reconnection if needed.
@@ -599,88 +527,135 @@ func (c *WSClient) SendCommand(ctx context.Context, msgType string, payload map[
 	var result *WSResultMessage
 
 	err := c.retryManager.Retry(ctx, func() error {
-		// Wait for connection if reconnecting
-		if !c.connected.Load() {
-			if c.config.AutoReconnect && c.reconnecting.Load() {
-				if waitErr := c.WaitForConnection(ctx); waitErr != nil {
-					return waitErr
-				}
-			} else {
-				return errors.New("not connected")
-			}
-		}
-
-		// Register pending request for this attempt
-		req := c.registerPendingRequest()
-		defer func() {
-			req.timer.Stop()
-			req.cleanup(c)
-		}()
-
-		// Send the command
-		if err := c.sendWSCommand(ctx, req.id, msgType, payload); err != nil {
-			return err
-		}
-
-		// Wait for response
-		var waitErr error
-		result, waitErr = c.waitForResponse(ctx, req.responseChan)
-		return waitErr
+		var attemptErr error
+		result, attemptErr = c.sendAttempt(ctx, msgType, payload)
+		return attemptErr
 	})
 
 	return result, err
 }
 
-// registerPendingRequest creates a new pending request with timeout cleanup.
-func (c *WSClient) registerPendingRequest() *pendingRequest {
-	id := c.msgID.Add(1)
-	responseChan := make(chan *WSResultMessage, 1)
-
-	c.pendingMu.Lock()
-	c.pending[id] = responseChan
-	c.pendingMu.Unlock()
-
-	timeout := c.config.RequestTimeout
-	if timeout == 0 {
-		timeout = defaultRequestTimeout
+// sendAttempt is one retry attempt: pick the session, write the command in
+// id order, and wait for its result.
+func (c *WSClient) sendAttempt(ctx context.Context, msgType string, payload map[string]any) (*WSResultMessage, error) {
+	s, err := c.currentSession(ctx)
+	if err != nil {
+		return nil, err
 	}
-
-	timer := time.AfterFunc(timeout, func() {
-		c.pendingMu.Lock()
-		if ch, ok := c.pending[id]; ok {
-			delete(c.pending, id)
-			close(ch)
-		}
-		c.pendingMu.Unlock()
-	})
-
-	return &pendingRequest{id: id, responseChan: responseChan, timer: timer}
+	id, ch, err := c.writeCommand(ctx, s, msgType, payload)
+	if err != nil {
+		return nil, err
+	}
+	return c.awaitResult(ctx, s, id, ch)
 }
 
-// sendWSCommand marshals and sends a WebSocket command.
-func (c *WSClient) sendWSCommand(ctx context.Context, id int64, msgType string, payload map[string]any) error {
-	cmd := &WSCommandWithPayload{ID: id, Type: msgType, Payload: payload}
-	data, err := json.Marshal(cmd)
-	if err != nil {
-		return fmt.Errorf("marshaling command: %w", err)
+// currentSession returns the live session, waiting for a running reconnect
+// if there is none.
+func (c *WSClient) currentSession(ctx context.Context) (*wsSession, error) {
+	if c.lifeCtx.Err() != nil {
+		return nil, errClientClosed
 	}
-	if err := c.conn.Write(ctx, websocket.MessageText, data); err != nil {
-		return fmt.Errorf("sending command: %w", err)
+	if s := c.session.Load(); s != nil {
+		return s, nil
+	}
+	if c.config.AutoReconnect && c.reconnecting.Load() {
+		if err := c.WaitForConnection(ctx); err != nil {
+			return nil, err
+		}
+		if s := c.session.Load(); s != nil {
+			return s, nil
+		}
+	}
+	return nil, newNotSentError(errors.New("not connected"))
+}
+
+// acquireSend takes the send slot, giving up when ctx ends or s ends.
+func (c *WSClient) acquireSend(ctx context.Context, s *wsSession) error {
+	select {
+	case c.sendSem <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.done:
+		return newNotSentError(errConnectionLost)
+	}
+	if err := ctx.Err(); err != nil {
+		// select picks randomly among ready cases; don't send for a caller
+		// that already gave up.
+		<-c.sendSem
+		return err
 	}
 	return nil
 }
 
-// waitForResponse waits for a response on the channel or context cancellation.
-func (c *WSClient) waitForResponse(ctx context.Context, responseChan chan *WSResultMessage) (*WSResultMessage, error) {
+// writeCommand allocates the id, registers it and writes the command, all
+// under the send slot, so ids hit the wire strictly increasing. A failed
+// write ends the session: the connection is unusable after it.
+func (c *WSClient) writeCommand(ctx context.Context, s *wsSession, msgType string, payload map[string]any) (int64, <-chan wsResponse, error) {
+	if err := c.acquireSend(ctx, s); err != nil {
+		return 0, nil, err
+	}
+
+	id := c.msgID.Add(1)
+	ch, err := s.register(id)
+	if err != nil {
+		<-c.sendSem
+		return 0, nil, err
+	}
+	data, err := json.Marshal(&WSCommandWithPayload{ID: id, Type: msgType, Payload: payload})
+	if err != nil {
+		<-c.sendSem
+		s.unregister(id)
+		return 0, nil, fmt.Errorf("marshaling command: %w", err)
+	}
+	err = c.writeFrame(s, data)
+	<-c.sendSem
+
+	if err != nil {
+		s.unregister(id)
+		c.endSession(s, err)
+		return 0, nil, newNotSentError(fmt.Errorf("sending command: %w", err))
+	}
+	return id, ch, nil
+}
+
+// writeFrame writes data bounded by the session (not the caller's ctx: a
+// write abandoned mid-frame makes the library close the shared connection)
+// and the write timeout.
+func (c *WSClient) writeFrame(s *wsSession, data []byte) error {
+	timeout := c.config.WriteTimeout
+	if timeout <= 0 {
+		timeout = defaultWriteTimeout
+	}
+	wctx, cancel := context.WithTimeout(s.ctx, timeout)
+	defer cancel()
+	return s.conn.Write(wctx, websocket.MessageText, data)
+}
+
+// awaitResult waits for the response to id, expiring it after RequestTimeout.
+func (c *WSClient) awaitResult(ctx context.Context, s *wsSession, id int64, ch <-chan wsResponse) (*WSResultMessage, error) {
+	timeout := c.config.RequestTimeout
+	if timeout <= 0 {
+		timeout = defaultRequestTimeout
+	}
+	t := time.AfterFunc(timeout, func() { s.expire(id) })
+	defer t.Stop()
+	defer s.unregister(id)
+	return c.waitForResponse(ctx, ch)
+}
+
+// waitForResponse waits for a response on ch or context cancellation.
+func (c *WSClient) waitForResponse(ctx context.Context, ch <-chan wsResponse) (*WSResultMessage, error) {
 	select {
-	case result, ok := <-responseChan:
-		if !ok {
-			if !c.connected.Load() {
-				return nil, errors.New("connection closed while waiting for response")
-			}
-			return nil, ErrRequestTimeout
+	case resp := <-ch:
+		if resp.err != nil {
+			return nil, resp.err
 		}
+		result := resp.msg
 		if !result.Success && result.Error != nil {
+			if result.Error.Code == wsErrCodeIDReuse {
+				c.logger.Error("Home Assistant rejected a reused message id (client bug)",
+					"code", result.Error.Code, "message", result.Error.Message)
+			}
 			return nil, fmt.Errorf("command failed: %s - %s", result.Error.Code, result.Error.Message)
 		}
 		return result, nil
@@ -694,38 +669,42 @@ func (c *WSClient) SendSimpleCommand(ctx context.Context, msgType string) (*WSRe
 	return c.SendCommand(ctx, msgType, nil)
 }
 
-// Close closes the WebSocket connection and stops reconnection attempts.
+// Close closes the WebSocket connection, stops reconnection attempts and
+// waits for every client goroutine to exit. It is idempotent.
 func (c *WSClient) Close() error {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return nil
+	}
+	c.closed = true
+	c.mu.Unlock()
+
 	c.logger.Info("Closing WebSocket connection")
-
-	// Stop health monitoring and wait for the goroutine to exit
-	c.logger.Debug("Stopping health monitor")
-	c.stopHealthMonitor()
-
-	// Stop reconnection attempts
-	c.logger.Debug("Stopping reconnection manager")
 	c.reconnectMgr.Stop()
+	c.lifeCancel()
+	if s := c.session.Swap(nil); s != nil {
+		s.end(websocket.StatusNormalClosure, "client closing")
+	}
+	c.wg.Wait()
 
-	if c.cancel != nil {
-		c.cancel()
-	}
-	if c.conn != nil {
-		return c.conn.Close(websocket.StatusNormalClosure, "client closing")
-	}
+	c.mu.Lock()
+	c.connected.Store(false)
+	c.mu.Unlock()
 	return nil
 }
 
 // SetOnReconnect sets the callback function called after successful reconnection.
+// The callback runs on its own goroutine.
 func (c *WSClient) SetOnReconnect(fn OnReconnectFunc) {
 	c.config.OnReconnect = fn
 }
 
 // SetOnDisconnect sets the callback function called when disconnect is detected.
-// Contract: at most once per connection drop. Two independent paths can observe
-// a drop (health monitor ping failure and the read loop's Read error); the pin
-// test TestWSClient_OnDisconnect_CalledOncePerDrop guards that only one of them
-// reports. Pinned by that test, not enforced by a lock - keep it that way if
-// the notification paths are refactored.
+// Contract: at most once per connection drop, on its own goroutine with no
+// client lock held (so it may call Close). Several paths can observe one drop
+// (read loop, failed write, health monitor); all of them go through
+// endSession, and wsSession.end lets only the first one through.
 func (c *WSClient) SetOnDisconnect(fn OnDisconnectFunc) {
 	c.config.OnDisconnect = fn
 }
@@ -740,10 +719,16 @@ func (c *WSClient) IsConnected() bool {
 	return c.connected.Load()
 }
 
+// IsUsable reports whether the client is connected or reconnecting, i.e.
+// whether a command may still succeed without a new client.
+func (c *WSClient) IsUsable() bool {
+	return c.connected.Load() || c.reconnecting.Load()
+}
+
 // WaitForConnection waits until the client is connected or the context is canceled.
 // This is useful when a reconnection is in progress and the caller wants to wait for it.
-// Returns nil if connected, context error if canceled, or ErrMaxReconnectAttempts if
-// reconnection failed.
+// Returns nil if connected, context error if canceled, errClientClosed after Close,
+// or ErrMaxReconnectAttempts if reconnection failed.
 func (c *WSClient) WaitForConnection(ctx context.Context) error {
 	// Already connected, return immediately
 	if c.connected.Load() {
@@ -761,6 +746,8 @@ func (c *WSClient) WaitForConnection(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-c.lifeCtx.Done():
+			return errClientClosed
 		case <-ticker.C:
 			if c.connected.Load() {
 				return nil
