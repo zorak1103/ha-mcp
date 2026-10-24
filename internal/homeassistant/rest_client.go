@@ -147,11 +147,11 @@ func NewRESTClientWithConfig(baseURL, token string, config RESTClientConfig) *RE
 
 // doRequest executes an HTTP request with rate limiting and retry logic.
 // If a rate limiter is configured, it waits for permission before executing.
-// Retries are performed for transient failures (5xx, 429, network errors).
+// GET/HEAD retry on transient failures; other methods only on 429 and dial errors.
 func (c *RESTClient) doRequest(ctx context.Context, req *http.Request) (*http.Response, error) {
 	var resp *http.Response
 
-	err := c.retryManager.Retry(ctx, func() error {
+	err := c.retryManager.RetryIf(ctx, func() error {
 		// Wait for rate limiter if configured
 		if c.limiter != nil {
 			if err := c.limiter.Wait(ctx); err != nil {
@@ -182,6 +182,8 @@ func (c *RESTClient) doRequest(ctx context.Context, req *http.Request) (*http.Re
 		}
 
 		return nil
+	}, func(err error) bool {
+		return isRetryableRESTError(req.Method, err)
 	})
 
 	if err != nil && resp != nil {
