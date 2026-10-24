@@ -116,7 +116,8 @@ func newConnectedTestWSClient(t *testing.T, cfg WSClientConfig) *WSClient {
 
 // TestWSClient_PerformHealthCheck_PingTimeout pins the stale-pong branch: an
 // old lastPong routes the health check into handleConnectionFailure - the
-// disconnect callback fires and the health loop is told to exit.
+// session ends (connected=false), the disconnect callback fires once (on its
+// own goroutine) and the health loop is told to exit.
 func TestWSClient_PerformHealthCheck_PingTimeout(t *testing.T) {
 	t.Parallel()
 
@@ -133,10 +134,15 @@ func TestWSClient_PerformHealthCheck_PingTimeout(t *testing.T) {
 		t.Error("performHealthCheck() = false with stale pong, want true (exit signal)")
 	}
 	if client.connected.Load() {
-		// handleConnectionFailure itself does not store connected=false (the
-		// read loop / reconnect path does), so this just documents behavior.
-		t.Log("connected still true after failure report; notification paths own the flag")
+		t.Error("connected = true after the health check ended the session, want false")
 	}
+	// OnDisconnect runs on its own goroutine: wait for it, then make sure the
+	// read loop observing the same drop does not report it a second time.
+	deadline := time.Now().Add(2 * time.Second)
+	for disconnects.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+	time.Sleep(50 * time.Millisecond)
 	if got := disconnects.Load(); got != 1 {
 		t.Errorf("OnDisconnect called %d times, want exactly 1", got)
 	}

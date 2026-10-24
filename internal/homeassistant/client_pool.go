@@ -77,10 +77,10 @@ func (p *ClientPool) GetOrCreate(ctx context.Context, token string) (Client, err
 	// Use write lock to safely check and potentially modify lastUsed or remove disconnected clients
 	p.mu.Lock()
 	if pc, exists := p.clients[token]; exists {
-		// Check if client is still connected
-		if !isClientConnected(pc.client) {
-			// Client disconnected, remove from pool and create new one
-			p.logger.Debug("Removing disconnected client from pool", "tokenHash", tokenHash)
+		// Check if client is still usable (connected or reconnecting)
+		if !isClientUsable(pc.client) {
+			// Client unusable, remove from pool and create new one
+			p.logger.Debug("Removing unusable client from pool", "tokenHash", tokenHash)
 			_ = CloseClient(pc.client)
 			delete(p.clients, token)
 			p.mu.Unlock()
@@ -102,8 +102,8 @@ func (p *ClientPool) GetOrCreate(ctx context.Context, token string) (Client, err
 
 	// Double-check after acquiring write lock (another goroutine may have created it)
 	if pc, exists := p.clients[token]; exists {
-		// Re-check connection status
-		if !isClientConnected(pc.client) {
+		// Re-check usability
+		if !isClientUsable(pc.client) {
 			_ = CloseClient(pc.client)
 			delete(p.clients, token)
 			// Fall through to create new client
@@ -231,6 +231,16 @@ func isClientConnected(client Client) bool {
 	}
 	// If no connection check available, assume connected (optimistic)
 	return true
+}
+
+// isClientUsable reports whether the pooled client is worth keeping: it is
+// connected or still reconnecting. Prefers IsUsable (WSClient and its
+// wrappers), falls back to IsConnected, and is optimistic when neither exists.
+func isClientUsable(client Client) bool {
+	if checker, ok := client.(interface{ IsUsable() bool }); ok {
+		return checker.IsUsable()
+	}
+	return isClientConnected(client)
 }
 
 // hashToken creates a short hash of the token for safe logging.

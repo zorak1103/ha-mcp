@@ -126,10 +126,32 @@ func (r *RetryManager) CalculateBackoff(attempt int) time.Duration {
 	return time.Duration(delay)
 }
 
+// notSentError marks a failure that happened before the command reached the
+// wire (not connected, write timeout, ...). Nothing was delivered to Home
+// Assistant, so retrying cannot duplicate a side effect.
+type notSentError struct{ err error }
+
+// Error returns the wrapped error's message unchanged.
+func (e *notSentError) Error() string { return e.err.Error() }
+
+// Unwrap returns the wrapped error.
+func (e *notSentError) Unwrap() error { return e.err }
+
+// newNotSentError wraps err as a pre-send failure that is safe to retry.
+func newNotSentError(err error) error { return &notSentError{err: err} }
+
 // IsRetryableError determines if an error is transient and should be retried.
 func IsRetryableError(err error) bool {
 	if err == nil {
 		return false
+	}
+
+	// Pre-send failures are always retryable. This must precede the context
+	// check: a write timeout wraps context.DeadlineExceeded but is not the
+	// caller's cancellation (RetryManager.Retry checks ctx.Err() itself).
+	var notSent *notSentError
+	if errors.As(err, &notSent) {
+		return true
 	}
 
 	// Context errors are not retryable
