@@ -258,14 +258,30 @@ func (s *TemplateHelperIntegrationTestSuite) TestTemplateBinarySensorDelayRoundT
 	s.Require().NoError(err, "Failed to get entity registry entry")
 	s.Require().NotEmpty(regEntry.ConfigEntryID, "template binary sensor should have a config_entry_id")
 
-	options, err := s.Client().GetConfigEntryOptions(s.Context(), regEntry.ConfigEntryID)
-	s.Require().NoError(err, "Failed to get template config entry options")
+	// Poll briefly so a residual gap between the options-flow update and the
+	// stored entry becoming readable cannot flake the test; the assertions
+	// below run on the last options map either way.
+	var options map[string]any
+	optionsDeadline := time.Now().Add(10 * time.Second)
+	for {
+		options, err = s.Client().GetConfigEntryOptions(s.Context(), regEntry.ConfigEntryID)
+		s.Require().NoError(err, "Failed to get template config entry options")
+		if delay, isMap := options["delay_off"].(map[string]any); isMap {
+			if minutes, isNum := delay["minutes"].(float64); isNum && minutes >= 3 {
+				break
+			}
+		}
+		if time.Now().After(optionsDeadline) {
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
 	s.T().Logf("template_binary_sensor options: %+v", options)
 
 	delayOff, ok := options["delay_off"].(map[string]any)
-	s.Require().True(ok, "delay_off should be a flat duration dict, got %T: %v", options["delay_off"], options["delay_off"])
-	s.InDelta(3.0, delayOff["minutes"], 0.001, "delay_off should be 3 minutes")
-	s.NotContains(options, "additional_options", "the expandable section must be flattened away")
+	s.Require().True(ok, "delay_off should be a flat duration dict, got %T: %v (all options: %+v)", options["delay_off"], options["delay_off"], options)
+	s.InDelta(3.0, delayOff["minutes"], 0.001, "delay_off should be 3 minutes (all options: %+v)", options)
+	s.NotContains(options, "additional_options", "the expandable section must be flattened away (all options: %+v)", options)
 
 	// The action under test: get_details shows the stored delay in both formats.
 	naturalText := s.getDetailsEventually(entityID, "natural", "Delay before turning off: 00:03:00")

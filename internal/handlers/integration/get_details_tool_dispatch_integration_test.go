@@ -253,6 +253,7 @@ func (s *GetDetailsRemediationTestSuite) TestGetDetailsStatisticsMaxAge() {
 	createResult := s.CallTool("manage_helper", map[string]any{
 		"action":               "create",
 		"type":                 "statistics",
+		"id":                   statsName,
 		"name":                 statsName,
 		"entity_id":            sensorEntityID,
 		"state_characteristic": "mean",
