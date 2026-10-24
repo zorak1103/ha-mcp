@@ -200,8 +200,9 @@ func IsRetryableHTTPStatus(statusCode int) bool {
 
 // isRetryableRESTError decides whether a failed REST request may be re-sent.
 // Idempotent requests (GET, HEAD, or an empty method) retry on any transient
-// failure. Every other method retries only when the server provably did not
-// act on the request: a 429 response, or a failed dial (nothing was sent).
+// failure. Every other method retries only in two cases: a 429, which means
+// the request was rejected before processing, or a failed dial (nothing was
+// sent).
 func isRetryableRESTError(method string, err error) bool {
 	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false

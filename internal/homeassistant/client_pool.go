@@ -48,7 +48,8 @@ type PoolOption func(*ClientPool)
 
 // WithWSConfig sets the WebSocket client configuration (including retry
 // settings) used for every client the pool creates. A nil cfg means the
-// WebSocket client defaults.
+// WebSocket client defaults. The config is not copied; do not mutate it after
+// passing it.
 func WithWSConfig(cfg *WSClientConfig) PoolOption {
 	return func(p *ClientPool) { p.wsConfig = cfg }
 }

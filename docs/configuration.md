@@ -166,7 +166,7 @@ export HA_MCP_LOG_LEVEL=info
 # REST API settings (optional)
 export HA_REST_RATE_LIMIT=10   # Requests per second (0 = unlimited, default: 10)
 export HA_REST_RATE_BURST=5    # Maximum burst size (default: 5)
-export HA_REST_MAX_RETRIES=3   # Max retry attempts (default: 3)
+export HA_REST_MAX_RETRIES=3   # Max retry attempts (0 = no retries, default: 3)
 export HA_REST_RETRY_INITIAL_DELAY_MS=100  # Initial retry delay in ms (default: 100)
 export HA_REST_RETRY_MAX_DELAY_MS=5000     # Max retry delay in ms (default: 5000)
 
@@ -199,7 +199,7 @@ See `configs/.env.example` for the full environment file template.
 
 The `HA_REST_*` and `HA_WS_*` retry settings are applied to the clients at startup:
 
-- **REST**: GET and HEAD requests are retried on any transient failure (5xx, 429, network errors). Other methods (create/update/delete, config flow steps, template render) are retried only on 429 and connection-setup (dial) failures, because replaying them after a 5xx or a timeout could run a write twice.
+- **REST**: GET and HEAD requests are retried on any transient failure (429, 500/502/503/504, network errors; not client timeouts). Other methods (create/update/delete, config flow steps, template render) are retried only on 429 and connection-setup (dial) failures, because replaying them after a 5xx or a timeout could run a write twice.
 - **WebSocket**: the settings bound the retries of a single command. `0` disables retries.
 - A delay of 0 or less falls back to the default, and a max delay below the initial delay is raised to the initial delay.
 

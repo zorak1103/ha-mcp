@@ -32,10 +32,11 @@ homeassistant:
     rate_limit: 10
     # Burst size: maximum burst of requests allowed (default: 5)
     rate_burst: 5
-    # Retry settings for transient failures. GET/HEAD requests retry on 5xx, 429
-    # and network errors; other methods (create/update/delete, flow steps,
-    # template render) retry only on 429 and connection-setup (dial) failures,
-    # because replaying them after a 5xx or timeout could run a write twice.
+    # Retry settings for transient failures. GET/HEAD requests retry on 429,
+    # 500/502/503/504 and network errors (not client timeouts); other methods
+    # (create/update/delete, flow steps, template render) retry only on 429 and
+    # connection-setup (dial) failures, because replaying them after a 5xx or
+    # timeout could run a write twice.
     # Max retry attempts (0 = no retries, default: 3)
     max_retries: 3
     # Initial delay between retries in milliseconds (default: 100)
