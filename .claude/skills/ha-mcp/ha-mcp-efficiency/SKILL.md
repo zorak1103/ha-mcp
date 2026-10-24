@@ -17,14 +17,14 @@ description: "Use when planning multi-call ha-mcp workflows or when token usage 
 
 **Never loop `get_state` N times.** One `query_entities` call replaces all of them.
 
-| Scenario                                           | Mode         | Key params                             |
-| -------------------------------------------------- | ------------ | -------------------------------------- |
-| Browse entities by domain, area, or state          | `current`    | `domain`, `area_id`, `state_filter`    |
-| Find unavailable / unknown / stale entities        | `health`     | `categories`, `include_disabled`       |
-| Who's home? Device trackers / persons              | `presence`   | (none extra)                           |
-| Sensor readings over a time range                  | `history`    | `entity_ids`, `start_time`, `end_time` |
-| Min/max/mean aggregated stats                      | `statistics` | `statistic_ids`, `period`              |
-| What entity domains exist in this HA instance?     | `domains`    | (none)                                 |
+| Scenario                                           | Mode         | Key params                               |
+| -------------------------------------------------- | ------------ | ---------------------------------------- |
+| Browse entities by domain, area, or state          | `current`    | `domain`, `area_id`, `state`             |
+| Find unavailable / unknown / stale entities        | `health`     | `categories`, `domain`, `stale_days`     |
+| Who's home? Device trackers / persons              | `presence`   | (none extra)                             |
+| Sensor readings over a time range                  | `history`    | `entity_id`, `start_time`, `end_time`    |
+| Min/max/mean aggregated stats                      | `statistics` | `statistic_ids`, `period`                |
+| What entity domains exist in this HA instance?     | `domains`    | (none)                                   |
 
 ## Patch Over Update
 

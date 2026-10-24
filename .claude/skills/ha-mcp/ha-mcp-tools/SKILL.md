@@ -101,7 +101,7 @@ Key non-obvious parameters for `create` and `update` actions:
 - automation_id (string, optional on create): override the auto-generated slug (needed for non-ASCII aliases)
 - mode (string, optional): `single` | `restart` | `queued` | `parallel` (HA default: single)
 - max (integer, optional): concurrent run limit; only for mode=parallel|queued (HA default 10)
-- triggers, conditions, actions (arrays): automation body
+- trigger, condition, automation_action (arrays): automation body
 
 **manage_script:**
 - alias (string, required on create): human-readable name; HA slugifies it to derive entity_id

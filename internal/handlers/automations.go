@@ -195,6 +195,7 @@ Actions:
 					Type:        "integer",
 					Description: "Maximum number of automations to return (for list action, max 1000)",
 				},
+				"offset": paginationOffsetSchema(),
 				"cursor": {
 					Type:        "string",
 					Description: "Pagination cursor from previous response (for list action)",

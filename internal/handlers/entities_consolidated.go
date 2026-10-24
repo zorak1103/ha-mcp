@@ -622,6 +622,7 @@ func queryEntitiesProperties() map[string]mcp.JSONSchema {
 			Type:        "integer",
 			Description: "Maximum number of results to return. Use with 'cursor' for pagination",
 		},
+		"offset": paginationOffsetSchema(),
 		"cursor": {
 			Type:        "string",
 			Description: "Pagination cursor from previous response",

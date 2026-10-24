@@ -116,6 +116,7 @@ func getRegistryProperties() map[string]mcp.JSONSchema {
 			Type:        "integer",
 			Description: "Maximum number of entries to return (max 1000). Use with 'cursor' for pagination.",
 		},
+		"offset": paginationOffsetSchema(),
 		"cursor": {
 			Type:        "string",
 			Description: "Pagination cursor from previous response to get next page",

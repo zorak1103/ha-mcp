@@ -71,6 +71,7 @@ func (h *LogbookHandlers) getLogbookTool() mcp.Tool {
 					Type:        "integer",
 					Description: "Maximum number of logbook entries to return (max 1000, default: no limit). Use with 'cursor' for pagination.",
 				},
+				"offset": paginationOffsetSchema(),
 				"cursor": {
 					Type:        "string",
 					Description: "Pagination cursor from previous response to get next page of results",

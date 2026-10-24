@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+
+	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
 
 const (
@@ -45,6 +47,15 @@ type PaginationMetadata struct {
 type PaginatedResponse[T any] struct {
 	Items      []T                `json:"items"`
 	Pagination PaginationMetadata `json:"pagination"`
+}
+
+// paginationOffsetSchema returns the schema for the "offset" argument that
+// ParsePaginationParams reads, for every tool that paginates through it.
+func paginationOffsetSchema() mcp.JSONSchema {
+	return mcp.JSONSchema{
+		Type:        "integer",
+		Description: "Number of results to skip before the first returned item (alternative to cursor)",
+	}
 }
 
 // ParsePaginationParams extracts pagination parameters from tool arguments.
