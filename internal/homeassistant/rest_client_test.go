@@ -2,10 +2,13 @@ package homeassistant
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1513,6 +1516,103 @@ func TestRESTClient_UpdateAutomation(t *testing.T) {
 			}
 		})
 	}
+}
+
+// captureBodyServer returns a test server that records the request body of
+// the last request and answers 200.
+func captureBodyServer(t *testing.T) (*httptest.Server, func() string) {
+	t.Helper()
+
+	var (
+		mu   sync.Mutex
+		body string
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		body = string(b)
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+
+	return server, func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return body
+	}
+}
+
+func TestRESTClient_KeyOrder_AutomationBodyKeepsOrder(t *testing.T) {
+	t.Parallel()
+
+	raw := `{"id":"a1","alias":"x","variables":{"zeta":1,"alpha":"{{ zeta }}"},"triggers":[{"platform":"time","at":"08:00:00"}]}`
+	var cfg AutomationConfig
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	t.Run("update", func(t *testing.T) {
+		t.Parallel()
+
+		server, body := captureBodyServer(t)
+		client := NewRESTClient(server.URL, "test-token")
+		if err := client.UpdateAutomation(context.Background(), "a1", cfg); err != nil {
+			t.Fatalf("UpdateAutomation() error = %v", err)
+		}
+		if got := body(); got != raw {
+			t.Errorf("body = %s, want %s", got, raw)
+		}
+	})
+
+	t.Run("create", func(t *testing.T) {
+		t.Parallel()
+
+		server, body := captureBodyServer(t)
+		client := NewRESTClient(server.URL, "test-token")
+		if err := client.CreateAutomation(context.Background(), cfg); err != nil {
+			t.Fatalf("CreateAutomation() error = %v", err)
+		}
+		if got := body(); got != raw {
+			t.Errorf("body = %s, want %s", got, raw)
+		}
+	})
+}
+
+func TestRESTClient_KeyOrder_ScriptBodyKeepsOrder(t *testing.T) {
+	t.Parallel()
+
+	raw := `{"alias":"s","variables":{"zeta":1,"alpha":"{{ zeta }}"},"sequence":[{"variables":{"y":1,"b":2},"service":"a.b"}]}`
+	var cfg ScriptConfig
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	t.Run("create", func(t *testing.T) {
+		t.Parallel()
+
+		server, body := captureBodyServer(t)
+		client := NewRESTClient(server.URL, "test-token")
+		if err := client.CreateScript(context.Background(), "s1", cfg); err != nil {
+			t.Fatalf("CreateScript() error = %v", err)
+		}
+		if got := body(); got != raw {
+			t.Errorf("body = %s, want %s", got, raw)
+		}
+	})
+
+	t.Run("update", func(t *testing.T) {
+		t.Parallel()
+
+		server, body := captureBodyServer(t)
+		client := NewRESTClient(server.URL, "test-token")
+		if err := client.UpdateScript(context.Background(), "s1", cfg); err != nil {
+			t.Fatalf("UpdateScript() error = %v", err)
+		}
+		if got := body(); got != raw {
+			t.Errorf("body = %s, want %s", got, raw)
+		}
+	})
 }
 
 func TestRESTClient_CreateScript(t *testing.T) {

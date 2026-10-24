@@ -7,6 +7,9 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+
+	"github.com/zorak1103/ha-mcp/internal/jsonorder"
 )
 
 func TestFlexibleString_UnmarshalJSON(t *testing.T) {
@@ -659,7 +662,7 @@ func TestAutomation_JSONRoundtrip(t *testing.T) {
 		t.Fatalf("Unmarshal failed: %v", err)
 	}
 
-	if diff := cmp.Diff(automation, got); diff != "" {
+	if diff := cmp.Diff(automation, got, cmpopts.IgnoreFields(AutomationConfig{}, "KeyOrder")); diff != "" {
 		t.Errorf("Roundtrip mismatch (-want +got):\n%s", diff)
 	}
 }
@@ -688,7 +691,7 @@ func TestAutomationConfig_JSONRoundtrip(t *testing.T) {
 		t.Fatalf("Unmarshal failed: %v", err)
 	}
 
-	if diff := cmp.Diff(config, got); diff != "" {
+	if diff := cmp.Diff(config, got, cmpopts.IgnoreFields(AutomationConfig{}, "KeyOrder")); diff != "" {
 		t.Errorf("Roundtrip mismatch (-want +got):\n%s", diff)
 	}
 }
@@ -754,8 +757,299 @@ func TestScriptConfig_JSONRoundtrip(t *testing.T) {
 		t.Fatalf("Unmarshal failed: %v", err)
 	}
 
-	if diff := cmp.Diff(config, got); diff != "" {
+	if diff := cmp.Diff(config, got, cmpopts.IgnoreFields(ScriptConfig{}, "KeyOrder")); diff != "" {
 		t.Errorf("Roundtrip mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// mustUnmarshalAutomationConfig decodes raw into an AutomationConfig.
+func mustUnmarshalAutomationConfig(t *testing.T, raw string) AutomationConfig {
+	t.Helper()
+
+	var cfg AutomationConfig
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+	return cfg
+}
+
+// mustUnmarshalScriptConfig decodes raw into a ScriptConfig.
+func mustUnmarshalScriptConfig(t *testing.T, raw string) ScriptConfig {
+	t.Helper()
+
+	var cfg ScriptConfig
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+	return cfg
+}
+
+func TestAutomationConfig_KeyOrder_VariablesSurviveRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	cfg := mustUnmarshalAutomationConfig(t,
+		`{"id":"a","alias":"x","variables":{"zeta":1,"alpha":"{{ zeta }}"},"triggers":[{"platform":"time","at":"08:00:00"}]}`)
+
+	if cfg.KeyOrder == nil {
+		t.Fatal("KeyOrder is nil after Unmarshal")
+	}
+
+	got, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+
+	want := `{"id":"a","alias":"x","variables":{"zeta":1,"alpha":"{{ zeta }}"},"triggers":[{"platform":"time","at":"08:00:00"}]}`
+	if string(got) != want {
+		t.Errorf("Marshal = %s, want %s", got, want)
+	}
+}
+
+func TestAutomationConfig_KeyOrder_SingularKeysNormalizedToPlural(t *testing.T) {
+	t.Parallel()
+
+	cfg := mustUnmarshalAutomationConfig(t,
+		`{"trigger":[{"platform":"state","variables":{"z":1,"a":2},"entity_id":"x"}],`+
+			`"condition":[{"condition":"state","state":"on","entity_id":"y"}],`+
+			`"action":[{"service":"s.t","data":{"zz":1,"aa":2}}]}`)
+
+	got, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+
+	want := `{"triggers":[{"platform":"state","variables":{"z":1,"a":2},"entity_id":"x"}],` +
+		`"conditions":[{"condition":"state","state":"on","entity_id":"y"}],` +
+		`"actions":[{"service":"s.t","data":{"zz":1,"aa":2}}]}`
+	if string(got) != want {
+		t.Errorf("Marshal = %s, want %s", got, want)
+	}
+
+	for _, singular := range []string{"trigger", "condition", "action"} {
+		if _, ok := cfg.KeyOrder.Fields[singular]; ok {
+			t.Errorf("KeyOrder.Fields still has singular key %q", singular)
+		}
+		for _, k := range cfg.KeyOrder.Keys {
+			if k == singular {
+				t.Errorf("KeyOrder.Keys still has singular key %q", singular)
+			}
+		}
+	}
+}
+
+func TestAutomationConfig_KeyOrder_PluralWinsWhenBothPresent(t *testing.T) {
+	t.Parallel()
+
+	cfg := mustUnmarshalAutomationConfig(t,
+		`{"trigger":[{"b":1,"a":2}],"triggers":[{"z":1,"a":2}]}`)
+
+	got, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+
+	want := `{"triggers":[{"z":1,"a":2}]}`
+	if string(got) != want {
+		t.Errorf("Marshal = %s, want %s", got, want)
+	}
+	if diff := cmp.Diff([]string{"triggers"}, cfg.KeyOrder.Keys); diff != "" {
+		t.Errorf("KeyOrder.Keys mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestAutomationConfig_KeyOrder_PluralBeforeSingularKeepsPluralOrder(t *testing.T) {
+	t.Parallel()
+
+	cfg := mustUnmarshalAutomationConfig(t,
+		`{"triggers":[{"z":1,"a":2}],"trigger":[{"b":1,"a":2}],"alias":"x"}`)
+
+	got, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+
+	want := `{"triggers":[{"z":1,"a":2}],"alias":"x"}`
+	if string(got) != want {
+		t.Errorf("Marshal = %s, want %s", got, want)
+	}
+}
+
+func TestAutomationConfig_KeyOrder_UnrecordedKeysFollowSorted(t *testing.T) {
+	t.Parallel()
+
+	cfg := mustUnmarshalAutomationConfig(t, `{"alias":"x","variables":{"zeta":1,"alpha":2}}`)
+	cfg.Variables["mid"] = 3
+	cfg.Mode = "single"
+
+	got, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+
+	want := `{"alias":"x","variables":{"zeta":1,"alpha":2,"mid":3},"mode":"single"}`
+	if string(got) != want {
+		t.Errorf("Marshal = %s, want %s", got, want)
+	}
+}
+
+func TestAutomationConfig_Marshal_NilKeyOrderIsByteIdentical(t *testing.T) {
+	t.Parallel()
+
+	cfg := AutomationConfig{
+		ID:        "a",
+		Alias:     "b",
+		Mode:      "single",
+		Max:       3,
+		Triggers:  []any{map[string]any{"platform": "time"}},
+		Variables: map[string]any{"b": 1, "a": 2},
+	}
+
+	got, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+
+	want := `{"id":"a","alias":"b","mode":"single","max":3,"triggers":[{"platform":"time"}],"variables":{"a":2,"b":1}}`
+	if string(got) != want {
+		t.Errorf("Marshal = %s, want %s", got, want)
+	}
+
+	gotPtr, err := json.Marshal(&cfg)
+	if err != nil {
+		t.Fatalf("Marshal(&cfg) failed: %v", err)
+	}
+	if string(gotPtr) != want {
+		t.Errorf("Marshal(&cfg) = %s, want %s", gotPtr, want)
+	}
+}
+
+func TestAutomationConfig_Marshal_Error(t *testing.T) {
+	t.Parallel()
+
+	for name, cfg := range map[string]AutomationConfig{
+		"nil order":  {Variables: map[string]any{"bad": make(chan int)}},
+		"with order": {Variables: map[string]any{"bad": make(chan int)}, KeyOrder: &jsonorder.Order{Keys: []string{"variables"}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			if _, err := json.Marshal(cfg); err == nil {
+				t.Error("Marshal() error = nil, want error for unsupported value")
+			}
+		})
+	}
+}
+
+func TestAutomation_KeyOrder_EmbeddedConfigKeepsOrder(t *testing.T) {
+	t.Parallel()
+
+	cfg := mustUnmarshalAutomationConfig(t, `{"alias":"x","variables":{"zeta":1,"alpha":2}}`)
+
+	t.Run("pointer field", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := json.Marshal(Automation{EntityID: "automation.x", Config: &cfg})
+		if err != nil {
+			t.Fatalf("Marshal failed: %v", err)
+		}
+		want := `{"entity_id":"automation.x","state":"","config":{"alias":"x","variables":{"zeta":1,"alpha":2}}}`
+		if string(got) != want {
+			t.Errorf("Marshal = %s, want %s", got, want)
+		}
+	})
+
+	t.Run("value field", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := json.Marshal(struct {
+			Config AutomationConfig `json:"config"`
+		}{Config: cfg})
+		if err != nil {
+			t.Fatalf("Marshal failed: %v", err)
+		}
+		want := `{"config":{"alias":"x","variables":{"zeta":1,"alpha":2}}}`
+		if string(got) != want {
+			t.Errorf("Marshal = %s, want %s", got, want)
+		}
+	})
+}
+
+func TestScriptConfig_KeyOrder_SurvivesRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	cfg := mustUnmarshalScriptConfig(t,
+		`{"alias":"s","fields":{"zf":{"selector":{},"name":"n"},"af":{}},`+
+			`"variables":{"zeta":1,"alpha":"{{ zeta }}"},`+
+			`"sequence":[{"variables":{"y":1,"b":2},"service":"a.b"}]}`)
+
+	if cfg.KeyOrder == nil {
+		t.Fatal("KeyOrder is nil after Unmarshal")
+	}
+
+	got, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+
+	want := `{"alias":"s","fields":{"zf":{"selector":{},"name":"n"},"af":{}},` +
+		`"variables":{"zeta":1,"alpha":"{{ zeta }}"},` +
+		`"sequence":[{"variables":{"y":1,"b":2},"service":"a.b"}]}`
+	if string(got) != want {
+		t.Errorf("Marshal = %s, want %s", got, want)
+	}
+}
+
+func TestScriptConfig_Unmarshal_MergesIntoExistingAndRejectsBadInput(t *testing.T) {
+	t.Parallel()
+
+	cfg := ScriptConfig{Alias: "keep", Mode: "single"}
+	if err := json.Unmarshal([]byte(`{"mode":"queued"}`), &cfg); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+	if cfg.Alias != "keep" || cfg.Mode != "queued" {
+		t.Errorf("got alias=%q mode=%q, want alias=keep mode=queued", cfg.Alias, cfg.Mode)
+	}
+
+	var bad ScriptConfig
+	if err := json.Unmarshal([]byte(`{"alias":5}`), &bad); err == nil {
+		t.Error("Unmarshal() error = nil, want type error")
+	}
+}
+
+func TestScriptConfig_Marshal_NilKeyOrderIsByteIdentical(t *testing.T) {
+	t.Parallel()
+
+	cfg := ScriptConfig{
+		Alias:     "s",
+		Mode:      "single",
+		Variables: map[string]any{"b": 1, "a": 2},
+	}
+
+	got, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+
+	want := `{"alias":"s","mode":"single","variables":{"a":2,"b":1},"sequence":null}`
+	if string(got) != want {
+		t.Errorf("Marshal = %s, want %s", got, want)
+	}
+}
+
+func TestScriptConfig_Marshal_Error(t *testing.T) {
+	t.Parallel()
+
+	for name, cfg := range map[string]ScriptConfig{
+		"nil order":  {Variables: map[string]any{"bad": make(chan int)}},
+		"with order": {Variables: map[string]any{"bad": make(chan int)}, KeyOrder: &jsonorder.Order{Keys: []string{"variables"}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			if _, err := json.Marshal(cfg); err == nil {
+				t.Error("Marshal() error = nil, want error for unsupported value")
+			}
+		})
 	}
 }
 
