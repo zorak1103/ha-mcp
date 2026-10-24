@@ -1924,6 +1924,12 @@ func (c *HybridClientCloser) IsConnected() bool {
 	return c.wsClient.IsConnected()
 }
 
+// IsUsable returns true if the underlying WebSocket client is connected or
+// reconnecting (i.e. not closed and worth keeping).
+func (c *HybridClientCloser) IsUsable() bool {
+	return c.wsClient.IsUsable()
+}
+
 // WaitForConnection waits until the underlying WebSocket client is connected.
 func (c *HybridClientCloser) WaitForConnection(ctx context.Context) error {
 	return c.wsClient.WaitForConnection(ctx)

@@ -1039,6 +1039,12 @@ func (c *CachedClient) IsConnected() bool {
 	return true
 }
 
+// IsUsable delegates to the underlying client, falling back to IsConnected,
+// and assumes usable when neither is implemented.
+func (c *CachedClient) IsUsable() bool {
+	return isClientUsable(c.client)
+}
+
 // Ensure CachedClient implements Client and ClientCloser interfaces.
 var (
 	_ Client       = (*CachedClient)(nil)

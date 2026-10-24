@@ -379,6 +379,54 @@ func (m *mockClient) SendHACSCommand(ctx context.Context, command string, data m
 	return nil, nil
 }
 
+// usableInnerClient exposes IsUsable (and IsConnected, to prove IsUsable wins).
+type usableInnerClient struct {
+	*mockClient
+	usable bool
+}
+
+func (c *usableInnerClient) IsUsable() bool    { return c.usable }
+func (c *usableInnerClient) IsConnected() bool { return !c.usable }
+
+// connectedOnlyInnerClient exposes only IsConnected.
+type connectedOnlyInnerClient struct {
+	*mockClient
+	connected bool
+}
+
+func (c *connectedOnlyInnerClient) IsConnected() bool { return c.connected }
+
+func TestCachedClient_IsUsable_Delegates(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.CacheConfig{Enabled: true}
+	logger := logging.New(logging.LevelError)
+
+	tests := []struct {
+		name  string
+		inner Client
+		want  bool
+	}{
+		{"inner IsUsable true", &usableInnerClient{mockClient: &mockClient{}, usable: true}, true},
+		{"inner IsUsable false", &usableInnerClient{mockClient: &mockClient{}, usable: false}, false},
+		{"inner IsConnected only, true", &connectedOnlyInnerClient{mockClient: &mockClient{}, connected: true}, true},
+		{"inner IsConnected only, false", &connectedOnlyInnerClient{mockClient: &mockClient{}, connected: false}, false},
+		{"inner has neither", &mockClient{}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cached, ok := NewCachedClient(tt.inner, cfg, logger).(*CachedClient)
+			if !ok {
+				t.Fatal("NewCachedClient did not return *CachedClient")
+			}
+			if got := cached.IsUsable(); got != tt.want {
+				t.Errorf("IsUsable() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCachedClient_CacheHit(t *testing.T) {
 	mock := &mockClient{}
 	cfg := config.CacheConfig{

@@ -605,6 +605,155 @@ func TestClientPool_GetOrCreate_RemovesDisconnectedClient(t *testing.T) {
 	}
 }
 
+// usabilityClientForPool is a pool mock that is not connected but reports
+// whether it is still usable (e.g. mid-reconnect), like WSClient.IsUsable.
+type usabilityClientForPool struct {
+	mockClientForPool
+	usable bool
+}
+
+func (m *usabilityClientForPool) IsUsable() bool { return m.usable }
+
+func TestClientPool_DoesNotEvictReconnectingClient(t *testing.T) {
+	t.Parallel()
+
+	pool := NewClientPool("http://127.0.0.1:1", time.Minute)
+	defer pool.Close()
+
+	// Not connected, but usable: the client is reconnecting.
+	reconnecting := &usabilityClientForPool{mockClientForPool: mockClientForPool{connected: false}, usable: true}
+	pool.mu.Lock()
+	pool.clients["reconnecting-token"] = &pooledClient{client: reconnecting, lastUsed: time.Now()}
+	pool.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	got, err := pool.GetOrCreate(ctx, "reconnecting-token")
+	if err != nil {
+		t.Fatalf("GetOrCreate returned error: %v", err)
+	}
+	if got != Client(reconnecting) {
+		t.Error("GetOrCreate did not return the pooled reconnecting client")
+	}
+	if reconnecting.closed {
+		t.Error("reconnecting client was closed, want it left alone")
+	}
+}
+
+func TestClientPool_EvictsUnusableClient(t *testing.T) {
+	t.Parallel()
+
+	pool := NewClientPool("http://127.0.0.1:1", time.Minute)
+	defer pool.Close()
+
+	unusable := &usabilityClientForPool{mockClientForPool: mockClientForPool{connected: false}, usable: false}
+	pool.mu.Lock()
+	pool.clients["unusable-token"] = &pooledClient{client: unusable, lastUsed: time.Now()}
+	pool.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// The replacement dial to 127.0.0.1:1 fails, so an error is expected.
+	if _, err := pool.GetOrCreate(ctx, "unusable-token"); err == nil {
+		t.Fatal("GetOrCreate returned nil error, want dial failure")
+	}
+	if !unusable.closed {
+		t.Error("unusable client was not closed")
+	}
+}
+
+// TestClientPool_ClientOutlivesCreatingContext pins at pool level that a
+// pooled client's lifetime is independent of the context that created it.
+func TestClientPool_ClientOutlivesCreatingContext(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeHA(t)
+	pool := NewClientPool(fake.URL, time.Minute)
+	defer pool.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	c1, err := pool.GetOrCreate(ctx, "token-outlives-ctx")
+	if err != nil {
+		cancel()
+		t.Fatalf("first GetOrCreate failed: %v", err)
+	}
+	cancel()
+	time.Sleep(50 * time.Millisecond)
+
+	c2, err := pool.GetOrCreate(context.Background(), "token-outlives-ctx")
+	if err != nil {
+		t.Fatalf("second GetOrCreate failed: %v", err)
+	}
+	if c1 != c2 {
+		t.Error("second GetOrCreate returned a different client, want the pooled one")
+	}
+	checker, ok := c2.(interface{ IsConnected() bool })
+	if !ok {
+		t.Fatal("pooled client does not implement IsConnected")
+	}
+	if !checker.IsConnected() {
+		t.Error("pooled client is not connected after the creating context was canceled")
+	}
+	if got := fake.conns.Load(); got != 1 {
+		t.Errorf("fake HA saw %d connections, want 1", got)
+	}
+}
+
+// TestClientPool_RebuildsClientAfterAuthFailure pins that a pooled client
+// whose reconnect is rejected with auth_invalid becomes unusable, so the next
+// GetOrCreate for the same token closes it and builds a new, working client.
+func TestClientPool_RebuildsClientAfterAuthFailure(t *testing.T) {
+	t.Parallel()
+
+	// Auth attempt 1 = first client, 2 = its reconnect (rejected), 3 = rebuild.
+	fake := newFakeHA(t, withAuthInvalidOnAttempt(2))
+	pool := NewClientPool(fake.URL, time.Minute)
+	defer pool.Close()
+
+	const token = "token-auth-rebuild"
+	c1, err := pool.GetOrCreate(context.Background(), token)
+	if err != nil {
+		t.Fatalf("first GetOrCreate failed: %v", err)
+	}
+	old, ok := c1.(*HybridClientCloser)
+	if !ok {
+		t.Fatalf("pooled client is %T, want *HybridClientCloser", c1)
+	}
+
+	fake.dropAll()
+
+	// The pool's default reconnect backoff starts at 1s.
+	if !waitFor(5*time.Second, func() bool { return fake.authAttempts.Load() >= 2 && !old.wsClient.IsUsable() }) {
+		t.Fatalf("old client still usable after auth_invalid (authAttempts=%d)", fake.authAttempts.Load())
+	}
+
+	c2, err := pool.GetOrCreate(context.Background(), token)
+	if err != nil {
+		t.Fatalf("GetOrCreate after auth failure = %v, want a rebuilt client", err)
+	}
+	if c2 == c1 {
+		t.Fatal("GetOrCreate returned the unusable client, want a new one")
+	}
+	if old.wsClient.lifeCtx.Err() == nil {
+		t.Error("old client was not closed by the pool")
+	}
+	rebuilt, ok := c2.(*HybridClientCloser)
+	if !ok {
+		t.Fatalf("rebuilt client is %T, want *HybridClientCloser", c2)
+	}
+	if _, err := rebuilt.wsClient.SendCommand(context.Background(), "test/echo", nil); err != nil {
+		t.Errorf("command on rebuilt client = %v, want success", err)
+	}
+	if got := fake.authAttempts.Load(); got != 3 {
+		t.Errorf("authAttempts = %d, want 3", got)
+	}
+	if got := fake.conns.Load(); got != 2 {
+		t.Errorf("fake.conns (authenticated) = %d, want 2", got)
+	}
+}
+
 func TestClientPool_CleanupIdleClients_AllIdle(t *testing.T) {
 	t.Parallel()
 
