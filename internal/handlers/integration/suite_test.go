@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"github.com/stretchr/testify/suite"
 	"github.com/zorak1103/ha-mcp/internal/handlers"
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
+	"github.com/zorak1103/ha-mcp/internal/jsonorder"
 	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
 
@@ -207,6 +209,26 @@ func (s *IntegrationTestSuite) Client() homeassistant.Client {
 // test exercised - every existing test in this package calls Client()
 // methods directly instead.
 func (s *IntegrationTestSuite) CallTool(name string, args map[string]any) *mcp.ToolsCallResult {
+	return s.dispatchTool(s.ctx, name, args)
+}
+
+// CallToolJSON is CallTool for a raw JSON arguments object. Like the server it
+// decodes the arguments into a map, but additionally records the key order of
+// the raw document and hands it to the handler via mcp.WithArgumentOrder, so
+// handlers see exactly the key order a real MCP client sent (a Go map literal
+// has none). Use it for tests that depend on the caller's key order.
+func (s *IntegrationTestSuite) CallToolJSON(name, raw string) *mcp.ToolsCallResult {
+	var args map[string]any
+	s.Require().NoError(json.Unmarshal([]byte(raw), &args), "CallToolJSON %q: arguments are not a JSON object", name)
+
+	order, err := jsonorder.Capture([]byte(raw))
+	s.Require().NoError(err, "CallToolJSON %q: capturing argument key order", name)
+
+	return s.dispatchTool(mcp.WithArgumentOrder(s.ctx, order), name, args)
+}
+
+// dispatchTool is the shared body of CallTool and CallToolJSON.
+func (s *IntegrationTestSuite) dispatchTool(ctx context.Context, name string, args map[string]any) *mcp.ToolsCallResult {
 	handler, ok := s.registry.GetHandler(name)
 	s.Require().True(ok, "tool %q is not registered", name)
 
@@ -215,7 +237,7 @@ func (s *IntegrationTestSuite) CallTool(name string, args map[string]any) *mcp.T
 	tool, _ := s.registry.GetTool(name)
 	s.Require().Empty(mcp.UnknownArguments(tool.InputSchema, args), "CallTool %q: undeclared arguments (the server would reject them)", name)
 
-	result, err := handler(s.ctx, s.client, args)
+	result, err := handler(ctx, s.client, args)
 	s.Require().NoError(err, "handler for %q returned a Go error - handlers must report domain errors via IsError, not a Go error", name)
 
 	return result
