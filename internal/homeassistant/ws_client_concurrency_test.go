@@ -226,7 +226,7 @@ func TestWSClient_ConnectOutlivesContext(t *testing.T) {
 // TestWSClient_ReconnectUnderConcurrentLoad pins that requests in flight when
 // the connection drops fail fast and are retried on the single new connection.
 func TestWSClient_ReconnectUnderConcurrentLoad(t *testing.T) {
-	fake := newFakeHA(t, withHoldOnConn(1))
+	fake := newFakeHA(t, withHoldOnConn(1, "get_states"))
 	cfg := newConcurrencyTestConfig()
 	cfg.RequestTimeout = 5 * time.Second
 	client := connectFakeClient(t, fake, cfg)
@@ -235,7 +235,7 @@ func TestWSClient_ReconnectUnderConcurrentLoad(t *testing.T) {
 	errs := make(chan error, n)
 	for range n {
 		go func() {
-			_, err := client.SendCommand(context.Background(), "test/hold", nil)
+			_, err := client.SendCommand(context.Background(), "get_states", nil)
 			errs <- err
 		}()
 	}
