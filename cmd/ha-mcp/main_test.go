@@ -14,6 +14,23 @@ import (
 	"github.com/zorak1103/ha-mcp/internal/config"
 )
 
+// isolateHAEnv blanks every HA_* variable in the caller's environment for the
+// duration of the test. config.Load binds many of them (HA_URL, HA_TOKEN,
+// HA_REST_*, ...) and an env var outranks the config file, so without this a
+// test that asserts config-file values only passes on machines that export none.
+// Scanning os.Environ rather than listing names keeps it in step with config.go.
+// An empty value is treated as unset by viper. Not usable from parallel tests
+// (t.Setenv panics there).
+func isolateHAEnv(t *testing.T) {
+	t.Helper()
+	for _, kv := range os.Environ() {
+		name, _, _ := strings.Cut(kv, "=")
+		if strings.HasPrefix(name, "HA_") {
+			t.Setenv(name, "")
+		}
+	}
+}
+
 func TestNewApp(t *testing.T) {
 	// Not parallel: uses global viper instance
 	app := NewApp()
@@ -360,6 +377,7 @@ func TestFlagOverridesReachLoadedConfig(t *testing.T) {
 	// End-to-end: CLI flags must override values that came from the config file.
 	// Regression: flags were bound to the global viper instance, which
 	// config.Load never reads, so --port etc. were silently ignored.
+	isolateHAEnv(t)
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yaml")
 	configContent := `homeassistant:
@@ -447,6 +465,7 @@ func TestVersionOutput(t *testing.T) {
 
 func TestFlagOverridesShownInConfigOutput(t *testing.T) {
 	// `config` display should reflect CLI flags, not just the config file.
+	isolateHAEnv(t)
 	tmpDir := t.TempDir()
 	configFile := filepath.Join(tmpDir, "config.yaml")
 	configContent := `homeassistant:
@@ -537,6 +556,7 @@ func TestSubcommandCount(t *testing.T) {
 }
 
 func TestRunConfig(t *testing.T) {
+	isolateHAEnv(t)
 	// Save current directory and change to temp dir
 	origDir, err := os.Getwd()
 	if err != nil {
@@ -575,6 +595,7 @@ logging:
 }
 
 func TestRunConfig_WithRESTConfig(t *testing.T) {
+	isolateHAEnv(t)
 	// Save current directory and change to temp dir
 	origDir, err := os.Getwd()
 	if err != nil {
@@ -634,6 +655,7 @@ logging:
 }
 
 func TestRunConfig_NoConfig(t *testing.T) {
+	isolateHAEnv(t)
 	// Save current directory and change to temp dir with no config
 	origDir, err := os.Getwd()
 	if err != nil {
