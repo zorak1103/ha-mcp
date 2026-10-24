@@ -126,11 +126,11 @@ homeassistant:
   rest:
     rate_limit: 10  # Requests per second (0 = unlimited)
     rate_burst: 5   # Maximum burst size
-    max_retries: 3  # Retry attempts for transient failures
+    max_retries: 3  # Retry attempts for transient failures (0 = no retries)
     retry_initial_delay_ms: 100  # Initial delay between retries
     retry_max_delay_ms: 5000     # Maximum delay between retries
   websocket:
-    max_retries: 3  # Retry attempts for transient failures
+    max_retries: 3  # Retry attempts per command (0 = no retries)
     retry_initial_delay_ms: 100
     retry_max_delay_ms: 5000
   cache:
@@ -171,7 +171,7 @@ export HA_REST_RETRY_INITIAL_DELAY_MS=100  # Initial retry delay in ms (default:
 export HA_REST_RETRY_MAX_DELAY_MS=5000     # Max retry delay in ms (default: 5000)
 
 # WebSocket settings (optional)
-export HA_WS_MAX_RETRIES=3     # Max retry attempts (default: 3)
+export HA_WS_MAX_RETRIES=3     # Max retry attempts per command, 0 = no retries (default: 3)
 export HA_WS_RETRY_INITIAL_DELAY_MS=100    # Initial retry delay in ms (default: 100)
 export HA_WS_RETRY_MAX_DELAY_MS=5000       # Max retry delay in ms (default: 5000)
 
@@ -194,6 +194,14 @@ export HA_MCP_TOOL_FILTER_BLACKLIST=""     # Comma-separated blacklist (default:
 ```
 
 See `configs/.env.example` for the full environment file template.
+
+### Retry behavior
+
+The `HA_REST_*` and `HA_WS_*` retry settings are applied to the clients at startup:
+
+- **REST**: GET and HEAD requests are retried on any transient failure (5xx, 429, network errors). Other methods (create/update/delete, config flow steps, template render) are retried only on 429 and connection-setup (dial) failures, because replaying them after a 5xx or a timeout could run a write twice.
+- **WebSocket**: the settings bound the retries of a single command. `0` disables retries.
+- A delay of 0 or less falls back to the default, and a max delay below the initial delay is raised to the initial delay.
 
 ## Command-Line Flags
 

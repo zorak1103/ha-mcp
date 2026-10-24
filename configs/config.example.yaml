@@ -32,22 +32,29 @@ homeassistant:
     rate_limit: 10
     # Burst size: maximum burst of requests allowed (default: 5)
     rate_burst: 5
-    # Retry settings for transient failures (5xx, 429, network errors)
+    # Retry settings for transient failures. GET/HEAD requests retry on 5xx, 429
+    # and network errors; other methods (create/update/delete, flow steps,
+    # template render) retry only on 429 and connection-setup (dial) failures,
+    # because replaying them after a 5xx or timeout could run a write twice.
     # Max retry attempts (0 = no retries, default: 3)
     max_retries: 3
     # Initial delay between retries in milliseconds (default: 100)
+    # A delay of 0 or less falls back to the default
     retry_initial_delay_ms: 100
     # Maximum delay between retries in milliseconds (default: 5000)
+    # A value below the initial delay is raised to the initial delay
     retry_max_delay_ms: 5000
 
   # WebSocket client settings (used for most operations)
   websocket:
-    # Retry settings for transient command failures
+    # Retry settings for transient command failures (bound the retries of a single command)
     # Max retry attempts (0 = no retries, default: 3)
     max_retries: 3
     # Initial delay between retries in milliseconds (default: 100)
+    # A delay of 0 or less falls back to the default
     retry_initial_delay_ms: 100
     # Maximum delay between retries in milliseconds (default: 5000)
+    # A value below the initial delay is raised to the initial delay
     retry_max_delay_ms: 5000
 
   # Post-mutation state polling settings
