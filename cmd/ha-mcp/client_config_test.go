@@ -6,6 +6,7 @@ import (
 
 	"github.com/zorak1103/ha-mcp/internal/config"
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
+	"github.com/zorak1103/ha-mcp/internal/logging"
 )
 
 func TestBuildRetryConfig(t *testing.T) {
@@ -154,13 +155,13 @@ func TestBuildClientConfigs_FromLoadedConfig(t *testing.T) {
 	// real environment cannot leak in.
 	t.Setenv("HA_URL", "http://test.local:8123")
 	t.Setenv("HA_WS_MAX_RETRIES", "7")
-	t.Setenv("HA_WS_RETRY_INITIAL_DELAY_MS", "100")
-	t.Setenv("HA_WS_RETRY_MAX_DELAY_MS", "5000")
+	t.Setenv("HA_WS_RETRY_INITIAL_DELAY_MS", "150")
+	t.Setenv("HA_WS_RETRY_MAX_DELAY_MS", "2500")
 	t.Setenv("HA_REST_MAX_RETRIES", "5")
 	t.Setenv("HA_REST_RETRY_INITIAL_DELAY_MS", "250")
 	t.Setenv("HA_REST_RETRY_MAX_DELAY_MS", "5000")
-	t.Setenv("HA_REST_RATE_LIMIT", "10")
-	t.Setenv("HA_REST_RATE_BURST", "5")
+	t.Setenv("HA_REST_RATE_LIMIT", "7")
+	t.Setenv("HA_REST_RATE_BURST", "3")
 
 	cfg, err := config.Load("")
 	if err != nil {
@@ -168,8 +169,14 @@ func TestBuildClientConfigs_FromLoadedConfig(t *testing.T) {
 	}
 
 	ws := buildWSClientConfig(cfg)
-	if ws.RetryConfig.MaxRetries != 7 {
-		t.Errorf("WS MaxRetries = %d, want 7", ws.RetryConfig.MaxRetries)
+	wantWS := homeassistant.RetryConfig{
+		MaxRetries:    7,
+		InitialDelay:  150 * time.Millisecond,
+		MaxDelay:      2500 * time.Millisecond,
+		BackoffFactor: 2.0,
+	}
+	if ws.RetryConfig != wantWS {
+		t.Errorf("WS RetryConfig = %+v, want %+v", ws.RetryConfig, wantWS)
 	}
 
 	rest := buildRESTClientConfig(cfg)
@@ -178,5 +185,71 @@ func TestBuildClientConfigs_FromLoadedConfig(t *testing.T) {
 	}
 	if rest.RetryConfig.InitialDelay != 250*time.Millisecond {
 		t.Errorf("REST InitialDelay = %v, want 250ms", rest.RetryConfig.InitialDelay)
+	}
+	if rest.RateLimit != 7 {
+		t.Errorf("REST RateLimit = %v, want 7", rest.RateLimit)
+	}
+	if rest.RateBurst != 3 {
+		t.Errorf("REST RateBurst = %d, want 3", rest.RateBurst)
+	}
+}
+
+// TestNewClientPool_CarriesRetryConfig guards the original #294 bug: the retry
+// settings were built from config but never handed to the pool.
+func TestNewClientPool_CarriesRetryConfig(t *testing.T) {
+	t.Setenv("HA_URL", "http://test.local:8123")
+	t.Setenv("HA_WS_MAX_RETRIES", "7")
+	t.Setenv("HA_WS_RETRY_INITIAL_DELAY_MS", "150")
+	t.Setenv("HA_WS_RETRY_MAX_DELAY_MS", "2500")
+	t.Setenv("HA_REST_MAX_RETRIES", "5")
+	t.Setenv("HA_REST_RETRY_INITIAL_DELAY_MS", "250")
+	t.Setenv("HA_REST_RETRY_MAX_DELAY_MS", "4000")
+	t.Setenv("HA_REST_RATE_LIMIT", "7")
+	t.Setenv("HA_REST_RATE_BURST", "3")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+
+	pool := newClientPool(cfg, logging.New(logging.LevelError))
+	defer func() {
+		if closeErr := pool.Close(); closeErr != nil {
+			t.Errorf("pool.Close: %v", closeErr)
+		}
+	}()
+
+	ws := pool.WSConfig()
+	if ws == nil {
+		t.Fatal("pool.WSConfig() = nil, want the built WebSocket config")
+	}
+	wantWS := homeassistant.RetryConfig{
+		MaxRetries:    7,
+		InitialDelay:  150 * time.Millisecond,
+		MaxDelay:      2500 * time.Millisecond,
+		BackoffFactor: 2.0,
+	}
+	if ws.RetryConfig != wantWS {
+		t.Errorf("pool WS RetryConfig = %+v, want %+v", ws.RetryConfig, wantWS)
+	}
+	if !ws.AutoReconnect {
+		t.Error("pool WS AutoReconnect = false, want true (builder must start from defaults)")
+	}
+
+	rest := pool.RESTConfig()
+	if rest == nil {
+		t.Fatal("pool.RESTConfig() = nil, want the built REST config")
+	}
+	wantREST := homeassistant.RetryConfig{
+		MaxRetries:    5,
+		InitialDelay:  250 * time.Millisecond,
+		MaxDelay:      4 * time.Second,
+		BackoffFactor: 2.0,
+	}
+	if rest.RetryConfig != wantREST {
+		t.Errorf("pool REST RetryConfig = %+v, want %+v", rest.RetryConfig, wantREST)
+	}
+	if rest.RateLimit != 7 || rest.RateBurst != 3 {
+		t.Errorf("pool REST rate = %v/%d, want 7/3", rest.RateLimit, rest.RateBurst)
 	}
 }

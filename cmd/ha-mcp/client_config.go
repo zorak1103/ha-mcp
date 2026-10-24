@@ -5,7 +5,19 @@ import (
 
 	"github.com/zorak1103/ha-mcp/internal/config"
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
+	"github.com/zorak1103/ha-mcp/internal/logging"
 )
+
+// newClientPool creates the per-token client pool with the REST and WebSocket
+// client configurations built from cfg. It lives here, not in main.go, so a
+// test can prove the built configs actually reach the pool.
+func newClientPool(cfg *config.Config, logger *logging.Logger) *homeassistant.ClientPool {
+	return homeassistant.NewClientPoolWithFullConfig(
+		cfg.HomeAssistant.URL, 30*time.Minute, 100,
+		buildRESTClientConfig(cfg), nil, logger,
+		homeassistant.WithWSConfig(buildWSClientConfig(cfg)),
+	)
+}
 
 // buildRetryConfig converts millisecond retry settings into a RetryConfig.
 //

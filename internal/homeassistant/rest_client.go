@@ -151,7 +151,18 @@ func NewRESTClientWithConfig(baseURL, token string, config RESTClientConfig) *RE
 func (c *RESTClient) doRequest(ctx context.Context, req *http.Request) (*http.Response, error) {
 	var resp *http.Response
 
+	attempt := 0
 	err := c.retryManager.RetryIf(ctx, func() error {
+		// The body is rewound explicitly for each retry attempt.
+		attempt++
+		if attempt > 1 && req.GetBody != nil {
+			body, bodyErr := req.GetBody()
+			if bodyErr != nil {
+				return fmt.Errorf("rewinding request body: %w", bodyErr)
+			}
+			req.Body = body
+		}
+
 		// Wait for rate limiter if configured
 		if c.limiter != nil {
 			if err := c.limiter.Wait(ctx); err != nil {

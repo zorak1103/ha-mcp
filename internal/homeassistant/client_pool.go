@@ -53,6 +53,20 @@ func WithWSConfig(cfg *WSClientConfig) PoolOption {
 	return func(p *ClientPool) { p.wsConfig = cfg }
 }
 
+// WSConfig returns the WebSocket client configuration the pool creates clients
+// with, or nil when the WebSocket client defaults apply. It exposes the stored
+// configuration and must not be mutated.
+func (p *ClientPool) WSConfig() *WSClientConfig {
+	return p.wsConfig
+}
+
+// RESTConfig returns the REST client configuration the pool creates clients
+// with, or nil when the REST client defaults apply. It exposes the stored
+// configuration and must not be mutated.
+func (p *ClientPool) RESTConfig() *RESTClientConfig {
+	return p.restConfig
+}
+
 // NewClientPoolWithFullConfig creates a new client pool with REST, cache, and size configuration.
 // maxSize limits the number of pooled clients; 0 means unlimited.
 // Optional PoolOptions (e.g. WithWSConfig) are applied before the cleanup goroutine starts.

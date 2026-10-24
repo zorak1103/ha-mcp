@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -124,6 +125,62 @@ func TestRESTClient_POST_RetriedOn429_ResendsBody(t *testing.T) {
 	defer mu.Unlock()
 	if len(bodies) != 2 || bodies[0] == "" || bodies[0] != bodies[1] {
 		t.Errorf("bodies = %q, want two equal non-empty bodies", bodies)
+	}
+}
+
+// bodyRecordingTransport answers 429 on the first request and 200 afterwards,
+// reading each request body itself (without net/http's own transport), so a
+// body that doRequest did not rewind shows up as empty.
+type bodyRecordingTransport struct {
+	mu     sync.Mutex
+	bodies []string
+}
+
+func (rt *bodyRecordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	var b []byte
+	if req.Body != nil {
+		b, _ = io.ReadAll(req.Body)
+		_ = req.Body.Close()
+	}
+	rt.mu.Lock()
+	rt.bodies = append(rt.bodies, string(b))
+	n := len(rt.bodies)
+	rt.mu.Unlock()
+
+	status := http.StatusOK
+	if n == 1 {
+		status = http.StatusTooManyRequests
+	}
+	return &http.Response{
+		StatusCode: status,
+		Body:       io.NopCloser(strings.NewReader("")),
+		Header:     make(http.Header),
+		Request:    req,
+	}, nil
+}
+
+func TestRESTClient_Retry_RewindsBodyExplicitly(t *testing.T) {
+	t.Parallel()
+
+	rt := &bodyRecordingTransport{}
+	client := NewRESTClientWithConfig("http://ha.invalid", "tok", RESTClientConfig{
+		RetryConfig: RetryConfig{
+			MaxRetries:    2,
+			InitialDelay:  time.Millisecond,
+			MaxDelay:      5 * time.Millisecond,
+			BackoffFactor: 2,
+		},
+	})
+	client.httpClient.Transport = rt
+
+	if err := client.CreateScript(context.Background(), "s1", ScriptConfig{Alias: "x"}); err != nil {
+		t.Fatalf("CreateScript() error = %v, want nil", err)
+	}
+
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	if len(rt.bodies) != 2 || rt.bodies[0] == "" || rt.bodies[0] != rt.bodies[1] {
+		t.Errorf("bodies = %q, want two equal non-empty bodies", rt.bodies)
 	}
 }
 

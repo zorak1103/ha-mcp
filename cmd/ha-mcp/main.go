@@ -248,11 +248,7 @@ func (a *App) run(_ *cobra.Command, _ []string) error {
 	defer cancel()
 
 	// Create client pool (always required for per-request auth)
-	clientPool := homeassistant.NewClientPoolWithFullConfig(
-		cfg.HomeAssistant.URL, 30*time.Minute, 100,
-		buildRESTClientConfig(cfg), nil, logger,
-		homeassistant.WithWSConfig(buildWSClientConfig(cfg)),
-	)
+	clientPool := newClientPool(cfg, logger)
 	defer func() {
 		logger.Info("Closing client pool...")
 		if closeErr := clientPool.Close(); closeErr != nil {
