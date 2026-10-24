@@ -153,7 +153,7 @@ go test -tags=integration -v ./internal/handlers/integration/... 2>&1 | tee test
 
 Every test above calls `homeassistant.Client` methods directly, verifying the client library talks to real HA correctly - but bypassing the MCP tool's argument-parsing/handler layer entirely. A prior bug where `manage_helper` update failed with `unknown_command` for config-entry helpers lived in that bypassed layer and had no test coverage as a result.
 
-`*_tool_dispatch_integration_test.go` files close this gap: they use `s.CallTool(name, args)` (added to `IntegrationTestSuite` in `suite_test.go`) to dispatch through the real registry + handler layer - the same path a real MCP client exercises - while reusing the existing suites' proven fixture-creation and cleanup code for setup/teardown.
+`*_tool_dispatch_integration_test.go` files close this gap: they use `s.CallTool(name, args)` (added to `IntegrationTestSuite` in `suite_test.go`) to dispatch through the real registry + handler layer - the same path a real MCP client exercises - while reusing the existing suites' proven fixture-creation and cleanup code for setup/teardown. `CallTool` also fails the test when `args` contains a name the tool's input schema does not declare, exactly as the server would reject it.
 
 | Test Suite                                | Tool               | Action(s) tested via CallTool                                                                                                                                               |
 | ----------------------------------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -177,6 +177,7 @@ Every test above calls `homeassistant.Client` methods directly, verifying the cl
 | `TestPersonToolDispatch`                  | `manage_person`    | list - regression test for the person WS command-prefix and response-shape fixes                                                                                            |
 | `TestZoneToolDispatch`                    | `manage_zone`      | list - regression test for the zone WS command-prefix fix                                                                                                                  |
 | `TestManageStatisticsToolDispatch`        | `manage_statistics`| list (smoke), unknown action rejection, validate (smoke), clear without ids/malformed id rejected, clear with a well-formed unknown id (no error)                           |
+| `TestLogbookToolDispatch`                 | `get_logbook`      | entries with `entity_ids` returns only the requested entities (verifies HA's comma-separated `entity` filter)                                                               |
 
 Writing these tests uncovered and fixed three further, previously-unknown bugs in the config-entry helper update path (all unreachable until the config-entry helper update routing fix let update calls reach Home Assistant's Options Flow submission for the first time) - see `AGENTS.md`'s API & Type Gotchas section for `buildConfigEntryUpdateConfig`'s `entity_id` leak, `addExtendedConfigEntryFields`'s `device_class` leak, and `extractOptionsFromSchema`'s nil `suggested_value` propagation.
 

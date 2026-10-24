@@ -199,6 +199,20 @@ Universal tool for runtime helper operations:
 | ------------- | ------------------------------------------------------------------------------------------------- |
 | `get_logbook` | Get logbook entries (mode: entries, correlation; format: natural/json) with cause-effect analysis |
 
+`get_logbook` parameters:
+
+| Parameter                                | Modes       | Notes                                                                                                         |
+| ---------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------- |
+| `mode`                                   | both        | `entries` (default) or `correlation`; any other value, or a non-string, is an error                           |
+| `start_time` / `end_time` / `hours`      | both        | ISO 8601 times, or `hours` to look back from now; default window is the last 24 hours                         |
+| `entity_id`                              | entries     | Filter by a single entity; exclusive with `entity_ids`                                                        |
+| `entity_ids`                             | both        | Entries: filter to these entities (max 100, deduplicated). Correlation: required. Exclusive with `entity_id`  |
+| `limit` / `cursor` / `offset`            | entries     | Pagination; a cursor is bound to the time range and the (order-independent) entity set it was issued for      |
+| `max_time_delta_seconds`                 | correlation | Maximum gap in seconds for grouping correlated events (default 60)                                            |
+| `format`                                 | both        | `natural` (default) or `json`                                                                                 |
+
+In correlation mode a failed logbook fetch for one entity is reported in a trailing `WARNING` block while the other entities are still analyzed; if every fetch fails the call is an error.
+
 ### Configuration Tools
 
 | Tool              | Description                                                  |
@@ -335,6 +349,18 @@ Most tools support two output formats via the `format` parameter:
   - Example: `{"entity_id": "light.living_room", "state": "on", "attributes": {"brightness": 204, ...}}`
 
 **Tools with format support**: `analyze_entity`, `analyze_target`, `call_service` (response-type payloads are complete in JSON; natural output is bounded with an overflow note), `find_references`, `get_entity_dependencies`, `get_logbook`, `get_registry`, `get_state`, `manage_area`, `manage_automation`, `manage_blueprint`, `manage_calendar`, `manage_camera`, `manage_config_entry`, `manage_dashboard`, `manage_device`, `manage_entity`, `manage_floor`, `manage_hacs`, `manage_helper`, `manage_label`, `manage_person`, `manage_scene`, `manage_script`, `manage_statistics`, `manage_system_log`, `manage_tag`, `manage_todo`, `manage_trace`, `manage_update`, `manage_zone`, `query_devices`, `query_entities`
+
+## Argument validation
+
+The server checks every tool call's argument names against the tool's input schema, and the multi-mode tools additionally check that each argument applies to the selected mode. A bad call fails with an error result (`isError: true`) instead of silently dropping the argument:
+
+- **Unknown argument names** are rejected with an error that lists the valid names, e.g. `unknown argument(s) "entity_idz" for tool "get_logbook"; valid arguments: cursor, end_time, entity_id, ...`. At most 10 offending names are echoed, each cut to 64 characters.
+- **Arguments of another mode or type** are rejected, e.g. `argument(s) not applicable to mode=correlation: limit (only for mode=entries).`. This applies to `get_logbook` (`mode`), `query_entities` (`mode`) and `get_registry` (`type`). The `mode`/`type` selector itself must be a valid string; an unknown or non-string value is an error.
+- **Absent placeholders**: `null`, `""` and `[]` count as "not supplied" and are never rejected. `0` and `false` are real values, so a client that sends typed defaults (`limit: 0`, `include_disabled: false`) to a mode that ignores them is rejected - omit the argument instead.
+- **`format` and `verbose`** are output options and are never rejected, whichever mode is active.
+- **Argument values** (types, enums, ranges) are not checked by the server; each handler validates what it reads and returns its own error. `analyze_target` accepts a bare string for `entity_id`, `device_id`, `area_id` and `label_id` and treats it as a one-element list; a non-string element or a non-boolean `expand_group` is an error.
+
+Pagination: `query_entities` (modes `current`, `statistics`), `get_registry` (types `entities`, `devices`), `get_logbook` (mode `entries`), `manage_automation` (`list`) and `manage_statistics` (`list`, `validate`) accept `offset` (number of results to skip) as an alternative to `cursor`.
 
 ## Example Requests
 
