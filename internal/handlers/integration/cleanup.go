@@ -4,7 +4,10 @@ package integration
 
 import (
 	"context"
+	stderrors "errors" // aliased: this file already names local variables "errors"
 	"fmt"
+	"log"
+	"net/http"
 	"strings"
 	"time"
 
@@ -180,7 +183,7 @@ func cleanupTestAutomations(ctx context.Context, client homeassistant.Client) er
 		}
 
 		if idToDelete != "" {
-			if err := deleteAutomationWithRetry(ctx, client, idToDelete); err != nil {
+			if _, err := deleteAutomationWithRetry(ctx, client, idToDelete, entityID); err != nil {
 				errors = append(errors, fmt.Sprintf("%s: %v", idToDelete, err))
 			}
 		}
@@ -214,7 +217,7 @@ func cleanupTestScripts(ctx context.Context, client homeassistant.Client) error 
 
 		// Script ID is the part after "script."
 		scriptID := strings.TrimPrefix(entityID, "script.")
-		if err := deleteScriptWithRetry(ctx, client, scriptID); err != nil {
+		if _, err := deleteScriptWithRetry(ctx, client, scriptID); err != nil {
 			errors = append(errors, fmt.Sprintf("%s: %v", scriptID, err))
 		}
 	}
@@ -287,40 +290,89 @@ func deleteHelperWithRetry(ctx context.Context, client homeassistant.Client, ent
 	return lastErr
 }
 
-// deleteAutomationWithRetry attempts to delete an automation with retry logic.
-func deleteAutomationWithRetry(ctx context.Context, client homeassistant.Client, automationID string) error {
-	if err := ValidateTestEntityID(automationID); err != nil {
-		return err
+// isNotFoundError reports whether err means the target does not exist. HA answers 400
+// {"message":"Resource not found"} (not 404) for config ids missing from the config file, so
+// a status-code-only check would miss it. Mirrors internal/handlers.isNotFoundError, which is
+// unexported in another package.
+func isNotFoundError(err error) bool {
+	if err == nil {
+		return false
 	}
+	var apiErr *homeassistant.APIError
+	if stderrors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "not found")
+}
 
+// deleteConfigWithRegistryFallback runs del with retries. When HA reports the config as not
+// found, the entity can still be alive without a config behind it (see #305), so it is removed
+// through the entity registry instead of retrying a delete that cannot succeed. viaRegistry is
+// true when that fallback fired; each firing is logged so an orphaning bug stays visible
+// instead of quietly turning the suite green.
+func deleteConfigWithRegistryFallback(
+	ctx context.Context,
+	client homeassistant.Client,
+	entityID string,
+	del func(context.Context) error,
+) (viaRegistry bool, err error) {
 	var lastErr error
 	for i := range 3 {
-		if err := client.DeleteAutomation(ctx, automationID); err != nil {
-			lastErr = err
-			time.Sleep(time.Duration(i+1) * 100 * time.Millisecond)
-			continue
+		delErr := del(ctx)
+		if delErr == nil {
+			return false, nil
 		}
-		return nil
+		if isNotFoundError(delErr) {
+			return removeOrphanViaRegistry(ctx, client, entityID, delErr)
+		}
+		lastErr = delErr
+		time.Sleep(time.Duration(i+1) * 100 * time.Millisecond)
 	}
-	return lastErr
+	return false, lastErr
+}
+
+// removeOrphanViaRegistry removes entityID from the entity registry after the config delete
+// failed with deleteErr. Only test entities are ever removed this way.
+func removeOrphanViaRegistry(ctx context.Context, client homeassistant.Client, entityID string, deleteErr error) (bool, error) {
+	if err := ValidateTestEntityID(entityID); err != nil {
+		return false, fmt.Errorf("%w (registry fallback refused: %w)", deleteErr, err)
+	}
+
+	if regErr := client.RemoveEntityRegistryEntry(ctx, entityID); regErr != nil &&
+		!isNotFoundError(regErr) && !strings.Contains(regErr.Error(), "does not exist") {
+		return false, fmt.Errorf("%w (registry removal also failed: %w)", deleteErr, regErr)
+	}
+
+	log.Printf("WARNING: integration cleanup removed %s via the entity registry after the config delete reported not found; the test that created it left an orphan", entityID)
+	return true, nil
+}
+
+// deleteAutomationWithRetry attempts to delete an automation with retry logic. entityID is the
+// automation's real entity_id (it can differ from the config id) and is only used for the
+// registry fallback; an empty entityID falls back to automation.<automationID>.
+func deleteAutomationWithRetry(ctx context.Context, client homeassistant.Client, automationID, entityID string) (bool, error) {
+	if err := ValidateTestEntityID(automationID); err != nil {
+		return false, err
+	}
+
+	if entityID == "" {
+		entityID = BuildEntityID("automation", automationID)
+	}
+
+	return deleteConfigWithRegistryFallback(ctx, client, entityID, func(ctx context.Context) error {
+		return client.DeleteAutomation(ctx, automationID)
+	})
 }
 
 // deleteScriptWithRetry attempts to delete a script with retry logic.
-func deleteScriptWithRetry(ctx context.Context, client homeassistant.Client, scriptID string) error {
+func deleteScriptWithRetry(ctx context.Context, client homeassistant.Client, scriptID string) (bool, error) {
 	if err := ValidateTestEntityID(scriptID); err != nil {
-		return err
+		return false, err
 	}
 
-	var lastErr error
-	for i := range 3 {
-		if err := client.DeleteScript(ctx, scriptID); err != nil {
-			lastErr = err
-			time.Sleep(time.Duration(i+1) * 100 * time.Millisecond)
-			continue
-		}
-		return nil
-	}
-	return lastErr
+	return deleteConfigWithRegistryFallback(ctx, client, BuildEntityID("script", scriptID), func(ctx context.Context) error {
+		return client.DeleteScript(ctx, scriptID)
+	})
 }
 
 // deleteSceneWithRetry attempts to delete a scene with retry logic.

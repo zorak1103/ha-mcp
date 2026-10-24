@@ -99,7 +99,8 @@ func (s *ScriptIntegrationTestSuite) TestScriptMaxFieldPreservation() {
 	scriptEntityID := BuildEntityID("script", scriptID)
 
 	s.RegisterCleanup(func() {
-		_ = s.Client().DeleteScript(s.Context(), scriptID)
+		s.NoError(s.Client().DeleteScript(s.Context(), scriptID),
+			"max-field test must clean up its own entity (#305)")
 	})
 
 	// Create a parallel script with max:4
@@ -127,6 +128,11 @@ func (s *ScriptIntegrationTestSuite) TestScriptMaxFieldPreservation() {
 	updatedCfg.Description = "updated description"
 	err = s.Client().UpdateScript(s.Context(), scriptID, updatedCfg)
 	s.Require().NoError(err, "failed to update script")
+
+	// Same update-then-immediate-delete race as the automation max test (#305): reload
+	// synchronously, as manage_script update does, before the cleanup delete runs.
+	_, err = s.Client().CallService(s.Context(), "script", "reload", nil)
+	s.Require().NoError(err, "failed to reload scripts after update")
 
 	// Confirm Max survived
 	afterUpdate, err := s.Client().GetScript(s.Context(), scriptEntityID)
