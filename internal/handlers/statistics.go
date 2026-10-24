@@ -206,8 +206,8 @@ func (h *StatisticsHandlers) handleStatisticClear(
 	args map[string]any,
 ) (*mcp.ToolsCallResult, error) {
 	// dry_run is the only thing standing between a preview and an
-	// irreversible purge, and the MCP server does no schema validation of
-	// its own (InputSchema is advisory) - a non-bool value must error, not
+	// irreversible purge, and the MCP server validates only argument names
+	// against InputSchema, never types or enums - a non-bool value must error, not
 	// silently become false and clear for real (issue C1).
 	dryRun, err := parseBoolArg(args, "dry_run")
 	if err != nil {

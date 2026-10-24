@@ -16,7 +16,7 @@ Use the `entity_ids` array form to check all relevant entities in one call. Look
 {
   "tool": "get_logbook",
   "mode": "correlation",
-  "entity_id": "automation.my_auto",
+  "entity_ids": ["automation.my_auto", "binary_sensor.motion"],
   "start_time": "2024-01-15T00:00:00",
   "end_time": "2024-01-15T23:59:59"
 }
@@ -36,7 +36,7 @@ Always pass `domain` — it is required despite the schema marking it optional.
 
 Then fetch the most recent trace:
 ```json
-{ "tool": "manage_trace", "action": "get", "domain": "automation", "trace_id": "<id from list>", "entity_id": "automation.my_auto" }
+{ "tool": "manage_trace", "action": "get", "domain": "automation", "run_id": "<id from list>", "entity_id": "automation.my_auto" }
 ```
 
 The trace shows exactly which conditions passed/failed and which actions executed.

@@ -5,11 +5,30 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
+
+// get_logbook modes.
+const (
+	logbookModeEntries     = "entries"
+	logbookModeCorrelation = "correlation"
+)
+
+// logbookArgModes maps each mode-specific get_logbook argument to the only
+// modes that read it; a supplied value for any other mode is rejected.
+// start_time, end_time, hours, entity_ids, format and mode apply to both modes
+// and are deliberately absent.
+var logbookArgModes = map[string][]string{
+	attrEntityID:             {logbookModeEntries},
+	"limit":                  {logbookModeEntries},
+	"cursor":                 {logbookModeEntries},
+	"offset":                 {logbookModeEntries},
+	"max_time_delta_seconds": {logbookModeCorrelation},
+}
 
 // LogbookHandlers provides handlers for Home Assistant logbook operations.
 type LogbookHandlers struct{}
@@ -47,11 +66,11 @@ func (h *LogbookHandlers) getLogbookTool() mcp.Tool {
 				},
 				attrEntityID: {
 					Type:        "string",
-					Description: "Filter by single entity ID (e.g., 'light.living_room'). For mode=entries only",
+					Description: "Filter by a single entity ID (mode=entries). Use entity_id OR entity_ids, not both.",
 				},
-				"entity_ids": {
+				attrEntityIDs: {
 					Type:        "array",
-					Description: "Array of entity IDs to analyze for correlations. Required for mode=correlation",
+					Description: "Entity IDs (max 100). mode=entries: filter to these entities (alternative to entity_id). mode=correlation: required.",
 					Items:       &mcp.JSONSchema{Type: "string"},
 				},
 				"hours": {
@@ -60,7 +79,7 @@ func (h *LogbookHandlers) getLogbookTool() mcp.Tool {
 				},
 				"max_time_delta_seconds": {
 					Type:        "integer",
-					Description: "Maximum time difference in seconds to group correlated events (default: 60). Only for mode=correlation",
+					Description: "Maximum time difference in seconds to group correlated events (default: 60). Only for mode=correlation; rejected in mode=entries",
 				},
 				"format": {
 					Type:        "string",
@@ -69,15 +88,23 @@ func (h *LogbookHandlers) getLogbookTool() mcp.Tool {
 				},
 				"limit": {
 					Type:        "integer",
-					Description: "Maximum number of logbook entries to return (max 1000, default: no limit). Use with 'cursor' for pagination.",
+					Description: "Maximum number of logbook entries to return (max 1000, default: no limit). Use with 'cursor' for pagination. Only for mode=entries; rejected in mode=correlation",
 				},
+				"offset": logbookOffsetSchema(),
 				"cursor": {
 					Type:        "string",
-					Description: "Pagination cursor from previous response to get next page of results",
+					Description: "Pagination cursor from previous response to get next page of results. Only for mode=entries; rejected in mode=correlation",
 				},
 			},
 		},
 	}
+}
+
+// logbookOffsetSchema is the shared offset schema with get_logbook's mode note.
+func logbookOffsetSchema() mcp.JSONSchema {
+	schema := paginationOffsetSchema()
+	schema.Description += ". Only for mode=entries; rejected in mode=correlation"
+	return schema
 }
 
 // logbookCompactEntry represents a compact logbook entry.
@@ -154,17 +181,18 @@ func (h *LogbookHandlers) handleGetLogbook(
 	client homeassistant.Client,
 	args map[string]any,
 ) (*mcp.ToolsCallResult, error) {
-	// Check mode parameter
-	mode := getString(args, "mode")
-	if mode == "" {
-		mode = "entries" // default mode
+	mode, bad := parseModeArg(args, "mode", logbookModeEntries, []string{logbookModeEntries, logbookModeCorrelation})
+	if bad != nil {
+		return bad, nil
 	}
 
-	if mode == "correlation" {
+	if rejected := rejectInapplicableArgs(args, "mode", mode, logbookArgModes, ""); rejected != nil {
+		return rejected, nil
+	}
+
+	if mode == logbookModeCorrelation {
 		return h.handleCorrelation(ctx, client, args)
 	}
-
-	// Handle entries mode
 	return h.handleEntriesMode(ctx, client, args)
 }
 
@@ -184,9 +212,12 @@ func (h *LogbookHandlers) handleEntriesMode(
 		}, nil
 	}
 
-	entityID := getString(args, attrEntityID)
+	entityIDs, err := parseEntityIDOrIDs(args)
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
 
-	entries, err := client.GetLogbook(ctx, startTime.Format(time.RFC3339), endTime.Format(time.RFC3339), entityID)
+	entries, err := client.GetLogbook(ctx, startTime.Format(time.RFC3339), endTime.Format(time.RFC3339), entityIDs)
 	if err != nil {
 		return &mcp.ToolsCallResult{
 			Content: []mcp.ContentBlock{
@@ -197,7 +228,7 @@ func (h *LogbookHandlers) handleEntriesMode(
 	}
 
 	// Build filters map for pagination hash
-	filtersMap := buildLogbookFiltersMap(startTime, endTime, entityID)
+	filtersMap := buildLogbookFiltersMap(startTime, endTime, entityIDs)
 
 	// Parse pagination params
 	paginationParams, err := ParsePaginationParams(args, filtersMap)
@@ -213,7 +244,7 @@ func (h *LogbookHandlers) handleEntriesMode(
 	// Apply pagination
 	paginated := ApplyPagination(entries, paginationParams)
 
-	output, err := buildLogbookResponsePaginated(paginated, startTime, endTime, entityID)
+	output, err := buildLogbookResponsePaginated(paginated, startTime, endTime, entityIDs)
 	if err != nil {
 		return &mcp.ToolsCallResult{
 			Content: []mcp.ContentBlock{
@@ -231,12 +262,14 @@ func (h *LogbookHandlers) handleEntriesMode(
 }
 
 // buildLogbookFiltersMap creates a map of filter values for pagination hash.
-func buildLogbookFiltersMap(startTime, endTime time.Time, entityID string) map[string]any {
+// The entity IDs are hashed as a sorted copy so that a cursor stays valid when
+// the caller reorders the same set; the caller's slice is left untouched.
+func buildLogbookFiltersMap(startTime, endTime time.Time, entityIDs []string) map[string]any {
 	filters := make(map[string]any)
 	filters["start_time"] = startTime.Format(time.RFC3339)
 	filters["end_time"] = endTime.Format(time.RFC3339)
-	if entityID != "" {
-		filters[attrEntityID] = entityID
+	if len(entityIDs) > 0 {
+		filters[attrEntityIDs] = slices.Sorted(slices.Values(entityIDs))
 	}
 	return filters
 }
@@ -250,7 +283,7 @@ type paginatedLogbookResponse struct {
 }
 
 // buildLogbookResponsePaginated builds the response from paginated logbook entries.
-func buildLogbookResponsePaginated(paginated PaginatedResponse[homeassistant.LogbookEntry], startTime, endTime time.Time, entityID string) (string, error) {
+func buildLogbookResponsePaginated(paginated PaginatedResponse[homeassistant.LogbookEntry], startTime, endTime time.Time, entityIDs []string) (string, error) {
 	compactEntries := make([]logbookCompactEntry, 0, len(paginated.Items))
 	for _, entry := range paginated.Items {
 		compactEntries = append(compactEntries, logbookCompactEntry{
@@ -280,8 +313,11 @@ func buildLogbookResponsePaginated(paginated PaginatedResponse[homeassistant.Log
 	}
 
 	summary := BuildPaginationSummary(paginated.Pagination, "logbook entries")
-	if entityID != "" {
-		summary += fmt.Sprintf(" for %s", entityID)
+	switch {
+	case len(entityIDs) == 1:
+		summary += fmt.Sprintf(" for %s", entityIDs[0])
+	case len(entityIDs) > 1:
+		summary += fmt.Sprintf(" for %d entities", len(entityIDs))
 	}
 
 	return summary + "\n\n" + string(output), nil

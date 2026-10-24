@@ -370,7 +370,7 @@ func (m *mockClientForPool) GetConfig(_ context.Context) (*Config, error)     { 
 func (m *mockClientForPool) RenderTemplate(_ context.Context, _ string) (string, error) {
 	return "", nil
 }
-func (m *mockClientForPool) GetLogbook(_ context.Context, _, _, _ string) ([]LogbookEntry, error) {
+func (m *mockClientForPool) GetLogbook(_ context.Context, _, _ string, _ []string) ([]LogbookEntry, error) {
 	return nil, nil
 }
 func (m *mockClientForPool) GetSystemLog(context.Context) ([]SystemLogEntry, error) { return nil, nil }

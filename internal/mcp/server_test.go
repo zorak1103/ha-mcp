@@ -28,6 +28,12 @@ func newTestServer(defaultClient homeassistant.Client, registry *Registry, port 
 	return NewServer(pool, defaultClient, registry, port, logger)
 }
 
+// formatOnlySchema declares just the `format` property, for test tools that are
+// called with `format` (the server rejects arguments a tool does not declare).
+func formatOnlySchema() JSONSchema {
+	return JSONSchema{Properties: map[string]JSONSchema{"format": {Type: "string"}}}
+}
+
 // mockHAClient implements homeassistant.Client for testing.
 type mockHAClient struct{}
 
@@ -367,7 +373,7 @@ func (m *mockHAClient) RenderTemplate(_ context.Context, _ string) (string, erro
 	return "", nil
 }
 
-func (m *mockHAClient) GetLogbook(_ context.Context, _, _, _ string) ([]homeassistant.LogbookEntry, error) {
+func (m *mockHAClient) GetLogbook(_ context.Context, _, _ string, _ []string) ([]homeassistant.LogbookEntry, error) {
 	return nil, nil
 }
 
@@ -821,7 +827,7 @@ func TestServer_HandleToolsCall(t *testing.T) {
 
 		registry := NewRegistry()
 		registry.RegisterTool(
-			Tool{Name: "test_tool"},
+			Tool{Name: "test_tool", InputSchema: JSONSchema{Properties: map[string]JSONSchema{"key": {Type: "string"}}}},
 			func(_ context.Context, _ homeassistant.Client, _ map[string]any) (*ToolsCallResult, error) {
 				return &ToolsCallResult{
 					Content: []ContentBlock{NewTextContent("success")},
@@ -988,7 +994,7 @@ func TestServer_HandleToolsCall_SizeFallback(t *testing.T) {
 
 	registry := NewRegistry()
 	registry.RegisterTool(
-		Tool{Name: "big_tool"},
+		Tool{Name: "big_tool", InputSchema: formatOnlySchema()},
 		func(_ context.Context, _ homeassistant.Client, args map[string]any) (*ToolsCallResult, error) {
 			if args["format"] == formatJSON {
 				return &ToolsCallResult{Content: []ContentBlock{NewTextContent(largeJSON)}}, nil
@@ -1101,7 +1107,7 @@ func TestServer_HandleToolsCall_SizeFallback(t *testing.T) {
 
 		smallRegistry := NewRegistry()
 		smallRegistry.RegisterTool(
-			Tool{Name: "small_tool"},
+			Tool{Name: "small_tool", InputSchema: formatOnlySchema()},
 			func(_ context.Context, _ homeassistant.Client, _ map[string]any) (*ToolsCallResult, error) {
 				return &ToolsCallResult{Content: []ContentBlock{NewTextContent("small json")}}, nil
 			},
@@ -1156,7 +1162,10 @@ func TestServer_HandleToolsCall_ResponseTypeDoesNotRetry(t *testing.T) {
 	var calls int
 	registry := NewRegistry()
 	registry.RegisterTool(
-		Tool{Name: "response_tool"},
+		Tool{Name: "response_tool", InputSchema: JSONSchema{Properties: map[string]JSONSchema{
+			"format":          {Type: "string"},
+			"return_response": {Type: "boolean"},
+		}}},
 		func(_ context.Context, _ homeassistant.Client, args map[string]any) (*ToolsCallResult, error) {
 			calls++
 			if args["format"] == formatJSON {
@@ -1195,7 +1204,7 @@ func TestServer_HandleToolsCall_SizeFallback_ExactLimit(t *testing.T) {
 
 	registry := NewRegistry()
 	registry.RegisterTool(
-		Tool{Name: "exact_tool"},
+		Tool{Name: "exact_tool", InputSchema: formatOnlySchema()},
 		func(_ context.Context, _ homeassistant.Client, _ map[string]any) (*ToolsCallResult, error) {
 			return &ToolsCallResult{Content: []ContentBlock{NewTextContent(strings.Repeat("x", maxJSONResponseBytes))}}, nil
 		},

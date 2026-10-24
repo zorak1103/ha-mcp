@@ -988,7 +988,7 @@ func TestRESTClient_GetLogbook(t *testing.T) {
 		name           string
 		startTime      string
 		endTime        string
-		entityID       string
+		entityIDs      []string
 		serverResponse func(w http.ResponseWriter, r *http.Request)
 		wantCount      int
 		wantErr        bool
@@ -998,7 +998,7 @@ func TestRESTClient_GetLogbook(t *testing.T) {
 			name:      "successful logbook retrieval",
 			startTime: "2024-01-01T00:00:00Z",
 			endTime:   "2024-01-01T23:59:59Z",
-			entityID:  "light.living_room",
+			entityIDs: []string{"light.living_room"},
 			serverResponse: func(w http.ResponseWriter, r *http.Request) {
 				// Verify path contains start_time
 				if r.URL.Path != "/api/logbook/2024-01-01T00:00:00Z" {
@@ -1025,7 +1025,7 @@ func TestRESTClient_GetLogbook(t *testing.T) {
 			name:      "logbook without entity filter",
 			startTime: "2024-01-01T00:00:00Z",
 			endTime:   "",
-			entityID:  "",
+			entityIDs: nil,
 			serverResponse: func(w http.ResponseWriter, r *http.Request) {
 				// Verify no query parameters
 				if r.URL.Query().Get("entity") != "" {
@@ -1039,10 +1039,42 @@ func TestRESTClient_GetLogbook(t *testing.T) {
 			wantErr:   false,
 		},
 		{
+			name:      "multiple entities joined with comma",
+			startTime: "2024-01-01T00:00:00Z",
+			endTime:   "",
+			entityIDs: []string{"light.a", "switch.b"},
+			serverResponse: func(w http.ResponseWriter, r *http.Request) {
+				if got := r.URL.Query().Get("entity"); got != "light.a,switch.b" {
+					t.Errorf("entity = %q, want light.a,switch.b", got)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`[{"name": "Test", "message": "test"}]`))
+			},
+			wantCount: 1,
+			wantErr:   false,
+		},
+		{
+			name:      "nil entity list sends no entity param",
+			startTime: "2024-01-01T00:00:00Z",
+			endTime:   "",
+			entityIDs: nil,
+			serverResponse: func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Query().Has("entity") {
+					t.Errorf("entity param must be absent, got %q", r.URL.Query().Get("entity"))
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`[]`))
+			},
+			wantCount: 0,
+			wantErr:   false,
+		},
+		{
 			name:      "empty logbook",
 			startTime: "2024-01-01T00:00:00Z",
 			endTime:   "2024-01-01T01:00:00Z",
-			entityID:  "sensor.nonexistent",
+			entityIDs: []string{"sensor.nonexistent"},
 			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusOK)
@@ -1055,7 +1087,7 @@ func TestRESTClient_GetLogbook(t *testing.T) {
 			name:      "unauthorized",
 			startTime: "2024-01-01T00:00:00Z",
 			endTime:   "",
-			entityID:  "",
+			entityIDs: nil,
 			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusUnauthorized)
 				_, _ = w.Write([]byte("unauthorized"))
@@ -1067,7 +1099,7 @@ func TestRESTClient_GetLogbook(t *testing.T) {
 			name:      "server error",
 			startTime: "2024-01-01T00:00:00Z",
 			endTime:   "",
-			entityID:  "",
+			entityIDs: nil,
 			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusInternalServerError)
 			},
@@ -1078,7 +1110,7 @@ func TestRESTClient_GetLogbook(t *testing.T) {
 			name:      "invalid JSON response",
 			startTime: "2024-01-01T00:00:00Z",
 			endTime:   "",
-			entityID:  "",
+			entityIDs: nil,
 			serverResponse: func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusOK)
@@ -1101,7 +1133,7 @@ func TestRESTClient_GetLogbook(t *testing.T) {
 			defer server.Close()
 
 			client := NewRESTClient(server.URL, "test-token")
-			entries, err := client.GetLogbook(context.Background(), tt.startTime, tt.endTime, tt.entityID)
+			entries, err := client.GetLogbook(context.Background(), tt.startTime, tt.endTime, tt.entityIDs)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("GetLogbook() error = %v, wantErr %v", err, tt.wantErr)
@@ -1143,7 +1175,7 @@ func TestRESTClient_GetLogbook_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := client.GetLogbook(ctx, "2024-01-01T00:00:00Z", "", "")
+	_, err := client.GetLogbook(ctx, "2024-01-01T00:00:00Z", "", nil)
 	if err == nil {
 		t.Error("expected error for canceled context, got nil")
 	}

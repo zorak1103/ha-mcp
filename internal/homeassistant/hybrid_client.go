@@ -200,7 +200,7 @@ type RESTOperations interface {
 	RenderTemplate(ctx context.Context, platformTemplate string) (string, error)
 
 	// Logbook
-	GetLogbook(ctx context.Context, startTime, endTime, entityID string) ([]LogbookEntry, error)
+	GetLogbook(ctx context.Context, startTime, endTime string, entityIDs []string) ([]LogbookEntry, error)
 
 	// Configuration validation
 	CheckConfig(ctx context.Context) (*ConfigCheckResult, error)
@@ -1837,8 +1837,8 @@ func (c *HybridClient) RenderTemplate(ctx context.Context, platformTemplate stri
 // =============================================================================
 
 // GetLogbook retrieves logbook entries from Home Assistant.
-func (c *HybridClient) GetLogbook(ctx context.Context, startTime, endTime, entityID string) ([]LogbookEntry, error) {
-	return c.rest.GetLogbook(ctx, startTime, endTime, entityID)
+func (c *HybridClient) GetLogbook(ctx context.Context, startTime, endTime string, entityIDs []string) ([]LogbookEntry, error) {
+	return c.rest.GetLogbook(ctx, startTime, endTime, entityIDs)
 }
 
 // =============================================================================

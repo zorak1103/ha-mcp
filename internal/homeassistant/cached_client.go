@@ -962,8 +962,8 @@ func (c *CachedClient) RenderTemplate(ctx context.Context, template string) (str
 }
 
 //nolint:revive // Delegated method
-func (c *CachedClient) GetLogbook(ctx context.Context, startTime, endTime, entityID string) ([]LogbookEntry, error) {
-	return c.client.GetLogbook(ctx, startTime, endTime, entityID)
+func (c *CachedClient) GetLogbook(ctx context.Context, startTime, endTime string, entityIDs []string) ([]LogbookEntry, error) {
+	return c.client.GetLogbook(ctx, startTime, endTime, entityIDs)
 }
 
 //nolint:revive // Delegated method

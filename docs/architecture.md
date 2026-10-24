@@ -81,6 +81,7 @@ ha-mcp/
 │   │   └── pointer.go           # RFC 6901 JSON Pointer navigation
 │   ├── mcp/
 │   │   ├── access_control.go    # Static tool/action read-write classification
+│   │   ├── arg_validation.go    # Rejection of argument names absent from a tool's input schema
 │   │   ├── registry.go          # Tool registry
 │   │   ├── server.go            # MCP HTTP server; per-IP rate limiting middleware
 │   │   ├── tool_filter.go       # ToolFilterEngine with whitelist/blacklist/category filtering
@@ -107,7 +108,9 @@ ha-mcp/
 │   │   ├── entities.go          # Entity tool handlers (get_state)
 │   │   ├── analysis.go          # Analysis tool handlers (analyze_entity, get_entity_dependencies)
 │   │   ├── analysis_paths.go    # RFC 6901 path walker for automation/script reference locations
+│   │   ├── arg_applicability.go # Mode/type selector parsing and rejection of arguments the active mode ignores
 │   │   ├── array_mode.go        # Label and alias array mode (add/remove/replace)
+│   │   ├── entity_id_args.go    # Strict entity ID list parsing (entity_id/entity_ids, 100-id cap)
 │   │   ├── config_search.go     # Shared reference-search scanners (dashboards, template helpers)
 │   │   ├── find_references.go   # Cross-config find_references tool (automations/scripts/scenes/dashboards/helpers)
 │   │   ├── entities_consolidated.go # Consolidated query_entities tool (current/history/statistics/domains/presence/health)

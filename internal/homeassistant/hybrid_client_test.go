@@ -337,7 +337,7 @@ func TestHybridClient_GetLogbook(t *testing.T) {
 		rest: restClient,
 	}
 
-	entries, err := hybridClient.GetLogbook(context.Background(), "2024-01-01T00:00:00Z", "", "")
+	entries, err := hybridClient.GetLogbook(context.Background(), "2024-01-01T00:00:00Z", "", nil)
 	if err != nil {
 		t.Fatalf("GetLogbook() error = %v, want nil", err)
 	}
@@ -1043,7 +1043,7 @@ type mockRESTOperations struct {
 	getServicesFunc                      func(ctx context.Context) ([]Service, error)
 	getConfigFunc                        func(ctx context.Context) (*Config, error)
 	renderTemplateFunc                   func(ctx context.Context, template string) (string, error)
-	getLogbookFunc                       func(ctx context.Context, startTime, endTime, entityID string) ([]LogbookEntry, error)
+	getLogbookFunc                       func(ctx context.Context, startTime, endTime string, entityIDs []string) ([]LogbookEntry, error)
 	checkConfigFunc                      func(ctx context.Context) (*ConfigCheckResult, error)
 	initConfigEntryOptionsFlowFunc       func(ctx context.Context, entryID string) (*OptionsFlowResult, error)
 	submitConfigEntryOptionsFlowStepFunc func(ctx context.Context, flowID string, data map[string]any) (*OptionsFlowResult, error)
@@ -1202,9 +1202,9 @@ func (m *mockRESTOperations) RenderTemplate(ctx context.Context, template string
 	return "", nil
 }
 
-func (m *mockRESTOperations) GetLogbook(ctx context.Context, startTime, endTime, entityID string) ([]LogbookEntry, error) {
+func (m *mockRESTOperations) GetLogbook(ctx context.Context, startTime, endTime string, entityIDs []string) ([]LogbookEntry, error) {
 	if m.getLogbookFunc != nil {
-		return m.getLogbookFunc(ctx, startTime, endTime, entityID)
+		return m.getLogbookFunc(ctx, startTime, endTime, entityIDs)
 	}
 	return nil, nil
 }

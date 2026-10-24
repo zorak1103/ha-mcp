@@ -21,6 +21,26 @@ const (
 	registryTypeAll      = "all"
 )
 
+// registryTypes lists the valid get_registry types in schema order.
+var registryTypes = []string{registryTypeEntities, registryTypeDevices, registryTypeAreas, registryTypeAll}
+
+// registryArgTypes maps each type-specific get_registry argument to the only
+// types that read it; a supplied value for any other type is rejected. type,
+// format and verbose apply everywhere and are deliberately absent.
+var registryArgTypes = map[string][]string{
+	"domain":           {registryTypeEntities},
+	"platform":         {registryTypeEntities},
+	"device_id":        {registryTypeEntities},
+	"manufacturer":     {registryTypeDevices},
+	"model":            {registryTypeDevices},
+	"include_entities": {registryTypeDevices},
+	"area_id":          {registryTypeEntities, registryTypeDevices},
+	"limit":            {registryTypeEntities, registryTypeDevices},
+	"cursor":           {registryTypeEntities, registryTypeDevices},
+	"offset":           {registryTypeEntities, registryTypeDevices},
+	"include_disabled": {registryTypeEntities, registryTypeDevices, registryTypeAll},
+}
+
 // ConsolidatedRegistryHandlers provides consolidated handlers for Home Assistant registry operations.
 // This replaces the individual list_entity_registry, list_device_registry, and list_area_registry tools.
 type ConsolidatedRegistryHandlers struct{}
@@ -68,7 +88,7 @@ func getRegistryProperties() map[string]mcp.JSONSchema {
 	return map[string]mcp.JSONSchema{
 		"type": {
 			Type:        "string",
-			Enum:        []string{registryTypeEntities, registryTypeDevices, registryTypeAreas, registryTypeAll},
+			Enum:        slices.Clone(registryTypes),
 			Description: "Registry type to query: entities, devices, areas, or all",
 		},
 		"format": {
@@ -106,7 +126,7 @@ func getRegistryProperties() map[string]mcp.JSONSchema {
 		},
 		"include_disabled": {
 			Type:        "boolean",
-			Description: "If true, include disabled entries. Default: false",
+			Description: "If true, include disabled entries. Only for type=entities, type=devices and type=all. Default: false",
 		},
 		"include_entities": {
 			Type:        "boolean",
@@ -114,11 +134,12 @@ func getRegistryProperties() map[string]mcp.JSONSchema {
 		},
 		"limit": {
 			Type:        "integer",
-			Description: "Maximum number of entries to return (max 1000). Use with 'cursor' for pagination.",
+			Description: "Maximum number of entries to return (max 1000). Use with 'cursor' for pagination. Only for type=entities and type=devices.",
 		},
+		"offset": paginationOffsetSchema(),
 		"cursor": {
 			Type:        "string",
-			Description: "Pagination cursor from previous response to get next page",
+			Description: "Pagination cursor from previous response to get next page. Only for type=entities and type=devices",
 		},
 	}
 }
@@ -129,9 +150,15 @@ func (h *ConsolidatedRegistryHandlers) handleGetRegistry(
 	client homeassistant.Client,
 	args map[string]any,
 ) (*mcp.ToolsCallResult, error) {
-	registryType, ok := args["type"].(string)
-	if !ok || registryType == "" {
+	if isAbsentArg(args["type"]) {
 		return errorResult("type parameter is required"), nil
+	}
+	registryType, invalid := parseModeArg(args, "type", "", registryTypes)
+	if invalid != nil {
+		return invalid, nil
+	}
+	if rejected := rejectInapplicableArgs(args, "type", registryType, registryArgTypes, ""); rejected != nil {
+		return rejected, nil
 	}
 
 	switch registryType {
@@ -141,10 +168,8 @@ func (h *ConsolidatedRegistryHandlers) handleGetRegistry(
 		return h.handleDevices(ctx, client, args)
 	case registryTypeAreas:
 		return h.handleAreas(ctx, client, args)
-	case registryTypeAll:
-		return h.handleAll(ctx, client, args)
 	default:
-		return errorResult(fmt.Sprintf("Invalid type %q. Must be one of: entities, devices, areas, all", registryType)), nil
+		return h.handleAll(ctx, client, args)
 	}
 }
 

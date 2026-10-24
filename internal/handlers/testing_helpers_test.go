@@ -149,7 +149,7 @@ type UniversalMockClient struct {
 	RenderTemplateFn func(ctx context.Context, template string) (string, error)
 
 	// Logbook operations
-	GetLogbookFn func(ctx context.Context, startTime, endTime, entityID string) ([]homeassistant.LogbookEntry, error)
+	GetLogbookFn func(ctx context.Context, startTime, endTime string, entityIDs []string) ([]homeassistant.LogbookEntry, error)
 
 	// System log operations
 	GetSystemLogFn   func(ctx context.Context) ([]homeassistant.SystemLogEntry, error)
@@ -838,9 +838,9 @@ func (m *UniversalMockClient) RenderTemplate(ctx context.Context, template strin
 
 // Logbook operations implementation
 
-func (m *UniversalMockClient) GetLogbook(ctx context.Context, startTime, endTime, entityID string) ([]homeassistant.LogbookEntry, error) {
+func (m *UniversalMockClient) GetLogbook(ctx context.Context, startTime, endTime string, entityIDs []string) ([]homeassistant.LogbookEntry, error) {
 	if m.GetLogbookFn != nil {
-		return m.GetLogbookFn(ctx, startTime, endTime, entityID)
+		return m.GetLogbookFn(ctx, startTime, endTime, entityIDs)
 	}
 	return []homeassistant.LogbookEntry{}, nil
 }

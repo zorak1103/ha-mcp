@@ -717,3 +717,111 @@ func TestConsolidatedRegistryHandlers_HandleGetRegistry_Devices_IncludeEntities(
 		})
 	}
 }
+
+func TestGetRegistry_RejectsArgsOfOtherTypes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		args         map[string]any
+		wantContains []string
+	}{
+		{"devices rejects domain", map[string]any{"type": "devices", "domain": "light"}, []string{"domain (only for type=entities)"}},
+		{"devices rejects platform and device_id", map[string]any{"type": "devices", "platform": "hue", "device_id": "d"}, []string{"device_id (only for type=entities)", "platform (only for type=entities)"}},
+		{"entities rejects manufacturer", map[string]any{"type": "entities", "manufacturer": "x"}, []string{"manufacturer (only for type=devices)"}},
+		{"entities rejects model and include_entities", map[string]any{"type": "entities", "model": "m", "include_entities": true}, []string{"include_entities (only for type=devices)", "model (only for type=devices)"}},
+		{"areas rejects limit", map[string]any{"type": "areas", "limit": 5.0}, []string{"limit (only for type=entities|devices)"}},
+		{"areas rejects cursor and offset", map[string]any{"type": "areas", "cursor": "c", "offset": 1.0}, []string{"cursor (only for type=entities|devices)", "offset (only for type=entities|devices)"}},
+		{"all rejects area_id", map[string]any{"type": "all", "area_id": "a"}, []string{"area_id (only for type=entities|devices)"}},
+		{"areas rejects include_disabled", map[string]any{"type": "areas", "include_disabled": true}, []string{"include_disabled (only for type=entities|devices|all)"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			h := NewConsolidatedRegistryHandlers()
+			result, err := h.handleGetRegistry(context.Background(), &mockConsolidatedRegistryClient{}, tt.args)
+			if err != nil {
+				t.Fatalf("handleGetRegistry() error = %v", err)
+			}
+			if !result.IsError {
+				t.Fatalf("expected an error result, got: %s", result.Content[0].Text)
+			}
+			text := result.Content[0].Text
+			if !strings.Contains(text, "not applicable to type=") {
+				t.Errorf("error %q does not name the active type", text)
+			}
+			for _, want := range tt.wantContains {
+				if !strings.Contains(text, want) {
+					t.Errorf("error %q does not contain %q", text, want)
+				}
+			}
+		})
+	}
+}
+
+func TestGetRegistry_AcceptsArgsOfTheSelectedType(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		args map[string]any
+	}{
+		{"all with include_disabled", map[string]any{"type": "all", "include_disabled": true}},
+		{"entities with its filters", map[string]any{"type": "entities", "domain": "light", "platform": "hue", "device_id": "d", "area_id": "a", "limit": 5.0, "offset": 0.0, "include_disabled": true, "format": "json", "verbose": true}},
+		{"devices with its filters", map[string]any{"type": "devices", "manufacturer": "x", "model": "m", "include_entities": true, "area_id": "a", "limit": 5.0}},
+		{"areas with format and verbose", map[string]any{"type": "areas", "format": "json", "verbose": true}},
+		{"placeholders count as absent", map[string]any{"type": "areas", "domain": "", "limit": nil, "manufacturer": ""}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			h := NewConsolidatedRegistryHandlers()
+			result, err := h.handleGetRegistry(context.Background(), &mockConsolidatedRegistryClient{}, tt.args)
+			if err != nil {
+				t.Fatalf("handleGetRegistry() error = %v", err)
+			}
+			if strings.Contains(result.Content[0].Text, "not applicable to") {
+				t.Errorf("a valid argument was rejected: %s", result.Content[0].Text)
+			}
+		})
+	}
+}
+
+func TestGetRegistry_NonStringTypeIsRejected(t *testing.T) {
+	t.Parallel()
+
+	h := NewConsolidatedRegistryHandlers()
+	for name, typ := range map[string]any{"number": float64(1), "bool": true} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			result, err := h.handleGetRegistry(context.Background(), &mockConsolidatedRegistryClient{}, map[string]any{"type": typ})
+			if err != nil {
+				t.Fatalf("handleGetRegistry() error = %v", err)
+			}
+			if !result.IsError || !strings.Contains(result.Content[0].Text, "Invalid type") || !strings.Contains(result.Content[0].Text, "expected a string") {
+				t.Errorf("expected a non-string type error, got: %s", result.Content[0].Text)
+			}
+		})
+	}
+}
+
+func TestGetRegistryProperties_DescribeAppliesToTypes(t *testing.T) {
+	t.Parallel()
+
+	props := getRegistryProperties()
+	want := map[string]string{
+		"limit":            "type=entities and type=devices",
+		"cursor":           "type=entities and type=devices",
+		"include_disabled": "type=entities, type=devices and type=all",
+	}
+	for name, fragment := range want {
+		if !strings.Contains(props[name].Description, fragment) {
+			t.Errorf("%s description %q does not mention %q", name, props[name].Description, fragment)
+		}
+	}
+}

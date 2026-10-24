@@ -9,7 +9,8 @@ import (
 
 // TestBoundedFieldList_EscapesControlCharacters guards against a caller-supplied
 // field name is arbitrary JSON with no length or content validation upstream
-// (internal/mcp does no additionalProperties enforcement). A name containing
+// (internal/mcp rejects names absent from the tool schema via
+// mcp.UnknownArguments, but does not check types, enums or required). A name containing
 // a newline must not be echoed raw into LLM-facing output, where it could be
 // read as new instructions rather than data.
 func TestBoundedFieldList_EscapesControlCharacters(t *testing.T) {

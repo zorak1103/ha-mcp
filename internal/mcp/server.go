@@ -471,6 +471,10 @@ func (s *Server) handleToolsCall(ctx context.Context, req *Request, r *http.Requ
 			fmt.Sprintf("action blocked by server filter (tool: %s)", params.Name), nil)
 	}
 
+	if rejected := s.rejectUnknownArguments(params.Name, params.Arguments); rejected != nil {
+		return NewSuccessResponse(req.ID, rejected)
+	}
+
 	ctx = context.WithValue(ctx, waitContextKey{}, s.waitConfig)
 	result, err := handler(ctx, client, params.Arguments)
 	if err != nil {

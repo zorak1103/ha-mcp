@@ -4,6 +4,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -22,9 +23,15 @@ type mockConsolidatedTargetsClient struct {
 	conditionsErr error
 	servicesErr   error
 	extractErr    error
+
+	// gotTarget and gotExpandGroup record the last GetTriggersForTarget call.
+	gotTarget      homeassistant.Target
+	gotExpandGroup *bool
 }
 
-func (m *mockConsolidatedTargetsClient) GetTriggersForTarget(_ context.Context, _ homeassistant.Target, _ *bool) ([]string, error) {
+func (m *mockConsolidatedTargetsClient) GetTriggersForTarget(_ context.Context, target homeassistant.Target, expandGroup *bool) ([]string, error) {
+	m.gotTarget = target
+	m.gotExpandGroup = expandGroup
 	if m.triggersErr != nil {
 		return nil, m.triggersErr
 	}
@@ -671,7 +678,105 @@ func TestConsolidatedTargetHandlers_ExpandGroup(t *testing.T) {
 	}
 }
 
-// TestConsolidatedTargetHandlers_AllInfo_WithDeviceAndAreaIDs covers extractStringArray for different target types.
+func TestConsolidatedTargetHandlers_TargetArgParsing(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		args       map[string]any
+		wantErr    string
+		wantEntity []string
+		wantArea   []string
+		wantExpand *bool
+	}{
+		{
+			name:       "bare string entity_id is coerced to a one-element list",
+			args:       map[string]any{"entity_id": "light.a"},
+			wantEntity: []string{"light.a"},
+		},
+		{
+			name:     "empty-string entity_id is absent next to area_id",
+			args:     map[string]any{"area_id": []any{"x"}, "entity_id": ""},
+			wantArea: []string{"x"},
+		},
+		{
+			name:    "non-string element is rejected",
+			args:    map[string]any{"entity_id": []any{"light.a", 5.0}},
+			wantErr: "entity_id[1] must be a non-empty string",
+		},
+		{
+			name:    "number entity_id is rejected",
+			args:    map[string]any{"entity_id": 5.0},
+			wantErr: "entity_id must be a string or an array of strings, got float64",
+		},
+		{
+			name:    "string expand_group is rejected",
+			args:    map[string]any{"entity_id": []any{"a"}, "expand_group": "yes"},
+			wantErr: "expand_group must be a boolean, got string",
+		},
+		{
+			name:       "bool expand_group is forwarded",
+			args:       map[string]any{"entity_id": []any{"a"}, "expand_group": false},
+			wantEntity: []string{"a"},
+			wantExpand: func() *bool { b := false; return &b }(),
+		},
+		{
+			name:    "nothing supplied keeps the at-least-one error",
+			args:    map[string]any{},
+			wantErr: "at least one of entity_id, device_id, area_id, or label_id is required",
+		},
+		{
+			name:    "only placeholders keeps the at-least-one error",
+			args:    map[string]any{"entity_id": "", "device_id": []any{}, "area_id": nil},
+			wantErr: "at least one of entity_id, device_id, area_id, or label_id is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			client := &mockConsolidatedTargetsClient{triggers: []string{"state"}}
+			args := map[string]any{"info": "triggers"}
+			for k, v := range tt.args {
+				args[k] = v
+			}
+
+			result, err := NewConsolidatedTargetHandlers().handleAnalyzeTarget(context.Background(), client, args)
+			if err != nil {
+				t.Fatalf("handleAnalyzeTarget() unexpected Go error: %v", err)
+			}
+
+			if tt.wantErr != "" {
+				if !result.IsError {
+					t.Fatalf("IsError = false, want error containing %q", tt.wantErr)
+				}
+				if text := result.Content[0].Text; !strings.Contains(text, "Invalid parameters: ") || !strings.Contains(text, tt.wantErr) {
+					t.Errorf("error = %q, want Invalid parameters: ... %q", text, tt.wantErr)
+				}
+				return
+			}
+
+			if result.IsError {
+				t.Fatalf("IsError = true: %s", result.Content[0].Text)
+			}
+			if !slices.Equal(client.gotTarget.EntityID, tt.wantEntity) {
+				t.Errorf("Target.EntityID = %v, want %v", client.gotTarget.EntityID, tt.wantEntity)
+			}
+			if !slices.Equal(client.gotTarget.AreaID, tt.wantArea) {
+				t.Errorf("Target.AreaID = %v, want %v", client.gotTarget.AreaID, tt.wantArea)
+			}
+			switch {
+			case tt.wantExpand == nil && client.gotExpandGroup != nil:
+				t.Errorf("expand_group = %v, want nil", *client.gotExpandGroup)
+			case tt.wantExpand != nil && (client.gotExpandGroup == nil || *client.gotExpandGroup != *tt.wantExpand):
+				t.Errorf("expand_group = %v, want %v", client.gotExpandGroup, *tt.wantExpand)
+			}
+		})
+	}
+}
+
+// TestConsolidatedTargetHandlers_AllInfo_WithDeviceAndAreaIDs covers parseTargetIDList for different target types.
 func TestConsolidatedTargetHandlers_AllInfo_WithDeviceAndAreaIDs(t *testing.T) {
 	t.Parallel()
 

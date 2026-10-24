@@ -316,8 +316,8 @@ func TestManageStatistics_DispatchValidation(t *testing.T) {
 		{
 			// issue C1: dry_run must fail closed on a non-bool value, since
 			// it is the only thing standing between a preview and an
-			// irreversible purge and the MCP server does no schema
-			// validation of its own.
+			// irreversible purge and the MCP server validates argument
+			// names (mcp.UnknownArguments) but not types, enums or required.
 			name: "clear with non-bool dry_run rejected (issue C1)",
 			args: map[string]any{
 				"action":        statActionClear,
