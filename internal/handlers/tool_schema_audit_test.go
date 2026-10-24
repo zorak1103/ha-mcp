@@ -20,7 +20,8 @@ import (
 )
 
 // auditFileOwners maps every non-test handler file that reads a literal or
-// const argument key (args["x"], params["x"], or f(args, "x")) - or hands
+// const argument key (args["x"], params["x"], f(args, "x"), or an argReader
+// call such as r.str("x")) - or hands
 // args to a function declared in an auditSharedArgFiles file - to the tools
 // whose handlers it serves. A key read in that file must be declared by at
 // least one of those tools' InputSchema.Properties. A new handler file that
@@ -49,6 +50,7 @@ var auditFileOwners = map[string][]string{
 	"hacs.go":                             {"manage_hacs"},
 	"helpers_config_builders_extended.go": {"manage_helper", "helper_action"},
 	"helpers_consolidated.go":             {"manage_helper", "helper_action"},
+	"helpers_template_types.go":           {"manage_helper", "helper_action"},
 	"labels.go":                           {"manage_label"},
 	"logbook.go":                          {"get_logbook"},
 	"logbook_correlation.go":              {"get_logbook"},
@@ -218,12 +220,143 @@ func sharedFuncFiles(files map[string]*ast.File) map[string]string {
 	return out
 }
 
+// auditScanContext holds the package-wide facts every file scan needs.
+type auditScanContext struct {
+	fset        *token.FileSet
+	consts      map[string]string
+	sharedFuncs map[string]string
+	// readerMethods is the set of *argReader methods whose first parameter
+	// is the args key they read (str, strAs, num, ...).
+	readerMethods map[string]bool
+}
+
+// isArgReaderType reports whether a type expression is argReader or
+// *argReader.
+func isArgReaderType(e ast.Expr) bool {
+	if star, ok := e.(*ast.StarExpr); ok {
+		e = star.X
+	}
+	id, ok := e.(*ast.Ident)
+	return ok && id.Name == "argReader"
+}
+
+// isNewArgReaderCall reports whether e is a newArgReader(...) call.
+func isNewArgReaderCall(e ast.Expr) bool {
+	call, ok := e.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	fn, ok := call.Fun.(*ast.Ident)
+	return ok && fn.Name == "newArgReader"
+}
+
+// argReaderMethods derives the *argReader methods that read args by the key
+// in their first parameter: a method indexing <recv>.args[<first param>]
+// directly, or forwarding its first parameter as the first argument of
+// another such method (str -> strAs), iterated to a fixed point. Helpers
+// like fail/checkStringLen take a key only for messages and never qualify.
+func argReaderMethods(files map[string]*ast.File) map[string]bool {
+	type method struct{ recv, key string }
+	methods := map[string]method{}
+	bodies := map[string]*ast.BlockStmt{}
+	for _, f := range files {
+		for _, decl := range f.Decls {
+			fd, ok := decl.(*ast.FuncDecl)
+			if !ok || fd.Recv == nil || fd.Body == nil || len(fd.Recv.List) != 1 ||
+				!isArgReaderType(fd.Recv.List[0].Type) || len(fd.Recv.List[0].Names) != 1 {
+				continue
+			}
+			params := fd.Type.Params.List
+			if len(params) == 0 || len(params[0].Names) == 0 {
+				continue
+			}
+			methods[fd.Name.Name] = method{recv: fd.Recv.List[0].Names[0].Name, key: params[0].Names[0].Name}
+			bodies[fd.Name.Name] = fd.Body
+		}
+	}
+	isIdent := func(e ast.Expr, name string) bool {
+		id, ok := e.(*ast.Ident)
+		return ok && id.Name == name
+	}
+	readers := map[string]bool{}
+	for changed := true; changed; {
+		changed = false
+		for name, m := range methods {
+			if readers[name] {
+				continue
+			}
+			ast.Inspect(bodies[name], func(n ast.Node) bool {
+				switch node := n.(type) {
+				case *ast.IndexExpr:
+					if sel, ok := node.X.(*ast.SelectorExpr); ok && isIdent(sel.X, m.recv) &&
+						sel.Sel.Name == "args" && isIdent(node.Index, m.key) {
+						readers[name] = true
+					}
+				case *ast.CallExpr:
+					if sel, ok := node.Fun.(*ast.SelectorExpr); ok && isIdent(sel.X, m.recv) &&
+						readers[sel.Sel.Name] && len(node.Args) > 0 && isIdent(node.Args[0], m.key) {
+						readers[name] = true
+					}
+				}
+				return !readers[name]
+			})
+			changed = changed || readers[name]
+		}
+	}
+	return readers
+}
+
+// argReaderIdents returns the identifiers that hold an *argReader anywhere in
+// decl: receivers and parameters (of the function or any closure in it)
+// typed argReader/*argReader, variables declared with that type, and
+// variables assigned from newArgReader(...).
+func argReaderIdents(decl ast.Decl) map[string]bool {
+	idents := map[string]bool{}
+	addFields := func(fl *ast.FieldList) {
+		if fl == nil {
+			return
+		}
+		for _, field := range fl.List {
+			if isArgReaderType(field.Type) {
+				for _, name := range field.Names {
+					idents[name.Name] = true
+				}
+			}
+		}
+	}
+	if fd, ok := decl.(*ast.FuncDecl); ok {
+		addFields(fd.Recv)
+	}
+	ast.Inspect(decl, func(n ast.Node) bool {
+		switch node := n.(type) {
+		case *ast.FuncType:
+			addFields(node.Params)
+		case *ast.ValueSpec:
+			for i, name := range node.Names {
+				if (node.Type != nil && isArgReaderType(node.Type)) ||
+					(i < len(node.Values) && isNewArgReaderCall(node.Values[i])) {
+					idents[name.Name] = true
+				}
+			}
+		case *ast.AssignStmt:
+			for i, lhs := range node.Lhs {
+				if id, ok := lhs.(*ast.Ident); ok && i < len(node.Rhs) && isNewArgReaderCall(node.Rhs[i]) {
+					idents[id.Name] = true
+				}
+			}
+		}
+		return true
+	})
+	return idents
+}
+
 // scanArgReads finds every literal/const argument key read in f: X[K] with X
-// an args ident, or a call whose argument i is an args ident and whose
-// argument i+1 is K. It also records which functions receive args, which
-// shared reader files those calls reach, and the direct reads of each
+// an args ident; a call whose argument i is an args ident and whose argument
+// i+1 is K; or R.m(K, ...) with R an *argReader and m one of its reader
+// methods. It also records which functions receive args (or an argReader),
+// which shared reader files those calls reach, and the direct reads of each
 // top-level function.
-func scanArgReads(fset *token.FileSet, f *ast.File, consts, sharedFuncs map[string]string) auditFileScan {
+func scanArgReads(sc auditScanContext, f *ast.File) auditFileScan {
 	scan := auditFileScan{
 		reads:       map[string]int{},
 		sharedCalls: map[string]bool{},
@@ -237,7 +370,7 @@ func scanArgReads(fset *token.FileSet, f *ast.File, consts, sharedFuncs map[stri
 			scan.funcReads[fd.Name.Name] = fnReads
 		}
 		record := func(key string, pos token.Pos) {
-			line := fset.Position(pos).Line
+			line := sc.fset.Position(pos).Line
 			if _, seen := scan.reads[key]; !seen {
 				scan.reads[key] = line
 			}
@@ -245,16 +378,17 @@ func scanArgReads(fset *token.FileSet, f *ast.File, consts, sharedFuncs map[stri
 				fnReads[key] = line
 			}
 		}
+		readers := argReaderIdents(decl)
 		ast.Inspect(decl, func(n ast.Node) bool {
 			switch node := n.(type) {
 			case *ast.IndexExpr:
 				if isArgIdent(node.X) {
-					if key, ok := resolveKey(node.Index, consts); ok {
+					if key, ok := resolveKey(node.Index, sc.consts); ok {
 						record(key, node.Pos())
 					}
 				}
 			case *ast.CallExpr:
-				scanArgCall(fset, node, consts, sharedFuncs, &scan, record)
+				scanArgCall(sc, node, readers, &scan, record)
 			}
 			return true
 		})
@@ -268,9 +402,21 @@ func scanArgReads(fset *token.FileSet, f *ast.File, consts, sharedFuncs map[stri
 }
 
 // scanArgCall handles one call expression for scanArgReads.
-func scanArgCall(fset *token.FileSet, call *ast.CallExpr, consts, sharedFuncs map[string]string, scan *auditFileScan, record func(string, token.Pos)) {
+func scanArgCall(sc auditScanContext, call *ast.CallExpr, readers map[string]bool, scan *auditFileScan, record func(string, token.Pos)) {
+	// R.m(K, ...) on an argReader: K is the args key (strAs's second
+	// argument is the config key, not an args key, so only the first counts).
+	if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sc.readerMethods[sel.Sel.Name] && len(call.Args) > 0 {
+		if recv, ok := sel.X.(*ast.Ident); ok && readers[recv.Name] {
+			if key, ok := resolveKey(call.Args[0], sc.consts); ok && key != "" {
+				record(key, call.Pos())
+			}
+		}
+	}
 	passesArgs := false
 	for i, a := range call.Args {
+		if id, ok := a.(*ast.Ident); ok && readers[id.Name] {
+			passesArgs = true
+		}
 		if !isArgIdent(a) {
 			continue
 		}
@@ -278,7 +424,7 @@ func scanArgCall(fset *token.FileSet, call *ast.CallExpr, consts, sharedFuncs ma
 		// An empty string after args is a plain value (e.g.
 		// buildStatisticListPaginationParams(args, "")), never a key.
 		if i+1 < len(call.Args) {
-			if key, ok := resolveKey(call.Args[i+1], consts); ok && key != "" {
+			if key, ok := resolveKey(call.Args[i+1], sc.consts); ok && key != "" {
 				record(key, call.Pos())
 			}
 		}
@@ -288,9 +434,9 @@ func scanArgCall(fset *token.FileSet, call *ast.CallExpr, consts, sharedFuncs ma
 		return
 	}
 	if _, seen := scan.argCalls[fn.Name]; !seen {
-		scan.argCalls[fn.Name] = fset.Position(call.Pos()).Line
+		scan.argCalls[fn.Name] = sc.fset.Position(call.Pos()).Line
 	}
-	if file, shared := sharedFuncs[fn.Name]; shared {
+	if file, shared := sc.sharedFuncs[fn.Name]; shared {
 		scan.sharedCalls[file] = true
 	}
 }
@@ -318,11 +464,18 @@ func scanAllHandlerSources(t *testing.T) map[string]auditFileScan {
 	if len(files) == 0 {
 		t.Fatal("no handler sources found; test must run from internal/handlers")
 	}
-	consts := collectStringConsts(files)
-	sharedFuncs := sharedFuncFiles(files)
+	sc := auditScanContext{
+		fset:          fset,
+		consts:        collectStringConsts(files),
+		sharedFuncs:   sharedFuncFiles(files),
+		readerMethods: argReaderMethods(files),
+	}
+	if len(sc.readerMethods) == 0 {
+		t.Fatal("no argReader reader methods found; argReader detection is broken")
+	}
 	scans := make(map[string]auditFileScan, len(files))
 	for name, f := range files {
-		scans[name] = scanArgReads(fset, f, consts, sharedFuncs)
+		scans[name] = scanArgReads(sc, f)
 	}
 	return scans
 }
