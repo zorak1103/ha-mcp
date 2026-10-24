@@ -3776,15 +3776,46 @@ func TestManageHelper_GetDetails(t *testing.T) {
 					}, nil
 				}
 				m.GetConfigEntryOptionsFn = func(context.Context, string) (map[string]any, error) {
-					return map[string]any{
-						"state":     "{{ states('binary_sensor.source') }}",
-						"delay_on":  map[string]any{"seconds": 5},
-						"delay_off": map[string]any{"seconds": 10},
+					return templateBinarySensorFlatOptions(), nil
+				}
+			},
+			wantError: false,
+			wantContains: []string{
+				"Binary Sensor: Template Binary", "Template Configuration:",
+				"Delay before turning on: 00:00:05", "Delay before turning off: 00:03:00",
+				"Availability template: {{ true }}", "Device: dev123",
+			},
+		},
+		{
+			name: "get_details for template binary_sensor with delays (json)",
+			args: map[string]any{
+				"action":    "get_details",
+				"entity_id": "binary_sensor.template_test",
+				"format":    "json",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetStateFn = func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+					return &homeassistant.Entity{
+						EntityID:   entityID,
+						State:      "on",
+						Attributes: map[string]any{"friendly_name": "Template Binary"},
 					}, nil
+				}
+				m.GetEntityRegistryFn = func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+					return []homeassistant.EntityRegistryEntry{
+						{
+							EntityID:      "binary_sensor.template_test",
+							Platform:      "template",
+							ConfigEntryID: "config456",
+						},
+					}, nil
+				}
+				m.GetConfigEntryOptionsFn = func(context.Context, string) (map[string]any, error) {
+					return templateBinarySensorFlatOptions(), nil
 				}
 			},
 			wantError:    false,
-			wantContains: []string{"Binary Sensor: Template Binary", "Template Configuration:", "Delay on:", "Delay off:"},
+			wantContains: []string{"\"delay_off\"", "\"minutes\": 3", "\"device_id\": \"dev123\""},
 		},
 		{
 			name: "get_details for non-template sensor (no enrichment)",
@@ -3993,10 +4024,86 @@ func TestManageHelper_GetDetails_TemplateSubtypeDomains(t *testing.T) {
 			wantContains:    []string{"Light", "My Light (light.my_light)", "State: on", "Brightness: 128"},
 			wantNotContains: []string{"unsupported helper type", "get_details is not supported for helper type"},
 		},
+		{
+			name: "get_details for template light reads availability and device from options",
+			args: map[string]any{
+				"action":    "get_details",
+				"entity_id": "light.tpl",
+				"format":    "json",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetStateFn = func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+					return &homeassistant.Entity{
+						EntityID:   entityID,
+						State:      "off",
+						Attributes: map[string]any{"friendly_name": "Tpl Light"},
+					}, nil
+				}
+				m.GetEntityRegistryFn = func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+					return []homeassistant.EntityRegistryEntry{
+						{EntityID: "light.tpl", Platform: "template", ConfigEntryID: "ce"},
+					}, nil
+				}
+				m.GetConfigEntryOptionsFn = func(context.Context, string) (map[string]any, error) {
+					return map[string]any{
+						"state":        "{{ 'off' }}",
+						"availability": "{{ true }}",
+						"device_id":    "dev1",
+					}, nil
+				}
+			},
+			wantError:    false,
+			wantContains: []string{"\"availability_template\": \"{{ true }}\"", "\"device_id\": \"dev1\"", "\"state\": \"off\""},
+		},
 	}
 
 	h := NewConsolidatedHelperHandlers()
 	runHandlerTestCases(t, tests, h.handleManageHelper)
+}
+
+// templateBinarySensorFlatOptions is the realistic FLAT options shape a
+// template binary_sensor yields after GetConfigEntryOptions lifts the
+// "additional_options" section children to the top level.
+func templateBinarySensorFlatOptions() map[string]any {
+	return map[string]any{
+		"state":        "{{ states('binary_sensor.source') }}",
+		"availability": "{{ true }}",
+		"device_id":    "dev123",
+		"delay_on":     map[string]any{"hours": 0.0, "minutes": 0.0, "seconds": 5.0},
+		"delay_off":    map[string]any{"hours": 0.0, "minutes": 3.0, "seconds": 0.0},
+	}
+}
+
+// TestAddTemplateSubtypeOptionsToDetails_ReturnsConsumedKeys pins that the
+// subtype reader reports exactly the option keys it rendered (domain fields
+// plus the universal availability/device_id), so the generic configuration
+// block can omit them.
+func TestAddTemplateSubtypeOptionsToDetails_ReturnsConsumedKeys(t *testing.T) {
+	t.Parallel()
+
+	details := map[string]any{}
+	options := map[string]any{
+		"value_template": "x",
+		"turn_on":        map[string]any{"action": "switch.turn_on"},
+		"availability":   "y",
+		"unrelated":      1.0,
+	}
+
+	consumed := addTemplateSubtypeOptionsToDetails("switch", options, details)
+
+	want := map[string]bool{"value_template": true, "turn_on": true, "availability": true}
+	if !reflect.DeepEqual(want, consumed) {
+		t.Errorf("consumed keys = %v, want %v", consumed, want)
+	}
+	if details["state_template"] != "x" {
+		t.Errorf("state_template = %v, want x", details["state_template"])
+	}
+	if details["availability_template"] != "y" {
+		t.Errorf("availability_template = %v, want y", details["availability_template"])
+	}
+	if _, found := details["unrelated"]; found {
+		t.Errorf("unrelated option leaked into details: %v", details)
+	}
 }
 
 // TestManageHelper_GetDetails_ClimateHumidifierSelectNaturalFormat pins the

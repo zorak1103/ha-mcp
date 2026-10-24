@@ -2117,37 +2117,45 @@ func enrichConfigEntryOptions(ctx context.Context, client homeassistant.Client, 
 	// update/vacuum/weather - never sensor or binary_sensor), so this is an
 	// either/or, not an ordering-sensitive check.
 	if templateSubtypeDomains[helperType] {
-		addTemplateSubtypeOptionsToDetails(helperType, options, details)
+		// Task 5 replaces this function; the consumed-key sets are not used yet.
+		_ = addTemplateSubtypeOptionsToDetails(helperType, options, details)
 		return
 	}
-	addTemplateOptionsToDetails(options, details)
+	_ = addTemplateOptionsToDetails(options, details)
 }
 
-// addTemplateOptionsToDetails extracts template options from config entry Options.
-func addTemplateOptionsToDetails(options, details map[string]any) {
-	details["config_entry_type"] = platformTemplate
+// templateSensorStringOptions maps the string-valued options of a
+// template sensor/binary_sensor (flat options) to their detail key. Empty
+// strings are skipped.
+var templateSensorStringOptions = []struct{ option, detail string }{
+	{"state", "state_template"},
+	{"availability", "availability_template"},
+	{"unit_of_measurement", "unit_of_measurement"},
+	{"device_class", "device_class"},
+	{"state_class", "state_class"},
+	{"device_id", "device_id"},
+}
 
-	if state, ok := options["state"].(string); ok && state != "" {
-		details["state_template"] = state
+// addTemplateOptionsToDetails extracts template sensor/binary_sensor options
+// from the flat config entry options and returns the set of option keys it
+// rendered, so a caller can leave those out of any generic options dump.
+func addTemplateOptionsToDetails(options, details map[string]any) map[string]bool {
+	details["config_entry_type"] = platformTemplate
+	consumed := map[string]bool{}
+
+	for _, m := range templateSensorStringOptions {
+		if v, ok := options[m.option].(string); ok && v != "" {
+			details[m.detail] = v
+			consumed[m.option] = true
+		}
 	}
-	if availability, ok := options["availability"].(string); ok && availability != "" {
-		details["availability_template"] = availability
+	for _, key := range []string{"delay_on", "delay_off"} {
+		if v, ok := options[key]; ok && v != nil {
+			details[key] = v
+			consumed[key] = true
+		}
 	}
-	if unit, ok := options["unit_of_measurement"].(string); ok && unit != "" {
-		details["unit_of_measurement"] = unit
-	}
-	if deviceClass, ok := options["device_class"].(string); ok && deviceClass != "" {
-		details["device_class"] = deviceClass
-	}
-	if stateClass, ok := options["state_class"].(string); ok && stateClass != "" {
-		details["state_class"] = stateClass
-	}
-	if delayOn, ok := options["delay_on"]; ok && delayOn != nil {
-		details["delay_on"] = delayOn
-	}
-	if delayOff, ok := options["delay_off"]; ok && delayOff != nil {
-		details["delay_off"] = delayOff
-	}
+	return consumed
 }
 
 // addTemplateSubtypeOptionsToDetails copies a template_* subtype's (issue
@@ -2161,20 +2169,29 @@ func addTemplateOptionsToDetails(options, details map[string]any) {
 // entity's real runtime state with a template string - issue #216's C1
 // collision, reintroduced inside this very fix. Every write goes through
 // putDetail as a safety net for any other, non-state collision.
-func addTemplateSubtypeOptionsToDetails(entityDomain string, options, details map[string]any) {
+//
+// The universal fields (availability, device_id) are read too. The returned
+// set holds the config keys that were rendered.
+func addTemplateSubtypeOptionsToDetails(entityDomain string, options, details map[string]any) map[string]bool {
 	putDetail(details, "config_entry_type", platformTemplate)
+	consumed := map[string]bool{}
 
-	for _, field := range resolveTemplateFieldsForDomain(entityDomain) {
-		val, ok := options[field.configKey()]
-		if !ok || val == nil {
-			continue
+	// resolveTemplateFieldsForDomain returns a shared slice: read-only.
+	for _, fields := range [][]templateField{resolveTemplateFieldsForDomain(entityDomain), templateUniversalFields} {
+		for _, field := range fields {
+			val, ok := options[field.configKey()]
+			if !ok || val == nil {
+				continue
+			}
+			key := field.arg
+			if field.kind == tplTemplate {
+				key += "_template"
+			}
+			putDetail(details, key, val)
+			consumed[field.configKey()] = true
 		}
-		key := field.arg
-		if field.kind == tplTemplate {
-			key += "_template"
-		}
-		putDetail(details, key, val)
 	}
+	return consumed
 }
 
 // =============================================================================
