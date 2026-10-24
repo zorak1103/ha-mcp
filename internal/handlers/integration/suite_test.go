@@ -210,6 +210,11 @@ func (s *IntegrationTestSuite) CallTool(name string, args map[string]any) *mcp.T
 	handler, ok := s.registry.GetHandler(name)
 	s.Require().True(ok, "tool %q is not registered", name)
 
+	// The server rejects undeclared argument names before the handler runs;
+	// mirror that here since CallTool bypasses the server.
+	tool, _ := s.registry.GetTool(name)
+	s.Require().Empty(mcp.UnknownArguments(tool.InputSchema, args), "CallTool %q: undeclared arguments (the server would reject them)", name)
+
 	result, err := handler(s.ctx, s.client, args)
 	s.Require().NoError(err, "handler for %q returned a Go error - handlers must report domain errors via IsError, not a Go error", name)
 
