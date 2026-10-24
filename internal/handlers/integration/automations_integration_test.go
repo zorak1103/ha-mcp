@@ -248,7 +248,8 @@ func (s *AutomationIntegrationTestSuite) TestAutomationMaxFieldPreservation() {
 	automationEntityID := BuildEntityID("automation", automationID)
 
 	s.RegisterCleanup(func() {
-		_ = s.Client().DeleteAutomation(s.Context(), automationID)
+		s.NoError(s.Client().DeleteAutomation(s.Context(), automationID),
+			"max-field test must clean up its own entity (#305)")
 	})
 
 	// Create a parallel automation with max:5
@@ -283,6 +284,12 @@ func (s *AutomationIntegrationTestSuite) TestAutomationMaxFieldPreservation() {
 	updatedCfg.Description = "updated description"
 	err = s.Client().UpdateAutomation(s.Context(), automationID, updatedCfg)
 	s.Require().NoError(err, "failed to update automation")
+
+	// HA schedules its own async reload after the config POST. A DELETE landing inside that
+	// window leaves a running entity with no config behind (#305), so reload synchronously, as
+	// manage_automation update does, before the cleanup delete runs.
+	_, err = s.Client().CallService(s.Context(), "automation", "reload", map[string]any{"id": automationID})
+	s.Require().NoError(err, "failed to reload automation after update")
 
 	// Fetch again and confirm Max is still 5 (not silently erased)
 	afterUpdate, err := s.Client().GetAutomation(s.Context(), automationID)
