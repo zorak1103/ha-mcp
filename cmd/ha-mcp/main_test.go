@@ -14,20 +14,60 @@ import (
 	"github.com/zorak1103/ha-mcp/internal/config"
 )
 
-// isolateHAEnv blanks every HA_* variable in the caller's environment for the
-// duration of the test. config.Load binds many of them (HA_URL, HA_TOKEN,
-// HA_REST_*, ...) and an env var outranks the config file, so without this a
-// test that asserts config-file values only passes on machines that export none.
-// Scanning os.Environ rather than listing names keeps it in step with config.go.
-// An empty value is treated as unset by viper. Not usable from parallel tests
-// (t.Setenv panics there).
+// isolateHAEnv makes a config-loading test independent of the machine it runs
+// on. It blanks every HA_* variable in the caller's environment: config.Load
+// binds many of them (HA_URL, HA_TOKEN, HA_REST_*, ...) and an env var outranks
+// the config file. Scanning os.Environ rather than listing names keeps it in
+// step with config.go; an empty value is treated as unset by viper.
+//
+// It also moves the test into an empty temp directory. config.Load reads a
+// .env from the working directory and sets every variable not already in the
+// environment (a blank above counts as set, an absent one does not), so a stray
+// .env in the package directory would otherwise leak values into the test, and
+// anything the test writes relative to the cwd would land in the package.
+//
+// Not usable from parallel tests (t.Setenv and t.Chdir panic there).
 func isolateHAEnv(t *testing.T) {
 	t.Helper()
+	t.Chdir(t.TempDir())
 	for _, kv := range os.Environ() {
 		name, _, _ := strings.Cut(kv, "=")
 		if strings.HasPrefix(name, "HA_") {
 			t.Setenv(name, "")
 		}
+	}
+}
+
+func TestIsolateHAEnv(t *testing.T) {
+	// Not parallel: isolateHAEnv uses t.Setenv and t.Chdir.
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get current directory: %v", err)
+	}
+	t.Setenv("HA_TOKEN", "leaked-token")
+
+	isolateHAEnv(t)
+
+	if got := os.Getenv("HA_TOKEN"); got != "" {
+		t.Errorf("HA_TOKEN = %q after isolateHAEnv, want empty", got)
+	}
+
+	// A .env in the working directory is loaded by config.Load and sets any
+	// variable not already in the environment, so the test must not run in the
+	// package directory (or write files into it).
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get current directory: %v", err)
+	}
+	if cwd == origDir {
+		t.Errorf("working directory = %q, want a fresh temp dir", cwd)
+	}
+	entries, err := os.ReadDir(cwd)
+	if err != nil {
+		t.Fatalf("failed to read %q: %v", cwd, err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("working directory %q has %d entries, want empty", cwd, len(entries))
 	}
 }
 
