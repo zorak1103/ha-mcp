@@ -11,7 +11,9 @@ import (
 
 // errConnectionLost is delivered to requests that were waiting for a response
 // when their connection ended. The text deliberately contains "connection
-// closed" so IsRetryableError keeps treating post-send loss as retryable.
+// closed" so IsRetryableError treats it as retryable - which wsRetryPredicate
+// honors for replay-safe commands only; any other command surfaces it wrapped
+// in errOutcomeUnknown instead of being re-sent.
 var errConnectionLost = errors.New("connection closed while waiting for response")
 
 // wsResponse is the single outcome delivered to a pending request: either a

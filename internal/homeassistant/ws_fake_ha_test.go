@@ -33,21 +33,39 @@ type fakeHA struct {
 	attempts        atomic.Int32
 	authInvalidOn   int32
 	holdOnConn      int32
+	holdTypes       map[string]struct{}
 	pauseReads      <-chan struct{}
 	dropAfterAuthOn int32
 	acceptLimit     int32
 
-	mu     sync.Mutex
-	active map[*websocket.Conn]struct{}
-	stop   chan struct{}
+	mu             sync.Mutex
+	active         map[*websocket.Conn]struct{}
+	receivedByType map[string]int
+	stop           chan struct{}
 }
 
 // fakeHAOption configures a fakeHA.
 type fakeHAOption func(*fakeHA)
 
-// withHoldOnConn makes "test/hold" commands on connection n get no reply.
-func withHoldOnConn(n int32) fakeHAOption {
-	return func(f *fakeHA) { f.holdOnConn = n }
+// withHoldOnConn makes commands of any listed type on connection n get no reply.
+//
+//nolint:unparam // n picks the connection; every current test holds on connection 1.
+func withHoldOnConn(n int32, msgTypes ...string) fakeHAOption {
+	return func(f *fakeHA) {
+		f.holdOnConn = n
+		f.holdTypes = make(map[string]struct{}, len(msgTypes))
+		for _, t := range msgTypes {
+			f.holdTypes[t] = struct{}{}
+		}
+	}
+}
+
+// receivedCount returns how many commands of msgType the server has received
+// across all connections.
+func (f *fakeHA) receivedCount(msgType string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.receivedByType[msgType]
 }
 
 // withPauseReads makes the server wait on ch after auth before reading commands.
@@ -77,8 +95,9 @@ func withAcceptLimit(n int32) fakeHAOption {
 func newFakeHA(t *testing.T, opts ...fakeHAOption) *fakeHA {
 	t.Helper()
 	f := &fakeHA{
-		active: make(map[*websocket.Conn]struct{}),
-		stop:   make(chan struct{}),
+		active:         make(map[*websocket.Conn]struct{}),
+		receivedByType: make(map[string]int),
+		stop:           make(chan struct{}),
 	}
 	for _, opt := range opts {
 		opt(f)
@@ -210,13 +229,16 @@ func (f *fakeHA) serve(ctx context.Context, conn *websocket.Conn, num int32) {
 			continue
 		}
 		f.received.Add(1)
+		f.mu.Lock()
+		f.receivedByType[cmd.Type]++
+		f.mu.Unlock()
 
 		var reply string
 		if cmd.ID <= lastID {
 			reply = fmt.Sprintf(`{"id":%d,"type":"result","success":false,"error":{"code":"id_reuse","message":"Identifier values have to increase."}}`, cmd.ID)
 		} else {
 			lastID = cmd.ID
-			if num == f.holdOnConn && cmd.Type == "test/hold" {
+			if _, held := f.holdTypes[cmd.Type]; held && num == f.holdOnConn {
 				continue
 			}
 			reply = fmt.Sprintf(`{"id":%d,"type":"result","success":true,"result":{}}`, cmd.ID)

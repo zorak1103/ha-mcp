@@ -640,6 +640,23 @@ func TestWSClient_SendCommand_NotConnected(t *testing.T) {
 	}
 }
 
+// TestWSClient_SendCommand_WriteNotConnected_NotOutcomeUnknown pins that a
+// write which never reached the wire is not reported as having an unknown
+// outcome.
+func TestWSClient_SendCommand_WriteNotConnected_NotOutcomeUnknown(t *testing.T) {
+	t.Parallel()
+
+	client := NewWSClient("http://example.com", "token")
+
+	_, err := client.SendCommand(context.Background(), "call_service", nil)
+	if err == nil {
+		t.Fatal("SendCommand() error is nil, want error")
+	}
+	if errors.Is(err, errOutcomeUnknown) {
+		t.Errorf("SendCommand() error = %v, must not be errOutcomeUnknown (nothing was sent)", err)
+	}
+}
+
 func TestWSClient_Connect_TimeoutDuringAuth(t *testing.T) {
 	t.Parallel()
 

@@ -1736,6 +1736,8 @@ func (c *wsClientImpl) GetConfigEntry(ctx context.Context, entryID string) (*Con
 // SendHACSCommand sends a generic HACS WebSocket command.
 // HACS is an optional third-party add-on, so commands may fail if not installed.
 // The result is returned as untyped JSON since HACS responses vary by command.
+// This is a generic passthrough: every command name callers use must be classified in
+// replaySafeWSCommands (ws_replay.go) to get post-send retries; unclassified names are never re-sent.
 func (c *wsClientImpl) SendHACSCommand(ctx context.Context, command string, data map[string]any) (any, error) {
 	result, err := c.ws.SendCommand(ctx, command, data)
 	if err != nil {
