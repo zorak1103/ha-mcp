@@ -455,6 +455,8 @@ set -a && source .env.integration && set +a && go test -tags=integration -v ./in
 
 **Gotcha vs. Issue**: an open GitHub issue is for unresolved *work* and stops being visible once closed - it is not where a settled, non-obvious invariant should live, because a fresh session won't read closed issues before touching the code. A gotcha in "API & Type Gotchas" is for exactly that: a terse, always-loaded "rule + one-line why" a future session needs before it re-discovers the same trap. When you fix a bug worth remembering, add or update one line there (see that section's convention note) instead of leaving the reasoning only in the PR description - and don't write the fix's origin story there, git history already has it.
 
+**No Git Worktrees**: No git worktrees. Work on a feature branch in the main checkout. Use a worktree only if I explicitly ask for parallel work.
+
 **File Editing Tool Priority**: Always use the dedicated file tools (Write, Edit) to create or modify files. Never use Bash with Python or shell commands to manipulate file content — the Write tool rewrites a complete file cleanly, the Edit tool makes surgical replacements. Python byte-level manipulation is error-prone, harder to read, and the wrong tool for the job.
 
 **Prefer Subagents for Test Execution and Boilerplate**: Delegate to subagents wherever the task allows it, to keep the main conversation's context free for planning, design, and judgment calls. Two categories are delegated by default, not just when convenient:
