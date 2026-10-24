@@ -934,3 +934,67 @@ func TestSetAtPath_UnexpectedIntermediateType(t *testing.T) {
 		t.Errorf("error = %q, want to contain %q", err.Error(), "cannot navigate")
 	}
 }
+
+// TestApply_SharedValueIsNotAliased verifies that two operations carrying the
+// same map value insert independent copies: a later edit at one location must
+// not leak into the other, nor into the caller's op value.
+func TestApply_SharedValueIsNotAliased(t *testing.T) {
+	t.Parallel()
+
+	shared := map[string]any{"x": float64(1)}
+	result, err := Apply(map[string]any{}, []Operation{
+		{Op: "add", Path: "/a", Value: shared},
+		{Op: "add", Path: "/b", Value: shared},
+		{Op: "replace", Path: "/a/x", Value: float64(2)},
+	})
+	if err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+
+	m := result.(map[string]any)
+	if got := m["b"].(map[string]any)["x"]; got != float64(1) {
+		t.Errorf("b.x = %v, want 1 (must not alias a)", got)
+	}
+	if got := m["a"].(map[string]any)["x"]; got != float64(2) {
+		t.Errorf("a.x = %v, want 2", got)
+	}
+	if got := shared["x"]; got != float64(1) {
+		t.Errorf("caller's op value x = %v, want 1 (must not be mutated)", got)
+	}
+}
+
+// TestApply_CopyIsNotAliased verifies that a copied subtree is independent of
+// its source.
+func TestApply_CopyIsNotAliased(t *testing.T) {
+	t.Parallel()
+
+	result := applyJSON(t, `{"a":{"x":1}}`, []Operation{
+		{Op: "copy", From: "/a", Path: "/b"},
+		{Op: "replace", Path: "/b/x", Value: float64(2)},
+	})
+
+	m := result.(map[string]any)
+	if got := m["a"].(map[string]any)["x"]; got != float64(1) {
+		t.Errorf("a.x = %v, want 1 (source must not change)", got)
+	}
+	if got := m["b"].(map[string]any)["x"]; got != float64(2) {
+		t.Errorf("b.x = %v, want 2", got)
+	}
+}
+
+// TestApply_UncloneableValueFails verifies that a value that cannot be cloned
+// is reported as an operation error instead of being stored by reference.
+func TestApply_UncloneableValueFails(t *testing.T) {
+	t.Parallel()
+
+	for _, op := range []string{"add", "replace"} {
+		doc := map[string]any{"a": float64(1)}
+		got, err := Apply(doc, []Operation{{Op: op, Path: "/a", Value: func() {}}})
+		if err == nil || !strings.Contains(err.Error(), "operation 0") {
+			t.Fatalf("%s: error = %v, want an operation 0 error", op, err)
+		}
+		if got.(map[string]any)["a"] != float64(1) {
+			t.Errorf("%s: original doc must be returned unchanged", op)
+		}
+	}
+}

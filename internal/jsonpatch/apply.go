@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+
+	"github.com/zorak1103/ha-mcp/internal/jsonorder"
 )
 
 // Operation represents a single RFC 6902 JSON Patch operation.
@@ -14,6 +16,9 @@ type Operation struct {
 	Path  string `json:"path"`
 	Value any    `json:"value,omitempty"`
 	From  string `json:"from,omitempty"`
+	// ValueOrder is the key order of Value, used only by ApplyWithOrder. It
+	// is cloned on every insert, so one order may be shared by several ops.
+	ValueOrder *jsonorder.Order `json:"-"`
 }
 
 // Apply applies RFC 6902 operations to doc atomically.
@@ -79,11 +84,25 @@ func applyAdd(doc any, path string, value any, opIdx int) (any, error) {
 	if err != nil {
 		return doc, opError(opIdx, err)
 	}
+	value, err = cloneValue(value)
+	if err != nil {
+		return doc, opError(opIdx, err)
+	}
 	result, err := setAtPath(doc, segs, value, true, path)
 	if err != nil {
 		return doc, opError(opIdx, err)
 	}
 	return result, nil
+}
+
+// cloneValue deep-copies a value before it is stored in the document, so the
+// caller's op value (or a copy source) is never aliased by the result.
+func cloneValue(value any) (any, error) {
+	c, err := deepClone(value)
+	if err != nil {
+		return nil, fmt.Errorf("cloning value: %w", err)
+	}
+	return c, nil
 }
 
 // applyRemove implements the RFC 6902 "remove" operation.
@@ -111,6 +130,10 @@ func applyReplace(doc any, path string, value any, opIdx int) (any, error) {
 		if _, getErr := Get(doc, path); getErr != nil {
 			return doc, opError(opIdx, getErr)
 		}
+	}
+	value, err = cloneValue(value)
+	if err != nil {
+		return doc, opError(opIdx, err)
 	}
 	result, err := setAtPath(doc, segs, value, false, path)
 	if err != nil {
@@ -159,6 +182,10 @@ func applyCopy(doc any, from, path string, opIdx int) (any, error) {
 	}
 
 	toSegs, err := Segments(path)
+	if err != nil {
+		return doc, opError(opIdx, err)
+	}
+	val, err = cloneValue(val)
 	if err != nil {
 		return doc, opError(opIdx, err)
 	}
