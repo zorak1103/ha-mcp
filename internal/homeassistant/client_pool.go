@@ -15,6 +15,7 @@ import (
 type ClientPool struct {
 	baseURL     string
 	restConfig  *RESTClientConfig
+	wsConfig    *WSClientConfig // nil = WebSocket client defaults
 	cacheConfig *config.CacheConfig
 	clients     map[string]*pooledClient
 	mu          sync.RWMutex
@@ -42,9 +43,20 @@ func NewClientPoolWithConfig(baseURL string, maxIdle time.Duration, restConfig *
 	return NewClientPoolWithFullConfig(baseURL, maxIdle, 0, restConfig, nil, logger)
 }
 
+// PoolOption customizes a ClientPool at construction time.
+type PoolOption func(*ClientPool)
+
+// WithWSConfig sets the WebSocket client configuration (including retry
+// settings) used for every client the pool creates. A nil cfg means the
+// WebSocket client defaults.
+func WithWSConfig(cfg *WSClientConfig) PoolOption {
+	return func(p *ClientPool) { p.wsConfig = cfg }
+}
+
 // NewClientPoolWithFullConfig creates a new client pool with REST, cache, and size configuration.
 // maxSize limits the number of pooled clients; 0 means unlimited.
-func NewClientPoolWithFullConfig(baseURL string, maxIdle time.Duration, maxSize int, restConfig *RESTClientConfig, cacheConfig *config.CacheConfig, logger *logging.Logger) *ClientPool {
+// Optional PoolOptions (e.g. WithWSConfig) are applied before the cleanup goroutine starts.
+func NewClientPoolWithFullConfig(baseURL string, maxIdle time.Duration, maxSize int, restConfig *RESTClientConfig, cacheConfig *config.CacheConfig, logger *logging.Logger, opts ...PoolOption) *ClientPool {
 	if logger == nil {
 		logger = logging.New(logging.LevelInfo)
 	}
@@ -58,6 +70,9 @@ func NewClientPoolWithFullConfig(baseURL string, maxIdle time.Duration, maxSize 
 		maxSize:     maxSize,
 		stopCh:      make(chan struct{}),
 		logger:      logger,
+	}
+	for _, opt := range opts {
+		opt(p)
 	}
 
 	// Start idle cleanup goroutine
@@ -115,12 +130,7 @@ func (p *ClientPool) GetOrCreate(ctx context.Context, token string) (Client, err
 
 	// Create new client
 	p.logger.Info("Creating new client for pool", "tokenHash", tokenHash)
-	opts := ClientOptions{
-		RESTConfig:  p.restConfig,
-		CacheConfig: p.cacheConfig,
-		Logger:      p.logger,
-	}
-	client, err := NewClientWithOptions(ctx, p.baseURL, token, opts)
+	client, err := NewClientWithOptions(ctx, p.baseURL, token, p.clientOptions())
 	if err != nil {
 		p.logger.Error("Failed to create client", "tokenHash", tokenHash, "error", err)
 		return nil, err
@@ -137,6 +147,16 @@ func (p *ClientPool) GetOrCreate(ctx context.Context, token string) (Client, err
 
 	p.logger.Debug("Client added to pool", "tokenHash", tokenHash, "poolSize", len(p.clients))
 	return client, nil
+}
+
+// clientOptions returns the options used to create every client in this pool.
+func (p *ClientPool) clientOptions() ClientOptions {
+	return ClientOptions{
+		WSConfig:    p.wsConfig,
+		RESTConfig:  p.restConfig,
+		CacheConfig: p.cacheConfig,
+		Logger:      p.logger,
+	}
 }
 
 // evictLRU removes the least-recently-used client from the pool.
