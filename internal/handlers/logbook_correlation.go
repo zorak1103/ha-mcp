@@ -43,7 +43,11 @@ func (h *LogbookHandlers) handleCorrelation(
 	args map[string]any,
 ) (*mcp.ToolsCallResult, error) {
 	// Parse and validate entity_ids
-	entityIDs, err := parseEntityIDsArray(args)
+	rawIDs, ok := args[attrEntityIDs]
+	if !ok {
+		return errorResult("entity_ids is required for correlation mode"), nil
+	}
+	entityIDs, err := parseStrictEntityIDList(attrEntityIDs, rawIDs)
 	if err != nil {
 		return errorResult(err.Error()), nil
 	}
@@ -56,56 +60,35 @@ func (h *LogbookHandlers) handleCorrelation(
 
 	// Fetch and build correlation report
 	maxTimeDelta := getMaxTimeDelta(args)
-	allEntries := fetchLogbookEntriesForCorrelation(ctx, client, entityIDs, startTime, endTime)
+	allEntries, failed := fetchLogbookEntriesForCorrelation(ctx, client, entityIDs, startTime, endTime)
+	if len(failed) == len(entityIDs) {
+		return errorResult("Could not fetch the logbook for any entity: " + formatScanFailureWarning(failed)), nil
+	}
 	correlations := buildCorrelationGroups(allEntries, maxTimeDelta)
 
-	// Build and format report
+	// Build and format report; partial fetch failures are reported as a second block
+	// so a format=json first block stays valid JSON.
 	report := buildCorrelationReport(entityIDs, startTime, endTime, allEntries, correlations)
-	return formatCorrelationOutput(report, args)
+	res := formatCorrelationOutput(report, args)
+	return appendResultWarning(res, formatScanFailureWarning(failed)), nil
 }
 
-// parseEntityIDsArray extracts and validates entity_ids from args.
-func parseEntityIDsArray(args map[string]any) ([]string, error) {
-	entityIDsAny, ok := args["entity_ids"]
-	if !ok {
-		return nil, fmt.Errorf("entity_ids is required for correlation mode")
-	}
-
-	entityIDsSlice, ok := entityIDsAny.([]any)
-	if !ok {
-		return nil, fmt.Errorf("entity_ids must be an array")
-	}
-
-	if len(entityIDsSlice) == 0 {
-		return nil, fmt.Errorf("entity_ids array cannot be empty")
-	}
-
-	entityIDs := make([]string, 0, len(entityIDsSlice))
-	for _, id := range entityIDsSlice {
-		if str, ok := id.(string); ok {
-			entityIDs = append(entityIDs, str)
-		}
-	}
-
-	if len(entityIDs) == 0 {
-		return nil, fmt.Errorf("entity_ids must contain valid strings")
-	}
-
-	return entityIDs, nil
-}
-
-// fetchLogbookEntriesForCorrelation fetches and parses logbook entries for all entity IDs.
+// fetchLogbookEntriesForCorrelation fetches and parses logbook entries for all entity IDs,
+// one GetLogbook call per entity. It returns one failed ScanOutcome per entity whose
+// fetch failed, in input order.
 func fetchLogbookEntriesForCorrelation(
 	ctx context.Context,
 	client homeassistant.Client,
 	entityIDs []string,
 	startTime, endTime time.Time,
-) []correlationEntry {
+) ([]correlationEntry, []ScanOutcome) {
 	allEntries := make([]correlationEntry, 0)
+	var failed []ScanOutcome
 
 	for _, entityID := range entityIDs {
 		entries, fetchErr := client.GetLogbook(ctx, startTime.Format(time.RFC3339), endTime.Format(time.RFC3339), []string{entityID})
 		if fetchErr != nil {
+			failed = append(failed, ScanOutcome{Source: entityID, Err: fetchErr})
 			continue
 		}
 
@@ -130,7 +113,7 @@ func fetchLogbookEntriesForCorrelation(
 		return a.Timestamp.Compare(b.Timestamp)
 	})
 
-	return allEntries
+	return allEntries, failed
 }
 
 // buildCorrelationReport creates the correlation report structure.
@@ -153,7 +136,7 @@ func buildCorrelationReport(
 }
 
 // formatCorrelationOutput formats the correlation report based on format parameter.
-func formatCorrelationOutput(report CorrelationReport, args map[string]any) (*mcp.ToolsCallResult, error) {
+func formatCorrelationOutput(report CorrelationReport, args map[string]any) *mcp.ToolsCallResult {
 	formatStr := getString(args, "format")
 	format := formatter.ParseFormat(formatStr)
 
@@ -161,14 +144,14 @@ func formatCorrelationOutput(report CorrelationReport, args map[string]any) (*mc
 	if format == formatter.FormatJSON {
 		data, marshalErr := json.MarshalIndent(report, "", "  ")
 		if marshalErr != nil {
-			return errorResult(fmt.Sprintf("Error formatting correlation report: %v", marshalErr)), nil
+			return errorResult(fmt.Sprintf("Error formatting correlation report: %v", marshalErr))
 		}
 		output = string(data)
 	} else {
 		output = formatCorrelationNatural(report)
 	}
 
-	return successResult(output), nil
+	return successResult(output)
 }
 
 // correlationEntry represents a logbook entry with parsed timestamp.

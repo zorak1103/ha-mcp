@@ -2,12 +2,104 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 )
+
+func TestLogbookCorrelation_FetchFailures(t *testing.T) {
+	t.Parallel()
+
+	when := time.Now().Add(-30 * time.Minute).Format(time.RFC3339)
+	mockFailing := func(failing ...string) *UniversalMockClient {
+		return &UniversalMockClient{
+			GetLogbookFn: func(_ context.Context, _, _ string, entityIDs []string) ([]homeassistant.LogbookEntry, error) {
+				if len(entityIDs) != 1 {
+					return nil, fmt.Errorf("expected one entity per fetch, got %v", entityIDs)
+				}
+				if slices.Contains(failing, entityIDs[0]) {
+					return nil, errors.New("boom")
+				}
+				return []homeassistant.LogbookEntry{{When: when, Name: "n", State: "on", EntityID: entityIDs[0]}}, nil
+			},
+		}
+	}
+	base := func(format string) map[string]any {
+		return map[string]any{
+			"mode":       "correlation",
+			"entity_ids": []any{"light.a", "switch.b"},
+			"hours":      float64(1),
+			"format":     format,
+		}
+	}
+
+	t.Run("partial failure adds a warning block", func(t *testing.T) {
+		t.Parallel()
+		res, err := NewLogbookHandlers().handleGetLogbook(context.Background(), mockFailing("switch.b"), base("natural"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if res.IsError {
+			t.Fatalf("want success, got error: %s", res.Content[0].Text)
+		}
+		if len(res.Content) != 2 {
+			t.Fatalf("len(Content) = %d, want 2", len(res.Content))
+		}
+		const want = "WARNING: ⚠ 1 source(s) could not be scanned: switch.b (boom)"
+		if !strings.HasPrefix(res.Content[1].Text, want) {
+			t.Errorf("Content[1] = %q, want prefix %q", res.Content[1].Text, want)
+		}
+	})
+
+	t.Run("json output stays valid with a warning", func(t *testing.T) {
+		t.Parallel()
+		res, err := NewLogbookHandlers().handleGetLogbook(context.Background(), mockFailing("switch.b"), base("json"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if res.IsError || len(res.Content) != 2 {
+			t.Fatalf("IsError=%v len(Content)=%d, want success with 2 blocks", res.IsError, len(res.Content))
+		}
+		if !json.Valid([]byte(res.Content[0].Text)) {
+			t.Errorf("Content[0] is not valid JSON: %s", res.Content[0].Text)
+		}
+	})
+
+	t.Run("all fetches failing is an error", func(t *testing.T) {
+		t.Parallel()
+		res, err := NewLogbookHandlers().handleGetLogbook(context.Background(), mockFailing("light.a", "switch.b"), base("natural"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !res.IsError {
+			t.Fatalf("want IsError, got: %s", res.Content[0].Text)
+		}
+		for _, want := range []string{"Could not fetch the logbook for any entity", "light.a (boom)", "switch.b (boom)"} {
+			if !strings.Contains(res.Content[0].Text, want) {
+				t.Errorf("error %q does not contain %q", res.Content[0].Text, want)
+			}
+		}
+	})
+
+	t.Run("non-string element is rejected", func(t *testing.T) {
+		t.Parallel()
+		args := base("natural")
+		args["entity_ids"] = []any{"light.a", 3.0}
+		res, err := NewLogbookHandlers().handleGetLogbook(context.Background(), mockFailing(), args)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !res.IsError || !strings.Contains(res.Content[0].Text, "entity_ids[1] must be a non-empty string") {
+			t.Errorf("IsError=%v text=%q", res.IsError, res.Content[0].Text)
+		}
+	})
+}
 
 func TestLogbook_Correlation(t *testing.T) {
 	t.Parallel()
