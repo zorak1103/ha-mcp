@@ -25,6 +25,52 @@ const (
 	groupByAreaID      = "area_id"
 )
 
+// query_entities modes.
+const (
+	queryModeCurrent    = "current"
+	queryModeHistory    = "history"
+	queryModeStatistics = "statistics"
+	queryModeDomains    = "domains"
+	queryModePresence   = "presence"
+	queryModeHealth     = "health"
+)
+
+// queryEntitiesModes lists the valid query_entities modes in schema order.
+var queryEntitiesModes = []string{
+	queryModeCurrent, queryModeHistory, queryModeStatistics,
+	queryModeDomains, queryModePresence, queryModeHealth,
+}
+
+// queryEntitiesArgModes maps each mode-specific query_entities argument to the
+// only modes that read it; a supplied value for any other mode is rejected.
+// mode, format and verbose apply everywhere and are deliberately absent, as are
+// the domains and presence modes, which read no filter at all.
+var queryEntitiesArgModes = map[string][]string{
+	"domain":        {queryModeCurrent, queryModeHealth},
+	"state":         {queryModeCurrent, queryModeHistory},
+	"state_not":     {queryModeCurrent},
+	"name_contains": {queryModeCurrent},
+	"device_class":  {queryModeCurrent},
+	"area_id":       {queryModeCurrent},
+	"sort_by":       {queryModeCurrent},
+	"group_by":      {queryModeCurrent},
+	attrEntityID:    {queryModeHistory},
+	"start_time":    {queryModeHistory},
+	"end_time":      {queryModeHistory},
+	"hours":         {queryModeHistory},
+	"statistic_ids": {queryModeStatistics},
+	"period":        {queryModeStatistics},
+	"limit":         {queryModeCurrent, queryModeHistory, queryModeStatistics},
+	"cursor":        {queryModeCurrent, queryModeStatistics},
+	"offset":        {queryModeCurrent, queryModeStatistics},
+	"categories":    {queryModeHealth},
+	"stale_days":    {queryModeHealth},
+}
+
+// queryEntitiesCurrentHint is appended when a mode=current call carries
+// arguments that only make sense for specific entities.
+const queryEntitiesCurrentHint = "For the current state of specific entities use get_state; for their history use mode=history."
+
 // ConsolidatedEntityQueryHandlers provides consolidated handlers for entity query operations.
 // This replaces get_states, get_history, get_statistics, and list_domains tools.
 type ConsolidatedEntityQueryHandlers struct{}
@@ -542,7 +588,7 @@ func queryEntitiesProperties() map[string]mcp.JSONSchema {
 	return map[string]mcp.JSONSchema{
 		"mode": {
 			Type:        "string",
-			Enum:        []string{"current", "history", "statistics", "domains", "presence", "health"},
+			Enum:        slices.Clone(queryEntitiesModes),
 			Description: "Query mode: current (states), history, statistics, domains, presence, or health",
 		},
 		"format": {
@@ -553,11 +599,11 @@ func queryEntitiesProperties() map[string]mcp.JSONSchema {
 		// Current mode parameters
 		"domain": {
 			Type:        "string",
-			Description: "Filter entities by domain (e.g., 'light', 'switch'). Only for mode=current",
+			Description: "Filter entities by domain (e.g., 'light', 'switch'). Only for mode=current and mode=health",
 		},
 		"state": {
 			Type:        "string",
-			Description: "Filter by state value (e.g., 'on', 'off'). Only for mode=current",
+			Description: "Filter by state value (e.g., 'on', 'off'). Only for mode=current and mode=history",
 		},
 		"state_not": {
 			Type:        "string",
@@ -620,12 +666,12 @@ func queryEntitiesProperties() map[string]mcp.JSONSchema {
 		},
 		"limit": {
 			Type:        "integer",
-			Description: "Maximum number of results to return. Use with 'cursor' for pagination",
+			Description: "Maximum number of results to return. Use with 'cursor' for pagination. Only for mode=current/history/statistics",
 		},
 		"offset": paginationOffsetSchema(),
 		"cursor": {
 			Type:        "string",
-			Description: "Pagination cursor from previous response",
+			Description: "Pagination cursor from previous response. Only for mode=current/statistics",
 		},
 		// Health mode parameters
 		"categories": {
@@ -649,26 +695,35 @@ func (h *ConsolidatedEntityQueryHandlers) handleQueryEntities(
 	client homeassistant.Client,
 	args map[string]any,
 ) (*mcp.ToolsCallResult, error) {
-	mode, ok := args["mode"].(string)
-	if !ok || mode == "" {
+	if isAbsentArg(args["mode"]) {
 		return errorResult("mode parameter is required"), nil
+	}
+	mode, invalid := parseModeArg(args, "mode", "", queryEntitiesModes)
+	if invalid != nil {
+		return invalid, nil
+	}
+
+	hint := ""
+	if mode == queryModeCurrent {
+		hint = queryEntitiesCurrentHint
+	}
+	if rejected := rejectInapplicableArgs(args, "mode", mode, queryEntitiesArgModes, hint); rejected != nil {
+		return rejected, nil
 	}
 
 	switch mode {
-	case "current":
+	case queryModeCurrent:
 		return h.handleCurrent(ctx, client, args)
-	case "history":
+	case queryModeHistory:
 		return h.handleHistory(ctx, client, args)
-	case "statistics":
+	case queryModeStatistics:
 		return h.handleStatistics(ctx, client, args)
-	case "domains":
+	case queryModeDomains:
 		return h.handleDomains(ctx, client, args)
-	case "presence":
+	case queryModePresence:
 		return h.handlePresence(ctx, client, args)
-	case "health":
-		return h.handleHealth(ctx, client, args)
 	default:
-		return errorResult(fmt.Sprintf("Invalid mode %q. Must be one of: current, history, statistics, domains, presence, health", mode)), nil
+		return h.handleHealth(ctx, client, args)
 	}
 }
 

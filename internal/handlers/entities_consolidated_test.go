@@ -1405,3 +1405,200 @@ func TestQueryEntities_Current_GroupByIntegration(t *testing.T) {
 	h := NewConsolidatedEntityQueryHandlers()
 	runHandlerTestCases(t, tests, h.handleQueryEntities)
 }
+
+const argNotApplicableMarker = "not applicable to"
+
+func TestQueryEntities_RejectsArgsOfOtherModes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		args         map[string]any
+		wantContains []string
+	}{
+		{
+			name:         "current rejects entity_id and points to get_state",
+			args:         map[string]any{"mode": modeCurrent, "entity_id": "light.a"},
+			wantContains: []string{"entity_id (only for mode=history)", "use get_state", "mode=history"},
+		},
+		{
+			name:         "current rejects statistic_ids",
+			args:         map[string]any{"mode": modeCurrent, "statistic_ids": []any{"sensor.x"}},
+			wantContains: []string{"statistic_ids (only for mode=statistics)"},
+		},
+		{
+			name:         "current rejects hours",
+			args:         map[string]any{"mode": modeCurrent, "hours": float64(3)},
+			wantContains: []string{"hours (only for mode=history)"},
+		},
+		{
+			name:         "current rejects stale_days",
+			args:         map[string]any{"mode": modeCurrent, "stale_days": float64(3)},
+			wantContains: []string{"stale_days (only for mode=health)"},
+		},
+		{
+			name:         "history rejects domain",
+			args:         map[string]any{"mode": modeHistory, "entity_id": "sensor.t", "domain": "light"},
+			wantContains: []string{"domain (only for mode=current|health)"},
+		},
+		{
+			name:         "history rejects cursor",
+			args:         map[string]any{"mode": modeHistory, "entity_id": "sensor.t", "cursor": "abc"},
+			wantContains: []string{"cursor (only for mode=current|statistics)"},
+		},
+		{
+			name:         "history rejects offset",
+			args:         map[string]any{"mode": modeHistory, "entity_id": "sensor.t", "offset": float64(5)},
+			wantContains: []string{"offset (only for mode=current|statistics)"},
+		},
+		{
+			name:         "statistics rejects state",
+			args:         map[string]any{"mode": modeStatistics, "statistic_ids": []any{"sensor.x"}, "state": "on"},
+			wantContains: []string{"state (only for mode=current|history)"},
+		},
+		{
+			name:         "statistics rejects start_time and end_time together",
+			args:         map[string]any{"mode": modeStatistics, "statistic_ids": []any{"sensor.x"}, "start_time": "2024-01-01T00:00:00Z", "end_time": "2024-01-02T00:00:00Z"},
+			wantContains: []string{"end_time (only for mode=history)", "start_time (only for mode=history)"},
+		},
+		{
+			name:         "domains rejects limit",
+			args:         map[string]any{"mode": modeDomains, "limit": float64(5)},
+			wantContains: []string{"limit (only for mode=current|history|statistics)"},
+		},
+		{
+			name:         "presence rejects domain",
+			args:         map[string]any{"mode": "presence", "domain": "person"},
+			wantContains: []string{"domain (only for mode=current|health)"},
+		},
+		{
+			name:         "health rejects state",
+			args:         map[string]any{"mode": "health", "state": "on"},
+			wantContains: []string{"state (only for mode=current|history)"},
+		},
+		{
+			name:         "current rejects period and categories together",
+			args:         map[string]any{"mode": modeCurrent, "period": "day", "categories": []any{"stale"}},
+			wantContains: []string{"categories (only for mode=health)", "period (only for mode=statistics)"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			client := &UniversalMockClient{
+				GetStatesFn: func(context.Context) ([]homeassistant.Entity, error) {
+					t.Error("GetStates must not be called when an argument is rejected")
+					return nil, nil
+				},
+				GetHistoryFn: func(context.Context, string, time.Time, time.Time) ([][]homeassistant.HistoryEntry, error) {
+					t.Error("GetHistory must not be called when an argument is rejected")
+					return nil, nil
+				},
+				GetStatisticsFn: func(context.Context, []string, string) ([]homeassistant.StatisticsResult, error) {
+					t.Error("GetStatistics must not be called when an argument is rejected")
+					return nil, nil
+				},
+			}
+
+			h := NewConsolidatedEntityQueryHandlers()
+			result, err := h.handleQueryEntities(context.Background(), client, tt.args)
+			if err != nil {
+				t.Fatalf("handleQueryEntities() error = %v", err)
+			}
+			if !result.IsError {
+				t.Fatalf("expected an error result, got: %s", result.Content[0].Text)
+			}
+			assertContainsAll(t, result.Content[0].Text, append([]string{argNotApplicableMarker}, tt.wantContains...))
+		})
+	}
+}
+
+func TestQueryEntities_AcceptsArgsOfTheSelectedMode(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		args map[string]any
+	}{
+		{"history with state filter", map[string]any{"mode": modeHistory, "entity_id": "sensor.t", "state": "on", "limit": float64(3), "hours": float64(1)}},
+		{"health with domain", map[string]any{"mode": "health", "domain": "light", "categories": []any{"stale"}, "stale_days": float64(7)}},
+		{"current with format and verbose", map[string]any{"mode": modeCurrent, "format": "json", "verbose": true}},
+		{"current with all current filters", map[string]any{"mode": modeCurrent, "domain": "light", "state": "on", "state_not": "off", "name_contains": "a", "device_class": "motion", "area_id": "x", "sort_by": "state", "group_by": "domain", "limit": float64(2), "offset": float64(0)}},
+		{"statistics with period and limit", map[string]any{"mode": modeStatistics, "statistic_ids": []any{"sensor.x"}, "period": "day", "limit": float64(2)}},
+		{"domains with format and verbose only", map[string]any{"mode": modeDomains, "format": "natural", "verbose": false}},
+		{"placeholders count as absent", map[string]any{"mode": modeCurrent, "entity_id": "", "statistic_ids": []any{}, "hours": nil, "categories": nil}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			h := NewConsolidatedEntityQueryHandlers()
+			result, err := h.handleQueryEntities(context.Background(), &UniversalMockClient{}, tt.args)
+			if err != nil {
+				t.Fatalf("handleQueryEntities() error = %v", err)
+			}
+			if len(result.Content) > 0 && strings.Contains(result.Content[0].Text, argNotApplicableMarker) {
+				t.Errorf("a valid argument was rejected: %s", result.Content[0].Text)
+			}
+		})
+	}
+}
+
+func TestQueryEntities_NonStringModeIsRejected(t *testing.T) {
+	t.Parallel()
+
+	h := NewConsolidatedEntityQueryHandlers()
+	for name, mode := range map[string]any{"number": float64(1), "bool": true, "object": map[string]any{"a": 1}} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			result, err := h.handleQueryEntities(context.Background(), &UniversalMockClient{}, map[string]any{"mode": mode})
+			if err != nil {
+				t.Fatalf("handleQueryEntities() error = %v", err)
+			}
+			if !result.IsError {
+				t.Fatalf("expected an error result, got: %s", result.Content[0].Text)
+			}
+			assertContainsAll(t, result.Content[0].Text, []string{"Invalid mode", "expected a string"})
+		})
+	}
+}
+
+func TestQueryEntities_EmptyModeStillRequired(t *testing.T) {
+	t.Parallel()
+
+	h := NewConsolidatedEntityQueryHandlers()
+	for name, mode := range map[string]any{"empty string": "", "nil": nil} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			result, err := h.handleQueryEntities(context.Background(), &UniversalMockClient{}, map[string]any{"mode": mode})
+			if err != nil {
+				t.Fatalf("handleQueryEntities() error = %v", err)
+			}
+			if !result.IsError || !strings.Contains(result.Content[0].Text, "mode parameter is required") {
+				t.Errorf("expected 'mode parameter is required', got: %s", result.Content[0].Text)
+			}
+		})
+	}
+}
+
+func TestQueryEntitiesProperties_DescribeAppliesToModes(t *testing.T) {
+	t.Parallel()
+
+	props := queryEntitiesProperties()
+	want := map[string]string{
+		"state":  "mode=current and mode=history",
+		"domain": "mode=current and mode=health",
+		"limit":  "mode=current/history/statistics",
+		"cursor": "mode=current/statistics",
+	}
+	for name, fragment := range want {
+		if !strings.Contains(props[name].Description, fragment) {
+			t.Errorf("%s description %q does not mention %q", name, props[name].Description, fragment)
+		}
+	}
+}
