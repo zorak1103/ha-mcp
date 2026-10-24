@@ -44,7 +44,7 @@ func (h *LogbookHandlers) handleCorrelation(
 ) (*mcp.ToolsCallResult, error) {
 	// Parse and validate entity_ids
 	rawIDs, ok := args[attrEntityIDs]
-	if !ok {
+	if !ok || isAbsentArg(rawIDs) {
 		return errorResult("entity_ids is required for correlation mode"), nil
 	}
 	entityIDs, err := parseStrictEntityIDList(attrEntityIDs, rawIDs)

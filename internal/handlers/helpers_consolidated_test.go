@@ -2280,8 +2280,9 @@ func TestManageHelper_Update_PartialApplyRendersSuccessWithWarning(t *testing.T)
 
 // TestUpdateSuccessMessage_BoundsTheEchoedFieldList guards the fact that
 // field names echoed back into LLM-facing text come straight from
-// caller-supplied JSON keys, which nothing in the stack validates or bounds
-// (internal/mcp does no InputSchema/additionalProperties enforcement). An
+// caller-supplied JSON keys, whose length and content nothing in the stack
+// bounds (internal/mcp rejects names absent from the tool schema via
+// mcp.UnknownArguments, but does not check types, enums or required). An
 // over-long name is truncated and an over-long list is capped.
 func TestUpdateSuccessMessage_BoundsTheEchoedFieldList(t *testing.T) {
 	t.Parallel()

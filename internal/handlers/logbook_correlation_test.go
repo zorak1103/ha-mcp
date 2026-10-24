@@ -55,6 +55,10 @@ func TestLogbookCorrelation_FetchFailures(t *testing.T) {
 		if !strings.HasPrefix(res.Content[1].Text, want) {
 			t.Errorf("Content[1] = %q, want prefix %q", res.Content[1].Text, want)
 		}
+		// The successful entity's event must still be analyzed.
+		if !strings.Contains(res.Content[0].Text, "Total Events: 1") {
+			t.Errorf("Content[0] dropped the successful entity's event: %s", res.Content[0].Text)
+		}
 	})
 
 	t.Run("json output stays valid with a warning", func(t *testing.T) {
@@ -68,6 +72,13 @@ func TestLogbookCorrelation_FetchFailures(t *testing.T) {
 		}
 		if !json.Valid([]byte(res.Content[0].Text)) {
 			t.Errorf("Content[0] is not valid JSON: %s", res.Content[0].Text)
+		}
+		var report CorrelationReport
+		if err := json.Unmarshal([]byte(res.Content[0].Text), &report); err != nil {
+			t.Fatalf("decoding report: %v", err)
+		}
+		if report.TotalEvents != 1 {
+			t.Errorf("total_events = %d, want 1 (the successful entity's event)", report.TotalEvents)
 		}
 	})
 
@@ -179,6 +190,24 @@ func TestLogbook_Correlation(t *testing.T) {
 			},
 			wantError:    true,
 			wantContains: []string{"entity_ids", "required"},
+		},
+		{
+			name:         "correlation with null entity_ids counts as absent",
+			args:         map[string]any{"mode": "correlation", "entity_ids": nil, "hours": float64(1)},
+			wantError:    true,
+			wantContains: []string{"entity_ids is required for correlation mode"},
+		},
+		{
+			name:         "correlation with empty-string entity_ids counts as absent",
+			args:         map[string]any{"mode": "correlation", "entity_ids": "", "hours": float64(1)},
+			wantError:    true,
+			wantContains: []string{"entity_ids is required for correlation mode"},
+		},
+		{
+			name:         "correlation with empty entity_ids array counts as absent",
+			args:         map[string]any{"mode": "correlation", "entity_ids": []any{}, "hours": float64(1)},
+			wantError:    true,
+			wantContains: []string{"entity_ids is required for correlation mode"},
 		},
 	}
 

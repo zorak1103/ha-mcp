@@ -20,8 +20,8 @@ const (
 
 // logbookArgModes maps each mode-specific get_logbook argument to the only
 // modes that read it; a supplied value for any other mode is rejected.
-// start_time, end_time, hours, format and mode apply to both modes and are
-// deliberately absent.
+// start_time, end_time, hours, entity_ids, format and mode apply to both modes
+// and are deliberately absent.
 var logbookArgModes = map[string][]string{
 	attrEntityID:             {logbookModeEntries},
 	"limit":                  {logbookModeEntries},

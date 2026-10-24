@@ -209,7 +209,7 @@ Universal tool for runtime helper operations:
 | `entity_ids`                             | both        | Entries: filter to these entities (max 100, deduplicated). Correlation: required. Exclusive with `entity_id`  |
 | `limit` / `cursor` / `offset`            | entries     | Pagination; a cursor is bound to the time range and the (order-independent) entity set it was issued for      |
 | `max_time_delta_seconds`                 | correlation | Maximum gap in seconds for grouping correlated events (default 60)                                            |
-| `format`                                 | both        | `natural` (default) or `json`                                                                                 |
+| `format`                                 | correlation | `natural` (default) or `json` for the correlation report; entries output is always JSON (value is ignored)    |
 
 In correlation mode a failed logbook fetch for one entity is reported in a trailing `WARNING` block while the other entities are still analyzed; if every fetch fails the call is an error.
 

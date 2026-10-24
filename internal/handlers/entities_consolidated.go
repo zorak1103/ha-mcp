@@ -676,7 +676,7 @@ func queryEntitiesProperties() map[string]mcp.JSONSchema {
 		// Health mode parameters
 		"categories": {
 			Type:        "array",
-			Description: "Filter by one or more health issue categories. Only for mode=health with action=analyze. Example: ['unavailable', 'unknown', 'stale']",
+			Description: "Filter by one or more health issue categories. Only for mode=health. Example: ['unavailable', 'unknown', 'stale']",
 			Items: &mcp.JSONSchema{
 				Type: "string",
 				Enum: []string{"unavailable", "unknown", "disabled", "orphaned_integration", "orphaned_device", "integration_error", "registry_only", "stale"},
