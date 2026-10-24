@@ -78,12 +78,16 @@ ha-mcp/
 │   │   ├── ws_messages.go       # WebSocket message types
 │   │   ├── ws_reconnect.go      # Reconnection logic
 │   │   └── ws_replay.go         # Replay-safe (read-only) WS command classifier
+│   ├── jsonorder/
+│   │   └── order.go             # Key-order shadow tree: capture from raw JSON, order-preserving marshal
 │   ├── jsonpatch/
 │   │   ├── jsonpatch.go         # RFC 6902 JSON Patch implementation
+│   │   ├── apply_order.go       # ApplyWithOrder: keeps a jsonorder.Order in step with each patch op
 │   │   └── pointer.go           # RFC 6901 JSON Pointer navigation
 │   ├── mcp/
 │   │   ├── access_control.go    # Static tool/action read-write classification
 │   │   ├── arg_validation.go    # Rejection of argument names absent from a tool's input schema
+│   │   ├── argument_order.go    # Key order of a tool call's arguments, carried in the request context
 │   │   ├── registry.go          # Tool registry
 │   │   ├── server.go            # MCP HTTP server; per-IP rate limiting middleware
 │   │   ├── tool_filter.go       # ToolFilterEngine with whitelist/blacklist/category filtering

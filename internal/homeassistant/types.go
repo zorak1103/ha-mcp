@@ -2,9 +2,14 @@
 package homeassistant
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
+	"slices"
 	"strings"
 	"time"
+
+	"github.com/zorak1103/ha-mcp/internal/jsonorder"
 )
 
 // FlexibleString is a type that can unmarshal from either a JSON string or an array of strings.
@@ -146,6 +151,11 @@ type AutomationConfig struct {
 	Conditions  []any          `json:"conditions,omitempty"`
 	Actions     []any          `json:"actions,omitempty"`
 	Variables   map[string]any `json:"variables,omitempty"`
+
+	// KeyOrder records the document key order of the decoded config (see
+	// package jsonorder). It is nil for configs built in code, which marshal
+	// exactly like a plain struct.
+	KeyOrder *jsonorder.Order `json:"-"`
 }
 
 // unmarshalDualKeySlice tries the plural key first, then the singular key, and
@@ -205,7 +215,72 @@ func (c *AutomationConfig) UnmarshalJSON(data []byte) error {
 	unmarshalDualKeySlice(raw, "conditions", "condition", &c.Conditions)
 	unmarshalDualKeySlice(raw, "actions", "action", &c.Actions)
 
+	// A capture failure leaves KeyOrder nil (sorted-key output) and never
+	// fails the decode: the order is a best-effort addition.
+	c.KeyOrder, _ = jsonorder.Capture(data)
+	normalizeDualKeyOrder(c.KeyOrder)
+
 	return nil
+}
+
+// automationConfigAlias has AutomationConfig's fields and tags but none of its
+// methods, so marshaling it cannot recurse into MarshalJSON.
+type automationConfigAlias AutomationConfig
+
+// MarshalJSON implements json.Marshaler for AutomationConfig. Without a
+// KeyOrder the output is exactly that of the plain struct; with one, object
+// keys inside the config are emitted in their recorded order.
+func (c AutomationConfig) MarshalJSON() ([]byte, error) {
+	return marshalWithOrder(automationConfigAlias(c), c.KeyOrder)
+}
+
+// marshalWithOrder marshals v like json.Marshal; when order is non-nil the
+// resulting object is re-emitted with its keys in the recorded order.
+func marshalWithOrder(v any, order *jsonorder.Order) ([]byte, error) {
+	plain, err := json.Marshal(v)
+	if err != nil || order == nil {
+		return plain, err
+	}
+
+	dec := json.NewDecoder(bytes.NewReader(plain))
+	dec.UseNumber() // keep numeric literals exactly as the struct encoder wrote them
+	var generic map[string]any
+	if err = dec.Decode(&generic); err != nil {
+		return nil, fmt.Errorf("decoding config for ordered encoding: %w", err)
+	}
+
+	ordered, err := jsonorder.Marshal(generic, order)
+	if err != nil {
+		return nil, fmt.Errorf("encoding config in key order: %w", err)
+	}
+	return ordered, nil
+}
+
+// normalizeDualKeyOrder rewrites the singular trigger/condition/action entries
+// of a freshly captured order to their plural names, mirroring
+// unmarshalDualKeySlice: the plural key wins and the singular one is dropped
+// when both are present. o is modified in place.
+func normalizeDualKeyOrder(o *jsonorder.Order) {
+	if o == nil {
+		return
+	}
+	for _, names := range [][2]string{{"triggers", "trigger"}, {"conditions", "condition"}, {"actions", "action"}} {
+		plural, singular := names[0], names[1]
+		idx := slices.Index(o.Keys, singular)
+		if idx < 0 {
+			continue
+		}
+		sub, hasSub := o.Fields[singular]
+		delete(o.Fields, singular)
+		if slices.Contains(o.Keys, plural) {
+			o.Keys = slices.Delete(o.Keys, idx, idx+1)
+			continue
+		}
+		o.Keys[idx] = plural
+		if hasSub {
+			o.Fields[plural] = sub
+		}
+	}
 }
 
 // HelperConfig represents the configuration for creating/updating an input helper.
@@ -237,6 +312,32 @@ type ScriptConfig struct {
 	Fields      map[string]any `json:"fields,omitempty"`
 	Variables   map[string]any `json:"variables,omitempty"`
 	Sequence    []any          `json:"sequence"`
+
+	// KeyOrder records the document key order of the decoded config (see
+	// package jsonorder). It is nil for configs built in code, which marshal
+	// exactly like a plain struct.
+	KeyOrder *jsonorder.Order `json:"-"`
+}
+
+// scriptConfigAlias has ScriptConfig's fields and tags but none of its
+// methods, so (un)marshaling it cannot recurse into the methods below.
+type scriptConfigAlias ScriptConfig
+
+// UnmarshalJSON implements json.Unmarshaler for ScriptConfig. It decodes like
+// the plain struct and additionally records the document key order.
+func (c *ScriptConfig) UnmarshalJSON(data []byte) error {
+	if err := json.Unmarshal(data, (*scriptConfigAlias)(c)); err != nil {
+		return err
+	}
+	// A capture failure leaves KeyOrder nil and never fails the decode.
+	c.KeyOrder, _ = jsonorder.Capture(data)
+	return nil
+}
+
+// MarshalJSON implements json.Marshaler for ScriptConfig. Without a KeyOrder
+// the output is exactly that of the plain struct.
+func (c ScriptConfig) MarshalJSON() ([]byte, error) {
+	return marshalWithOrder(scriptConfigAlias(c), c.KeyOrder)
 }
 
 // SceneConfig represents the configuration of a scene.

@@ -2,11 +2,11 @@
 package handlers
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"slices"
 	"strings"
 	"unicode"
@@ -15,6 +15,7 @@ import (
 
 	"github.com/zorak1103/ha-mcp/internal/handlers/formatter"
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
+	"github.com/zorak1103/ha-mcp/internal/jsonorder"
 	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
 
@@ -410,6 +411,7 @@ func (h *AutomationHandlers) handleCreate(ctx context.Context, client homeassist
 		Mode:        getString(args, "mode"),
 		Max:         getInt(args, "max"),
 	}
+	config.KeyOrder = automationArgsOrder(nil, mcp.ArgumentOrderFromContext(ctx), args, autoFilled)
 
 	if err := client.CreateAutomation(ctx, config); err != nil {
 		return errorResult(enrichAutomationError(fmt.Sprintf("Error creating automation: %v", err), err)), nil
@@ -452,13 +454,9 @@ func (h *AutomationHandlers) handleUpdate(ctx context.Context, client homeassist
 		current.Config = &homeassistant.AutomationConfig{ID: configID}
 	}
 
-	// Snapshot config before mutation so we can detect no-op updates.
-	// No-op writes cause a needless HA reload that resets in-flight "for:" trigger timers.
-	beforeMap, _ := configToMap(current.Config)
-	applyAutomationConfigUpdates(current.Config, args)
-	afterMap, _ := configToMap(current.Config)
-
-	if reflect.DeepEqual(beforeMap, afterMap) {
+	// Detect no-op updates on the ordered encoding: no-op writes cause a needless
+	// HA reload that resets in-flight "for:" trigger timers.
+	if !applyAutomationUpdateOrdered(ctx, current.Config, args) {
 		return successResult(fmt.Sprintf("Automation '%s': no changes detected, skipping write (reload and for: timer reset avoided)", automationID)), nil
 	}
 
@@ -564,6 +562,7 @@ func (h *AutomationHandlers) handlePatch(ctx context.Context, client homeassista
 	if errResult != nil {
 		return errResult, nil
 	}
+	attachValueOrders(ops, mcp.ArgumentOrderFromContext(ctx).Field("operations"))
 
 	entityID, configID := normalizeAutomationID(automationID)
 
@@ -584,7 +583,8 @@ func (h *AutomationHandlers) handlePatch(ctx context.Context, client homeassista
 		return errorResult(fmt.Sprintf("error processing automation config: %v", err)), nil
 	}
 
-	patchedMap, resolvedOps, patchErr := applyPatchWithSemantics(configMap, ops)
+	configOrder := current.Config.KeyOrder
+	patchedMap, patchedOrder, resolvedOps, patchErr := applyPatchWithSemanticsOrdered(configMap, configOrder, ops)
 	if patchErr != nil {
 		return errorResult(fmt.Sprintf("error applying patch: %v", patchErr)), nil
 	}
@@ -602,23 +602,27 @@ func (h *AutomationHandlers) handlePatch(ctx context.Context, client homeassista
 	// matched a different entity than a bare entityID guess).
 	checkEntityID := resolveWriteCheckEntityID(entityID, current.EntityID)
 
-	return applyPatchedAutomationWrite(ctx, client, automationID, checkEntityID, actualConfigID, configMap, patchedMap, current.Config.Triggers, len(ops))
+	return applyPatchedAutomationWrite(ctx, client, automationID, checkEntityID, actualConfigID,
+		configMap, patchedMap, configOrder, patchedOrder, current.Config.Triggers, len(ops))
 }
 
 // applyPatchedAutomationWrite writes the patched config to HA and returns the success result.
-// It skips the write entirely when configMap and patchedMap are deep-equal: every write to
-// /api/config/automation/config/{id} causes HA to reload the automation, discarding any in-flight
-// "for:" trigger timers — so a no-op write must never reach the REST API.
+// It skips the write entirely when configMap and patchedMap encode to the same bytes in their
+// key orders (configOrder, patchedOrder): every write to /api/config/automation/config/{id}
+// causes HA to reload the automation, discarding any in-flight "for:" trigger timers — so a
+// no-op write must never reach the REST API. A pure key reorder is NOT a no-op (it is how a
+// config whose variables order was destroyed gets repaired, issue #311).
 // When the write does happen, the success message includes a for: timer warning when relevant.
 func applyPatchedAutomationWrite(
 	ctx context.Context,
 	client homeassistant.Client,
 	automationID, entityID, actualConfigID string,
 	configMap, patchedMap map[string]any,
+	configOrder, patchedOrder *jsonorder.Order,
 	oldTriggers []any,
 	numOps int,
 ) (*mcp.ToolsCallResult, error) {
-	if reflect.DeepEqual(configMap, patchedMap) {
+	if orderedConfigEqual(configMap, configOrder, patchedMap, patchedOrder) {
 		return successResult(fmt.Sprintf("Automation '%s': no changes detected, skipping write (reload and for: timer reset avoided)", automationID)), nil
 	}
 
@@ -632,6 +636,9 @@ func applyPatchedAutomationWrite(
 	if err := mapToStruct(patchedMap, &newConfig); err != nil {
 		return errorResult(fmt.Sprintf("error parsing patched config: %v", err)), nil
 	}
+	// mapToStruct round-trips through json.Marshal(map), so UnmarshalJSON captured
+	// the SORTED key order; restore the patched document order before writing.
+	newConfig.KeyOrder = patchedOrder
 
 	if err := client.UpdateAutomation(ctx, actualConfigID, newConfig); err != nil {
 		return errorResult(enrichAutomationError(fmt.Sprintf("error saving patched automation: %v", err), err)), nil
@@ -914,6 +921,60 @@ func buildPaginatedAutomationResponse(paginated PaginatedResponse[homeassistant.
 	}
 	result, _ := json.MarshalIndent(response, "", "  ")
 	return result
+}
+
+// automationArgsOrder composes the key order of a config after
+// applyAutomationConfigUpdates (or create) replaced subtrees from args. base is
+// the config's current order (nil on create), argOrder the tool-call
+// arguments' order (nil for a Go-map caller). Each subtree replaced from args
+// takes the caller's order for that argument, or none: HA's previous order
+// must never be applied by index to elements the caller supplied. Callers
+// without argument order (internal Go-map callers) therefore get a nil
+// sub-order, i.e. the replaced subtree is written sorted rather than with HA's
+// stale order applied by index. The arg precedence mirrors
+// applyAutomationConfigUpdates. base is never modified.
+func automationArgsOrder(base, argOrder *jsonorder.Order, args map[string]any, autoFilledTrigger bool) *jsonorder.Order {
+	order := base
+	if trigger, ok := args["trigger"].([]any); ok {
+		var sub *jsonorder.Order
+		if len(trigger) > 0 && !autoFilledTrigger {
+			sub = argOrder.Field("trigger")
+		}
+		order = withFieldOrder(order, "triggers", sub)
+	}
+	if _, ok := args["condition"].([]any); ok {
+		order = withFieldOrder(order, "conditions", argOrder.Field("condition"))
+	}
+	if _, ok := args["automation_action"].([]any); ok {
+		order = withFieldOrder(order, "actions", argOrder.Field("automation_action"))
+	} else if _, ok := args["action"].([]any); ok {
+		order = withFieldOrder(order, "actions", argOrder.Field("action"))
+	}
+	return order
+}
+
+// withFieldOrder sets the order of member key copy-on-write (sub is cloned so
+// the result never aliases the caller's argument order). A nil order with a
+// nil sub stays nil, so a config built without any recorded order keeps
+// marshaling exactly like the plain struct.
+func withFieldOrder(order *jsonorder.Order, key string, sub *jsonorder.Order) *jsonorder.Order {
+	if order == nil && sub == nil {
+		return nil
+	}
+	return order.WithField(key, sub.Clone())
+}
+
+// applyAutomationUpdateOrdered applies args to config, composes its key order
+// and reports whether the ordered JSON encoding changed. Comparing ordered
+// bytes (not maps) means a reorder-only update counts as a change, so it can
+// repair a config whose key order was broken.
+func applyAutomationUpdateOrdered(ctx context.Context, config *homeassistant.AutomationConfig, args map[string]any) bool {
+	before, errBefore := json.Marshal(*config)
+	applyAutomationConfigUpdates(config, args)
+	_, autoFilled := resolveAutomationTriggers(args)
+	config.KeyOrder = automationArgsOrder(config.KeyOrder, mcp.ArgumentOrderFromContext(ctx), args, autoFilled)
+	after, errAfter := json.Marshal(*config)
+	return errBefore != nil || errAfter != nil || !bytes.Equal(before, after)
 }
 
 // applyAutomationConfigUpdates applies provided fields from args to the automation config.

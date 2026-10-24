@@ -3482,3 +3482,207 @@ func TestManageAutomation_CreateReload(t *testing.T) {
 		}
 	})
 }
+
+// =============================================================================
+// Issue #311: patch preserves key order
+// =============================================================================
+
+// issue311AutomationJSON is an automation as HA returns it. Both variables
+// blocks are deliberately NOT in alphabetical order: "desired" references
+// "heizzeit", and the action-level "alpha" references "zeta". HA renders
+// variables sequentially, so sorting them breaks the automation at runtime.
+const issue311AutomationJSON = `{
+	"id": "heating",
+	"alias": "Heating",
+	"description": "old",
+	"mode": "single",
+	"variables": {"heizzeit": "{{ 5 }}", "desired": "{{ heizzeit * 2 }}"},
+	"triggers": [
+		{"trigger": "state", "entity_id": "sensor.a", "for": {"seconds": 1}},
+		{"trigger": "state", "entity_id": "sensor.b", "for": {"seconds": 1}}
+	],
+	"actions": [
+		{"variables": {"zeta": "1", "alpha": "{{ zeta }}"}},
+		{"action": "light.turn_on"}
+	]
+}`
+
+// orderedAutomationPatch runs a manage_automation patch against a mock whose
+// GetAutomation decodes cfgJSON (so the config carries a real KeyOrder) and
+// returns the result plus every config written, as json.Marshal(cfg) text.
+// rawArgs are the tool-call arguments; withOrder controls whether their key
+// order reaches the handler (as the MCP server provides it) or not (an
+// internal caller passing a Go map).
+func orderedAutomationPatch(t *testing.T, cfgJSON, rawArgs string, withOrder bool) (*mcp.ToolsCallResult, []string) {
+	t.Helper()
+	var writes []string
+	client := &UniversalMockClient{}
+	client.GetAutomationFn = func(context.Context, string) (*homeassistant.Automation, error) {
+		var cfg homeassistant.AutomationConfig
+		if err := json.Unmarshal([]byte(cfgJSON), &cfg); err != nil {
+			return nil, err
+		}
+		return &homeassistant.Automation{EntityID: "automation.heating", Config: &cfg}, nil
+	}
+	client.UpdateAutomationFn = func(_ context.Context, _ string, cfg homeassistant.AutomationConfig) error {
+		b, err := json.Marshal(cfg)
+		if err != nil {
+			t.Errorf("marshaling written config: %v", err)
+		}
+		writes = append(writes, string(b))
+		return nil
+	}
+	client.GetEntityRegistryFn = storageManagedRegistry("automation.heating")
+
+	ctx := mcp.WithWaitConfig(context.Background(), mcp.WaitConfig{Timeout: 50 * time.Millisecond, PollInterval: 5 * time.Millisecond})
+	orderedCtx, args := ctxWithRawArgs(t, ctx, rawArgs)
+	if withOrder {
+		ctx = orderedCtx
+	}
+	result, err := (&AutomationHandlers{}).handleManageAutomation(ctx, client, args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got error: %s", result.Content[0].Text)
+	}
+	return result, writes
+}
+
+// singleWrite asserts exactly one config write happened and returns it.
+func singleWrite(t *testing.T, writes []string) string {
+	t.Helper()
+	if len(writes) != 1 {
+		t.Fatalf("expected exactly one config write, got %d: %v", len(writes), writes)
+	}
+	return writes[0]
+}
+
+// TestAutomationPatch_Issue311_KeepsVariablesOrder pins Review Focus trap 1:
+// patching an unrelated field must write the whole config in HA's order. The
+// struct round-trip in mapToStruct captures a sorted order, so the handler
+// must reassign KeyOrder afterwards.
+func TestAutomationPatch_Issue311_KeepsVariablesOrder(t *testing.T) {
+	t.Parallel()
+
+	raw := `{"action":"patch","automation_id":"heating","operations":[{"op":"replace","path":"/description","value":"new"}]}`
+	for _, withOrder := range []bool{true, false} {
+		_, writes := orderedAutomationPatch(t, issue311AutomationJSON, raw, withOrder)
+		got := singleWrite(t, writes)
+		want := compactJSON(t, strings.Replace(issue311AutomationJSON, `"old"`, `"new"`, 1))
+		if got != want {
+			t.Errorf("withOrder=%v: written config lost HA's key order\n got: %s\nwant: %s", withOrder, got, want)
+		}
+	}
+}
+
+// TestAutomationPatch_CallerOrderOnAddVariables: a value supplied by the caller
+// is written in the order the caller sent it.
+func TestAutomationPatch_CallerOrderOnAddVariables(t *testing.T) {
+	t.Parallel()
+
+	raw := `{"action":"patch","automation_id":"heating","operations":[` +
+		`{"op":"add","path":"/variables","value":{"zz":"1","mm":"{{ zz }}","aa":"{{ mm }}"}}]}`
+	_, writes := orderedAutomationPatch(t, issue311AutomationJSON, raw, true)
+	got := singleWrite(t, writes)
+	if want := `"variables":{"zz":"1","mm":"{{ zz }}","aa":"{{ mm }}"}`; !strings.Contains(got, want) {
+		t.Errorf("caller order of added variables lost\n got: %s\nwant substring: %s", got, want)
+	}
+	// The rest of the document keeps HA's order.
+	if want := `{"variables":{"zeta":"1","alpha":"{{ zeta }}"}}`; !strings.Contains(got, want) {
+		t.Errorf("action-level variables reordered\n got: %s\nwant substring: %s", got, want)
+	}
+}
+
+// TestAutomationPatch_SemanticReplaceSharesCallerOrder: one semantic op that
+// matches two triggers writes the caller's value order into both.
+func TestAutomationPatch_SemanticReplaceSharesCallerOrder(t *testing.T) {
+	t.Parallel()
+
+	raw := `{"action":"patch","automation_id":"heating","operations":[` +
+		`{"op":"replace","match":{"trigger":"state"},"section":"triggers","field":"for","value":{"minutes":5,"hours":1}}]}`
+	_, writes := orderedAutomationPatch(t, issue311AutomationJSON, raw, true)
+	got := singleWrite(t, writes)
+	if n := strings.Count(got, `"for":{"minutes":5,"hours":1}`); n != 2 {
+		t.Errorf("expected both matched triggers in caller order, found %d\n got: %s", n, got)
+	}
+}
+
+// TestAutomationPatch_ReorderOnlyReplaceWrites pins Review Focus trap 2: a
+// replace that changes only key order (the repair for a config already broken
+// by #311) must reach HA, so the no-op check compares ordered bytes.
+func TestAutomationPatch_ReorderOnlyReplaceWrites(t *testing.T) {
+	t.Parallel()
+
+	broken := strings.Replace(issue311AutomationJSON,
+		`{"heizzeit": "{{ 5 }}", "desired": "{{ heizzeit * 2 }}"}`,
+		`{"desired": "{{ heizzeit * 2 }}", "heizzeit": "{{ 5 }}"}`, 1)
+	raw := `{"action":"patch","automation_id":"heating","operations":[` +
+		`{"op":"replace","path":"/variables","value":{"heizzeit":"{{ 5 }}","desired":"{{ heizzeit * 2 }}"}}]}`
+	result, writes := orderedAutomationPatch(t, broken, raw, true)
+	got := singleWrite(t, writes)
+	if want := `"variables":{"heizzeit":"{{ 5 }}","desired":"{{ heizzeit * 2 }}"}`; !strings.Contains(got, want) {
+		t.Errorf("reorder-only replace did not write the caller's order\n got: %s\nwant substring: %s", got, want)
+	}
+	if !strings.Contains(result.Content[0].Text, "patched successfully") {
+		t.Errorf("expected success message, got: %s", result.Content[0].Text)
+	}
+}
+
+// TestAutomationPatch_IdenticalPatchSkipsWrite: content and order unchanged ->
+// still no write (no reload, no for: timer reset).
+func TestAutomationPatch_IdenticalPatchSkipsWrite(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		raw       string
+		withOrder bool
+	}{
+		{
+			name: "replace variables with same content and same caller order",
+			raw: `{"action":"patch","automation_id":"heating","operations":[` +
+				`{"op":"replace","path":"/variables","value":{"heizzeit":"{{ 5 }}","desired":"{{ heizzeit * 2 }}"}}]}`,
+			withOrder: true,
+		},
+		{
+			name:      "replace scalar with same value, no argument order",
+			raw:       `{"action":"patch","automation_id":"heating","operations":[{"op":"replace","path":"/description","value":"old"}]}`,
+			withOrder: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			result, writes := orderedAutomationPatch(t, issue311AutomationJSON, tt.raw, tt.withOrder)
+			if len(writes) != 0 {
+				t.Errorf("identical patch must not write, got %d writes: %v", len(writes), writes)
+			}
+			if !strings.Contains(result.Content[0].Text, "no changes") {
+				t.Errorf("expected 'no changes', got: %s", result.Content[0].Text)
+			}
+		})
+	}
+}
+
+// TestAutomationPatch_DryRunOutputUnchangedByOrder: dry-run renders the same
+// compact diff with or without argument order, and never writes.
+func TestAutomationPatch_DryRunOutputUnchangedByOrder(t *testing.T) {
+	t.Parallel()
+
+	raw := `{"action":"patch","automation_id":"heating","dry_run":true,"operations":[` +
+		`{"op":"replace","path":"/variables","value":{"zz":"1","aa":"2"}}]}`
+	want := "Dry-run result for automation 'heating' (1 operations, NOT saved):\n" +
+		"1. replace /variables\n" +
+		"   before: {\"desired\":\"{{ heizzeit * 2 }}\",\"heizzeit\":\"{{ 5 }}\"}\n" +
+		"   after:  {\"aa\":\"2\",\"zz\":\"1\"}\n"
+	for _, withOrder := range []bool{true, false} {
+		result, writes := orderedAutomationPatch(t, issue311AutomationJSON, raw, withOrder)
+		if len(writes) != 0 {
+			t.Errorf("withOrder=%v: dry-run must not write, got %v", withOrder, writes)
+		}
+		if got := result.Content[0].Text; got != want {
+			t.Errorf("withOrder=%v: dry-run output changed\n got: %q\nwant: %q", withOrder, got, want)
+		}
+	}
+}

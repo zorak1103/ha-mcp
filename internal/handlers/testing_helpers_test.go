@@ -2,15 +2,47 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
+	"github.com/zorak1103/ha-mcp/internal/jsonorder"
 	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
+
+// ctxWithRawArgs decodes raw (a tool call's "arguments" JSON) into an args map
+// and returns ctx carrying the arguments' key order, exactly as the MCP server
+// does for a real tools/call request (mcp.WithArgumentOrder).
+//
+//nolint:revive // context-as-argument: t first is the test-helper convention
+func ctxWithRawArgs(t *testing.T, ctx context.Context, raw string) (context.Context, map[string]any) {
+	t.Helper()
+	var args map[string]any
+	if err := json.Unmarshal([]byte(raw), &args); err != nil {
+		t.Fatalf("decoding raw args: %v", err)
+	}
+	o, err := jsonorder.Capture([]byte(raw))
+	if err != nil {
+		t.Fatalf("capturing raw args order: %v", err)
+	}
+	return mcp.WithArgumentOrder(ctx, o), args
+}
+
+// compactJSON returns s with insignificant whitespace removed, so test
+// literals can be written readably and still be compared byte-for-byte.
+func compactJSON(t *testing.T, s string) string {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, []byte(s)); err != nil {
+		t.Fatalf("compacting JSON: %v", err)
+	}
+	return buf.String()
+}
 
 // UniversalMockClient is a flexible mock for all handler tests.
 // It implements the homeassistant.Client interface with configurable function hooks.

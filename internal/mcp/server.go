@@ -476,6 +476,7 @@ func (s *Server) handleToolsCall(ctx context.Context, req *Request, r *http.Requ
 	}
 
 	ctx = context.WithValue(ctx, waitContextKey{}, s.waitConfig)
+	ctx = WithArgumentOrder(ctx, s.captureArgumentOrder(req.Params))
 	result, err := handler(ctx, client, params.Arguments)
 	if err != nil {
 		s.logger.Error("Tool execution failed", "tool", params.Name, "error", err)

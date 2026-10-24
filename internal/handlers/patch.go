@@ -1,12 +1,14 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/zorak1103/ha-mcp/internal/jsonorder"
 	"github.com/zorak1103/ha-mcp/internal/jsonpatch"
 	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
@@ -181,23 +183,67 @@ func parseOneOperation(raw any, idx int) (SemanticOperation, error) {
 // operations (semantic match+section addressing expanded to real JSON Pointer
 // paths) on success — the resolved ops let callers render a compact dry-run diff
 // (see dryRunPatchResult) without re-deriving affected paths.
+//
+// It ignores key order; callers that write order-sensitive configs
+// (automations, scripts) use applyPatchWithSemanticsOrdered instead.
 func applyPatchWithSemantics(configMap map[string]any, ops []SemanticOperation) (map[string]any, []jsonpatch.Operation, error) {
+	patchedMap, _, resolved, err := applyPatchWithSemanticsOrdered(configMap, nil, ops)
+	return patchedMap, resolved, err
+}
+
+// applyPatchWithSemanticsOrdered is applyPatchWithSemantics that also carries
+// the key order of configMap (configOrder, may be nil) through every
+// operation, returning the patched map's order alongside it. Inserted values
+// take their op's ValueOrder (see attachValueOrders); neither configOrder nor
+// any ValueOrder is modified.
+func applyPatchWithSemanticsOrdered(
+	configMap map[string]any,
+	configOrder *jsonorder.Order,
+	ops []SemanticOperation,
+) (map[string]any, *jsonorder.Order, []jsonpatch.Operation, error) {
 	resolved, err := resolveSemanticOps(configMap, ops)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
-	patchedAny, err := jsonpatch.Apply(configMap, resolved)
+	patchedAny, patchedOrder, err := jsonpatch.ApplyWithOrder(configMap, configOrder, resolved)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	patchedMap, ok := patchedAny.(map[string]any)
 	if !ok {
-		return nil, nil, fmt.Errorf("patch result must be an object")
+		return nil, nil, nil, fmt.Errorf("patch result must be an object")
 	}
 
-	return patchedMap, resolved, nil
+	return patchedMap, patchedOrder, resolved, nil
+}
+
+// attachValueOrders sets each op's ValueOrder to the key order of the raw
+// operation's "value", taken from opsOrder (the order tree of the tool call's
+// "operations" argument). parseOperations keeps one parsed op per raw
+// element, so parsed index i is raw index i. A nil opsOrder (internal callers
+// passing Go maps) leaves every value unordered, i.e. sorted on write.
+func attachValueOrders(ops []SemanticOperation, opsOrder *jsonorder.Order) {
+	for i := range ops {
+		ops[i].ValueOrder = opsOrder.Item(i).Field("value")
+	}
+}
+
+// orderedConfigEqual reports whether two config maps encode to identical
+// bytes in their respective key orders. Unlike reflect.DeepEqual it treats a
+// pure key reorder as a change, which is what lets a patch repair a config
+// whose order was destroyed (issue #311). Trade-off: rewriting identical
+// content in a different order now writes, and for automations resets any
+// running for: timer. An encode failure counts as "different" so the write
+// proceeds rather than being silently skipped.
+func orderedConfigEqual(a map[string]any, aOrder *jsonorder.Order, b map[string]any, bOrder *jsonorder.Order) bool {
+	aBytes, errA := jsonorder.Marshal(a, aOrder)
+	bBytes, errB := jsonorder.Marshal(b, bOrder)
+	if errA != nil || errB != nil {
+		return false
+	}
+	return bytes.Equal(aBytes, bBytes)
 }
 
 // configToMap converts a typed config struct to map[string]any via JSON round-trip.
