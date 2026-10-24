@@ -4598,3 +4598,142 @@ func TestGetConfigEntryOptions_AdvanceSubmitsNestedSection(t *testing.T) {
 		t.Errorf("GetConfigEntryOptions() = %v, want flat %v", options, flatTemplateBinarySensorOptions())
 	}
 }
+
+// TestGetConfigEntryOptions_MenuNavigationFailureAbortsInitFlow pins that a
+// failed menu navigation neither panics (the deferred abort once read the
+// reassigned, nil result) nor leaves the flow dangling in HA: the abort runs
+// with the flow id the init call returned.
+func TestGetConfigEntryOptions_MenuNavigationFailureAbortsInitFlow(t *testing.T) {
+	t.Parallel()
+
+	var abortedFlowID string
+	mockWS := &mockWSOperations{
+		getConfigEntryFunc: func(context.Context, string) (*ConfigEntryFull, error) {
+			return nil, errors.New("ws down")
+		},
+	}
+	mockREST := &mockRESTOperations{
+		initConfigEntryOptionsFlowFunc: func(context.Context, string) (*OptionsFlowResult, error) {
+			return &OptionsFlowResult{
+				FlowID:      "flow-menu",
+				Type:        flowTypeMenu,
+				MenuOptions: []string{"sensor", "binary_sensor"},
+			}, nil
+		},
+		abortConfigEntryOptionsFlowFunc: func(_ context.Context, flowID string) error {
+			abortedFlowID = flowID
+			return nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	options, err := client.GetConfigEntryOptions(context.Background(), "config-menu")
+
+	if err == nil || !strings.Contains(err.Error(), "ws down") {
+		t.Errorf("GetConfigEntryOptions() error = %v, want the menu navigation error", err)
+	}
+	if options != nil {
+		t.Errorf("GetConfigEntryOptions() = %v, want nil on error", options)
+	}
+	if abortedFlowID != "flow-menu" {
+		t.Errorf("aborted flow id = %q, want %q", abortedFlowID, "flow-menu")
+	}
+}
+
+// TestGetConfigEntryOptions_SubmitFailureMidWalkReturnsError pins that a
+// genuine submit failure while walking the steps (transport error, HA error
+// response, context expiry) is reported instead of silently returning the
+// partial merge of the steps read so far - and the flow is still aborted.
+func TestGetConfigEntryOptions_SubmitFailureMidWalkReturnsError(t *testing.T) {
+	t.Parallel()
+
+	var abortedFlowID string
+	submits := 0
+	mockWS := &mockWSOperations{}
+	mockREST := &mockRESTOperations{
+		initConfigEntryOptionsFlowFunc: func(context.Context, string) (*OptionsFlowResult, error) {
+			return &OptionsFlowResult{
+				FlowID: "flow-walk",
+				Type:   flowTypeForm,
+				StepID: "init",
+				DataSchema: []OptionsFlowField{
+					{Name: "heater", Description: map[string]any{"suggested_value": "switch.heater"}},
+				},
+			}, nil
+		},
+		submitConfigEntryOptionsFlowStepFunc: func(context.Context, string, map[string]any) (*OptionsFlowResult, error) {
+			submits++
+			if submits == 1 {
+				return &OptionsFlowResult{
+					FlowID: "flow-walk",
+					Type:   flowTypeForm,
+					StepID: "presets",
+					DataSchema: []OptionsFlowField{
+						{Name: "away_temp", Description: map[string]any{"suggested_value": 16.0}},
+					},
+				}, nil
+			}
+			return nil, context.DeadlineExceeded
+		},
+		abortConfigEntryOptionsFlowFunc: func(_ context.Context, flowID string) error {
+			abortedFlowID = flowID
+			return nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, mockREST)
+	options, err := client.GetConfigEntryOptions(context.Background(), "config-walk")
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("GetConfigEntryOptions() error = %v, want wrapped context.DeadlineExceeded", err)
+	}
+	if err != nil && !strings.Contains(err.Error(), "presets") {
+		t.Errorf("error %q should name the step whose submission failed", err)
+	}
+	if options != nil {
+		t.Errorf("GetConfigEntryOptions() = %v, want nil (no silent partial result)", options)
+	}
+	if abortedFlowID != "flow-walk" {
+		t.Errorf("aborted flow id = %q, want %q", abortedFlowID, "flow-walk")
+	}
+}
+
+// TestGetConfigEntryOptions_BenignWalkEndingsReturnMergedOptions pins that a
+// flow which finishes on submit (create_entry or abort) is the normal end of
+// the walk, not a failure.
+func TestGetConfigEntryOptions_BenignWalkEndingsReturnMergedOptions(t *testing.T) {
+	t.Parallel()
+
+	for _, endType := range []string{flowTypeCreateEntry, "abort"} {
+		t.Run(endType, func(t *testing.T) {
+			t.Parallel()
+			mockREST := &mockRESTOperations{
+				initConfigEntryOptionsFlowFunc: func(context.Context, string) (*OptionsFlowResult, error) {
+					return &OptionsFlowResult{
+						FlowID: "flow-end",
+						Type:   flowTypeForm,
+						StepID: "init",
+						DataSchema: []OptionsFlowField{
+							{Name: "sampling_size", Description: map[string]any{"suggested_value": 20.0}},
+						},
+					}, nil
+				},
+				submitConfigEntryOptionsFlowStepFunc: func(context.Context, string, map[string]any) (*OptionsFlowResult, error) {
+					return &OptionsFlowResult{FlowID: "flow-end", Type: endType}, nil
+				},
+				abortConfigEntryOptionsFlowFunc: func(context.Context, string) error { return nil },
+			}
+
+			client := NewHybridClientWithInterfaces(&mockWSOperations{}, mockREST)
+			options, err := client.GetConfigEntryOptions(context.Background(), "config-end")
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			want := map[string]any{"sampling_size": 20.0}
+			if !reflect.DeepEqual(options, want) {
+				t.Errorf("GetConfigEntryOptions() = %v, want %v", options, want)
+			}
+		})
+	}
+}
