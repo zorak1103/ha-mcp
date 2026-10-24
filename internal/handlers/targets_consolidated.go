@@ -78,22 +78,22 @@ func getAnalyzeTargetProperties() map[string]mcp.JSONSchema {
 		},
 		attrEntityID: {
 			Type:        "array",
-			Description: "List of entity IDs (e.g., ['light.living_room', 'switch.kitchen'])",
+			Description: "List of entity IDs (e.g., ['light.living_room', 'switch.kitchen']). A single string is accepted as a one-element list.",
 			Items:       &mcp.JSONSchema{Type: "string"},
 		},
 		"device_id": {
 			Type:        "array",
-			Description: "List of device IDs",
+			Description: "List of device IDs. A single string is accepted as a one-element list.",
 			Items:       &mcp.JSONSchema{Type: "string"},
 		},
 		"area_id": {
 			Type:        "array",
-			Description: "List of area IDs",
+			Description: "List of area IDs. A single string is accepted as a one-element list.",
 			Items:       &mcp.JSONSchema{Type: "string"},
 		},
 		"label_id": {
 			Type:        "array",
-			Description: "List of label IDs",
+			Description: "List of label IDs. A single string is accepted as a one-element list.",
 			Items:       &mcp.JSONSchema{Type: "string"},
 		},
 		"expand_group": {
@@ -140,12 +140,28 @@ func (h *ConsolidatedTargetHandlers) handleAnalyzeTarget(
 }
 
 // parseTargetParams extracts target and expand_group from parameters.
-func (h *ConsolidatedTargetHandlers) parseTargetParams(params map[string]any) (homeassistant.Target, *bool, error) {
-	target := homeassistant.Target{
-		EntityID: h.extractStringArray(params, attrEntityID),
-		DeviceID: h.extractStringArray(params, "device_id"),
-		AreaID:   h.extractStringArray(params, "area_id"),
-		LabelID:  h.extractStringArray(params, "label_id"),
+// It returns the first malformed argument as an error.
+func (*ConsolidatedTargetHandlers) parseTargetParams(params map[string]any) (homeassistant.Target, *bool, error) {
+	var target homeassistant.Target
+	for _, field := range []struct {
+		key string
+		dst *[]string
+	}{
+		{attrEntityID, &target.EntityID},
+		{"device_id", &target.DeviceID},
+		{"area_id", &target.AreaID},
+		{"label_id", &target.LabelID},
+	} {
+		ids, err := parseTargetIDList(params, field.key)
+		if err != nil {
+			return target, nil, err
+		}
+		*field.dst = ids
+	}
+
+	expandGroup, err := parseExpandGroup(params)
+	if err != nil {
+		return target, nil, err
 	}
 
 	if len(target.EntityID) == 0 && len(target.DeviceID) == 0 &&
@@ -153,36 +169,44 @@ func (h *ConsolidatedTargetHandlers) parseTargetParams(params map[string]any) (h
 		return target, nil, fmt.Errorf("at least one of entity_id, device_id, area_id, or label_id is required")
 	}
 
-	var expandGroup *bool
-	if eg, ok := params["expand_group"]; ok {
-		if b, ok := eg.(bool); ok {
-			expandGroup = &b
-		}
-	}
-
 	return target, expandGroup, nil
 }
 
-// extractStringArray extracts a string array from parameters by key.
-func (h *ConsolidatedTargetHandlers) extractStringArray(params map[string]any, key string) []string {
-	value, ok := params[key]
+// parseTargetIDList reads one target list argument. Absent placeholders (see
+// isAbsentArg) yield nil; a bare string is coerced to a one-element list; an
+// array must contain only non-empty strings.
+func parseTargetIDList(params map[string]any, key string) ([]string, error) {
+	raw, ok := params[key]
+	if !ok || isAbsentArg(raw) {
+		return nil, nil
+	}
+
+	switch v := raw.(type) {
+	case string:
+		return []string{v}, nil
+	case []any:
+		return parseNonEmptyStringArray(key, v)
+	default:
+		return nil, fmt.Errorf("%s must be a string or an array of strings, got %T", key, raw)
+	}
+}
+
+// parseExpandGroup reads the optional expand_group flag; a non-boolean is an error.
+func parseExpandGroup(params map[string]any) (*bool, error) {
+	var expandGroup *bool // stays nil when the flag is not supplied
+
+	raw, ok := params["expand_group"]
+	if !ok || isAbsentArg(raw) {
+		return expandGroup, nil
+	}
+
+	b, ok := raw.(bool)
 	if !ok {
-		return nil
+		return nil, fmt.Errorf("expand_group must be a boolean, got %T", raw)
 	}
+	expandGroup = &b
 
-	arr, ok := value.([]any)
-	if !ok {
-		return nil
-	}
-
-	result := make([]string, 0, len(arr))
-	for _, v := range arr {
-		if s, ok := v.(string); ok {
-			result = append(result, s)
-		}
-	}
-
-	return result
+	return expandGroup, nil
 }
 
 // handleTriggers handles info=triggers requests.

@@ -110,6 +110,30 @@ func TestParseStrictEntityIDList_LimitCountsBeforeDedup(t *testing.T) {
 	}
 }
 
+func TestParseNonEmptyStringArray_Errors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		raw     any
+		wantErr string
+	}{
+		{name: "not an array", raw: "a", wantErr: "k must be an array"},
+		{name: "empty array", raw: []any{}, wantErr: "k array cannot be empty"},
+		{name: "empty string element", raw: []any{"a", ""}, wantErr: "k[1] must be a non-empty string, got string"},
+		{name: "non-string element", raw: []any{5.0}, wantErr: "k[0] must be a non-empty string, got float64"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := parseNonEmptyStringArray("k", tt.raw)
+			if err == nil || err.Error() != tt.wantErr {
+				t.Errorf("parseNonEmptyStringArray(%#v) error = %v, want %q", tt.raw, err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestIsAbsentArg(t *testing.T) {
 	t.Parallel()
 
