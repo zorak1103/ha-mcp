@@ -126,6 +126,13 @@ func TestWSClient_CallerCancelDoesNotCloseSharedConn(t *testing.T) {
 	}()
 
 	time.Sleep(180 * time.Millisecond)
+	// Guard: the test only means something if A's write is still blocked
+	// (server reads paused) past A's 100ms deadline.
+	select {
+	case err := <-aErr:
+		t.Fatalf("A returned (%v) before release: its write did not block; raise callerCancelBlobSize", err)
+	default:
+	}
 	select {
 	case err := <-cErr:
 		if !errors.Is(err, context.DeadlineExceeded) {
@@ -147,6 +154,16 @@ func TestWSClient_CallerCancelDoesNotCloseSharedConn(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("B did not return within 10s")
+	}
+	// C gave up while waiting for the send slot, so it must have consumed no
+	// message id and written nothing. Both counts are exact here: ids are
+	// allocated only under the send slot (A=1, B=2), and B's reply means the
+	// server has read A's frame and then B's frame.
+	if got := client.msgID.Load(); got != 2 {
+		t.Errorf("msgID = %d after A and B, want 2 (C must consume no id)", got)
+	}
+	if got := fake.received.Load(); got != 2 {
+		t.Errorf("fake.received = %d after B's reply, want 2 (C must write nothing)", got)
 	}
 	select {
 	case err := <-aErr:
