@@ -185,8 +185,12 @@ func (h *LogbookHandlers) handleEntriesMode(
 	}
 
 	entityID := getString(args, attrEntityID)
+	var entityIDs []string
+	if entityID != "" {
+		entityIDs = []string{entityID}
+	}
 
-	entries, err := client.GetLogbook(ctx, startTime.Format(time.RFC3339), endTime.Format(time.RFC3339), entityID)
+	entries, err := client.GetLogbook(ctx, startTime.Format(time.RFC3339), endTime.Format(time.RFC3339), entityIDs)
 	if err != nil {
 		return &mcp.ToolsCallResult{
 			Content: []mcp.ContentBlock{

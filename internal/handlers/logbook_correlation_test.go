@@ -31,7 +31,11 @@ func TestLogbook_Correlation(t *testing.T) {
 				"format":     "natural",
 			},
 			setupMock: func(m *UniversalMockClient) {
-				m.GetLogbookFn = func(_ context.Context, _, _, entityID string) ([]homeassistant.LogbookEntry, error) {
+				m.GetLogbookFn = func(_ context.Context, _, _ string, entityIDs []string) ([]homeassistant.LogbookEntry, error) {
+					entityID := ""
+					if len(entityIDs) == 1 {
+						entityID = entityIDs[0]
+					}
 					if entityID == "binary_sensor.motion" {
 						return []homeassistant.LogbookEntry{
 							{
@@ -67,7 +71,7 @@ func TestLogbook_Correlation(t *testing.T) {
 				"format":     "json",
 			},
 			setupMock: func(m *UniversalMockClient) {
-				m.GetLogbookFn = func(_ context.Context, _, _, _ string) ([]homeassistant.LogbookEntry, error) {
+				m.GetLogbookFn = func(_ context.Context, _, _ string, _ []string) ([]homeassistant.LogbookEntry, error) {
 					return []homeassistant.LogbookEntry{}, nil
 				}
 			},

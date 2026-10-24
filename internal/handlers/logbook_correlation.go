@@ -104,7 +104,7 @@ func fetchLogbookEntriesForCorrelation(
 	allEntries := make([]correlationEntry, 0)
 
 	for _, entityID := range entityIDs {
-		entries, fetchErr := client.GetLogbook(ctx, startTime.Format(time.RFC3339), endTime.Format(time.RFC3339), entityID)
+		entries, fetchErr := client.GetLogbook(ctx, startTime.Format(time.RFC3339), endTime.Format(time.RFC3339), []string{entityID})
 		if fetchErr != nil {
 			continue
 		}

@@ -367,7 +367,7 @@ func (m *mockHAClient) RenderTemplate(_ context.Context, _ string) (string, erro
 	return "", nil
 }
 
-func (m *mockHAClient) GetLogbook(_ context.Context, _, _, _ string) ([]homeassistant.LogbookEntry, error) {
+func (m *mockHAClient) GetLogbook(_ context.Context, _, _ string, _ []string) ([]homeassistant.LogbookEntry, error) {
 	return nil, nil
 }
 

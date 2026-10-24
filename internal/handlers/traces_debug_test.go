@@ -135,7 +135,7 @@ func TestHandleDebugTrace_NaturalFormat(t *testing.T) {
 				LastChanged: now.Add(-5 * time.Minute),
 			}, nil
 		},
-		GetLogbookFn: func(_ context.Context, _, _, _ string) ([]homeassistant.LogbookEntry, error) {
+		GetLogbookFn: func(_ context.Context, _, _ string, _ []string) ([]homeassistant.LogbookEntry, error) {
 			return []homeassistant.LogbookEntry{
 				{When: now.Add(-30 * time.Minute).Format(time.RFC3339), Name: "Morning Routine", State: "triggered"},
 			}, nil
@@ -183,7 +183,7 @@ func TestHandleDebugTrace_JSONFormat(t *testing.T) {
 		SendHACSCommandFn: func(_ context.Context, _ string, _ map[string]any) (any, error) {
 			return []any{}, nil
 		},
-		GetLogbookFn: func(_ context.Context, _, _, _ string) ([]homeassistant.LogbookEntry, error) {
+		GetLogbookFn: func(_ context.Context, _, _ string, _ []string) ([]homeassistant.LogbookEntry, error) {
 			return []homeassistant.LogbookEntry{}, nil
 		},
 	}
@@ -221,7 +221,7 @@ func TestHandleDebugTrace_NoTraces(t *testing.T) {
 		SendHACSCommandFn: func(_ context.Context, _ string, _ map[string]any) (any, error) {
 			return []any{}, nil
 		},
-		GetLogbookFn: func(_ context.Context, _, _, _ string) ([]homeassistant.LogbookEntry, error) {
+		GetLogbookFn: func(_ context.Context, _, _ string, _ []string) ([]homeassistant.LogbookEntry, error) {
 			return []homeassistant.LogbookEntry{}, nil
 		},
 	}
@@ -259,7 +259,7 @@ func TestHandleDebugTrace_NoEntityTriggers(t *testing.T) {
 		SendHACSCommandFn: func(_ context.Context, _ string, _ map[string]any) (any, error) {
 			return []any{}, nil
 		},
-		GetLogbookFn: func(_ context.Context, _, _, _ string) ([]homeassistant.LogbookEntry, error) {
+		GetLogbookFn: func(_ context.Context, _, _ string, _ []string) ([]homeassistant.LogbookEntry, error) {
 			return []homeassistant.LogbookEntry{}, nil
 		},
 	}
@@ -292,7 +292,7 @@ func TestHandleDebugTrace_EmptyLogbook(t *testing.T) {
 		SendHACSCommandFn: func(_ context.Context, _ string, _ map[string]any) (any, error) {
 			return []any{}, nil
 		},
-		GetLogbookFn: func(_ context.Context, _, _, _ string) ([]homeassistant.LogbookEntry, error) {
+		GetLogbookFn: func(_ context.Context, _, _ string, _ []string) ([]homeassistant.LogbookEntry, error) {
 			return nil, nil
 		},
 	}
@@ -325,7 +325,7 @@ func TestHandleDebugTrace_CustomHours(t *testing.T) {
 		SendHACSCommandFn: func(_ context.Context, _ string, _ map[string]any) (any, error) {
 			return []any{}, nil
 		},
-		GetLogbookFn: func(_ context.Context, _, _, _ string) ([]homeassistant.LogbookEntry, error) {
+		GetLogbookFn: func(_ context.Context, _, _ string, _ []string) ([]homeassistant.LogbookEntry, error) {
 			return []homeassistant.LogbookEntry{}, nil
 		},
 	}
@@ -401,7 +401,7 @@ func TestHandleDebugTrace_ArrayEntityTriggers(t *testing.T) {
 				LastChanged: now.Add(-15 * time.Minute),
 			}, nil
 		},
-		GetLogbookFn: func(_ context.Context, _, _, _ string) ([]homeassistant.LogbookEntry, error) {
+		GetLogbookFn: func(_ context.Context, _, _ string, _ []string) ([]homeassistant.LogbookEntry, error) {
 			return []homeassistant.LogbookEntry{}, nil
 		},
 	}
@@ -563,7 +563,7 @@ func TestHandleDebugTrace_StateFromGetState(t *testing.T) {
 		SendHACSCommandFn: func(_ context.Context, _ string, _ map[string]any) (any, error) {
 			return []any{}, nil
 		},
-		GetLogbookFn: func(_ context.Context, _, _, _ string) ([]homeassistant.LogbookEntry, error) {
+		GetLogbookFn: func(_ context.Context, _, _ string, _ []string) ([]homeassistant.LogbookEntry, error) {
 			return []homeassistant.LogbookEntry{}, nil
 		},
 	}
@@ -604,7 +604,7 @@ func TestHandleDebugTrace_StateGetStateFails(t *testing.T) {
 		SendHACSCommandFn: func(_ context.Context, _ string, _ map[string]any) (any, error) {
 			return []any{}, nil
 		},
-		GetLogbookFn: func(_ context.Context, _, _, _ string) ([]homeassistant.LogbookEntry, error) {
+		GetLogbookFn: func(_ context.Context, _, _ string, _ []string) ([]homeassistant.LogbookEntry, error) {
 			return []homeassistant.LogbookEntry{}, nil
 		},
 	}
@@ -822,7 +822,7 @@ func TestHandleDebugTrace_UnresolvedItemIDWarning(t *testing.T) {
 		SendHACSCommandFn: func(_ context.Context, _ string, _ map[string]any) (any, error) {
 			return []any{}, nil
 		},
-		GetLogbookFn: func(_ context.Context, _, _, _ string) ([]homeassistant.LogbookEntry, error) {
+		GetLogbookFn: func(_ context.Context, _, _ string, _ []string) ([]homeassistant.LogbookEntry, error) {
 			return []homeassistant.LogbookEntry{}, nil
 		},
 	}

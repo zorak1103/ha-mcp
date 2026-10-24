@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -71,7 +72,7 @@ func TestLogbookHandlers_HandleGetLogbook(t *testing.T) {
 			name: "successful logbook fetch with defaults",
 			args: map[string]any{},
 			setupMock: func(m *UniversalMockClient) {
-				m.GetLogbookFn = func(_ context.Context, _, _, _ string) ([]homeassistant.LogbookEntry, error) {
+				m.GetLogbookFn = func(_ context.Context, _, _ string, _ []string) ([]homeassistant.LogbookEntry, error) {
 					return testEntries, nil
 				}
 			},
@@ -82,7 +83,7 @@ func TestLogbookHandlers_HandleGetLogbook(t *testing.T) {
 			name: "with hours parameter",
 			args: map[string]any{"hours": 6.0},
 			setupMock: func(m *UniversalMockClient) {
-				m.GetLogbookFn = func(_ context.Context, _, _, _ string) ([]homeassistant.LogbookEntry, error) {
+				m.GetLogbookFn = func(_ context.Context, _, _ string, _ []string) ([]homeassistant.LogbookEntry, error) {
 					return testEntries, nil
 				}
 			},
@@ -93,9 +94,9 @@ func TestLogbookHandlers_HandleGetLogbook(t *testing.T) {
 			name: "with entity_id filter",
 			args: map[string]any{"entity_id": "light.living_room"},
 			setupMock: func(m *UniversalMockClient) {
-				m.GetLogbookFn = func(_ context.Context, _, _, entityID string) ([]homeassistant.LogbookEntry, error) {
-					if entityID != "light.living_room" {
-						t.Errorf("expected entity_id %q, got %q", "light.living_room", entityID)
+				m.GetLogbookFn = func(_ context.Context, _, _ string, entityIDs []string) ([]homeassistant.LogbookEntry, error) {
+					if want := []string{"light.living_room"}; !slices.Equal(entityIDs, want) {
+						t.Errorf("expected entity ids %v, got %v", want, entityIDs)
 					}
 					return testEntries, nil
 				}
@@ -107,7 +108,7 @@ func TestLogbookHandlers_HandleGetLogbook(t *testing.T) {
 			name: "API error",
 			args: map[string]any{},
 			setupMock: func(m *UniversalMockClient) {
-				m.GetLogbookFn = func(_ context.Context, _, _, _ string) ([]homeassistant.LogbookEntry, error) {
+				m.GetLogbookFn = func(_ context.Context, _, _ string, _ []string) ([]homeassistant.LogbookEntry, error) {
 					return nil, errors.New("connection refused")
 				}
 			},
@@ -136,7 +137,7 @@ func TestLogbookHandlers_EmptyLogbook(t *testing.T) {
 	t.Parallel()
 
 	client := &UniversalMockClient{
-		GetLogbookFn: func(_ context.Context, _, _, _ string) ([]homeassistant.LogbookEntry, error) {
+		GetLogbookFn: func(_ context.Context, _, _ string, _ []string) ([]homeassistant.LogbookEntry, error) {
 			return []homeassistant.LogbookEntry{}, nil
 		},
 	}
@@ -196,7 +197,7 @@ func TestLogbookHandlers_TimeFormats(t *testing.T) {
 			t.Parallel()
 
 			client := &UniversalMockClient{
-				GetLogbookFn: func(_ context.Context, _, _, _ string) ([]homeassistant.LogbookEntry, error) {
+				GetLogbookFn: func(_ context.Context, _, _ string, _ []string) ([]homeassistant.LogbookEntry, error) {
 					return []homeassistant.LogbookEntry{}, nil
 				},
 			}

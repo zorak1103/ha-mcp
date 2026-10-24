@@ -159,7 +159,9 @@ type Client interface {
 	RenderTemplate(ctx context.Context, template string) (string, error)
 
 	// Logbook operations
-	GetLogbook(ctx context.Context, startTime, endTime, entityID string) ([]LogbookEntry, error)
+	// GetLogbook retrieves logbook entries. entityIDs are sent as HA's
+	// comma-separated `entity` query filter; nil = all entities.
+	GetLogbook(ctx context.Context, startTime, endTime string, entityIDs []string) ([]LogbookEntry, error)
 
 	// Configuration validation operations
 	CheckConfig(ctx context.Context) (*ConfigCheckResult, error)

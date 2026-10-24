@@ -237,7 +237,7 @@ func (s *TraceIntegrationTestSuite) TestDebugAutomation() {
 	// 4. Verify GetLogbook works for the automation
 	now := time.Now()
 	startTime := now.Add(-6 * time.Hour)
-	logbook, err := s.Client().GetLogbook(s.Context(), startTime.Format(time.RFC3339), now.Format(time.RFC3339), entityID)
+	logbook, err := s.Client().GetLogbook(s.Context(), startTime.Format(time.RFC3339), now.Format(time.RFC3339), []string{entityID})
 	s.Require().NoError(err, "GetLogbook should succeed")
 	s.T().Logf("Found %d logbook entries for %s in last 6 hours", len(logbook), entityID)
 

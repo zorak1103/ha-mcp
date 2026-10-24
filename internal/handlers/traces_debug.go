@@ -268,7 +268,7 @@ func fetchDebugLogbook(ctx context.Context, client homeassistant.Client, entityI
 	now := time.Now()
 	startTime := now.Add(-time.Duration(hours) * time.Hour)
 
-	entries, err := client.GetLogbook(ctx, startTime.Format(time.RFC3339), now.Format(time.RFC3339), entityID)
+	entries, err := client.GetLogbook(ctx, startTime.Format(time.RFC3339), now.Format(time.RFC3339), []string{entityID})
 	if err != nil {
 		return nil
 	}

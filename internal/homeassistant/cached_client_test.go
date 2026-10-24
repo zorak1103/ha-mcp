@@ -354,7 +354,7 @@ func (m *mockClient) GetHelperConfig(ctx context.Context, platform, entityID str
 func (m *mockClient) RenderTemplate(ctx context.Context, template string) (string, error) {
 	return "", nil
 }
-func (m *mockClient) GetLogbook(ctx context.Context, startTime, endTime, entityID string) ([]LogbookEntry, error) {
+func (m *mockClient) GetLogbook(ctx context.Context, startTime, endTime string, entityIDs []string) ([]LogbookEntry, error) {
 	return nil, nil
 }
 func (m *mockClient) GetSystemLog(context.Context) ([]SystemLogEntry, error)      { return nil, nil }

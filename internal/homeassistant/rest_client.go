@@ -863,8 +863,9 @@ func (c *RESTClient) RenderTemplate(ctx context.Context, template string) (strin
 
 // GetLogbook retrieves logbook entries from Home Assistant.
 // Endpoint: GET /api/logbook/<timestamp>
-// Query params: entity=<entity_id>, end_time=<timestamp>
-func (c *RESTClient) GetLogbook(ctx context.Context, startTime, endTime, entityID string) ([]LogbookEntry, error) {
+// Query params: entity=<id>[,<id>...], end_time=<timestamp>
+// entityIDs are sent as HA's comma-separated `entity` query filter; nil = all entities.
+func (c *RESTClient) GetLogbook(ctx context.Context, startTime, endTime string, entityIDs []string) ([]LogbookEntry, error) {
 	// Build URL with start_time in path
 	url := fmt.Sprintf("%s/api/logbook/%s", c.baseURL, neturl.PathEscape(startTime))
 
@@ -878,8 +879,8 @@ func (c *RESTClient) GetLogbook(ctx context.Context, startTime, endTime, entityI
 	if endTime != "" {
 		query.Set("end_time", endTime)
 	}
-	if entityID != "" {
-		query.Set("entity", entityID)
+	if joined := strings.Join(entityIDs, ","); joined != "" {
+		query.Set("entity", joined)
 	}
 	req.URL.RawQuery = query.Encode()
 

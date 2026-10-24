@@ -438,7 +438,7 @@ func (m *mockNonCloserClient) RenderTemplate(_ context.Context, _ string) (strin
 	return "", nil
 }
 
-func (m *mockNonCloserClient) GetLogbook(_ context.Context, _, _, _ string) ([]LogbookEntry, error) {
+func (m *mockNonCloserClient) GetLogbook(_ context.Context, _, _ string, _ []string) ([]LogbookEntry, error) {
 	return []LogbookEntry{}, nil
 }
 
