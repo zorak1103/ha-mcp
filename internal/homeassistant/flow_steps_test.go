@@ -383,3 +383,113 @@ func TestFindMatchingMenuOption_PrefersExactMatch(t *testing.T) {
 		})
 	}
 }
+
+func additionalOptionsSection(children ...OptionsFlowField) OptionsFlowField {
+	return OptionsFlowField{Name: "additional_options", Type: "expandable", Schema: children}
+}
+
+func TestFlattenStepValues_LiftsSectionChildren(t *testing.T) {
+	t.Parallel()
+
+	ix := indexStepSchema([]OptionsFlowField{
+		{Name: "state"},
+		additionalOptionsSection(OptionsFlowField{Name: "availability"}, OptionsFlowField{Name: "delay_off"}),
+	})
+	stepValues := map[string]any{
+		"state": "{{ x }}",
+		"additional_options": map[string]any{
+			"availability": "{{ true }}",
+			"delay_off":    map[string]any{"hours": 0.0, "minutes": 3.0, "seconds": 0.0},
+		},
+	}
+	dst := map[string]any{}
+	flattenStepValues(ix, stepValues, dst)
+
+	want := map[string]any{
+		"state":        "{{ x }}",
+		"availability": "{{ true }}",
+		"delay_off":    map[string]any{"hours": 0.0, "minutes": 3.0, "seconds": 0.0},
+	}
+	if !reflect.DeepEqual(dst, want) {
+		t.Errorf("flattenStepValues() dst = %v, want %v", dst, want)
+	}
+}
+
+func TestFlattenStepValues_CollisionKeepsPrefixedChild(t *testing.T) {
+	t.Parallel()
+
+	ix := indexStepSchema([]OptionsFlowField{
+		{Name: "availability"},
+		additionalOptionsSection(OptionsFlowField{Name: "availability"}),
+	})
+	stepValues := map[string]any{
+		"availability":       "top",
+		"additional_options": map[string]any{"availability": "nested"},
+	}
+	dst := map[string]any{}
+	flattenStepValues(ix, stepValues, dst)
+
+	want := map[string]any{"availability": "top", "additional_options.availability": "nested"}
+	if !reflect.DeepEqual(dst, want) {
+		t.Errorf("flattenStepValues() dst = %v, want %v", dst, want)
+	}
+}
+
+func TestFlattenStepValues_CollisionWithAlreadyMergedKeyIsPrefixed(t *testing.T) {
+	t.Parallel()
+
+	ix := indexStepSchema([]OptionsFlowField{
+		additionalOptionsSection(OptionsFlowField{Name: "availability"}),
+	})
+	dst := map[string]any{"availability": "from-earlier-step"}
+	flattenStepValues(ix, map[string]any{
+		"additional_options": map[string]any{"availability": "nested"},
+	}, dst)
+
+	want := map[string]any{"availability": "from-earlier-step", "additional_options.availability": "nested"}
+	if !reflect.DeepEqual(dst, want) {
+		t.Errorf("flattenStepValues() dst = %v, want %v", dst, want)
+	}
+}
+
+func TestFlattenStepValues_DurationDictStaysIntact(t *testing.T) {
+	t.Parallel()
+
+	ix := indexStepSchema([]OptionsFlowField{{Name: "max_age"}})
+	dst := map[string]any{}
+	flattenStepValues(ix, map[string]any{"max_age": map[string]any{"minutes": 10.0}}, dst)
+
+	if got := dst["max_age"]; !reflect.DeepEqual(got, map[string]any{"minutes": 10.0}) {
+		t.Errorf("dst[max_age] = %v, want the duration dict intact", got)
+	}
+	if _, found := dst["max_age.minutes"]; found {
+		t.Errorf("dst has key max_age.minutes; a duration dict must not be treated as a section")
+	}
+}
+
+func TestFlattenStepValues_EmptySectionDropped(t *testing.T) {
+	t.Parallel()
+
+	ix := indexStepSchema([]OptionsFlowField{
+		additionalOptionsSection(OptionsFlowField{Name: "availability"}),
+	})
+	dst := map[string]any{}
+	flattenStepValues(ix, map[string]any{"additional_options": map[string]any{}}, dst)
+
+	if len(dst) != 0 {
+		t.Errorf("dst = %v, want empty (the section key itself never reaches dst)", dst)
+	}
+}
+
+func TestFlattenStepValues_EmptyIndexCopiesAsIs(t *testing.T) {
+	t.Parallel()
+
+	ix := indexStepSchema(nil)
+	dst := map[string]any{"old": 1}
+	flattenStepValues(ix, map[string]any{"a": 1, "additional_options": map[string]any{"b": 2}}, dst)
+
+	want := map[string]any{"old": 1, "a": 1, "additional_options": map[string]any{"b": 2}}
+	if !reflect.DeepEqual(dst, want) {
+		t.Errorf("flattenStepValues() dst = %v, want %v", dst, want)
+	}
+}
