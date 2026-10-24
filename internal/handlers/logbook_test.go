@@ -161,6 +161,84 @@ func TestLogbookHandlers_HandleGetLogbook(t *testing.T) {
 	runHandlerTestCases(t, tests, h.handleGetLogbook)
 }
 
+func TestLogbookHandlers_ModeValidation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		args         map[string]any
+		wantError    bool
+		wantCall     bool
+		wantContains []string
+	}{
+		{
+			name:         "unknown mode",
+			args:         map[string]any{"mode": "bogus"},
+			wantError:    true,
+			wantContains: []string{`Invalid mode "bogus". Must be one of: entries, correlation`},
+		},
+		{
+			name:         "correlation-only arg in default entries mode",
+			args:         map[string]any{"max_time_delta_seconds": 30.0},
+			wantError:    true,
+			wantContains: []string{"max_time_delta_seconds (only for mode=correlation)", "mode=entries"},
+		},
+		{
+			name:         "entries-only limit in correlation mode",
+			args:         map[string]any{"mode": "correlation", "entity_ids": []any{"light.a", "light.b"}, "limit": 5.0},
+			wantError:    true,
+			wantContains: []string{"limit (only for mode=entries)"},
+		},
+		{
+			name:         "entries-only entity_id in correlation mode",
+			args:         map[string]any{"mode": "correlation", "entity_id": "light.a", "entity_ids": []any{"light.a"}},
+			wantError:    true,
+			wantContains: []string{"entity_id (only for mode=entries)"},
+		},
+		{
+			name:         "empty mode means entries",
+			args:         map[string]any{"mode": ""},
+			wantCall:     true,
+			wantContains: []string{"Found 0 logbook entries"},
+		},
+		{
+			name:         "placeholder for other-mode arg is accepted",
+			args:         map[string]any{"max_time_delta_seconds": nil},
+			wantCall:     true,
+			wantContains: []string{"Found 0 logbook entries"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			called := false
+			client := &UniversalMockClient{
+				GetLogbookFn: func(context.Context, string, string, []string) ([]homeassistant.LogbookEntry, error) {
+					called = true
+					return []homeassistant.LogbookEntry{}, nil
+				},
+			}
+			res, err := NewLogbookHandlers().handleGetLogbook(context.Background(), client, tt.args)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if res.IsError != tt.wantError {
+				t.Fatalf("IsError = %v, want %v: %+v", res.IsError, tt.wantError, res)
+			}
+			for _, want := range tt.wantContains {
+				if !strings.Contains(res.Content[0].Text, want) {
+					t.Errorf("result %q does not contain %q", res.Content[0].Text, want)
+				}
+			}
+			if called != tt.wantCall {
+				t.Errorf("GetLogbook called = %v, want %v", called, tt.wantCall)
+			}
+		})
+	}
+}
+
 func TestLogbookEntries_CursorStableAcrossIDOrder(t *testing.T) {
 	t.Parallel()
 

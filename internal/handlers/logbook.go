@@ -12,6 +12,24 @@ import (
 	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
 
+// get_logbook modes.
+const (
+	logbookModeEntries     = "entries"
+	logbookModeCorrelation = "correlation"
+)
+
+// logbookArgModes maps each mode-specific get_logbook argument to the only
+// modes that read it; a supplied value for any other mode is rejected.
+// start_time, end_time, hours, format and mode apply to both modes and are
+// deliberately absent.
+var logbookArgModes = map[string][]string{
+	attrEntityID:             {logbookModeEntries},
+	"limit":                  {logbookModeEntries},
+	"cursor":                 {logbookModeEntries},
+	"offset":                 {logbookModeEntries},
+	"max_time_delta_seconds": {logbookModeCorrelation},
+}
+
 // LogbookHandlers provides handlers for Home Assistant logbook operations.
 type LogbookHandlers struct{}
 
@@ -61,7 +79,7 @@ func (h *LogbookHandlers) getLogbookTool() mcp.Tool {
 				},
 				"max_time_delta_seconds": {
 					Type:        "integer",
-					Description: "Maximum time difference in seconds to group correlated events (default: 60). Only for mode=correlation",
+					Description: "Maximum time difference in seconds to group correlated events (default: 60). Only for mode=correlation; rejected in mode=entries",
 				},
 				"format": {
 					Type:        "string",
@@ -70,16 +88,23 @@ func (h *LogbookHandlers) getLogbookTool() mcp.Tool {
 				},
 				"limit": {
 					Type:        "integer",
-					Description: "Maximum number of logbook entries to return (max 1000, default: no limit). Use with 'cursor' for pagination.",
+					Description: "Maximum number of logbook entries to return (max 1000, default: no limit). Use with 'cursor' for pagination. Only for mode=entries; rejected in mode=correlation",
 				},
-				"offset": paginationOffsetSchema(),
+				"offset": logbookOffsetSchema(),
 				"cursor": {
 					Type:        "string",
-					Description: "Pagination cursor from previous response to get next page of results",
+					Description: "Pagination cursor from previous response to get next page of results. Only for mode=entries; rejected in mode=correlation",
 				},
 			},
 		},
 	}
+}
+
+// logbookOffsetSchema is the shared offset schema with get_logbook's mode note.
+func logbookOffsetSchema() mcp.JSONSchema {
+	schema := paginationOffsetSchema()
+	schema.Description += ". Only for mode=entries; rejected in mode=correlation"
+	return schema
 }
 
 // logbookCompactEntry represents a compact logbook entry.
@@ -156,17 +181,24 @@ func (h *LogbookHandlers) handleGetLogbook(
 	client homeassistant.Client,
 	args map[string]any,
 ) (*mcp.ToolsCallResult, error) {
-	// Check mode parameter
 	mode := getString(args, "mode")
 	if mode == "" {
-		mode = "entries" // default mode
+		mode = logbookModeEntries
 	}
 
-	if mode == "correlation" {
+	switch mode {
+	case logbookModeEntries, logbookModeCorrelation:
+	default:
+		return errorResult(fmt.Sprintf("Invalid mode %q. Must be one of: %s, %s", mode, logbookModeEntries, logbookModeCorrelation)), nil
+	}
+
+	if rejected := rejectInapplicableArgs(args, "mode", mode, logbookArgModes, ""); rejected != nil {
+		return rejected, nil
+	}
+
+	if mode == logbookModeCorrelation {
 		return h.handleCorrelation(ctx, client, args)
 	}
-
-	// Handle entries mode
 	return h.handleEntriesMode(ctx, client, args)
 }
 
