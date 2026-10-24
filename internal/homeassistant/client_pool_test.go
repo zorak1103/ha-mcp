@@ -701,6 +701,59 @@ func TestClientPool_ClientOutlivesCreatingContext(t *testing.T) {
 	}
 }
 
+// TestClientPool_RebuildsClientAfterAuthFailure pins that a pooled client
+// whose reconnect is rejected with auth_invalid becomes unusable, so the next
+// GetOrCreate for the same token closes it and builds a new, working client.
+func TestClientPool_RebuildsClientAfterAuthFailure(t *testing.T) {
+	t.Parallel()
+
+	// Auth attempt 1 = first client, 2 = its reconnect (rejected), 3 = rebuild.
+	fake := newFakeHA(t, withAuthInvalidOnAttempt(2))
+	pool := NewClientPool(fake.URL, time.Minute)
+	defer pool.Close()
+
+	const token = "token-auth-rebuild"
+	c1, err := pool.GetOrCreate(context.Background(), token)
+	if err != nil {
+		t.Fatalf("first GetOrCreate failed: %v", err)
+	}
+	old, ok := c1.(*HybridClientCloser)
+	if !ok {
+		t.Fatalf("pooled client is %T, want *HybridClientCloser", c1)
+	}
+
+	fake.dropAll()
+
+	// The pool's default reconnect backoff starts at 1s.
+	if !waitFor(5*time.Second, func() bool { return fake.authAttempts.Load() >= 2 && !old.wsClient.IsUsable() }) {
+		t.Fatalf("old client still usable after auth_invalid (authAttempts=%d)", fake.authAttempts.Load())
+	}
+
+	c2, err := pool.GetOrCreate(context.Background(), token)
+	if err != nil {
+		t.Fatalf("GetOrCreate after auth failure = %v, want a rebuilt client", err)
+	}
+	if c2 == c1 {
+		t.Fatal("GetOrCreate returned the unusable client, want a new one")
+	}
+	if old.wsClient.lifeCtx.Err() == nil {
+		t.Error("old client was not closed by the pool")
+	}
+	rebuilt, ok := c2.(*HybridClientCloser)
+	if !ok {
+		t.Fatalf("rebuilt client is %T, want *HybridClientCloser", c2)
+	}
+	if _, err := rebuilt.wsClient.SendCommand(context.Background(), "test/echo", nil); err != nil {
+		t.Errorf("command on rebuilt client = %v, want success", err)
+	}
+	if got := fake.authAttempts.Load(); got != 3 {
+		t.Errorf("authAttempts = %d, want 3", got)
+	}
+	if got := fake.conns.Load(); got != 2 {
+		t.Errorf("fake.conns (authenticated) = %d, want 2", got)
+	}
+}
+
 func TestClientPool_CleanupIdleClients_AllIdle(t *testing.T) {
 	t.Parallel()
 

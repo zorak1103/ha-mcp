@@ -35,6 +35,10 @@ const wsErrCodeIDReuse = "id_reuse"
 // Close. It is deliberately not retryable.
 var errClientClosed = errors.New("websocket client closed")
 
+// errAuthFailed marks Home Assistant rejecting the credentials (auth_invalid).
+// It is permanent: the reconnect loop stops on it instead of re-dialing.
+var errAuthFailed = errors.New("authentication failed")
+
 // WSClientConfig holds configuration options for WSClient.
 type WSClientConfig struct {
 	// ReconnectConfig configures automatic reconnection behavior.
@@ -239,25 +243,32 @@ func (c *WSClient) healthLoop(s *wsSession) {
 			c.logger.Debug("Health monitor stopped")
 			return
 		case <-ticker.C:
-			if shouldExit := c.performHealthCheck(s.ctx); shouldExit {
+			if shouldExit := c.checkSession(s.ctx, s); shouldExit {
 				return
 			}
 		}
 	}
 }
 
-// performHealthCheck executes a single health check cycle.
-// Returns true if the health loop should exit.
+// performHealthCheck executes a single health check cycle on the current
+// session. Returns true if the health loop should exit.
 func (c *WSClient) performHealthCheck(ctx context.Context) bool {
 	s := c.session.Load()
 	if s == nil {
 		return false
 	}
+	return c.checkSession(ctx, s)
+}
 
+// checkSession runs one health check against s itself - never against
+// whatever session is current, so a stale loop cannot ping (and, via the
+// library's write-ctx handling, close) or end a newer connection.
+// Returns true if the health loop should exit.
+func (c *WSClient) checkSession(ctx context.Context, s *wsSession) bool {
 	if c.isPongTimeout() {
 		lastPong, _ := c.lastPong.Load().(time.Time)
 		c.logger.Warn("Ping timeout detected", "lastPong", time.Since(lastPong))
-		c.handleConnectionFailure(errors.New("ping timeout"))
+		c.failSession(s, errors.New("ping timeout"))
 		return true
 	}
 
@@ -266,7 +277,7 @@ func (c *WSClient) performHealthCheck(ctx context.Context) bool {
 			return true // Session ended, clean shutdown
 		}
 		c.logger.Error("Ping failed", "error", err)
-		c.handleConnectionFailure(fmt.Errorf("ping failed: %w", err))
+		c.failSession(s, fmt.Errorf("ping failed: %w", err))
 		return true
 	}
 
@@ -293,10 +304,15 @@ func (c *WSClient) sendPing(ctx context.Context, conn *websocket.Conn) error {
 
 // handleConnectionFailure ends the current session after a health failure.
 func (c *WSClient) handleConnectionFailure(err error) {
-	c.logger.Error("Connection failure detected", "error", err)
 	if s := c.session.Load(); s != nil {
-		c.endSession(s, err)
+		c.failSession(s, err)
 	}
+}
+
+// failSession ends s after a health failure.
+func (c *WSClient) failSession(s *wsSession, err error) {
+	c.logger.Error("Connection failure detected", "error", err)
+	c.endSession(s, err)
 }
 
 // buildWSURL converts the base URL to a WebSocket URL.
@@ -370,9 +386,9 @@ func (c *WSClient) authenticate(ctx context.Context, conn *websocket.Conn) error
 	case "auth_invalid":
 		var invalid WSAuthInvalid
 		if err := json.Unmarshal(data, &invalid); err != nil {
-			return errors.New("authentication failed: invalid credentials")
+			return fmt.Errorf("%w: invalid credentials", errAuthFailed)
 		}
-		return fmt.Errorf("authentication failed: %s", invalid.Message)
+		return fmt.Errorf("%w: %s", errAuthFailed, invalid.Message)
 	default:
 		return fmt.Errorf("unexpected auth response type: %s", msgType)
 	}
@@ -480,6 +496,12 @@ func (c *WSClient) reconnectUntilDialed() error {
 		err := c.dialSession(c.lifeCtx)
 		if err == nil {
 			return nil
+		}
+		if errors.Is(err, errAuthFailed) {
+			// Re-dialing with rejected credentials can never succeed; stop so
+			// the client reports unusable and an owner can rebuild it.
+			c.logger.Error("Reconnection stopped: Home Assistant rejected the credentials", "error", err)
+			return err
 		}
 		c.logger.Warn("Reconnection attempt failed", "attempt", attempt, "error", err)
 		if errors.Is(err, errClientClosed) {

@@ -87,11 +87,17 @@ func TestWSClient_ConcurrentSendCommand_IDsStrictlyIncreasing(t *testing.T) {
 }
 
 // callerCancelBlobSize must exceed what the OS socket buffers absorb while the
-// fake server is not reading (so A's write blocks), yet marshal well inside
-// A's 100ms ctx even under -race (so A actually reaches the blocked write).
-// Measured on Windows/-race: 1 MiB already blocks and marshals in ~27ms,
-// while 32 MiB takes ~850ms to marshal - A's ctx expired before it wrote.
-const callerCancelBlobSize = 1 << 20
+// fake server is not reading, so A's write blocks. 32 MiB is far above any
+// common loopback buffering (Linux autotunes send+receive up to ~10 MiB
+// combined; Windows blocked at 1 MiB). callerCancelADeadline must comfortably
+// exceed the time to marshal that blob under -race (~850ms measured), so A
+// really is blocked in the write when its deadline expires - otherwise old code
+// fails A at the library's lock acquire and never tears the conn down.
+const (
+	callerCancelBlobSize   = 32 << 20
+	callerCancelADeadline  = 3 * time.Second
+	callerCancelCheckpoint = callerCancelADeadline + 500*time.Millisecond
+)
 
 // TestWSClient_CallerCancelDoesNotCloseSharedConn pins that a caller's context
 // expiring - while its write is blocked or while it waits for the send slot -
@@ -100,18 +106,28 @@ func TestWSClient_CallerCancelDoesNotCloseSharedConn(t *testing.T) {
 	release := make(chan struct{})
 	fake := newFakeHA(t, withPauseReads(release))
 	cfg := newConcurrencyTestConfig()
-	cfg.WriteTimeout = 5 * time.Second
+	// Must outlast A's blocked write until release plus the drain after it.
+	cfg.WriteTimeout = 15 * time.Second
 	client := connectFakeClient(t, fake, cfg)
 
+	// Build the blob before A starts: under -race it takes long enough that B
+	// or C could otherwise take the send slot first.
+	blob := map[string]any{"blob": strings.Repeat("x", callerCancelBlobSize)}
+	start := time.Now()
 	aErr := make(chan error, 1)
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		ctx, cancel := context.WithTimeout(context.Background(), callerCancelADeadline)
 		defer cancel()
-		_, err := client.SendCommand(ctx, "test/echo", map[string]any{"blob": strings.Repeat("x", callerCancelBlobSize)})
+		_, err := client.SendCommand(ctx, "test/echo", blob)
 		aErr <- err
 	}()
 
-	time.Sleep(20 * time.Millisecond)
+	// A holds the send slot through its marshal and its blocked write. Ids are
+	// allocated only under the slot, so msgID == 1 means A holds it; B and C
+	// then queue behind it, and C gives up while still waiting.
+	if !waitFor(2*time.Second, func() bool { return client.msgID.Load() == 1 }) {
+		t.Fatal("A did not take the send slot within 2s")
+	}
 	bErr := make(chan error, 1)
 	go func() {
 		_, err := client.SendCommand(context.Background(), "test/echo", nil)
@@ -125,12 +141,16 @@ func TestWSClient_CallerCancelDoesNotCloseSharedConn(t *testing.T) {
 		cErr <- err
 	}()
 
-	time.Sleep(180 * time.Millisecond)
+	time.Sleep(callerCancelCheckpoint - time.Since(start))
+	if !client.IsConnected() || fake.conns.Load() != 1 {
+		t.Errorf("at checkpoint: IsConnected()=%v conns=%d, want true/1 (a caller's ctx must not close the shared conn)",
+			client.IsConnected(), fake.conns.Load())
+	}
 	// Guard: the test only means something if A's write is still blocked
-	// (server reads paused) past A's 100ms deadline.
+	// (server reads paused) past A's deadline.
 	select {
 	case err := <-aErr:
-		t.Fatalf("A returned (%v) before release: its write did not block; raise callerCancelBlobSize", err)
+		t.Fatalf("A returned (%v) before release: its write did not block (raise callerCancelBlobSize) or its ctx tore down the write", err)
 	default:
 	}
 	select {
@@ -139,10 +159,7 @@ func TestWSClient_CallerCancelDoesNotCloseSharedConn(t *testing.T) {
 			t.Errorf("C error = %v, want context.DeadlineExceeded", err)
 		}
 	default:
-		t.Error("C has not returned by 200ms, want context.DeadlineExceeded while waiting for the send slot")
-	}
-	if !client.IsConnected() {
-		t.Error("IsConnected() = false at 200ms, want true (a caller's ctx must not close the shared conn)")
+		t.Error("C has not returned by the checkpoint, want context.DeadlineExceeded while waiting for the send slot")
 	}
 
 	close(release)
@@ -255,14 +272,21 @@ func TestWSClient_ReconnectUnderConcurrentLoad(t *testing.T) {
 func TestWSClient_HealthAndReadPathsReconnectOnce(t *testing.T) {
 	fake := newFakeHA(t)
 	cfg := newConcurrencyTestConfig()
+	// Fast pings so the health path races the read path for the same drop;
+	// a generous PingTimeout so a scheduler stall on a loaded -race runner
+	// cannot fake a pong timeout (a second "drop").
 	cfg.PingInterval = 5 * time.Millisecond
-	cfg.PingTimeout = 50 * time.Millisecond
+	cfg.PingTimeout = 500 * time.Millisecond
 	var disconnects atomic.Int32
 	cfg.OnDisconnect = func(error) { disconnects.Add(1) }
 	client := connectFakeClient(t, fake, cfg)
 
 	fake.dropAll()
-	time.Sleep(500 * time.Millisecond)
+	if !waitFor(2*time.Second, func() bool { return fake.conns.Load() >= 2 && client.IsConnected() }) {
+		t.Fatalf("no reconnect within 2s (conns=%d)", fake.conns.Load())
+	}
+	// Give a late second notification path time to (wrongly) fire.
+	time.Sleep(200 * time.Millisecond)
 
 	if got := fake.conns.Load(); got != 2 {
 		t.Errorf("fake.conns = %d, want 2", got)
@@ -322,6 +346,93 @@ func TestWSClient_GiveUpAfterMaxAttempts_NotUsable(t *testing.T) {
 	}
 }
 
+// TestWSClient_AuthInvalidOnReconnect_GivesUp pins that an auth_invalid on a
+// reconnect attempt is terminal: the client stops dialing and reports itself
+// unusable, so a pool evicts it and the caller sees the auth error from a
+// fresh Connect instead of waiting on an endless reconnect.
+func TestWSClient_AuthInvalidOnReconnect_GivesUp(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeHA(t, withAuthInvalidOnAttempt(2))
+	client := connectFakeClient(t, fake, newConcurrencyTestConfig())
+
+	fake.dropAll()
+
+	if !waitFor(2*time.Second, func() bool {
+		return fake.authAttempts.Load() >= 2 && !client.IsUsable() && !client.IsConnected()
+	}) {
+		t.Fatalf("after auth_invalid: authAttempts=%d IsUsable()=%v IsConnected()=%v, want >=2/false/false",
+			fake.authAttempts.Load(), client.IsUsable(), client.IsConnected())
+	}
+
+	// With a 10ms backoff, a client that kept dialing would add attempts here.
+	time.Sleep(300 * time.Millisecond)
+	if got := fake.authAttempts.Load(); got != 2 {
+		t.Errorf("authAttempts = %d, want 2 (no dialing after auth_invalid)", got)
+	}
+	if client.IsUsable() {
+		t.Error("IsUsable() = true after auth_invalid, want false")
+	}
+}
+
+// TestWSClient_StaleHealthCheck_DoesNotTouchNewSession pins that a health
+// check for an ended session acts on that session only: it must neither ping
+// the new connection with the old session's canceled ctx (coder/websocket
+// closes a conn whose write ctx is done) nor end the new session.
+func TestWSClient_StaleHealthCheck_DoesNotTouchNewSession(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeHA(t)
+	client := connectFakeClient(t, fake, newConcurrencyTestConfig())
+	old := client.session.Load()
+
+	fake.dropAll()
+	if !waitFor(2*time.Second, func() bool { return fake.conns.Load() == 2 && client.IsConnected() }) {
+		t.Fatalf("no reconnect within 2s (conns=%d)", fake.conns.Load())
+	}
+	current := client.session.Load()
+
+	// Several stale ticks: one canceled-ctx ping may lose the library's lock
+	// race harmlessly, so repeat to make a regression near-certain to show.
+	for range 10 {
+		if !client.checkSession(old.ctx, old) {
+			t.Fatal("checkSession(old) = false, want true (the old session's loop must exit)")
+		}
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	if client.session.Load() != current || !client.IsConnected() {
+		t.Fatal("a stale health check disturbed the new session")
+	}
+	if _, err := client.SendCommand(context.Background(), "test/echo", nil); err != nil {
+		t.Errorf("SendCommand() on the new session = %v, want success", err)
+	}
+	if got := fake.conns.Load(); got != 2 {
+		t.Errorf("fake.conns = %d, want 2 (no extra reconnect)", got)
+	}
+}
+
+// TestWSClient_HandleConnectionFailure_EndsCurrentSession pins the thin
+// wrapper: it ends whichever session is current.
+func TestWSClient_HandleConnectionFailure_EndsCurrentSession(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeHA(t)
+	cfg := newConcurrencyTestConfig()
+	cfg.AutoReconnect = false
+	client := connectFakeClient(t, fake, cfg)
+	s := client.session.Load()
+
+	client.handleConnectionFailure(errors.New("test failure"))
+
+	if client.session.Load() != nil || client.IsConnected() {
+		t.Error("session still current after handleConnectionFailure, want it ended")
+	}
+	if s.ctx.Err() == nil {
+		t.Error("ended session's ctx not canceled")
+	}
+}
+
 // TestWSClient_SendAfterClose_FailsFast pins that a closed client rejects
 // commands immediately with errClientClosed instead of waiting or retrying.
 func TestWSClient_SendAfterClose_FailsFast(t *testing.T) {
@@ -340,8 +451,10 @@ func TestWSClient_SendAfterClose_FailsFast(t *testing.T) {
 	if !errors.Is(err, errClientClosed) {
 		t.Errorf("SendCommand() after Close = %v, want errClientClosed", err)
 	}
-	if elapsed > 50*time.Millisecond {
-		t.Errorf("SendCommand() after Close took %v, want <= 50ms", elapsed)
+	// The real bound is "no retry backoff" (>= 100ms default); 250ms leaves
+	// headroom for a loaded -race runner.
+	if elapsed > 250*time.Millisecond {
+		t.Errorf("SendCommand() after Close took %v, want <= 250ms (no retry)", elapsed)
 	}
 	if client.IsUsable() {
 		t.Error("IsUsable() = true after Close, want false")

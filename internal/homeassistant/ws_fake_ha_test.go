@@ -26,7 +26,12 @@ type fakeHA struct {
 	// received counts non-auth commands received across all connections.
 	received atomic.Int32
 
+	// authAttempts counts connections whose client sent an "auth" message,
+	// whether or not the server then accepted it.
+	authAttempts atomic.Int32
+
 	attempts        atomic.Int32
+	authInvalidOn   int32
 	holdOnConn      int32
 	pauseReads      <-chan struct{}
 	dropAfterAuthOn int32
@@ -53,6 +58,14 @@ func withPauseReads(ch <-chan struct{}) fakeHAOption {
 // withDropAfterAuthOnConn makes connection n close right after auth_ok.
 func withDropAfterAuthOnConn(n int32) fakeHAOption {
 	return func(f *fakeHA) { f.dropAfterAuthOn = n }
+}
+
+// withAuthInvalidOnAttempt answers exactly the n-th auth attempt (1-based,
+// counted in authAttempts: connections that reached the "auth" message) with
+// HA's auth_invalid and closes it. A rejected attempt is not counted in
+// conns, which keeps meaning "authenticated connections".
+func withAuthInvalidOnAttempt(n int32) fakeHAOption {
+	return func(f *fakeHA) { f.authInvalidOn = n }
 }
 
 // withAcceptLimit rejects connection attempts beyond n with HTTP 503.
@@ -124,19 +137,20 @@ func (f *fakeHA) handle(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.CloseNow()
 	conn.SetReadLimit(-1)
+	// Track before the handshake: the client's Connect returns as soon as it
+	// reads auth_ok, and a dropAll right after must already see this conn.
+	f.track(conn)
+	defer f.untrack(conn)
 
 	ctx := r.Context()
-	if !fakeHAHandshake(ctx, conn) {
+	num, ok := f.handshake(ctx, conn)
+	if !ok {
 		return
 	}
-	num := f.conns.Add(1)
 	if num == f.dropAfterAuthOn {
 		_ = conn.Close(websocket.StatusGoingAway, "fake HA drop after auth")
 		return
 	}
-
-	f.track(conn)
-	defer f.untrack(conn)
 
 	if f.pauseReads != nil {
 		select {
@@ -150,22 +164,34 @@ func (f *fakeHA) handle(w http.ResponseWriter, r *http.Request) {
 	f.serve(ctx, conn, num)
 }
 
-// fakeHAHandshake runs auth_required -> auth -> auth_ok.
-func fakeHAHandshake(ctx context.Context, conn *websocket.Conn) bool {
+// handshake runs auth_required -> auth -> auth_ok (or auth_invalid for the
+// configured attempt, which reports false). On success it returns the
+// connection's 1-based number, counted in conns before auth_ok is written so
+// the count is visible by the time the client's Connect returns.
+func (f *fakeHA) handshake(ctx context.Context, conn *websocket.Conn) (int32, bool) {
 	if conn.Write(ctx, websocket.MessageText, []byte(`{"type":"auth_required","ha_version":"2026.1.0"}`)) != nil {
-		return false
+		return 0, false
 	}
 	_, data, err := conn.Read(ctx)
 	if err != nil {
-		return false
+		return 0, false
 	}
 	var msg struct {
 		Type string `json:"type"`
 	}
 	if json.Unmarshal(data, &msg) != nil || msg.Type != "auth" {
-		return false
+		return 0, false
 	}
-	return conn.Write(ctx, websocket.MessageText, []byte(`{"type":"auth_ok","ha_version":"2026.1.0"}`)) == nil
+	if f.authAttempts.Add(1) == f.authInvalidOn {
+		_ = conn.Write(ctx, websocket.MessageText, []byte(`{"type":"auth_invalid","message":"Invalid access token or password"}`))
+		_ = conn.Close(websocket.StatusPolicyViolation, "auth invalid")
+		return 0, false
+	}
+	num := f.conns.Add(1)
+	if conn.Write(ctx, websocket.MessageText, []byte(`{"type":"auth_ok","ha_version":"2026.1.0"}`)) != nil {
+		return 0, false
+	}
+	return num, true
 }
 
 // serve is the per-connection reader: it tracks the last id seen and replies.
