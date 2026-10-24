@@ -400,6 +400,31 @@ func TestHybridClientCloser_IsConnected(t *testing.T) {
 	}
 }
 
+// TestHybridClientCloser_IsUsable verifies IsUsable delegates to WSClient:
+// usable while connected or reconnecting, not otherwise.
+func TestHybridClientCloser_IsUsable(t *testing.T) {
+	t.Parallel()
+
+	restClient := NewRESTClient("http://example.com", "test-token")
+	wsClient := NewWSClient("http://example.com", "token")
+	hybridCloser := NewHybridClientCloser(wsClient, restClient)
+
+	if hybridCloser.IsUsable() {
+		t.Error("IsUsable() = true, want false (neither connected nor reconnecting)")
+	}
+
+	wsClient.connected.Store(true)
+	if !hybridCloser.IsUsable() {
+		t.Error("IsUsable() = false, want true (connected)")
+	}
+
+	wsClient.connected.Store(false)
+	wsClient.reconnecting.Store(true)
+	if !hybridCloser.IsUsable() {
+		t.Error("IsUsable() = false, want true (reconnecting)")
+	}
+}
+
 // TestHybridClientCloser_WaitForConnection verifies WaitForConnection delegates to WSClient.
 func TestHybridClientCloser_WaitForConnection(t *testing.T) {
 	t.Parallel()
