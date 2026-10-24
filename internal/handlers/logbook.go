@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
@@ -47,11 +48,11 @@ func (h *LogbookHandlers) getLogbookTool() mcp.Tool {
 				},
 				attrEntityID: {
 					Type:        "string",
-					Description: "Filter by single entity ID (e.g., 'light.living_room'). For mode=entries only",
+					Description: "Filter by a single entity ID (mode=entries). Use entity_id OR entity_ids, not both.",
 				},
-				"entity_ids": {
+				attrEntityIDs: {
 					Type:        "array",
-					Description: "Array of entity IDs to analyze for correlations. Required for mode=correlation",
+					Description: "Entity IDs (max 100). mode=entries: filter to these entities (alternative to entity_id). mode=correlation: required.",
 					Items:       &mcp.JSONSchema{Type: "string"},
 				},
 				"hours": {
@@ -185,10 +186,9 @@ func (h *LogbookHandlers) handleEntriesMode(
 		}, nil
 	}
 
-	entityID := getString(args, attrEntityID)
-	var entityIDs []string
-	if entityID != "" {
-		entityIDs = []string{entityID}
+	entityIDs, err := parseEntityIDOrIDs(args)
+	if err != nil {
+		return errorResult(err.Error()), nil
 	}
 
 	entries, err := client.GetLogbook(ctx, startTime.Format(time.RFC3339), endTime.Format(time.RFC3339), entityIDs)
@@ -202,7 +202,7 @@ func (h *LogbookHandlers) handleEntriesMode(
 	}
 
 	// Build filters map for pagination hash
-	filtersMap := buildLogbookFiltersMap(startTime, endTime, entityID)
+	filtersMap := buildLogbookFiltersMap(startTime, endTime, entityIDs)
 
 	// Parse pagination params
 	paginationParams, err := ParsePaginationParams(args, filtersMap)
@@ -218,7 +218,7 @@ func (h *LogbookHandlers) handleEntriesMode(
 	// Apply pagination
 	paginated := ApplyPagination(entries, paginationParams)
 
-	output, err := buildLogbookResponsePaginated(paginated, startTime, endTime, entityID)
+	output, err := buildLogbookResponsePaginated(paginated, startTime, endTime, entityIDs)
 	if err != nil {
 		return &mcp.ToolsCallResult{
 			Content: []mcp.ContentBlock{
@@ -236,12 +236,14 @@ func (h *LogbookHandlers) handleEntriesMode(
 }
 
 // buildLogbookFiltersMap creates a map of filter values for pagination hash.
-func buildLogbookFiltersMap(startTime, endTime time.Time, entityID string) map[string]any {
+// The entity IDs are hashed as a sorted copy so that a cursor stays valid when
+// the caller reorders the same set; the caller's slice is left untouched.
+func buildLogbookFiltersMap(startTime, endTime time.Time, entityIDs []string) map[string]any {
 	filters := make(map[string]any)
 	filters["start_time"] = startTime.Format(time.RFC3339)
 	filters["end_time"] = endTime.Format(time.RFC3339)
-	if entityID != "" {
-		filters[attrEntityID] = entityID
+	if len(entityIDs) > 0 {
+		filters[attrEntityIDs] = slices.Sorted(slices.Values(entityIDs))
 	}
 	return filters
 }
@@ -255,7 +257,7 @@ type paginatedLogbookResponse struct {
 }
 
 // buildLogbookResponsePaginated builds the response from paginated logbook entries.
-func buildLogbookResponsePaginated(paginated PaginatedResponse[homeassistant.LogbookEntry], startTime, endTime time.Time, entityID string) (string, error) {
+func buildLogbookResponsePaginated(paginated PaginatedResponse[homeassistant.LogbookEntry], startTime, endTime time.Time, entityIDs []string) (string, error) {
 	compactEntries := make([]logbookCompactEntry, 0, len(paginated.Items))
 	for _, entry := range paginated.Items {
 		compactEntries = append(compactEntries, logbookCompactEntry{
@@ -285,8 +287,11 @@ func buildLogbookResponsePaginated(paginated PaginatedResponse[homeassistant.Log
 	}
 
 	summary := BuildPaginationSummary(paginated.Pagination, "logbook entries")
-	if entityID != "" {
-		summary += fmt.Sprintf(" for %s", entityID)
+	switch {
+	case len(entityIDs) == 1:
+		summary += fmt.Sprintf(" for %s", entityIDs[0])
+	case len(entityIDs) > 1:
+		summary += fmt.Sprintf(" for %d entities", len(entityIDs))
 	}
 
 	return summary + "\n\n" + string(output), nil

@@ -41,6 +41,7 @@ var auditFileOwners = map[string][]string{
 	"devices_health.go":                   {"query_devices"},
 	"devices_manage.go":                   {"manage_device"},
 	"entities.go":                         {"get_state"},
+	"entity_id_args.go":                   {"get_logbook"},
 	"entities_consolidated.go":            {"query_entities"},
 	"entities_health.go":                  {"query_entities"},
 	"entities_manage.go":                  {"manage_entity"},
