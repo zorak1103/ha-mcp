@@ -1066,3 +1066,57 @@ func TestHelperFormatter_AllHelperTypes(t *testing.T) {
 		t.Errorf("FormatList() should show 12 helpers, got:\n%s", result)
 	}
 }
+
+func TestNaturalHelperFormatter_ConfigurationSectionOnEveryRenderer(t *testing.T) {
+	t.Parallel()
+
+	f := NewNaturalHelperFormatter()
+	ctx := context.Background()
+
+	newDetail := func(entityID string) map[string]any {
+		return map[string]any{
+			"entity_id":            entityID,
+			"state":                "on",
+			"friendly_name":        "Thing",
+			DetailKeyConfiguration: map[string]any{"restore": true},
+		}
+	}
+
+	tests := []struct {
+		name   string
+		render func() (string, error)
+	}{
+		{"sensor (dedicated)", func() (string, error) {
+			return f.FormatHelperDetail(ctx, "sensor", newDetail("sensor.thing"))
+		}},
+		{"climate (generic)", func() (string, error) {
+			return f.FormatHelperDetail(ctx, "climate", newDetail("climate.thing"))
+		}},
+		{"counter", func() (string, error) {
+			return f.FormatCounterDetail(ctx, newDetail("counter.thing"))
+		}},
+		{"timer", func() (string, error) {
+			return f.FormatTimerDetail(ctx, newDetail("timer.thing"))
+		}},
+		{"schedule", func() (string, error) {
+			return f.FormatScheduleDetail(ctx, newDetail("schedule.thing"))
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			out, err := tt.render()
+			if err != nil {
+				t.Fatalf("render error = %v, want nil", err)
+			}
+			if !strings.Contains(out, "\n\nConfiguration:\nRestore: true") {
+				t.Errorf("output lacks configuration section:\n%s", out)
+			}
+			if n := strings.Count(out, "Configuration:"); n != 1 {
+				t.Errorf("\"Configuration:\" occurs %d times, want 1:\n%s", n, out)
+			}
+		})
+	}
+}

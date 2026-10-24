@@ -128,7 +128,7 @@ func (f *NaturalHelperFormatter) FormatScheduleDetail(
 		f.writeScheduleBlocks(&result, schedule)
 	}
 
-	return strings.TrimSuffix(result.String(), "\n"), nil
+	return appendConfigurationSection(strings.TrimSuffix(result.String(), "\n"), detail), nil
 }
 
 // FormatCounterDetail formats counter details in natural language.
@@ -163,7 +163,7 @@ func (f *NaturalHelperFormatter) FormatCounterDetail(
 		fmt.Fprintf(&result, "Step: %s", step)
 	}
 
-	return strings.TrimSuffix(result.String(), "\n"), nil
+	return appendConfigurationSection(strings.TrimSuffix(result.String(), "\n"), detail), nil
 }
 
 // FormatTimerDetail formats timer details in natural language.
@@ -199,7 +199,7 @@ func (f *NaturalHelperFormatter) FormatTimerDetail(
 		}
 	}
 
-	return strings.TrimSuffix(result.String(), "\n"), nil
+	return appendConfigurationSection(strings.TrimSuffix(result.String(), "\n"), detail), nil
 }
 
 // FormatHelperDetail formats helper details for all other helper types in natural language.
@@ -209,9 +209,9 @@ func (f *NaturalHelperFormatter) FormatHelperDetail(
 	detail map[string]any,
 ) (string, error) {
 	if renderer, ok := dedicatedDetailRenderers[helperType]; ok {
-		return renderer(f, detail), nil
+		return appendConfigurationSection(renderer(f, detail), detail), nil
 	}
-	return f.formatGenericDetail(helperType, detail), nil
+	return appendConfigurationSection(f.formatGenericDetail(helperType, detail), detail), nil
 }
 
 // dedicatedDetailRenderers maps a helper type to its hand-tuned natural-format
@@ -259,9 +259,10 @@ func DedicatedDetailTypes() []string {
 // the detail map, while this one skips a detail key already shown elsewhere
 // in this renderer's own output.
 var genericDetailHeaderKeys = map[string]bool{
-	"entity_id":     true,
-	"friendly_name": true,
-	"state":         true,
+	"entity_id":            true,
+	"friendly_name":        true,
+	"state":                true,
+	DetailKeyConfiguration: true, // rendered as its own section by appendConfigurationSection
 }
 
 // formatGenericDetail renders natural-format output for helper types with no
