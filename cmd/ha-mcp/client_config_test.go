@@ -262,6 +262,107 @@ func TestNewClientPool_CarriesLogger(t *testing.T) {
 	}
 }
 
+// TestBuildCacheConfig_FromLoadedConfig guards #299: every HA_CACHE_* value
+// must arrive in the cache config handed to the clients.
+func TestBuildCacheConfig_FromLoadedConfig(t *testing.T) {
+	t.Setenv("HA_URL", "http://test.local:8123")
+	t.Setenv("HA_CACHE_ENABLED", "true")
+	t.Setenv("HA_CACHE_SERVICES_TTL_MIN", "15")
+	t.Setenv("HA_CACHE_CONFIG_TTL_MIN", "16")
+	t.Setenv("HA_CACHE_ENTITY_REG_TTL_MIN", "17")
+	t.Setenv("HA_CACHE_DEVICE_REG_TTL_MIN", "18")
+	t.Setenv("HA_CACHE_AREA_REG_TTL_MIN", "19")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+
+	got := buildCacheConfig(cfg)
+	if got == nil {
+		t.Fatal("buildCacheConfig() = nil, want a config")
+	}
+	want := config.CacheConfig{
+		Enabled:         true,
+		ServicesTTLMin:  15,
+		ConfigTTLMin:    16,
+		EntityRegTTLMin: 17,
+		DeviceRegTTLMin: 18,
+		AreaRegTTLMin:   19,
+	}
+	if *got != want {
+		t.Errorf("buildCacheConfig() = %+v, want %+v", *got, want)
+	}
+	if got == &cfg.HomeAssistant.Cache {
+		t.Error("buildCacheConfig() aliases the loaded config, want a copy")
+	}
+}
+
+func TestBuildCacheConfig_DisabledByDefault(t *testing.T) {
+	t.Setenv("HA_URL", "http://test.local:8123")
+	t.Setenv("HA_CACHE_ENABLED", "false")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+
+	got := buildCacheConfig(cfg)
+	if got == nil {
+		t.Fatal("buildCacheConfig() = nil, want a non-nil disabled config")
+	}
+	if got.Enabled {
+		t.Error("Enabled = true, want false")
+	}
+}
+
+func TestBuildClientOptions_CarriesEverything(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{}
+	cfg.HomeAssistant.Cache = config.CacheConfig{Enabled: true, ServicesTTLMin: 5}
+	logger := logging.New(logging.LevelError)
+
+	got := buildClientOptions(cfg, logger)
+
+	if got.Logger != logger {
+		t.Errorf("Logger = %p, want the supplied logger %p", got.Logger, logger)
+	}
+	if got.WSConfig == nil || got.WSConfig.Logger != logger {
+		t.Errorf("WSConfig = %+v, want a config carrying the supplied logger", got.WSConfig)
+	}
+	if got.RESTConfig == nil || got.RESTConfig.Logger != logger {
+		t.Errorf("RESTConfig = %+v, want a config carrying the supplied logger", got.RESTConfig)
+	}
+	if got.CacheConfig == nil || !got.CacheConfig.Enabled || got.CacheConfig.ServicesTTLMin != 5 {
+		t.Errorf("CacheConfig = %+v, want the enabled cache config", got.CacheConfig)
+	}
+}
+
+// TestNewClientPool_CarriesCacheConfig proves the cache config reaches the pool
+// (#299): it used to be passed as a literal nil, so per-request-auth clients
+// were never cached.
+func TestNewClientPool_CarriesCacheConfig(t *testing.T) {
+	t.Setenv("HA_URL", "http://test.local:8123")
+	t.Setenv("HA_CACHE_ENABLED", "true")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+
+	pool := newClientPool(cfg, logging.New(logging.LevelError))
+	defer func() {
+		if closeErr := pool.Close(); closeErr != nil {
+			t.Errorf("pool.Close: %v", closeErr)
+		}
+	}()
+
+	if pool.CacheConfig() == nil || !pool.CacheConfig().Enabled {
+		t.Errorf("pool.CacheConfig() = %+v, want an enabled cache config", pool.CacheConfig())
+	}
+}
+
 // TestNewClientPool_CarriesRetryConfig guards the original #294 bug: the retry
 // settings were built from config but never handed to the pool.
 func TestNewClientPool_CarriesRetryConfig(t *testing.T) {

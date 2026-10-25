@@ -134,6 +134,7 @@ homeassistant:
     retry_initial_delay_ms: 100
     retry_max_delay_ms: 5000
   cache:
+    # The cache applies to the default HA_TOKEN client and to per-request-auth clients alike.
     enabled: false  # Enable caching for static data (opt-in)
     services_ttl_min: 60     # Services cache TTL in minutes
     config_ttl_min: 30       # Config cache TTL in minutes
@@ -175,7 +176,7 @@ export HA_WS_MAX_RETRIES=3     # Max retry attempts per command, 0 = no retries 
 export HA_WS_RETRY_INITIAL_DELAY_MS=100    # Initial retry delay in ms (default: 100)
 export HA_WS_RETRY_MAX_DELAY_MS=5000       # Max retry delay in ms (default: 5000)
 
-# Caching settings (optional, disabled by default)
+# Caching settings (optional, disabled by default; applies to the default HA_TOKEN client and to per-request-auth clients alike)
 export HA_CACHE_ENABLED=false              # Enable caching (default: false)
 export HA_CACHE_SERVICES_TTL_MIN=60        # Services cache TTL (default: 60)
 export HA_CACHE_CONFIG_TTL_MIN=30          # Config cache TTL (default: 30)

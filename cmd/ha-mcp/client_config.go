@@ -14,9 +14,30 @@ import (
 func newClientPool(cfg *config.Config, logger *logging.Logger) *homeassistant.ClientPool {
 	return homeassistant.NewClientPoolWithFullConfig(
 		cfg.HomeAssistant.URL, 30*time.Minute, 100,
-		buildRESTClientConfig(cfg, logger), nil, logger,
+		buildRESTClientConfig(cfg, logger), buildCacheConfig(cfg), logger,
 		homeassistant.WithWSConfig(buildWSClientConfig(cfg, logger)),
 	)
+}
+
+// buildClientOptions bundles the WebSocket, REST and cache configurations and
+// the app logger into the options for the default (HA_TOKEN) client, so it is
+// built the same way as every pooled per-token client.
+func buildClientOptions(cfg *config.Config, logger *logging.Logger) homeassistant.ClientOptions {
+	return homeassistant.ClientOptions{
+		WSConfig:    buildWSClientConfig(cfg, logger),
+		RESTConfig:  buildRESTClientConfig(cfg, logger),
+		CacheConfig: buildCacheConfig(cfg),
+		Logger:      logger,
+	}
+}
+
+// buildCacheConfig returns a copy of the cache settings in cfg. It is never
+// nil: a disabled cache is passed through with Enabled=false, and
+// NewClientWithOptions only wraps in a CachedClient when Enabled is true.
+func buildCacheConfig(cfg *config.Config) *config.CacheConfig {
+	cacheCfg := cfg.HomeAssistant.Cache
+
+	return &cacheCfg
 }
 
 // buildRetryConfig converts millisecond retry settings into a RetryConfig.
