@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
@@ -182,7 +184,7 @@ func TestManageAutomationTool_Schema(t *testing.T) {
 	}
 
 	// Check expected properties exist
-	expectedProps := []string{"action", "automation_id", "alias", "trigger", "condition", "automation_action", "mode", "max", "enabled", "state", "verbose", "limit", "cursor", "format"}
+	expectedProps := []string{"action", "automation_id", "alias", "trigger", "condition", "automation_action", "mode", "max", "variables", "enabled", "state", "verbose", "limit", "cursor", "format"}
 	for _, prop := range expectedProps {
 		if _, ok := tool.InputSchema.Properties[prop]; !ok {
 			t.Errorf("Expected property %q in input schema", prop)
@@ -192,6 +194,51 @@ func TestManageAutomationTool_Schema(t *testing.T) {
 	// action is required
 	if len(tool.InputSchema.Required) != 1 || tool.InputSchema.Required[0] != "action" {
 		t.Error("Expected 'action' to be the only required field")
+	}
+}
+
+func TestParseVariablesArg(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		args        map[string]any
+		wantVars    map[string]any
+		wantPresent bool
+		wantErr     bool
+	}{
+		{name: "absent", args: map[string]any{}},
+		{name: "nil removes", args: map[string]any{"variables": nil}, wantPresent: true},
+		{name: "empty object removes", args: map[string]any{"variables": map[string]any{}}, wantPresent: true},
+		{
+			name:        "non-empty object",
+			args:        map[string]any{"variables": map[string]any{"a": "1"}},
+			wantVars:    map[string]any{"a": "1"},
+			wantPresent: true,
+		},
+		{name: "string is an error", args: map[string]any{"variables": "x"}, wantErr: true},
+		{name: "array is an error", args: map[string]any{"variables": []any{}}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			vars, present, err := parseVariablesArg(tt.args)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("parseVariablesArg() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if err != nil {
+				if err.Error() != "variables must be an object (use {} or null to remove the block)" {
+					t.Errorf("unexpected error text %q", err.Error())
+				}
+				return
+			}
+			if present != tt.wantPresent {
+				t.Errorf("present = %v, want %v", present, tt.wantPresent)
+			}
+			if diff := cmp.Diff(tt.wantVars, vars); diff != "" {
+				t.Errorf("vars mismatch (-want +got):\n%s", diff)
+			}
+		})
 	}
 }
 
