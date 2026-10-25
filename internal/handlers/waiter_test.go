@@ -279,6 +279,7 @@ func TestServiceChangesTargetState(t *testing.T) {
 	}{
 		{"automation", "trigger", false},
 		{"homeassistant", "update_entity", false},
+		{"script", "turn_on", false},
 		{"automation", "turn_on", true},
 		{"automation", "turn_off", true},
 		{"automation", "toggle", true},

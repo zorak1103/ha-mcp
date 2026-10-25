@@ -31,11 +31,14 @@ type stateDiff struct {
 //   - automation.trigger runs the automation's actions; the automation entity stays "on" (its
 //     last_triggered attribute moves, its state does not).
 //   - homeassistant.update_entity only refreshes the entity's data from its source.
+//   - script.turn_on starts the script; the script entity goes off -> on -> off, so a fast script
+//     finishes between polls and the poll only times out (verified live against HA).
 //
 // automation.turn_on/turn_off/toggle are deliberately absent: they do flip the target's state.
 var servicesWithoutTargetStateChange = map[string]struct{}{
 	"automation.trigger":          {},
 	"homeassistant.update_entity": {},
+	"script.turn_on":              {},
 }
 
 // serviceChangesTargetState reports whether calling domain.service is expected to change the
