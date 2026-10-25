@@ -78,7 +78,7 @@ func TestBuildRESTClientConfig(t *testing.T) {
 		RetryMaxDelayMs:     3000,
 	}
 
-	got := buildRESTClientConfig(cfg)
+	got := buildRESTClientConfig(cfg, nil)
 
 	if got.RateLimit != 20 {
 		t.Errorf("RateLimit = %v, want 20", got.RateLimit)
@@ -110,7 +110,7 @@ func TestBuildWSClientConfig_KeepsDefaults(t *testing.T) {
 		RetryMaxDelayMs:     2500,
 	}
 
-	got := buildWSClientConfig(cfg)
+	got := buildWSClientConfig(cfg, nil)
 	def := homeassistant.DefaultWSClientConfig()
 
 	wantRetry := homeassistant.RetryConfig{
@@ -168,7 +168,7 @@ func TestBuildClientConfigs_FromLoadedConfig(t *testing.T) {
 		t.Fatalf("config.Load: %v", err)
 	}
 
-	ws := buildWSClientConfig(cfg)
+	ws := buildWSClientConfig(cfg, nil)
 	wantWS := homeassistant.RetryConfig{
 		MaxRetries:    7,
 		InitialDelay:  150 * time.Millisecond,
@@ -179,7 +179,7 @@ func TestBuildClientConfigs_FromLoadedConfig(t *testing.T) {
 		t.Errorf("WS RetryConfig = %+v, want %+v", ws.RetryConfig, wantWS)
 	}
 
-	rest := buildRESTClientConfig(cfg)
+	rest := buildRESTClientConfig(cfg, nil)
 	if rest.RetryConfig.MaxRetries != 5 {
 		t.Errorf("REST MaxRetries = %d, want 5", rest.RetryConfig.MaxRetries)
 	}
@@ -191,6 +191,74 @@ func TestBuildClientConfigs_FromLoadedConfig(t *testing.T) {
 	}
 	if rest.RateBurst != 3 {
 		t.Errorf("REST RateBurst = %d, want 3", rest.RateBurst)
+	}
+}
+
+// TestBuildWSClientConfig_CarriesLogger guards #300: the logger built from
+// HA_MCP_LOG_LEVEL must reach the WebSocket client and its retry manager, which
+// otherwise fall back to a private logger that ignores the configured level.
+func TestBuildWSClientConfig_CarriesLogger(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{}
+	logger := logging.New(logging.LevelError)
+
+	if got := buildWSClientConfig(cfg, logger).Logger; got != logger {
+		t.Errorf("WS Logger = %p, want the supplied logger %p", got, logger)
+	}
+	if got := buildWSClientConfig(cfg, nil).Logger; got != nil {
+		t.Errorf("WS Logger with nil logger = %p, want nil", got)
+	}
+}
+
+// TestBuildRESTClientConfig_CarriesLogger is the REST counterpart of
+// TestBuildWSClientConfig_CarriesLogger (#300).
+func TestBuildRESTClientConfig_CarriesLogger(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{}
+	logger := logging.New(logging.LevelError)
+
+	if got := buildRESTClientConfig(cfg, logger).Logger; got != logger {
+		t.Errorf("REST Logger = %p, want the supplied logger %p", got, logger)
+	}
+	if got := buildRESTClientConfig(cfg, nil).Logger; got != nil {
+		t.Errorf("REST Logger with nil logger = %p, want nil", got)
+	}
+}
+
+// TestNewClientPool_CarriesLogger proves the logger reaches the pool's WS and
+// REST configs, not just the builders (#300).
+func TestNewClientPool_CarriesLogger(t *testing.T) {
+	t.Setenv("HA_URL", "http://test.local:8123")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+
+	logger := logging.New(logging.LevelError)
+	pool := newClientPool(cfg, logger)
+	defer func() {
+		if closeErr := pool.Close(); closeErr != nil {
+			t.Errorf("pool.Close: %v", closeErr)
+		}
+	}()
+
+	ws := pool.WSConfig()
+	if ws == nil {
+		t.Fatal("pool.WSConfig() = nil, want the built WebSocket config")
+	}
+	if ws.Logger != logger {
+		t.Errorf("pool WS Logger = %p, want the supplied logger %p", ws.Logger, logger)
+	}
+
+	rest := pool.RESTConfig()
+	if rest == nil {
+		t.Fatal("pool.RESTConfig() = nil, want the built REST config")
+	}
+	if rest.Logger != logger {
+		t.Errorf("pool REST Logger = %p, want the supplied logger %p", rest.Logger, logger)
 	}
 }
 

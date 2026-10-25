@@ -330,7 +330,7 @@ func (a *App) initHomeAssistantClient(
 
 	haClient, err := homeassistant.NewConnectedClient(
 		ctx, cfg.HomeAssistant.URL, cfg.HomeAssistant.Token,
-		buildWSClientConfig(cfg), buildRESTClientConfig(cfg),
+		buildWSClientConfig(cfg, logger), buildRESTClientConfig(cfg, logger),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to Home Assistant: %w", err)
