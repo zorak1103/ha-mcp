@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1909,6 +1910,128 @@ func TestScriptHandlers_CallService_Target(t *testing.T) {
 		}
 		if calls != 0 {
 			t.Errorf("CallService invoked %d times, want 0", calls)
+		}
+	})
+}
+
+func TestScriptHandlers_CallService_NoWaitForTrigger(t *testing.T) {
+	t.Parallel()
+
+	ctx := mcp.WithWaitConfig(context.Background(), mcp.WaitConfig{Timeout: 50 * time.Millisecond, PollInterval: 5 * time.Millisecond})
+
+	alwaysOn := func(getStateCalls *atomic.Int32) *mockScriptClient {
+		return &mockScriptClient{
+			callServiceFn: func(context.Context, string, string, map[string]any) ([]homeassistant.Entity, error) {
+				return nil, nil
+			},
+			getStateFn: func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+				getStateCalls.Add(1)
+				return &homeassistant.Entity{EntityID: entityID, State: "on"}, nil
+			},
+		}
+	}
+
+	assertQuiet := func(t *testing.T, result *mcp.ToolsCallResult, getStateCalls *atomic.Int32) string {
+		t.Helper()
+		if result.IsError {
+			t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+		}
+		text := result.Content[0].Text
+		for _, unwanted := range []string{"warning", "State changes", "not confirmed"} {
+			if strings.Contains(text, unwanted) {
+				t.Errorf("result %q must not contain %q", text, unwanted)
+			}
+		}
+		if n := getStateCalls.Load(); n != 0 {
+			t.Errorf("GetState called %d times, want 0", n)
+		}
+		return text
+	}
+
+	t.Run("automation.trigger with data does not poll", func(t *testing.T) {
+		t.Parallel()
+
+		var calls atomic.Int32
+		result, err := NewScriptHandlers().handleCallService(ctx, alwaysOn(&calls), map[string]any{
+			"domain":  "automation",
+			"service": "trigger",
+			"data":    map[string]any{"entity_id": "automation.x"},
+		})
+		if err != nil {
+			t.Fatalf("handleCallService() returned error: %v", err)
+		}
+		assertQuiet(t, result, &calls)
+	})
+
+	t.Run("automation.trigger with target does not poll and still names the entity", func(t *testing.T) {
+		t.Parallel()
+
+		var calls atomic.Int32
+		result, err := NewScriptHandlers().handleCallService(ctx, alwaysOn(&calls), map[string]any{
+			"domain":  "automation",
+			"service": "trigger",
+			"target":  map[string]any{"entity_id": "automation.x"},
+		})
+		if err != nil {
+			t.Fatalf("handleCallService() returned error: %v", err)
+		}
+		text := assertQuiet(t, result, &calls)
+		if !strings.Contains(text, "automation.x") {
+			t.Errorf("result %q does not mention automation.x", text)
+		}
+	})
+
+	t.Run("automation.turn_on still waits and reports an unconfirmed change", func(t *testing.T) {
+		t.Parallel()
+
+		var calls atomic.Int32
+		result, err := NewScriptHandlers().handleCallService(ctx, alwaysOn(&calls), map[string]any{
+			"domain":  "automation",
+			"service": "turn_on",
+			"data":    map[string]any{"entity_id": "automation.x"},
+		})
+		if err != nil {
+			t.Fatalf("handleCallService() returned error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+		}
+		if !strings.Contains(result.Content[0].Text, "state change not confirmed") {
+			t.Errorf("result %q does not contain %q", result.Content[0].Text, "state change not confirmed")
+		}
+	})
+
+	t.Run("automation.turn_on reports the state flip", func(t *testing.T) {
+		t.Parallel()
+
+		var called atomic.Bool
+		client := &mockScriptClient{
+			callServiceFn: func(context.Context, string, string, map[string]any) ([]homeassistant.Entity, error) {
+				called.Store(true)
+				return nil, nil
+			},
+			getStateFn: func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+				state := "off"
+				if called.Load() {
+					state = "on"
+				}
+				return &homeassistant.Entity{EntityID: entityID, State: state}, nil
+			},
+		}
+
+		result, err := NewScriptHandlers().handleCallService(ctx, client, map[string]any{
+			"domain":  "automation",
+			"service": "turn_on",
+			"data":    map[string]any{"entity_id": "automation.x"},
+		})
+		if err != nil {
+			t.Fatalf("handleCallService() returned error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+		}
+		if !strings.Contains(result.Content[0].Text, "State changes: automation.x: off → on") {
+			t.Errorf("result %q does not contain the off → on state change", result.Content[0].Text)
 		}
 	})
 }

@@ -883,9 +883,13 @@ func (h *ScriptHandlers) handleCallService(ctx context.Context, client homeassis
 		return callServiceReturningResponse(ctx, client, domain, service, data, format)
 	}
 
-	// Extract targets and snapshot state before calling the service
+	// Extract targets (always, the output names them) and snapshot state before calling the
+	// service, unless the service cannot change it (a poll would only time out).
 	targets := extractEntityTargets(data)
-	snapshots := snapshotEntities(ctx, client, targets)
+	var snapshots []entitySnapshot
+	if serviceChangesTargetState(domain, service) {
+		snapshots = snapshotEntities(ctx, client, targets)
+	}
 
 	_, err = client.CallService(ctx, domain, service, data)
 	if err != nil {

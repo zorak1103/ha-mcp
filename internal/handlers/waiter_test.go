@@ -268,3 +268,29 @@ func TestReloadAndWaitForEntity(t *testing.T) {
 		t.Errorf("expected automation.test, got %s", entity.EntityID)
 	}
 }
+
+func TestServiceChangesTargetState(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		domain  string
+		service string
+		want    bool
+	}{
+		{"automation", "trigger", false},
+		{"homeassistant", "update_entity", false},
+		{"automation", "turn_on", true},
+		{"automation", "turn_off", true},
+		{"automation", "toggle", true},
+		{"light", "turn_on", true},
+		{"homeassistant", "turn_off", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.domain+"."+tt.service, func(t *testing.T) {
+			t.Parallel()
+			if got := serviceChangesTargetState(tt.domain, tt.service); got != tt.want {
+				t.Errorf("serviceChangesTargetState(%q, %q) = %v, want %v", tt.domain, tt.service, got, tt.want)
+			}
+		})
+	}
+}
