@@ -227,10 +227,10 @@ In correlation mode a failed logbook fetch for one entity is reported in a trail
 
 ### Service Tools
 
-| Tool            | Description                                                            |
-| --------------- | ---------------------------------------------------------------------- |
-| `call_service`  | Call any Home Assistant service, including response-type services via `return_response` (format: natural/json) |
-| `list_services` | List all available services with descriptions (optional domain filter) |
+| Tool            | Description                                                                                                                                                                                                   |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `call_service`  | Call any Home Assistant service; `target` (HA-standard, e.g. `{"entity_id": "light.kitchen"}`) is merged into `data` and wins on a clash; response-type services via `return_response` (format: natural/json) |
+| `list_services` | List all available services with descriptions (optional domain filter)                                                                                                                                        |
 
 ### System Tools
 
