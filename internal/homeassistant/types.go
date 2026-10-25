@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -156,6 +157,56 @@ type AutomationConfig struct {
 	// package jsonorder). It is nil for configs built in code, which marshal
 	// exactly like a plain struct.
 	KeyOrder *jsonorder.Order `json:"-"`
+
+	// extra holds the keys of the decoded config that this struct does not
+	// model (trigger_variables, initial_state, max_exceeded, trace, keys of
+	// future HA versions), verbatim, so a read-modify-write round trip does not
+	// delete them. Unexported so code cannot put a modeled key in here (it would
+	// be written twice); treat as immutable - struct copies share the map.
+	extra map[string]json.RawMessage `json:"-"`
+}
+
+// automationKnownKeys are the top-level keys AutomationConfig models, derived
+// from the struct tags so they cannot drift. The singular trigger/condition/
+// action are modeled too: UnmarshalJSON normalizes them to the plural fields.
+var automationKnownKeys = knownConfigKeys(reflect.TypeOf(automationConfigAlias{}), "trigger", "condition", "action")
+
+// knownConfigKeys returns the JSON key names declared by the exported fields of
+// struct type t, plus the given extra names. Fields tagged "-" or without a
+// name in their json tag are skipped.
+func knownConfigKeys(t reflect.Type, extra ...string) map[string]struct{} {
+	keys := make(map[string]struct{}, t.NumField()+len(extra))
+	for i := range t.NumField() {
+		f := t.Field(i)
+		if !f.IsExported() {
+			continue
+		}
+		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+		if name == "" || name == "-" {
+			continue
+		}
+		keys[name] = struct{}{}
+	}
+	for _, name := range extra {
+		keys[name] = struct{}{}
+	}
+	return keys
+}
+
+// collectExtraKeys returns the entries of raw whose key is not in known, or nil
+// when there are none.
+func collectExtraKeys(raw map[string]json.RawMessage, known map[string]struct{}) map[string]json.RawMessage {
+	var extra map[string]json.RawMessage
+	for k, v := range raw {
+		if _, ok := known[k]; ok {
+			continue
+		}
+		if extra == nil {
+			extra = make(map[string]json.RawMessage)
+		}
+		extra[k] = v
+	}
+	return extra
 }
 
 // unmarshalDualKeySlice tries the plural key first, then the singular key, and
@@ -219,6 +270,7 @@ func (c *AutomationConfig) UnmarshalJSON(data []byte) error {
 	// fails the decode: the order is a best-effort addition.
 	c.KeyOrder, _ = jsonorder.Capture(data)
 	normalizeDualKeyOrder(c.KeyOrder)
+	c.extra = collectExtraKeys(raw, automationKnownKeys)
 
 	return nil
 }
@@ -228,25 +280,37 @@ func (c *AutomationConfig) UnmarshalJSON(data []byte) error {
 type automationConfigAlias AutomationConfig
 
 // MarshalJSON implements json.Marshaler for AutomationConfig. Without a
-// KeyOrder the output is exactly that of the plain struct; with one, object
-// keys inside the config are emitted in their recorded order.
+// KeyOrder and no kept unmodeled keys the output is exactly that of the plain
+// struct; with an order, object keys inside the config are emitted in their
+// recorded order, and kept unmodeled keys are written along with the modeled ones.
 func (c AutomationConfig) MarshalJSON() ([]byte, error) {
-	return marshalWithOrder(automationConfigAlias(c), c.KeyOrder)
+	return marshalWithOrder(automationConfigAlias(c), c.KeyOrder, c.extra)
 }
 
-// marshalWithOrder marshals v like json.Marshal; when order is non-nil the
-// resulting object is re-emitted with its keys in the recorded order.
-func marshalWithOrder(v any, order *jsonorder.Order) ([]byte, error) {
+// marshalWithOrder marshals v like json.Marshal. When order is non-nil the
+// resulting object is re-emitted with its keys in the recorded order, and the
+// unmodeled keys in extra are added to it (a key v already wrote wins). Kept
+// values are decoded rather than inserted raw so their nested key order follows
+// order too.
+func marshalWithOrder(v any, order *jsonorder.Order, extra map[string]json.RawMessage) ([]byte, error) {
 	plain, err := json.Marshal(v)
-	if err != nil || order == nil {
+	if err != nil || (order == nil && len(extra) == 0) {
 		return plain, err
 	}
 
-	dec := json.NewDecoder(bytes.NewReader(plain))
-	dec.UseNumber() // keep numeric literals exactly as the struct encoder wrote them
-	var generic map[string]any
-	if err = dec.Decode(&generic); err != nil {
+	generic, err := decodeNumbers[map[string]any](plain)
+	if err != nil {
 		return nil, fmt.Errorf("decoding config for ordered encoding: %w", err)
+	}
+	for k, raw := range extra {
+		if _, written := generic[k]; written {
+			continue
+		}
+		val, decErr := decodeNumbers[any](raw)
+		if decErr != nil {
+			return nil, fmt.Errorf("decoding kept key %q for ordered encoding: %w", k, decErr)
+		}
+		generic[k] = val
 	}
 
 	ordered, err := jsonorder.Marshal(generic, order)
@@ -254,6 +318,16 @@ func marshalWithOrder(v any, order *jsonorder.Order) ([]byte, error) {
 		return nil, fmt.Errorf("encoding config in key order: %w", err)
 	}
 	return ordered, nil
+}
+
+// decodeNumbers decodes data into a T, keeping numeric literals exactly as
+// written (json.Number) instead of squeezing them through float64.
+func decodeNumbers[T any](data []byte) (T, error) {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	var out T
+	err := dec.Decode(&out)
+	return out, err
 }
 
 // normalizeDualKeyOrder rewrites the singular trigger/condition/action entries
@@ -317,27 +391,45 @@ type ScriptConfig struct {
 	// package jsonorder). It is nil for configs built in code, which marshal
 	// exactly like a plain struct.
 	KeyOrder *jsonorder.Order `json:"-"`
+
+	// extra holds the keys of the decoded config that this struct does not
+	// model (max_exceeded, trace, keys of future HA versions), verbatim, so a
+	// read-modify-write round trip does not delete them. Unexported so code
+	// cannot put a modeled key in here (it would be written twice); treat as
+	// immutable - struct copies share the map.
+	extra map[string]json.RawMessage `json:"-"`
 }
 
 // scriptConfigAlias has ScriptConfig's fields and tags but none of its
 // methods, so (un)marshaling it cannot recurse into the methods below.
 type scriptConfigAlias ScriptConfig
 
+// scriptKnownKeys are the top-level keys ScriptConfig models, derived from the
+// struct tags so they cannot drift.
+var scriptKnownKeys = knownConfigKeys(reflect.TypeOf(scriptConfigAlias{}))
+
 // UnmarshalJSON implements json.Unmarshaler for ScriptConfig. It decodes like
-// the plain struct and additionally records the document key order.
+// the plain struct and additionally records the document key order and keeps
+// the keys the struct does not model.
 func (c *ScriptConfig) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, (*scriptConfigAlias)(c)); err != nil {
 		return err
 	}
 	// A capture failure leaves KeyOrder nil and never fails the decode.
 	c.KeyOrder, _ = jsonorder.Capture(data)
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	c.extra = collectExtraKeys(raw, scriptKnownKeys)
 	return nil
 }
 
 // MarshalJSON implements json.Marshaler for ScriptConfig. Without a KeyOrder
-// the output is exactly that of the plain struct.
+// and kept unmodeled keys the output is exactly that of the plain struct.
 func (c ScriptConfig) MarshalJSON() ([]byte, error) {
-	return marshalWithOrder(scriptConfigAlias(c), c.KeyOrder)
+	return marshalWithOrder(scriptConfigAlias(c), c.KeyOrder, c.extra)
 }
 
 // SceneConfig represents the configuration of a scene.

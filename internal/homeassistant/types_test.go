@@ -2,6 +2,8 @@ package homeassistant
 
 import (
 	"encoding/json"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -662,7 +664,7 @@ func TestAutomation_JSONRoundtrip(t *testing.T) {
 		t.Fatalf("Unmarshal failed: %v", err)
 	}
 
-	if diff := cmp.Diff(automation, got, cmpopts.IgnoreFields(AutomationConfig{}, "KeyOrder")); diff != "" {
+	if diff := cmp.Diff(automation, got, cmpopts.IgnoreFields(AutomationConfig{}, "KeyOrder", "extra")); diff != "" {
 		t.Errorf("Roundtrip mismatch (-want +got):\n%s", diff)
 	}
 }
@@ -691,7 +693,7 @@ func TestAutomationConfig_JSONRoundtrip(t *testing.T) {
 		t.Fatalf("Unmarshal failed: %v", err)
 	}
 
-	if diff := cmp.Diff(config, got, cmpopts.IgnoreFields(AutomationConfig{}, "KeyOrder")); diff != "" {
+	if diff := cmp.Diff(config, got, cmpopts.IgnoreFields(AutomationConfig{}, "KeyOrder", "extra")); diff != "" {
 		t.Errorf("Roundtrip mismatch (-want +got):\n%s", diff)
 	}
 }
@@ -757,7 +759,7 @@ func TestScriptConfig_JSONRoundtrip(t *testing.T) {
 		t.Fatalf("Unmarshal failed: %v", err)
 	}
 
-	if diff := cmp.Diff(config, got, cmpopts.IgnoreFields(ScriptConfig{}, "KeyOrder")); diff != "" {
+	if diff := cmp.Diff(config, got, cmpopts.IgnoreFields(ScriptConfig{}, "KeyOrder", "extra")); diff != "" {
 		t.Errorf("Roundtrip mismatch (-want +got):\n%s", diff)
 	}
 }
@@ -1051,6 +1053,245 @@ func TestScriptConfig_Marshal_Error(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAutomationConfig_UnmodeledKeys_SurviveRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	in := `{"id":"a","alias":"x","trigger_variables":{"zt":1,"at":"{{ 1 }}"},"initial_state":false,` +
+		`"mode":"queued","max_exceeded":"silent","trace":{"stored_traces":20},"future_key":{"z":[1,2.50,12345678901234567890],"a":null},` +
+		`"triggers":[{"platform":"time","at":"08:00:00"}]}`
+	cfg := mustUnmarshalAutomationConfig(t, in)
+
+	if len(cfg.extra) != 5 {
+		t.Errorf("len(extra) = %d, want 5 (trigger_variables, initial_state, max_exceeded, trace, future_key)", len(cfg.extra))
+	}
+
+	got, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+	if string(got) != in {
+		t.Errorf("Marshal = %s, want %s", got, in)
+	}
+}
+
+func TestAutomationConfig_UnmodeledKeys_SingularKeysAreNotKept(t *testing.T) {
+	t.Parallel()
+
+	cfg := mustUnmarshalAutomationConfig(t,
+		`{"trigger":[{"platform":"state"}],"condition":[],"action":[{"service":"a.b"}],"trace":{"stored_traces":5}}`)
+
+	if diff := cmp.Diff([]string{"trace"}, sortedExtraKeys(cfg.extra)); diff != "" {
+		t.Errorf("extra keys mismatch (-want +got):\n%s", diff)
+	}
+
+	got, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+	want := `{"triggers":[{"platform":"state"}],"actions":[{"service":"a.b"}],"trace":{"stored_traces":5}}`
+	if string(got) != want {
+		t.Errorf("Marshal = %s, want %s", got, want)
+	}
+	if n := strings.Count(string(got), `"trigger"`) + strings.Count(string(got), `"action"`) + strings.Count(string(got), `"condition"`); n != 0 {
+		t.Errorf("output contains %d singular keys: %s", n, got)
+	}
+}
+
+func TestAutomationConfig_UnmodeledKeys_NilWhenNothingLeftOver(t *testing.T) {
+	t.Parallel()
+
+	cfg := mustUnmarshalAutomationConfig(t, `{"id":"a","alias":"x","trigger":[],"variables":{"a":1}}`)
+	if cfg.extra != nil {
+		t.Errorf("extra = %v, want nil", cfg.extra)
+	}
+}
+
+func TestAutomationConfig_UnmodeledKeys_WrittenWithNilKeyOrder(t *testing.T) {
+	t.Parallel()
+
+	cfg := mustUnmarshalAutomationConfig(t, `{"alias":"x","trace":{"stored_traces":20},"initial_state":false}`)
+	cfg.KeyOrder = nil
+
+	got, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+	want := `{"alias":"x","initial_state":false,"trace":{"stored_traces":20}}`
+	if string(got) != want {
+		t.Errorf("Marshal = %s, want %s", got, want)
+	}
+}
+
+func TestAutomationConfig_UnmodeledKeys_ModeledKeyWins(t *testing.T) {
+	t.Parallel()
+
+	cfg := mustUnmarshalAutomationConfig(t, `{"alias":"x","trace":{"a":1}}`)
+	cfg.extra["alias"] = json.RawMessage(`"shadow"`)
+
+	got, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+	want := `{"alias":"x","trace":{"a":1}}`
+	if string(got) != want {
+		t.Errorf("Marshal = %s, want %s", got, want)
+	}
+}
+
+func TestAutomationConfig_UnmodeledKeys_BadExtraValueIsError(t *testing.T) {
+	t.Parallel()
+
+	cfg := AutomationConfig{extra: map[string]json.RawMessage{"trace": json.RawMessage(`{`)}}
+	if _, err := json.Marshal(cfg); err == nil {
+		t.Error("Marshal() error = nil, want error for invalid kept value")
+	}
+}
+
+func TestAutomationConfig_UnmodeledKeys_ReplacedOnReUnmarshal(t *testing.T) {
+	t.Parallel()
+
+	cfg := mustUnmarshalAutomationConfig(t, `{"trace":{"a":1}}`)
+	if err := json.Unmarshal([]byte(`{"alias":"y"}`), &cfg); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+	if cfg.extra != nil {
+		t.Errorf("extra = %v, want nil after re-unmarshal without kept keys", cfg.extra)
+	}
+}
+
+func TestScriptConfig_UnmodeledKeys_SurviveRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	in := `{"alias":"s","mode":"queued","max_exceeded":"silent","trace":{"stored_traces":20},` +
+		`"future_key":{"z":1.0,"a":[true]},"sequence":[{"service":"a.b"}]}`
+	cfg := mustUnmarshalScriptConfig(t, in)
+
+	if diff := cmp.Diff([]string{"future_key", "max_exceeded", "trace"}, sortedExtraKeys(cfg.extra)); diff != "" {
+		t.Errorf("extra keys mismatch (-want +got):\n%s", diff)
+	}
+
+	got, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+	if string(got) != in {
+		t.Errorf("Marshal = %s, want %s", got, in)
+	}
+}
+
+func TestScriptConfig_UnmodeledKeys_NilWhenNothingLeftOver(t *testing.T) {
+	t.Parallel()
+
+	cfg := mustUnmarshalScriptConfig(t, `{"alias":"s","icon":"mdi:x","sequence":[]}`)
+	if cfg.extra != nil {
+		t.Errorf("extra = %v, want nil", cfg.extra)
+	}
+}
+
+func TestScriptConfig_UnmodeledKeys_WrittenWithNilKeyOrder(t *testing.T) {
+	t.Parallel()
+
+	cfg := mustUnmarshalScriptConfig(t, `{"alias":"s","trace":{"stored_traces":20},"sequence":[]}`)
+	cfg.KeyOrder = nil
+
+	got, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+	want := `{"alias":"s","sequence":[],"trace":{"stored_traces":20}}`
+	if string(got) != want {
+		t.Errorf("Marshal = %s, want %s", got, want)
+	}
+}
+
+func TestScriptConfig_UnmodeledKeys_ReplacedOnReUnmarshal(t *testing.T) {
+	t.Parallel()
+
+	cfg := mustUnmarshalScriptConfig(t, `{"trace":{"a":1},"sequence":[]}`)
+	if err := json.Unmarshal([]byte(`{"alias":"y"}`), &cfg); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+	if cfg.extra != nil {
+		t.Errorf("extra = %v, want nil after re-unmarshal without kept keys", cfg.extra)
+	}
+}
+
+func TestKnownConfigKeys(t *testing.T) {
+	t.Parallel()
+
+	type sample struct {
+		Plain    string `json:"plain"`
+		WithOpts int    `json:"with_opts,omitempty"`
+		Skipped  string `json:"-"`
+		NoName   string `json:",omitempty"`
+		Untagged string
+	}
+
+	got := knownConfigKeys(reflect.TypeOf(sample{}), "extra_a", "extra_b")
+	want := map[string]struct{}{
+		"plain": {}, "with_opts": {}, "extra_a": {}, "extra_b": {},
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("knownConfigKeys mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestKnownConfigKeys_ConfigSets(t *testing.T) {
+	t.Parallel()
+
+	for _, k := range []string{"id", "alias", "description", "mode", "max", "triggers", "conditions", "actions", "variables", "trigger", "condition", "action"} {
+		if _, ok := automationKnownKeys[k]; !ok {
+			t.Errorf("automationKnownKeys missing %q", k)
+		}
+	}
+	for _, k := range []string{"trigger_variables", "initial_state", "max_exceeded", "trace", "KeyOrder", "extra", "-"} {
+		if _, ok := automationKnownKeys[k]; ok {
+			t.Errorf("automationKnownKeys unexpectedly has %q", k)
+		}
+	}
+	for _, k := range []string{"alias", "description", "mode", "max", "icon", "fields", "variables", "sequence"} {
+		if _, ok := scriptKnownKeys[k]; !ok {
+			t.Errorf("scriptKnownKeys missing %q", k)
+		}
+	}
+	for _, k := range []string{"max_exceeded", "trace", "KeyOrder", "extra", "-"} {
+		if _, ok := scriptKnownKeys[k]; ok {
+			t.Errorf("scriptKnownKeys unexpectedly has %q", k)
+		}
+	}
+}
+
+func TestCollectExtraKeys(t *testing.T) {
+	t.Parallel()
+
+	known := map[string]struct{}{"a": {}, "b": {}}
+
+	if got := collectExtraKeys(map[string]json.RawMessage{"a": json.RawMessage(`1`), "b": json.RawMessage(`2`)}, known); got != nil {
+		t.Errorf("collectExtraKeys(all known) = %v, want nil", got)
+	}
+	if got := collectExtraKeys(nil, known); got != nil {
+		t.Errorf("collectExtraKeys(nil) = %v, want nil", got)
+	}
+
+	got := collectExtraKeys(map[string]json.RawMessage{
+		"a": json.RawMessage(`1`), "c": json.RawMessage(`{"z":1}`), "d": json.RawMessage(`null`),
+	}, known)
+	want := map[string]json.RawMessage{"c": json.RawMessage(`{"z":1}`), "d": json.RawMessage(`null`)}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("collectExtraKeys mismatch (-want +got):\n%s", diff)
+	}
+}
+
+// sortedExtraKeys returns the keys of m in sorted order.
+func sortedExtraKeys(m map[string]json.RawMessage) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	return keys
 }
 
 func TestSceneConfig_JSONRoundtrip(t *testing.T) {
