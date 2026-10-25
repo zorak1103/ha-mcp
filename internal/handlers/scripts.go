@@ -597,7 +597,8 @@ func (h *ScriptHandlers) handleUpdate(ctx context.Context, client homeassistant.
 		return errorResult(enrichConfigError(msg, err, scriptErrorHints)), nil
 	}
 
-	successMsg := fmt.Sprintf("Script %s updated successfully", target)
+	successMsg := fmt.Sprintf("Script %s updated successfully", target) +
+		keptKeysNote(config, scriptOwnedKeys)
 	if !reloadDomain(ctx, client, "script") {
 		successMsg += scriptReloadFailedWarning
 	}

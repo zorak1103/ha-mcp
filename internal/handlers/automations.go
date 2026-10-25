@@ -6,6 +6,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -125,7 +126,7 @@ Actions:
 - list: List automations (optional filters: state, alias, entity_id; supports verbose, limit, cursor)
 - get: Get details of a specific automation (requires automation_id)
 - create: Create a new automation (requires alias, trigger, automation_action; trigger=[] for manual-only)
-- update: Update an existing automation (requires automation_id)
+- update: Update an existing automation (requires automation_id); fields not passed are kept. variables replaces the whole block ({} or null removes it)
 - delete: Delete an automation (requires automation_id)
 - toggle: Enable or disable an automation (requires automation_id, enabled)
 - coverage: Analyze which areas/entities lack automation coverage
@@ -175,6 +176,10 @@ Actions:
 				"max": {
 					Type:        "integer",
 					Description: "Concurrent run limit (minimum 1, HA default 10). Only applies when mode is 'parallel' or 'queued'.",
+				},
+				"variables": {
+					Type:        schemaTypeObject,
+					Description: "Top-level automation variables, rendered by Home Assistant in key order (a later variable can reference an earlier one). On create it sets the block. On update it replaces the whole existing block; {} or null removes it; omit to keep the existing block.",
 				},
 				"enabled": {
 					Type:        "boolean",
@@ -368,6 +373,11 @@ func (h *AutomationHandlers) handleGet(ctx context.Context, client homeassistant
 }
 
 func (h *AutomationHandlers) handleCreate(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+	variables, _, err := parseVariablesArg(args)
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
+
 	alias, _ := args["alias"].(string)
 	if alias == "" {
 		return errorResult("alias is required for create action"), nil
@@ -378,17 +388,9 @@ func (h *AutomationHandlers) handleCreate(ctx context.Context, client homeassist
 		return errorResult("trigger is required for create action (pass empty array [] for manual-only automations)"), nil
 	}
 
-	// Support both "action" and "automation_action" for backwards compatibility
-	automationAction, actionOK := args["automation_action"].([]any)
-	if !actionOK {
-		// Try legacy "action" field
-		automationAction, actionOK = args["action"].([]any)
-	}
-	if !actionOK {
-		return errorResult("automation_action is required for create action"), nil
-	}
-	if len(automationAction) == 0 {
-		return errorResult("automation_action must contain at least one action"), nil
+	automationAction, actionErr := createActions(args)
+	if actionErr != "" {
+		return errorResult(actionErr), nil
 	}
 
 	var id string
@@ -410,10 +412,11 @@ func (h *AutomationHandlers) handleCreate(ctx context.Context, client homeassist
 		Actions:     automationAction,
 		Mode:        getString(args, "mode"),
 		Max:         getInt(args, "max"),
+		Variables:   variables,
 	}
 	config.KeyOrder = automationArgsOrder(nil, mcp.ArgumentOrderFromContext(ctx), args, autoFilled)
 
-	if err := client.CreateAutomation(ctx, config); err != nil {
+	if err = client.CreateAutomation(ctx, config); err != nil {
 		return errorResult(enrichAutomationError(fmt.Sprintf("Error creating automation: %v", err), err)), nil
 	}
 
@@ -432,7 +435,28 @@ func (h *AutomationHandlers) handleCreate(ctx context.Context, client homeassist
 	return successResult(successMsg), nil
 }
 
+// createActions reads the actions of a create call, supporting both
+// "automation_action" and the legacy "action" for backwards compatibility. It
+// returns a non-empty error message when they are missing or empty.
+func createActions(args map[string]any) ([]any, string) {
+	automationAction, ok := args["automation_action"].([]any)
+	if !ok {
+		automationAction, ok = args["action"].([]any)
+	}
+	if !ok {
+		return nil, "automation_action is required for create action"
+	}
+	if len(automationAction) == 0 {
+		return nil, "automation_action must contain at least one action"
+	}
+	return automationAction, ""
+}
+
 func (h *AutomationHandlers) handleUpdate(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+	if _, _, err := parseVariablesArg(args); err != nil {
+		return errorResult(err.Error()), nil
+	}
+
 	automationID, ok := args["automation_id"].(string)
 	if !ok || automationID == "" {
 		return errorResult("automation_id is required for update action. Use 'list' action to find IDs (shown in [brackets])"), nil
@@ -479,7 +503,8 @@ func (h *AutomationHandlers) handleUpdate(ctx context.Context, client homeassist
 		return errorResult(enrichAutomationError(fmt.Sprintf("Error updating automation: %v", err), err)), nil
 	}
 
-	successMsg := fmt.Sprintf("Automation '%s' updated successfully", automationID)
+	successMsg := fmt.Sprintf("Automation '%s' updated successfully", automationID) +
+		keptKeysNote(current.Config, automationOwnedKeys, variablesReplaced(args)...)
 	if !reloadDomainTargeted(ctx, client, "automation", actualConfigID) {
 		successMsg += automationReloadFailedWarning
 	} else if triggersHaveForTimer(current.Config.Triggers) {
@@ -950,7 +975,39 @@ func automationArgsOrder(base, argOrder *jsonorder.Order, args map[string]any, a
 	} else if _, ok := args["action"].([]any); ok {
 		order = withFieldOrder(order, "actions", argOrder.Field("action"))
 	}
+	if vars, ok := args["variables"].(map[string]any); ok && len(vars) > 0 {
+		order = withFieldOrder(order, "variables", argOrder.Field("variables"))
+	}
 	return order
+}
+
+// parseVariablesArg reads the top-level variables argument. present reports
+// whether the key exists in args; nil and an empty object both mean "no
+// variables" (vars == nil, i.e. remove the block on update); a non-empty object
+// is returned as is. Anything else is an error: the server validates argument
+// names, not types, so a string would otherwise be dropped silently.
+func parseVariablesArg(args map[string]any) (vars map[string]any, present bool, err error) {
+	raw, present := args["variables"]
+	if !present || raw == nil {
+		return nil, present, nil
+	}
+	obj, ok := raw.(map[string]any)
+	if !ok {
+		return nil, present, errors.New("variables must be an object (use {} or null to remove the block)")
+	}
+	if len(obj) == 0 {
+		return nil, present, nil
+	}
+	return obj, present, nil
+}
+
+// variablesReplaced names the variables key for keptKeysNote when the caller
+// supplied the argument (replaced or removed), so it is not reported as kept.
+func variablesReplaced(args map[string]any) []string {
+	if _, ok := args["variables"]; ok {
+		return []string{"variables"}
+	}
+	return nil
 }
 
 // withFieldOrder sets the order of member key copy-on-write (sub is cloned so
@@ -1006,6 +1063,11 @@ func applyAutomationConfigUpdates(config *homeassistant.AutomationConfig, args m
 	}
 	if maxVal, ok := args["max"].(float64); ok {
 		config.Max = int(maxVal)
+	}
+	// The handlers reject an invalid variables argument before getting here, so
+	// the error (and this function's lack of an error return) is moot.
+	if vars, present, _ := parseVariablesArg(args); present {
+		config.Variables = vars
 	}
 }
 

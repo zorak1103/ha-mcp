@@ -101,6 +101,7 @@ Key non-obvious parameters for `create` and `update` actions:
 - automation_id (string, optional on create): override the auto-generated slug (needed for non-ASCII aliases)
 - mode (string, optional): `single` | `restart` | `queued` | `parallel` (HA default: single)
 - max (integer, optional): concurrent run limit; only for mode=parallel|queued (HA default 10)
+- variables (object, optional): top-level automation variables, rendered in key order; on update it replaces the whole block, `{}` or `null` removes it, omitted keeps the existing block; on create it sets the block. This is a `manage_automation` argument only (for `manage_script`, `variables` is an execute-time argument, not stored config)
 - trigger, condition, automation_action (arrays): automation body
 
 **manage_script:**
