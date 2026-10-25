@@ -47,14 +47,20 @@ func (h *FindReferencesHandlers) findReferencesTool() mcp.Tool {
 
 Returns matches grouped by type with the object id, JSON path (where applicable), context, and a snippet. ` +
 			`The response includes scanned_sources (which types were successfully searched) and failed_sources ` +
-			`(which could not be fetched), so a "no references found" result can be trusted only when failed_sources is empty.`,
+			`(which could not be fetched), so a "no references found" result can be trusted only when failed_sources is empty.
+
+Pass the entity_id or any text to look for as the required argument search, e.g. {"search": "climate.living_room"}.
+
+Matching: substring by default (search "light.kitchen" also finds "light.kitchen_2" and entity_ids inside Jinja templates); ` +
+			`match_mode "exact" matches only leaf values equal to search and skips template text.`,
 		InputSchema: mcp.JSONSchema{
 			Type:        schemaTypeObject,
 			Description: "Parameters for a cross-config reference search",
 			Properties: map[string]mcp.JSONSchema{
 				"search": {
-					Type:        "string",
-					Description: "String or entity_id to search for",
+					Type: "string",
+					Description: "Required. An entity_id (e.g. climate.living_room) or any text to look for. " +
+						"Matched as a substring unless match_mode is \"exact\".",
 				},
 				"match_mode": {
 					Type: "string",
@@ -90,7 +96,7 @@ type findReferencesResult struct {
 func (h *FindReferencesHandlers) handleFindReferences(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
 	search, _ := args["search"].(string)
 	if search == "" {
-		return errorResult("search is required"), nil
+		return errorResult(`search is required: pass the entity_id or text to look for, e.g. {"search": "light.kitchen"}`), nil
 	}
 
 	matchMode, _ := args["match_mode"].(string)

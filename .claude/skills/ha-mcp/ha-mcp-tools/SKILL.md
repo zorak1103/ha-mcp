@@ -21,7 +21,7 @@ description: "Use when choosing which ha-mcp tool or action to call. Examples: \
 | Device health (orphaned / config errors)             | `query_devices` mode=health                                            |
 | Where is entity X used? (automations, scripts, scenes, dashboards, template helpers) | `analyze_entity` — returns RFC 6901 paths to each reference location; `scanned_sources` lists what was actually searched |
 | Which entities does automation X depend on?          | `get_entity_dependencies`                                              |
-| Find a string/entity_id across ALL config types in one call | `find_references` — automations/scripts/scenes/dashboards/helper templates, match_mode substring/exact |
+| Find a string/entity_id across ALL config types in one call | `find_references` — automations/scripts/scenes/dashboards/helper templates, match_mode substring/exact (argument: `search`) |
 | Create / edit / delete an automation                 | `manage_automation` action=create/update/delete                        |
 | Toggle / enable / disable an automation              | `manage_automation` action=toggle                                       |
 | See automation trigger/condition/service coverage    | `manage_automation` action=coverage                                    |
