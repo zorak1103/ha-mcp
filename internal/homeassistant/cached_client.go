@@ -1039,6 +1039,16 @@ func (c *CachedClient) IsConnected() bool {
 	return true
 }
 
+// WaitForConnection delegates to the underlying client so callers that look
+// for a reconnect wait (e.g. the MCP server) keep working through the cache
+// wrapper. It returns nil when the underlying client cannot wait.
+func (c *CachedClient) WaitForConnection(ctx context.Context) error {
+	if waiter, ok := c.client.(interface{ WaitForConnection(context.Context) error }); ok {
+		return waiter.WaitForConnection(ctx)
+	}
+	return nil
+}
+
 // IsUsable delegates to the underlying client, falling back to IsConnected,
 // and assumes usable when neither is implemented.
 func (c *CachedClient) IsUsable() bool {
@@ -1049,4 +1059,6 @@ func (c *CachedClient) IsUsable() bool {
 var (
 	_ Client       = (*CachedClient)(nil)
 	_ ClientCloser = (*CachedClient)(nil)
+
+	_ interface{ WaitForConnection(context.Context) error } = (*CachedClient)(nil)
 )

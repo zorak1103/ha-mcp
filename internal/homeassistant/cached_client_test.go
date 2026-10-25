@@ -427,6 +427,67 @@ func TestCachedClient_IsUsable_Delegates(t *testing.T) {
 	}
 }
 
+// waiterInnerClient exposes WaitForConnection and records the call.
+type waiterInnerClient struct {
+	*mockClient
+	err    error
+	calls  int
+	gotCtx context.Context
+}
+
+func (c *waiterInnerClient) WaitForConnection(ctx context.Context) error {
+	c.calls++
+	c.gotCtx = ctx
+	return c.err
+}
+
+type waitCtxKey struct{}
+
+func TestCachedClient_WaitForConnection_DelegatesToInner(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.CacheConfig{Enabled: true}
+	logger := logging.New(logging.LevelError)
+	wantErr := errors.New("reconnect timed out")
+
+	inner := &waiterInnerClient{mockClient: &mockClient{}, err: wantErr}
+	cached, ok := NewCachedClient(inner, cfg, logger).(*CachedClient)
+	if !ok {
+		t.Fatal("NewCachedClient did not return *CachedClient")
+	}
+
+	ctx := context.WithValue(context.Background(), waitCtxKey{}, "marker")
+	if err := cached.WaitForConnection(ctx); !errors.Is(err, wantErr) {
+		t.Errorf("WaitForConnection() = %v, want %v", err, wantErr)
+	}
+	if inner.calls != 1 {
+		t.Errorf("inner WaitForConnection calls = %d, want 1", inner.calls)
+	}
+	if inner.gotCtx == nil || inner.gotCtx.Value(waitCtxKey{}) != "marker" {
+		t.Error("inner WaitForConnection did not receive the caller's context")
+	}
+
+	inner.err = nil
+	if err := cached.WaitForConnection(ctx); err != nil {
+		t.Errorf("WaitForConnection() with nil inner error = %v, want nil", err)
+	}
+}
+
+func TestCachedClient_WaitForConnection_InnerWithoutMethod(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.CacheConfig{Enabled: true}
+	logger := logging.New(logging.LevelError)
+
+	cached, ok := NewCachedClient(&mockClient{}, cfg, logger).(*CachedClient)
+	if !ok {
+		t.Fatal("NewCachedClient did not return *CachedClient")
+	}
+	if err := cached.WaitForConnection(context.Background()); err != nil {
+		t.Errorf("WaitForConnection() = %v, want nil", err)
+	}
+}
+
 func TestCachedClient_CacheHit(t *testing.T) {
 	mock := &mockClient{}
 	cfg := config.CacheConfig{
