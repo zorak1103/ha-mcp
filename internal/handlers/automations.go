@@ -479,7 +479,8 @@ func (h *AutomationHandlers) handleUpdate(ctx context.Context, client homeassist
 		return errorResult(enrichAutomationError(fmt.Sprintf("Error updating automation: %v", err), err)), nil
 	}
 
-	successMsg := fmt.Sprintf("Automation '%s' updated successfully", automationID)
+	successMsg := fmt.Sprintf("Automation '%s' updated successfully", automationID) +
+		keptKeysNote(current.Config, automationOwnedKeys)
 	if !reloadDomainTargeted(ctx, client, "automation", actualConfigID) {
 		successMsg += automationReloadFailedWarning
 	} else if triggersHaveForTimer(current.Config.Triggers) {

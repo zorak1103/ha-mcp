@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -82,4 +83,38 @@ func TestScriptUpdate_Issue314_IdenticalUpdateSkipsWrite(t *testing.T) {
 	raw := `{"action":"update","script_id":"heat","description":"old"}`
 	result, writes := orderedScriptPatch(t, issue314ScriptJSON, raw, true)
 	assertNoWrite(t, result.Content[0].Text, writes)
+}
+
+// issue319ScriptJSON is issue314ScriptJSON plus a variables block.
+const issue319ScriptJSON = `{
+	"alias": "Heat",
+	"description": "old",
+	"mode": "single",
+	"variables": {"abt": "climate.x"},
+	"max_exceeded": "warning",
+	"trace": {"stored_traces": 10},
+	"sequence": [{"action": "light.turn_on"}]
+}`
+
+func TestScriptUpdate_ReportsKeptKeys(t *testing.T) {
+	t.Parallel()
+
+	raw := `{"action":"update","script_id":"heat","description":"new"}`
+	result, _ := orderedScriptPatch(t, issue319ScriptJSON, raw, true)
+
+	want := keptKeysNotePrefix + ": max_exceeded, trace, variables"
+	if text := result.Content[0].Text; !strings.Contains(text, want) {
+		t.Errorf("result text %q does not contain %q", text, want)
+	}
+}
+
+func TestScriptUpdate_NoNoteWithoutKeptKeys(t *testing.T) {
+	t.Parallel()
+
+	const ownedOnly = `{"alias": "Heat", "mode": "single", "sequence": [{"action": "light.turn_on"}]}`
+	raw := `{"action":"update","script_id":"heat","description":"new"}`
+	result, _ := orderedScriptPatch(t, ownedOnly, raw, true)
+	if text := result.Content[0].Text; strings.Contains(text, keptKeysNotePrefix) {
+		t.Errorf("unexpected kept-keys note in %q", text)
+	}
 }

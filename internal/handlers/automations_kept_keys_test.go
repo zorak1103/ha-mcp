@@ -177,3 +177,69 @@ func TestAutomationUpdate_Issue314_IdenticalUpdateSkipsWrite(t *testing.T) {
 	result, writes := orderedAutomationPatch(t, issue314AutomationJSON, raw, true)
 	assertNoWrite(t, result.Content[0].Text, writes)
 }
+
+// =============================================================================
+// Issue #319: update reports the top-level keys it carried over
+// =============================================================================
+
+const keptKeysNotePrefix = "kept from previous config"
+
+// issue319AutomationJSON is issue314AutomationJSON plus a variables block.
+const issue319AutomationJSON = `{
+	"id": "heating",
+	"alias": "Heating",
+	"description": "old",
+	"mode": "single",
+	"variables": {"abt": "climate.x", "desired": "{{ 1 }}"},
+	"trigger_variables": {"limit": "{{ 5 }}"},
+	"initial_state": true,
+	"max_exceeded": "warning",
+	"trace": {"stored_traces": 10},
+	"triggers": [{"trigger": "state", "entity_id": "sensor.a"}],
+	"actions": [{"action": "light.turn_on"}]
+}`
+
+// issue319OwnedOnlyAutomationJSON carries only keys update has an argument for.
+const issue319OwnedOnlyAutomationJSON = `{
+	"id": "heating",
+	"alias": "Heating",
+	"mode": "single",
+	"triggers": [{"trigger": "state", "entity_id": "sensor.a"}],
+	"actions": [{"action": "light.turn_on"}]
+}`
+
+func TestAutomationUpdate_Issue319_ReportsKeptKeys(t *testing.T) {
+	t.Parallel()
+
+	raw := `{"action":"update","automation_id":"heating","description":"new"}`
+	result, writes := orderedAutomationPatch(t, issue319AutomationJSON, raw, true)
+
+	want := keptKeysNotePrefix + ": initial_state, max_exceeded, trace, trigger_variables, variables"
+	if text := result.Content[0].Text; !strings.Contains(text, want) {
+		t.Errorf("result text %q does not contain %q", text, want)
+	}
+	assertKeptKeys(t, singleWrite(t, writes), keptKeyCase{
+		wantKept:        map[string]any{"variables": map[string]any{"abt": "climate.x", "desired": "{{ 1 }}"}},
+		wantDescription: "new",
+	})
+}
+
+func TestAutomationUpdate_Issue319_NoNoteWithoutKeptKeys(t *testing.T) {
+	t.Parallel()
+
+	raw := `{"action":"update","automation_id":"heating","description":"new"}`
+	result, _ := orderedAutomationPatch(t, issue319OwnedOnlyAutomationJSON, raw, true)
+	if text := result.Content[0].Text; strings.Contains(text, keptKeysNotePrefix) {
+		t.Errorf("unexpected kept-keys note in %q", text)
+	}
+}
+
+func TestAutomationUpdate_Issue319_IdenticalUpdateHasNoNote(t *testing.T) {
+	t.Parallel()
+
+	raw := `{"action":"update","automation_id":"heating","description":"old"}`
+	result, _ := orderedAutomationPatch(t, issue314AutomationJSON, raw, true)
+	if text := result.Content[0].Text; strings.Contains(text, keptKeysNotePrefix) {
+		t.Errorf("unexpected kept-keys note in no-op result %q", text)
+	}
+}
