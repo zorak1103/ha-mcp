@@ -25,6 +25,29 @@ type stateDiff struct {
 	Changed  bool
 }
 
+// servicesWithoutTargetStateChange lists "domain.service" calls that, by design, leave the state
+// of the entity they target alone, so the Smart Wait poll can only run into its timeout and
+// report a spurious "state change not confirmed" warning:
+//   - automation.trigger runs the automation's actions; the automation entity stays "on" (its
+//     last_triggered attribute moves, its state does not).
+//   - homeassistant.update_entity only refreshes the entity's data from its source.
+//   - script.turn_on starts the script; the script entity goes off -> on -> off, so a fast script
+//     finishes between polls and the poll only times out (verified live against HA).
+//
+// automation.turn_on/turn_off/toggle are deliberately absent: they do flip the target's state.
+var servicesWithoutTargetStateChange = map[string]struct{}{
+	"automation.trigger":          {},
+	"homeassistant.update_entity": {},
+	"script.turn_on":              {},
+}
+
+// serviceChangesTargetState reports whether calling domain.service is expected to change the
+// state of its target entities, i.e. whether snapshotting and polling them is meaningful.
+func serviceChangesTargetState(domain, service string) bool {
+	_, exempt := servicesWithoutTargetStateChange[domain+"."+service]
+	return !exempt
+}
+
 // snapshotEntities captures the current state of each entity.
 // Entities that don't exist (GetState error) are silently skipped.
 func snapshotEntities(ctx context.Context, client homeassistant.Client, entityIDs []string) []entitySnapshot {

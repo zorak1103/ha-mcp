@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"strings"
 
@@ -134,7 +135,7 @@ Actions:
 func (h *ScriptHandlers) callServiceTool() mcp.Tool {
 	return mcp.Tool{
 		Name:        "call_service",
-		Description: "Call any Home Assistant service. Pass entity_id and service parameters inside the 'data' object.",
+		Description: "Call any Home Assistant service. Pass the HA-standard 'target' (entity_id, device_id, area_id, floor_id, label_id) and put service parameters in 'data'. An entity_id inside 'data' also works; 'target' is merged into 'data' and wins on a clash.",
 		InputSchema: mcp.JSONSchema{
 			Type: "object",
 			Properties: map[string]mcp.JSONSchema{
@@ -149,6 +150,10 @@ func (h *ScriptHandlers) callServiceTool() mcp.Tool {
 				"data": {
 					Type:        "object",
 					Description: "Service data object. Include entity_id and parameters here (e.g., {\"entity_id\": \"light.living_room\", \"brightness\": 255})",
+				},
+				"target": {
+					Type:        schemaTypeObject,
+					Description: "HA-standard service target with entity_id, device_id, area_id, floor_id and/or label_id (e.g., {\"area_id\": \"kitchen\"}). Merged into 'data' and wins on a key clash. State-change confirmation only follows entity_id.",
 				},
 				"format": {
 					Type:        "string",
@@ -829,6 +834,29 @@ func callServiceReturningResponse(ctx context.Context, client homeassistant.Clie
 	return successResult(output), nil
 }
 
+// buildServiceData merges args["data"] with the HA-standard args["target"] into a fresh map
+// (the caller's maps are never modified). On a key clash target wins, matching HA core's
+// service_data.update(target). It returns nil when neither is supplied, and an error when
+// target is present but not an object.
+func buildServiceData(args map[string]any) (map[string]any, error) {
+	data, _ := args["data"].(map[string]any)
+
+	rawTarget, hasTarget := args["target"]
+	if !hasTarget {
+		return maps.Clone(data), nil // nil stays nil
+	}
+
+	target, ok := rawTarget.(map[string]any)
+	if !ok {
+		return nil, errors.New(`target must be an object (e.g. {"entity_id": "light.kitchen"})`)
+	}
+
+	merged := make(map[string]any, len(data)+len(target))
+	maps.Copy(merged, data)
+	maps.Copy(merged, target)
+	return merged, nil
+}
+
 func (h *ScriptHandlers) handleCallService(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
 	domain, ok := args["domain"].(string)
 	if !ok || domain == "" {
@@ -840,9 +868,9 @@ func (h *ScriptHandlers) handleCallService(ctx context.Context, client homeassis
 		return errorResult("service is required"), nil
 	}
 
-	var data map[string]any
-	if d, ok := args["data"].(map[string]any); ok {
-		data = d
+	data, err := buildServiceData(args)
+	if err != nil {
+		return errorResult(err.Error()), nil
 	}
 
 	returnResponse, err := parseBoolArg(args, "return_response")
@@ -855,9 +883,13 @@ func (h *ScriptHandlers) handleCallService(ctx context.Context, client homeassis
 		return callServiceReturningResponse(ctx, client, domain, service, data, format)
 	}
 
-	// Extract targets and snapshot state before calling the service
+	// Extract targets (always, the output names them) and snapshot state before calling the
+	// service, unless the service cannot change it (a poll would only time out).
 	targets := extractEntityTargets(data)
-	snapshots := snapshotEntities(ctx, client, targets)
+	var snapshots []entitySnapshot
+	if serviceChangesTargetState(domain, service) {
+		snapshots = snapshotEntities(ctx, client, targets)
+	}
 
 	_, err = client.CallService(ctx, domain, service, data)
 	if err != nil {

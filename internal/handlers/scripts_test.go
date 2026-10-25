@@ -4,10 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"reflect"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 	"github.com/zorak1103/ha-mcp/internal/mcp"
@@ -1727,11 +1732,350 @@ func TestScriptHandlers_CallService_ReturnResponse(t *testing.T) {
 	}
 }
 
+func TestBuildServiceData(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		args    map[string]any
+		want    map[string]any
+		wantErr string
+	}{
+		{name: "both absent", args: map[string]any{}, want: nil},
+		{
+			name: "data only",
+			args: map[string]any{"data": map[string]any{"brightness": 255}},
+			want: map[string]any{"brightness": 255},
+		},
+		{
+			name: "target only",
+			args: map[string]any{"target": map[string]any{"entity_id": "light.kitchen"}},
+			want: map[string]any{"entity_id": "light.kitchen"},
+		},
+		{
+			name: "disjoint keys",
+			args: map[string]any{
+				"data":   map[string]any{"brightness": 255},
+				"target": map[string]any{"entity_id": "light.kitchen"},
+			},
+			want: map[string]any{"brightness": 255, "entity_id": "light.kitchen"},
+		},
+		{
+			name: "entity_id in both: target wins",
+			args: map[string]any{
+				"data":   map[string]any{"entity_id": "light.from_data", "brightness": 255},
+				"target": map[string]any{"entity_id": "light.from_target"},
+			},
+			want: map[string]any{"entity_id": "light.from_target", "brightness": 255},
+		},
+		{
+			name: "empty target with data",
+			args: map[string]any{
+				"data":   map[string]any{"brightness": 255},
+				"target": map[string]any{},
+			},
+			want: map[string]any{"brightness": 255},
+		},
+		{name: "target string", args: map[string]any{"target": "light.x"}, wantErr: "target must be an object"},
+		{name: "target array", args: map[string]any{"target": []any{}}, wantErr: "target must be an object"},
+		{name: "target nil", args: map[string]any{"target": nil}, wantErr: "target must be an object"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			dataBefore, _ := tt.args["data"].(map[string]any)
+			dataSnapshot := maps.Clone(dataBefore)
+			targetBefore, _ := tt.args["target"].(map[string]any)
+			targetSnapshot := maps.Clone(targetBefore)
+
+			got, err := buildServiceData(tt.args)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("buildServiceData() error = %v, want containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("buildServiceData() unexpected error: %v", err)
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("buildServiceData() mismatch (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(dataSnapshot, dataBefore); diff != "" {
+				t.Errorf("caller's data map was mutated (-before +after):\n%s", diff)
+			}
+			if diff := cmp.Diff(targetSnapshot, targetBefore); diff != "" {
+				t.Errorf("caller's target map was mutated (-before +after):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestScriptHandlers_CallService_Target(t *testing.T) {
+	t.Parallel()
+
+	newClient := func(captured *map[string]any, calls *int, stateIDs *[]string) *mockScriptClient {
+		return &mockScriptClient{
+			callServiceFn: func(_ context.Context, _, _ string, data map[string]any) ([]homeassistant.Entity, error) {
+				*calls++
+				*captured = data
+				return nil, nil
+			},
+			getStateFn: func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+				*stateIDs = append(*stateIDs, entityID)
+				return nil, errors.New("entity not found")
+			},
+		}
+	}
+
+	t.Run("target entity_id reaches client and snapshotting", func(t *testing.T) {
+		t.Parallel()
+
+		var captured map[string]any
+		var calls int
+		var stateIDs []string
+		client := newClient(&captured, &calls, &stateIDs)
+
+		result, err := NewScriptHandlers().handleCallService(context.Background(), client, map[string]any{
+			"domain":  "light",
+			"service": "turn_on",
+			"target":  map[string]any{"entity_id": "light.kitchen"},
+		})
+		if err != nil {
+			t.Fatalf("handleCallService() returned error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+		}
+		if diff := cmp.Diff(map[string]any{"entity_id": "light.kitchen"}, captured); diff != "" {
+			t.Errorf("service data mismatch (-want +got):\n%s", diff)
+		}
+		if !slices.Contains(stateIDs, "light.kitchen") {
+			t.Errorf("GetState requested %v, want light.kitchen among them", stateIDs)
+		}
+		if !strings.Contains(result.Content[0].Text, "light.kitchen") {
+			t.Errorf("result %q does not mention light.kitchen", result.Content[0].Text)
+		}
+	})
+
+	t.Run("data and target are merged", func(t *testing.T) {
+		t.Parallel()
+
+		var captured map[string]any
+		var calls int
+		var stateIDs []string
+		client := newClient(&captured, &calls, &stateIDs)
+
+		result, err := NewScriptHandlers().handleCallService(context.Background(), client, map[string]any{
+			"domain":  "light",
+			"service": "turn_on",
+			"data":    map[string]any{"brightness": 255},
+			"target":  map[string]any{"entity_id": "light.kitchen"},
+		})
+		if err != nil {
+			t.Fatalf("handleCallService() returned error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+		}
+		want := map[string]any{"brightness": 255, "entity_id": "light.kitchen"}
+		if diff := cmp.Diff(want, captured); diff != "" {
+			t.Errorf("service data mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("non-object target is refused before the call", func(t *testing.T) {
+		t.Parallel()
+
+		var captured map[string]any
+		var calls int
+		var stateIDs []string
+		client := newClient(&captured, &calls, &stateIDs)
+
+		result, err := NewScriptHandlers().handleCallService(context.Background(), client, map[string]any{
+			"domain":  "light",
+			"service": "turn_on",
+			"target":  "light.kitchen",
+		})
+		if err != nil {
+			t.Fatalf("handleCallService() returned error: %v", err)
+		}
+		if !result.IsError {
+			t.Error("IsError = false, want true")
+		}
+		if !strings.Contains(result.Content[0].Text, "target must be an object") {
+			t.Errorf("result %q does not contain %q", result.Content[0].Text, "target must be an object")
+		}
+		if calls != 0 {
+			t.Errorf("CallService invoked %d times, want 0", calls)
+		}
+	})
+}
+
+func TestScriptHandlers_CallService_NoWaitForTrigger(t *testing.T) {
+	t.Parallel()
+
+	ctx := mcp.WithWaitConfig(context.Background(), mcp.WaitConfig{Timeout: 50 * time.Millisecond, PollInterval: 5 * time.Millisecond})
+
+	alwaysOn := func(getStateCalls *atomic.Int32) *mockScriptClient {
+		return &mockScriptClient{
+			callServiceFn: func(context.Context, string, string, map[string]any) ([]homeassistant.Entity, error) {
+				return nil, nil
+			},
+			getStateFn: func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+				getStateCalls.Add(1)
+				return &homeassistant.Entity{EntityID: entityID, State: "on"}, nil
+			},
+		}
+	}
+
+	assertQuiet := func(t *testing.T, result *mcp.ToolsCallResult, getStateCalls *atomic.Int32) string {
+		t.Helper()
+		if result.IsError {
+			t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+		}
+		text := result.Content[0].Text
+		for _, unwanted := range []string{"warning", "State changes", "not confirmed"} {
+			if strings.Contains(text, unwanted) {
+				t.Errorf("result %q must not contain %q", text, unwanted)
+			}
+		}
+		if n := getStateCalls.Load(); n != 0 {
+			t.Errorf("GetState called %d times, want 0", n)
+		}
+		return text
+	}
+
+	t.Run("automation.trigger with data does not poll", func(t *testing.T) {
+		t.Parallel()
+
+		var calls atomic.Int32
+		result, err := NewScriptHandlers().handleCallService(ctx, alwaysOn(&calls), map[string]any{
+			"domain":  "automation",
+			"service": "trigger",
+			"data":    map[string]any{"entity_id": "automation.x"},
+		})
+		if err != nil {
+			t.Fatalf("handleCallService() returned error: %v", err)
+		}
+		assertQuiet(t, result, &calls)
+	})
+
+	t.Run("automation.trigger with target does not poll and still names the entity", func(t *testing.T) {
+		t.Parallel()
+
+		var calls atomic.Int32
+		result, err := NewScriptHandlers().handleCallService(ctx, alwaysOn(&calls), map[string]any{
+			"domain":  "automation",
+			"service": "trigger",
+			"target":  map[string]any{"entity_id": "automation.x"},
+		})
+		if err != nil {
+			t.Fatalf("handleCallService() returned error: %v", err)
+		}
+		text := assertQuiet(t, result, &calls)
+		if !strings.Contains(text, "automation.x") {
+			t.Errorf("result %q does not mention automation.x", text)
+		}
+	})
+
+	t.Run("automation.turn_on still waits and reports an unconfirmed change", func(t *testing.T) {
+		t.Parallel()
+
+		var calls atomic.Int32
+		result, err := NewScriptHandlers().handleCallService(ctx, alwaysOn(&calls), map[string]any{
+			"domain":  "automation",
+			"service": "turn_on",
+			"data":    map[string]any{"entity_id": "automation.x"},
+		})
+		if err != nil {
+			t.Fatalf("handleCallService() returned error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+		}
+		if !strings.Contains(result.Content[0].Text, "state change not confirmed") {
+			t.Errorf("result %q does not contain %q", result.Content[0].Text, "state change not confirmed")
+		}
+	})
+
+	t.Run("automation.turn_on reports the state flip", func(t *testing.T) {
+		t.Parallel()
+
+		var called atomic.Bool
+		client := &mockScriptClient{
+			callServiceFn: func(context.Context, string, string, map[string]any) ([]homeassistant.Entity, error) {
+				called.Store(true)
+				return nil, nil
+			},
+			getStateFn: func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
+				state := "off"
+				if called.Load() {
+					state = "on"
+				}
+				return &homeassistant.Entity{EntityID: entityID, State: state}, nil
+			},
+		}
+
+		result, err := NewScriptHandlers().handleCallService(ctx, client, map[string]any{
+			"domain":  "automation",
+			"service": "turn_on",
+			"data":    map[string]any{"entity_id": "automation.x"},
+		})
+		if err != nil {
+			t.Fatalf("handleCallService() returned error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+		}
+		if !strings.Contains(result.Content[0].Text, "State changes: automation.x: off → on") {
+			t.Errorf("result %q does not contain the off → on state change", result.Content[0].Text)
+		}
+	})
+}
+
+func TestScriptHandlers_CallService_ReturnResponseTarget(t *testing.T) {
+	t.Parallel()
+
+	var captured map[string]any
+	client := &mockScriptClient{
+		callServiceWithResponseFn: func(_ context.Context, _, _ string, data map[string]any) (map[string]any, error) {
+			captured = data
+			return map[string]any{"weather.home": map[string]any{"forecast": "sunny"}}, nil
+		},
+	}
+
+	result, err := NewScriptHandlers().handleCallService(context.Background(), client, map[string]any{
+		"domain":          "weather",
+		"service":         "get_forecasts",
+		"return_response": true,
+		"target":          map[string]any{"entity_id": "weather.home"},
+	})
+	if err != nil {
+		t.Fatalf("handleCallService() returned error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+	}
+	if got := captured["entity_id"]; got != "weather.home" {
+		t.Errorf("response call data entity_id = %v, want weather.home (data %#v)", got, captured)
+	}
+}
+
 func TestCallServiceTool_Schema(t *testing.T) {
 	tool := NewScriptHandlers().callServiceTool()
 
-	if len(tool.InputSchema.Properties) != 5 {
-		t.Fatalf("property count = %d, want 5", len(tool.InputSchema.Properties))
+	if len(tool.InputSchema.Properties) != 6 {
+		t.Fatalf("property count = %d, want 6", len(tool.InputSchema.Properties))
+	}
+	targetSchema, ok := tool.InputSchema.Properties["target"]
+	if !ok {
+		t.Fatal("target property is missing")
+	}
+	if targetSchema.Type != "object" {
+		t.Errorf("target type = %q, want object", targetSchema.Type)
 	}
 	responseSchema, ok := tool.InputSchema.Properties["return_response"]
 	if !ok {
