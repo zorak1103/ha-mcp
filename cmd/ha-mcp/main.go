@@ -328,9 +328,9 @@ func (a *App) initHomeAssistantClient(
 ) (homeassistant.Client, error) {
 	logger.Info("Connecting to Home Assistant WebSocket API...")
 
-	haClient, err := homeassistant.NewConnectedClient(
+	haClient, err := homeassistant.NewClientWithOptions(
 		ctx, cfg.HomeAssistant.URL, cfg.HomeAssistant.Token,
-		buildWSClientConfig(cfg), buildRESTClientConfig(cfg),
+		buildClientOptions(cfg, logger),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to Home Assistant: %w", err)
