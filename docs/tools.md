@@ -40,9 +40,9 @@ Authorization: Bearer <your-ha-access-token>
 
 ### Automation Tools
 
-| Tool                | Description                                                                                                                                   |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `manage_automation` | Consolidated automation management (actions: list, get, create, update, delete, toggle, coverage, patch (RFC 6902 JSON Patch + semantic patch), schema; format: natural/json for list/get/coverage) |
+| Tool                | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `manage_automation` | Consolidated automation management (actions: list, get, create, update, delete, toggle, coverage, patch (RFC 6902 JSON Patch + semantic patch), schema; format: natural/json for list/get/coverage). `create`/`update` accept a top-level `variables` object (on `update` it replaces the whole block; `{}` or `null` removes it; omitted keeps it). `update` is a merge and appends `(kept from previous config: ...)` naming the top-level keys it carried over. |
 
 **Flexible ID Lookup**: The `automation_id` parameter accepts multiple formats:
 - Entity ID: `automation.morning_lights`
