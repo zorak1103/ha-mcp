@@ -89,6 +89,22 @@ Fix: pass `automation_id` explicitly:
 }
 ```
 
+## Trigger shapes
+
+Legacy trigger types (`state`, `numeric_state`, `time`, ...) take flat keys; purpose-specific triggers (e.g. `power.crossed_threshold`) take `trigger`/`target`/`options`. `action=get` returns the stored shape, so write the shape that matches each trigger's type, not the neighbor you copied from. A legacy trigger with `options` or `target` fails with `not a valid option at 'options'` (or `'target'`); use flat keys instead.
+
+Legacy shape, "state to on for 15 minutes":
+
+```json
+{"trigger": "state", "entity_id": "binary_sensor.washer_running", "to": "on", "for": "00:15:00"}
+```
+
+Purpose-specific shape for the same kind of intent, "fire after 15 minutes below 2 W". The keys inside `options` are defined per trigger type: copy them from an existing trigger of the same type; the ones below are illustrative.
+
+```json
+{"trigger": "power.crossed_threshold", "target": {"entity_id": "sensor.washer_power"}, "options": {"threshold": {"type": "below", "value": {"number": 2}}, "for": {"minutes": 15}}}
+```
+
 ## Patching vs. updating
 
 Use `action=patch` for surgical changes (adding/removing triggers, changing mode).

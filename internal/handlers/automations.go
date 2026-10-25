@@ -131,7 +131,9 @@ Actions:
 - toggle: Enable or disable an automation (requires automation_id, enabled)
 - coverage: Analyze which areas/entities lack automation coverage
 - patch: Apply RFC 6902 JSON Patch operations (requires automation_id, operations)
-- schema: Return reference for all valid trigger, condition, and action types with required/optional fields`,
+- schema: Return reference for all valid trigger, condition, and action types with required/optional fields
+
+Trigger shape: legacy types (state, numeric_state, ...) use flat keys (entity_id, for); purpose-specific triggers (e.g. power.crossed_threshold) use trigger/target/options. get returns the stored shape; write the shape that matches each trigger's type. See action=schema.`,
 		InputSchema: mcp.JSONSchema{
 			Type:        "object",
 			Description: "Automation management operation",
