@@ -114,6 +114,7 @@ go test -tags=integration -v ./internal/handlers/integration/... 2>&1 | tee test
 | --------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | `TestAutomationIntegration`         | create, update, toggle, trigger, delete                                                                          |
 | `TestAutomationsCoverageIntegration`| coverage analysis of uncovered areas and entities                                                                |
+| `TestUnmodeledKeysIntegration`      | unmodeled automation/script keys (`trigger_variables`, `max_exceeded`, `trace`) survive patch and update         |
 | `TestScriptIntegration`             | create, update, execute, delete                                                                                  |
 | `TestSceneIntegration`              | create, update, activate, delete                                                                                 |
 | `TestAreaIntegration`               | create, update (with label_mode and alias_mode), delete, multiple areas, unknown-label rejection via tool dispatch |
