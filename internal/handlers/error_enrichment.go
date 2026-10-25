@@ -43,7 +43,24 @@ const templateSyntaxErrorHint = "Jinja2 template syntax error. \"unexpected '}'\
 	"{% set empty = days in ['unknown','unavailable',''] %}{{ empty }}. " +
 	"The data[...] path shown in the error above identifies which template failed."
 
+// legacyTriggerShapeHint explains HA's "not a valid option at 'options'"/"'target'"
+// rejection of a legacy trigger written in the purpose-specific shape.
+const legacyTriggerShapeHint = "If this is a legacy trigger type (state, numeric_state, time, ...), it takes flat keys, " +
+	"not the purpose-specific shape. Move the contents of options to the trigger's top level, e.g. \"for\", " +
+	"and put entity_id at the top level instead of under target. " +
+	"target/options are only for purpose-specific triggers such as power.crossed_threshold."
+
 var automationErrorHints = []configErrorHint{
+	{
+		// Must precede "extra keys not allowed": a message may carry both, and this one names the real fix.
+		pattern:    "not a valid option at 'options'",
+		suggestion: legacyTriggerShapeHint,
+	},
+	{
+		// HA words a misplaced target the same way, at 'target'.
+		pattern:    "not a valid option at 'target'",
+		suggestion: legacyTriggerShapeHint,
+	},
 	{
 		// Specific match before the generic "extra keys not allowed" catch-all.
 		pattern:    "data['which']",

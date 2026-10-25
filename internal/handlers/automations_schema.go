@@ -76,6 +76,8 @@ var automationSchema = struct {
 		"For sun elevation condition, use {condition: sun, above: -0.5} — NOT a state condition",
 		"For above_horizon check, either use sun condition OR {condition: state, entity_id: sun.sun, state: above_horizon}",
 		"'repeat/while' expects an array of conditions; 'repeat/count' expects a number; 'repeat/until' expects conditions",
+		"Legacy trigger types (state, numeric_state, time, sun, event, template, ...) take flat keys: {trigger: state, entity_id: ..., to: on, for: \"00:05:00\"}. They do NOT accept target or options.",
+		"Purpose-specific triggers (e.g. power.crossed_threshold) use {trigger: <domain.name>, target: {entity_id: ...}, options: {...}}. get returns whichever shape is stored, unchanged; when patching or updating, use the shape that matches the trigger's type, not the shape of a neighboring trigger.",
 	},
 }
 

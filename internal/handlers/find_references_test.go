@@ -37,6 +37,13 @@ func TestFindReferencesHandlers_Schema(t *testing.T) {
 	if !strings.Contains(tool.Description, "scanned_sources") || !strings.Contains(tool.Description, "failed_sources") {
 		t.Errorf("Description should mention scanned_sources/failed_sources trust guarantee, got: %s", tool.Description)
 	}
+	if !strings.Contains(tool.Description, "required argument search") || !strings.Contains(tool.Description, "match_mode") {
+		t.Errorf("Description should explain the required search argument and match_mode, got: %s", tool.Description)
+	}
+	searchDesc := tool.InputSchema.Properties["search"].Description
+	if !strings.Contains(searchDesc, "entity_id") || !strings.Contains(searchDesc, "substring") {
+		t.Errorf("search property description should mention entity_id and substring, got: %s", searchDesc)
+	}
 }
 
 func TestHandleFindReferences(t *testing.T) {
@@ -85,7 +92,19 @@ func TestHandleFindReferences(t *testing.T) {
 			name:         "missing search",
 			args:         map[string]any{},
 			wantError:    true,
-			wantContains: []string{"search is required"},
+			wantContains: []string{"search is required: pass the entity_id"},
+		},
+		{
+			name:         "non-string search",
+			args:         map[string]any{"search": 42},
+			wantError:    true,
+			wantContains: []string{"search is required: pass the entity_id"},
+		},
+		{
+			name:         "empty search",
+			args:         map[string]any{"search": ""},
+			wantError:    true,
+			wantContains: []string{"search is required: pass the entity_id"},
 		},
 		{
 			name: "substring match across all types by default",

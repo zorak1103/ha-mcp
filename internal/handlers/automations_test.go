@@ -2524,6 +2524,46 @@ func TestEnrichAutomationError(t *testing.T) {
 			wantNotContain: "{% set %}",
 		},
 		{
+			// Must win over the generic "extra keys not allowed" hint even if a message carries both.
+			name: "not a valid option at options triggers trigger-shape hint",
+			msg:  "error saving patched automation: HA error",
+			err: &homeassistant.APIError{
+				StatusCode: 400,
+				Message:    "invalid automation config: {\"message\":\"Message malformed: not a valid option at 'options'\"}",
+			},
+			wantContain:    "flat keys",
+			wantNotContain: "unrecognized key",
+		},
+		{
+			name: "not a valid option at target triggers trigger-shape hint",
+			msg:  "error saving patched automation: HA error",
+			err: &homeassistant.APIError{
+				StatusCode: 400,
+				Message:    "invalid automation config: {\"message\":\"Message malformed: not a valid option at 'target'\"}",
+			},
+			wantContain:    "flat keys",
+			wantNotContain: "unrecognized key",
+		},
+		{
+			name: "options hint wins when the body also says extra keys not allowed",
+			msg:  "error saving patched automation: HA error",
+			err: &homeassistant.APIError{
+				StatusCode: 400,
+				Message:    "invalid automation config: {\"message\":\"Message malformed: extra keys not allowed @ data['triggers'][0]; not a valid option at 'options'\"}",
+			},
+			wantContain:    "flat keys",
+			wantNotContain: "unrecognized key",
+		},
+		{
+			name: "non-400 with the same text unchanged",
+			msg:  "error saving patched automation: HA error",
+			err: &homeassistant.APIError{
+				StatusCode: 500,
+				Message:    "invalid automation config: {\"message\":\"Message malformed: not a valid option at 'options'\"}",
+			},
+			wantExact: "error saving patched automation: HA error",
+		},
+		{
 			name: "unrecognized 400 error unchanged",
 			msg:  "Error creating automation: HA error",
 			err: &homeassistant.APIError{
@@ -2570,6 +2610,24 @@ func TestManageAutomation_Schema(t *testing.T) {
 	for _, want := range []string{"triggers", "conditions", "actions", "notes", "state", "numeric_state", "time", "sun", "template"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("schema missing expected field/type %q", want)
+		}
+	}
+	for _, want := range []string{"Legacy trigger types", "Purpose-specific triggers", "power.crossed_threshold", "NOT accept target or options"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("schema missing trigger-shape guidance %q", want)
+		}
+	}
+}
+
+func TestManageAutomationTool_DescriptionDocumentsTriggerShapes(t *testing.T) {
+	t.Parallel()
+
+	h := &AutomationHandlers{}
+	tool := h.manageAutomationTool()
+
+	for _, want := range []string{"Trigger shape:", "power.crossed_threshold", "target/options"} {
+		if !strings.Contains(tool.Description, want) {
+			t.Errorf("tool description missing %q", want)
 		}
 	}
 }

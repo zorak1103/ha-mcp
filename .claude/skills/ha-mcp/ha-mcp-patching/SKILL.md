@@ -160,14 +160,36 @@ so it stays small even for a large dashboard.
   skipped as a no-op.
 - Dashboards and scenes are not covered; their key order is cosmetic.
 
+## Trigger Shapes
+
+HA stores two trigger shapes, and `get` returns whichever one is stored, unchanged.
+
+Legacy types (`state`, `numeric_state`, `time`, `sun`, `event`, `template`, ...) take **flat keys**.
+Intent "state to on for 15 minutes":
+```json
+{"trigger": "state", "entity_id": "binary_sensor.washer_running", "to": "on", "for": "00:15:00"}
+```
+
+Purpose-specific triggers (e.g. `power.crossed_threshold`) take `trigger` + `target` + `options`.
+Intent "fire after 15 minutes below 2 W". Copy `options` keys from an existing trigger of that type; the ones shown are illustrative.
+```json
+{"trigger": "power.crossed_threshold", "target": {"entity_id": "sensor.washer_power"}, "options": {"threshold": {"type": "below", "value": {"number": 2}}, "for": {"minutes": 15}}}
+```
+
+Rule: match the shape of the trigger type you are writing, not the neighbor you copied from. Adding
+`options` or `target` to a legacy trigger fails with `not a valid option at 'options'` (or `'target'`).
+Fix: move the contents of `options` (e.g. `for`) and the `entity_id` from `target` to the trigger's top level.
+The tool appends a hint to this error.
+
 ## Anti-Patterns
 
-| Instead of…                                          | Do this                                                |
-| ---------------------------------------------------- | ------------------------------------------------------ |
-| Full `update` to change 1-2 fields                   | `patch` with `replace` ops on those fields             |
-| Using `path` index after a remove in the same call   | Use semantic `match` to address elements by property   |
-| Patching without calling `get` first                 | Always `get` first — `list` does not populate Config   |
-| Using both `match` and `path` in the same op         | They are mutually exclusive — pick one per op          |
+| Instead of…                                                                        | Do this                                                |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| Full `update` to change 1-2 fields                                                 | `patch` with `replace` ops on those fields             |
+| Using `path` index after a remove in the same call                                 | Use semantic `match` to address elements by property   |
+| Patching without calling `get` first                                               | Always `get` first — `list` does not populate Config   |
+| Using both `match` and `path` in the same op                                       | They are mutually exclusive — pick one per op          |
+| Copying a purpose-specific trigger's `target`/`options` onto a state trigger       | Use flat `entity_id`/`for` for legacy types            |
 
 ## Source for Maintenance
 

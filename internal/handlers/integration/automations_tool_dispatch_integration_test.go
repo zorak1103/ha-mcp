@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
+	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
 
 type AutomationToolDispatchTestSuite struct {
@@ -105,6 +106,85 @@ func (s *AutomationToolDispatchTestSuite) TestAutomationUpdateAndPatchViaTool() 
 	trigger, ok := afterPatch.Config.Triggers[0].(map[string]any)
 	s.Require().True(ok, "trigger should be a map")
 	s.Equal("00:00:05", trigger["for"], "trigger should have 'for' field added via semantic patch")
+}
+
+// TestPatchLegacyTriggerWithOptionsGivesHint pins issue #304: a legacy trigger
+// (state, numeric_state, ...) written with the purpose-specific `options`
+// wrapper is rejected by HA with an opaque schema error, and the tool must name
+// the cause and the fix. It then applies the hinted flat shape to prove the fix
+// actually works.
+func (s *AutomationToolDispatchTestSuite) TestPatchLegacyTriggerWithOptionsGivesHint() {
+	triggerName := GenerateTestID("auto_opt_trigger")
+	triggerEntityID := BuildEntityID("input_button", triggerName)
+	automationID := GenerateTestID("auto_opt")
+
+	s.RegisterCleanup(func() {
+		_ = s.Client().DeleteAutomation(s.Context(), automationID)
+		_ = s.Client().DeleteHelper(s.Context(), triggerEntityID)
+	})
+
+	err := s.Client().CreateHelper(s.Context(), homeassistant.HelperConfig{
+		Platform: "input_button",
+		Config:   map[string]any{"name": triggerName},
+	})
+	s.Require().NoError(err, "Failed to create trigger input_button")
+	_, err = s.WaitForEntity(triggerEntityID, 30*time.Second)
+	s.Require().NoError(err)
+
+	err = s.Client().CreateAutomation(s.Context(), homeassistant.AutomationConfig{
+		ID:    automationID,
+		Alias: automationID,
+		Mode:  "single",
+		Triggers: []any{
+			map[string]any{"platform": "state", "entity_id": triggerEntityID},
+		},
+		Actions: []any{
+			map[string]any{"service": "input_button.press", "target": map[string]any{"entity_id": triggerEntityID}},
+		},
+	})
+	s.Require().NoError(err, "Failed to create automation")
+	_, err = s.WaitForAutomation(automationID, 30*time.Second)
+	s.Require().NoError(err, "Automation did not appear")
+
+	patchTrigger := func(trigger map[string]any) *mcp.ToolsCallResult {
+		return s.CallTool("manage_automation", map[string]any{
+			"action":        "patch",
+			"automation_id": automationID,
+			"operations": []any{
+				map[string]any{"op": "add", "path": "/triggers/-", "value": trigger},
+			},
+		})
+	}
+
+	// Wrong shape: options wrapper on a legacy trigger.
+	bad := patchTrigger(map[string]any{
+		"trigger":   "state",
+		"entity_id": triggerEntityID,
+		"to":        "on",
+		"options":   map[string]any{"for": "00:15:00"},
+	})
+	s.Require().True(bad.IsError, "legacy trigger with options must be rejected")
+	s.Contains(resultText(bad), "Hint:")
+	s.Contains(resultText(bad), "flat keys")
+
+	// Wrong shape: target wrapper on a legacy trigger.
+	badTarget := patchTrigger(map[string]any{
+		"trigger": "state",
+		"target":  map[string]any{"entity_id": triggerEntityID},
+		"to":      "on",
+	})
+	s.Require().True(badTarget.IsError, "legacy trigger with target must be rejected")
+	s.Contains(resultText(badTarget), "Hint:")
+	s.Contains(resultText(badTarget), "flat keys")
+
+	// The hinted fix: flat keys.
+	good := patchTrigger(map[string]any{
+		"trigger":   "state",
+		"entity_id": triggerEntityID,
+		"to":        "on",
+		"for":       "00:15:00",
+	})
+	s.Require().False(good.IsError, "flat-shape trigger should be accepted, got: %s", resultText(good))
 }
 
 // TestAutomationUpdate_ConfigFileEntryExists_StorageManaged verifies the config-file existence

@@ -50,3 +50,30 @@ func TestEnrichConfigError_ScriptTemplateSyntaxError(t *testing.T) {
 		})
 	}
 }
+
+// TestEnrichConfigError_TriggerShapeHintIsAutomationOnly pins that the legacy
+// trigger-shape hint lives in automationErrorHints only: scripts and scenes have
+// no triggers, so the same HA body must pass through unchanged.
+func TestEnrichConfigError_TriggerShapeHintIsAutomationOnly(t *testing.T) {
+	const msg = "Error saving: HA error"
+	err := &homeassistant.APIError{
+		StatusCode: 400,
+		Message:    "invalid config: {\"message\":\"Message malformed: not a valid option at 'options'\"}",
+	}
+
+	tests := []struct {
+		name  string
+		hints []configErrorHint
+	}{
+		{name: "script hints", hints: scriptErrorHints},
+		{name: "scene hints", hints: sceneErrorHints},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := enrichConfigError(msg, err, tt.hints); got != msg {
+				t.Errorf("expected message unchanged, got %q", got)
+			}
+		})
+	}
+}
