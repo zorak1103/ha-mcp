@@ -193,4 +193,4 @@ The tool appends a hint to this error.
 
 ## Source for Maintenance
 
-`internal/jsonpatch/`, `internal/handlers/patch_semantic.go`, AGENTS.md section "JSON Patch (RFC 6902) + Semantic Patch".
+`internal/jsonpatch/`, `internal/handlers/patch_semantic.go`, `docs/agents/tool-behaviors.md` section "JSON Patch (RFC 6902) + Semantic Patch".

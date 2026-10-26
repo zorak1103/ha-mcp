@@ -67,4 +67,4 @@ Look up by symptom. Fix is actionable.
 
 ## Source for Maintenance
 
-`D:\data\godev\ha-mcp\AGENTS.md` sections "API & Type Gotchas" and "Pattern Reference".
+`docs/agents/gotchas.md` and `docs/agents/helpers-gotchas.md` (formerly AGENTS.md's "API & Type Gotchas"), plus the "Registry and detail-map patterns" section of `docs/agents/gotchas.md` and `docs/agents/helpers-config-entries.md` (formerly "Pattern Reference").

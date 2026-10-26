@@ -89,7 +89,7 @@ New tools have a documentation checklist beyond just code + tests — update all
 of the following if applicable (see `AGENTS.md`'s Workflow Preferences for the
 full list): `README.md` (tool count and summary table), `docs/tools.md`,
 `docs/architecture.md` (if adding a handler file), `docs/feature-comparison.md`,
-`AGENTS.md` (Key Files / Consolidated Tools sections),
+`AGENTS.md` (Key Files section) and `docs/agents/tool-behaviors.md` (Consolidated Tools section),
 `docs/integration-tests.md`, and the relevant
 `.claude/skills/ha-mcp/*/SKILL.md` files.
 
