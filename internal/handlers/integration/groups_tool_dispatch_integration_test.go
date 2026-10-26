@@ -19,7 +19,7 @@ func TestGroupToolDispatch(t *testing.T) {
 }
 
 // TestGroupDeleteViaTool exercises the wsClientImpl.DeleteHelper guard
-// (isWSHelperPlatform) added alongside the fix routing config-entry helper
+// (IsWSHelperPlatform) added alongside the fix routing config-entry helper
 // updates/deletes correctly: "group" is a config-entry platform recognized by
 // extractPlatform, so without the guard a delete falling through to the WS
 // layer would build the nonexistent "group/delete" command instead of

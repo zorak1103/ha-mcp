@@ -2167,7 +2167,7 @@ func TestWSClientImplWithSender_GetHelperConfig_NotFound(t *testing.T) {
 }
 
 // TestWSClientImplWithSender_GetHelperConfig_RejectsConfigEntryPlatform
-// mirrors UpdateHelper's own isWSHelperPlatform gate: a Config Entry
+// mirrors UpdateHelper's own IsWSHelperPlatform gate: a Config Entry
 // platform (e.g. "threshold") has no "<platform>/list" WS command, so
 // GetHelperConfig must reject it before sending a command HA never
 // registered, rather than surfacing HA's opaque unknown_command error.

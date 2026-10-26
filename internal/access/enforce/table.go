@@ -1,8 +1,10 @@
 package enforce
 
-// class says how the wrapper enforces one Client method. Every method starts
-// as classUnclassified (fail closed); later tasks give each its real class as
-// they replace the stub in stubs.go.
+// class says how the wrapper enforces one Client method. A method added to the
+// interface starts as classUnclassified (fail closed, its body calls
+// c.unclassified) until it is given its real class;
+// TestNoMethodLeftUnclassified and TestNoClassifiedMethodCallsUnclassified keep
+// the table and the method bodies in step.
 type class int
 
 const (
@@ -26,6 +28,10 @@ const (
 	classSystem
 	// classCommand is the WebSocket passthrough, decided per command name.
 	classCommand
+	// classPassThrough is an object-less read forwarded unchanged: it exposes
+	// no per-object data and cannot write. Each such entry carries its
+	// justification in methodClass.
+	classPassThrough
 )
 
 // methodClass has exactly one entry per homeassistant.Client method, keyed by
@@ -43,10 +49,10 @@ var methodClass = map[string]class{
 	"DeleteAutomation":          classWriteChecked,
 	"ToggleAutomation":          classWriteChecked,
 	"ListHelpers":               classReadFiltered,
-	"CreateHelper":              classUnclassified,
-	"CreateHelperEntity":        classUnclassified,
-	"UpdateHelper":              classUnclassified,
-	"DeleteHelper":              classUnclassified,
+	"CreateHelper":              classWriteChecked,
+	"CreateHelperEntity":        classWriteChecked,
+	"UpdateHelper":              classWriteChecked,
+	"DeleteHelper":              classWriteChecked,
 	"SetHelperValue":            classWriteChecked,
 	"ListScripts":               classReadFiltered,
 	"GetScript":                 classReadLookup,
@@ -64,65 +70,71 @@ var methodClass = map[string]class{
 	"GetEntityRegistryEntry":    classReadLookup,
 	"GetDeviceRegistry":         classReadFiltered,
 	"GetAreaRegistry":           classReadFiltered,
-	"CreateArea":                classUnclassified,
-	"UpdateArea":                classUnclassified,
-	"DeleteArea":                classUnclassified,
-	"GetLabelRegistry":          classUnclassified,
-	"CreateLabel":               classUnclassified,
-	"UpdateLabel":               classUnclassified,
-	"DeleteLabel":               classUnclassified,
-	"GetFloorRegistry":          classUnclassified,
-	"CreateFloor":               classUnclassified,
-	"UpdateFloor":               classUnclassified,
-	"DeleteFloor":               classUnclassified,
-	"GetZones":                  classUnclassified,
-	"CreateZone":                classUnclassified,
-	"UpdateZone":                classUnclassified,
-	"DeleteZone":                classUnclassified,
-	"GetPersons":                classUnclassified,
-	"CreatePerson":              classUnclassified,
-	"UpdatePerson":              classUnclassified,
-	"DeletePerson":              classUnclassified,
-	"GetTags":                   classUnclassified,
-	"CreateTag":                 classUnclassified,
-	"UpdateTag":                 classUnclassified,
-	"DeleteTag":                 classUnclassified,
-	"RemoveEntityRegistryEntry": classUnclassified,
-	"UpdateEntityRegistryEntry": classUnclassified,
-	"RemoveDeviceConfigEntry":   classUnclassified,
-	"UpdateDeviceRegistryEntry": classUnclassified,
+	"CreateArea":                classWriteChecked,
+	"UpdateArea":                classWriteChecked,
+	"DeleteArea":                classWriteChecked,
+	"GetLabelRegistry":          classReadFiltered,
+	"CreateLabel":               classWriteChecked,
+	"UpdateLabel":               classWriteChecked,
+	"DeleteLabel":               classWriteChecked,
+	"GetFloorRegistry":          classReadFiltered,
+	"CreateFloor":               classWriteChecked,
+	"UpdateFloor":               classWriteChecked,
+	"DeleteFloor":               classWriteChecked,
+	"GetZones":                  classReadFiltered,
+	"CreateZone":                classWriteChecked,
+	"UpdateZone":                classWriteChecked,
+	"DeleteZone":                classWriteChecked,
+	"GetPersons":                classReadFiltered,
+	"CreatePerson":              classWriteChecked,
+	"UpdatePerson":              classWriteChecked,
+	"DeletePerson":              classWriteChecked,
+	"GetTags":                   classReadFiltered,
+	"CreateTag":                 classWriteChecked,
+	"UpdateTag":                 classWriteChecked,
+	"DeleteTag":                 classWriteChecked,
+	"RemoveEntityRegistryEntry": classWriteChecked,
+	"UpdateEntityRegistryEntry": classWriteChecked,
+	"RemoveDeviceConfigEntry":   classWriteChecked,
+	"UpdateDeviceRegistryEntry": classWriteChecked,
 	"SignPath":                  classReadRestricted,
 	"GetCameraStream":           classReadLookup,
 	"BrowseMedia":               classReadFiltered,
 	"GetLovelaceConfig":         classReadLookup,
-	"SaveLovelaceConfig":        classUnclassified,
+	"SaveLovelaceConfig":        classWriteChecked,
 	"ListDashboards":            classReadFiltered,
-	"CreateDashboard":           classUnclassified,
-	"UpdateDashboard":           classUnclassified,
-	"DeleteDashboard":           classUnclassified,
+	"CreateDashboard":           classWriteChecked,
+	"UpdateDashboard":           classWriteChecked,
+	"DeleteDashboard":           classWriteChecked,
 	"GetStatistics":             classReadFiltered,
 	"GetTriggersForTarget":      classReadFiltered,
 	"GetConditionsForTarget":    classReadFiltered,
 	"GetServicesForTarget":      classReadFiltered,
 	"ExtractFromTarget":         classReadFiltered,
 	"GetHelperConfig":           classReadLookup,
-	"GetConfigEntries":          classUnclassified,
-	"GetConfigEntry":            classUnclassified,
-	"GetConfigEntryOptions":     classUnclassified,
+	"GetConfigEntries":          classReadFiltered,
+	"GetConfigEntry":            classReadLookup,
+	"GetConfigEntryOptions":     classReadLookup,
 	"DeleteConfigEntry":         classSystem,
-	"GetServices":               classUnclassified,
-	"GetConfig":                 classUnclassified,
-	"RenderTemplate":            classReadRestricted,
-	"GetLogbook":                classReadFiltered,
-	"CheckConfig":               classUnclassified,
-	"SendHACSCommand":           classCommand,
-	"CallServiceWithResponse":   classWriteChecked,
-	"ListStatisticIDs":          classReadFiltered,
-	"ValidateStatistics":        classUnclassified,
-	"ClearStatistics":           classSystem,
-	"GetCalendars":              classReadFiltered,
-	"GetCalendarEvents":         classReadLookup,
-	"GetCameraSnapshot":         classReadLookup,
-	"GetSystemLog":              classUnclassified,
-	"ClearSystemLog":            classSystem,
+	// Service descriptions (names, fields, selectors) of every integration:
+	// no entity ids or states, and a read.
+	"GetServices": classPassThrough,
+	// Core configuration (location, units, version, loaded components): no
+	// per-object data, and a read.
+	"GetConfig":      classPassThrough,
+	"RenderTemplate": classReadRestricted,
+	"GetLogbook":     classReadFiltered,
+	// Validation of configuration.yaml (valid/invalid plus messages): a
+	// read-only check that names no entity state.
+	"CheckConfig":             classPassThrough,
+	"SendHACSCommand":         classCommand,
+	"CallServiceWithResponse": classWriteChecked,
+	"ListStatisticIDs":        classReadFiltered,
+	"ValidateStatistics":      classReadFiltered,
+	"ClearStatistics":         classSystem,
+	"GetCalendars":            classReadFiltered,
+	"GetCalendarEvents":       classReadLookup,
+	"GetCameraSnapshot":       classReadLookup,
+	"GetSystemLog":            classReadRestricted,
+	"ClearSystemLog":          classSystem,
 }

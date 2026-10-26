@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/zorak1103/ha-mcp/internal/access"
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
@@ -24,6 +25,34 @@ type client struct {
 	p     *access.Policy
 	tr    *access.Tracker
 	snap  *snapshot
+	// created holds the entity ids this request created (helper creates), so
+	// a follow-up write in the same request finds them before the registry
+	// lists them.
+	created createdSet
+}
+
+// createdSet is a concurrency-safe set of entity ids; the zero value is empty.
+type createdSet struct {
+	mu  sync.Mutex
+	ids map[string]bool
+}
+
+func (s *createdSet) add(id string) {
+	if id == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ids == nil {
+		s.ids = map[string]bool{}
+	}
+	s.ids[id] = true
+}
+
+func (s *createdSet) has(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ids[id]
 }
 
 var _ homeassistant.Client = (*client)(nil)

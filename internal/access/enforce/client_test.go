@@ -125,42 +125,6 @@ func TestWrapped_DoesNotImplementClose(t *testing.T) {
 	}
 }
 
-func TestEveryStubFailsClosed(t *testing.T) {
-	typ := reflect.TypeOf((*homeassistant.Client)(nil)).Elem()
-	ctx, tr := access.WithTracker(context.Background(), "some_tool")
-	w := Wrap(readPolicy(t), &panicInner{}, tr)
-	wantMsg := access.Denial{Tool: "some_tool"}.Message()
-	for i := range typ.NumMethod() {
-		m := typ.Method(i)
-		if methodClass[m.Name] != classUnclassified {
-			continue // enforced for real; covered by its own tests
-		}
-		t.Run(m.Name, func(t *testing.T) {
-			args := []reflect.Value{reflect.ValueOf(ctx)}
-			for j := 1; j < m.Type.NumIn(); j++ {
-				args = append(args, reflect.Zero(m.Type.In(j)))
-			}
-			out := reflect.ValueOf(w).MethodByName(m.Name).Call(args)
-			last := out[len(out)-1]
-			err, _ := last.Interface().(error)
-			if err == nil {
-				t.Fatal("unclassified method must fail closed with an error")
-			}
-			if err.Error() != wantMsg {
-				t.Errorf("error = %q, want %q", err.Error(), wantMsg)
-			}
-			for _, v := range out[:len(out)-1] {
-				if !v.IsZero() {
-					t.Errorf("non-zero result %v on the fail-closed path", v)
-				}
-			}
-		})
-	}
-	if d := tr.First(); d == nil || d.Tool != "some_tool" {
-		t.Errorf("denial not recorded on the tracker: %+v", d)
-	}
-}
-
 func TestUnclassified_RecordsMethodNameWithoutRevealingIt(t *testing.T) {
 	_, tr := access.WithTracker(context.Background(), "manage_x")
 	c := &client{p: readPolicy(t), tr: tr}

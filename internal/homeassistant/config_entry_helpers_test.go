@@ -22,7 +22,7 @@ func TestWSHelperAndConfigEntryPlatforms_AreDisjoint(t *testing.T) {
 	for platform := range wsHelperPlatforms {
 		if configEntryPlatforms[platform] {
 			t.Errorf("platform %q is in both wsHelperPlatforms and configEntryPlatforms - "+
-				"isWSHelperPlatform and RequiresConfigEntryFlow would both return true for it, "+
+				"IsWSHelperPlatform and RequiresConfigEntryFlow would both return true for it, "+
 				"an invariant the merge gate in internal/handlers relies on holding", platform)
 		}
 	}

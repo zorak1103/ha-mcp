@@ -687,6 +687,14 @@ var staticPlatformDomains = map[string]string{
 	"generic_hygrostat":  domainHumidifier,
 }
 
+// ConfigEntryEntityDomain returns the entity domain a Config Entry helper
+// creates, as the real client predicts it (determineEntityDomainForConfigEntry),
+// or "" when it cannot tell. Exported for the access policy layer, which
+// decides a helper create on the entity id it will get.
+func ConfigEntryEntityDomain(config HelperConfig) string {
+	return (&HybridClient{}).determineEntityDomainForConfigEntry(config)
+}
+
 // determineEntityDomainForConfigEntry determines the entity domain for a Config Entry helper.
 func (c *HybridClient) determineEntityDomainForConfigEntry(config HelperConfig) string {
 	// Check static domain mapping first

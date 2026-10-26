@@ -13,7 +13,7 @@ import (
 // would make. ExtractCalls is for those definition shapes only; callers must
 // not pass other shapes (a template helper keeps its actions under its own
 // keys, which ExtractCalls does not walk, so it would yield no calls and no
-// error).
+// error): ExtractCallsFromActionKeys is the entry point for those.
 //
 // Targets holds the objects named by the node's target, its top-level id keys,
 // the id keys of its data and, for services that carry the object id in their
@@ -115,6 +115,27 @@ func ExtractCalls(def map[string]any) ([]Call, error) {
 		}
 		if err := e.walkNode(node, 0); err != nil {
 			return nil, err
+		}
+	}
+	return e.calls, nil
+}
+
+// ExtractCallsFromActionKeys returns every service call made by the action
+// lists stored under keys of def, the shape of a template helper (turn_on,
+// press, set_value, ...). Each present, non-null value is walked exactly like
+// an automation's action list, with the same fail-closed rules: an error means
+// the actions cannot be fully decided and the caller must refuse. Keys of def
+// that are not named are not looked at; the caller decides which keys hold
+// actions.
+func ExtractCallsFromActionKeys(def map[string]any, keys []string) ([]Call, error) {
+	e := &extractor{}
+	for _, key := range keys {
+		node, ok := def[key]
+		if !ok || node == nil {
+			continue
+		}
+		if err := e.walkNode(node, 0); err != nil {
+			return nil, fmt.Errorf("%s: %w", key, err)
 		}
 	}
 	return e.calls, nil
@@ -511,6 +532,11 @@ func hasTemplate(s string) bool {
 	}
 	return false
 }
+
+// ContainsTemplate reports whether any string inside v, or any map key, holds a
+// Jinja template marker ({{, {% or {#). It fails closed: a value of a type it
+// does not know how to inspect counts as a template.
+func ContainsTemplate(v any) bool { return containsTemplate(v) }
 
 // containsTemplate reports whether any string inside v, or any map key, holds
 // a template marker. It fails closed: a value of a type it does not know how to

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 )
@@ -58,6 +59,51 @@ func errLovelaceMissing(urlPath string) error {
 	}
 	return fmt.Errorf("get lovelace config failed: %w",
 		wsCommandError("config_not_found", "Unknown config specified: "+urlPath))
+}
+
+// errLovelaceSaveMissing is SaveLovelaceConfig's error for an unknown
+// dashboard: the same HA answer as for a read (errLovelaceMissing), wrapped by
+// the save method. LIVE-CHECK.
+func errLovelaceSaveMissing(urlPath string) error {
+	if urlPath == "" {
+		urlPath = "None"
+	}
+	return fmt.Errorf("save lovelace config failed: %w",
+		wsCommandError("config_not_found", "Unknown config specified: "+urlPath))
+}
+
+// errDashboardMissing is UpdateDashboard's ("update") or DeleteDashboard's
+// ("delete") error for an unknown dashboard id: HA's storage collection
+// answers not_found "Unable to find dashboard_id <id>". LIVE-CHECK.
+func errDashboardMissing(op, dashboardID string) error {
+	return fmt.Errorf("%s dashboard failed: %w",
+		op, wsCommandError("not_found", "Unable to find dashboard_id "+dashboardID))
+}
+
+// errRegistryUpdateMissing is UpdateEntityRegistryEntry's error for an
+// entity not in the registry (HA: not_found "Entity not found"). LIVE-CHECK.
+func errRegistryUpdateMissing() error {
+	return fmt.Errorf("failed to update entity: %w", wsCommandError("not_found", "Entity not found"))
+}
+
+// errRegistryRemoveMissing is RemoveEntityRegistryEntry's error for an
+// entity not in the registry. LIVE-CHECK.
+func errRegistryRemoveMissing() error {
+	return fmt.Errorf("remove entity registry entry failed: %w", wsCommandError("not_found", "Entity not found"))
+}
+
+// errConfigEntryMissing is GetConfigEntry's error for an unknown entry id
+// (HA: not_found "Config entry not found"). LIVE-CHECK.
+func errConfigEntryMissing() error {
+	return fmt.Errorf("get config entry failed: %w", wsCommandError("not_found", "Config entry not found"))
+}
+
+// errHelperMissing is the answer for a helper update or delete whose entity is
+// hidden or, under a hiding policy, does not exist: the client's own
+// missing-helper error for the entity's domain, so it depends on the id alone.
+func errHelperMissing(entityID string) error {
+	domain, _, _ := strings.Cut(entityID, ".")
+	return homeassistant.NewHelperConfigMissingError(domain, entityID)
 }
 
 // errCalendarMissing is GetCalendarEvents' error for an unknown calendar: HA

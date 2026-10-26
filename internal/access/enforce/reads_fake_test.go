@@ -42,6 +42,7 @@ type readFake struct {
 	hacsFn      func(command string, data map[string]any) (any, error)
 	writes      []writeCall // see writes_fake_test.go
 	cfg         configStore // see writes_config_test.go
+	more        moreStore   // see registry_fake_test.go
 
 	mu         sync.Mutex
 	seenIDs    []string

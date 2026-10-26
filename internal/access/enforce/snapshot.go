@@ -215,6 +215,13 @@ func (d *snapData) entitiesOfLabel(labelID string) []string {
 	})
 }
 
+// entitiesOfConfigEntry lists the entities registered by the config entry.
+func (d *snapData) entitiesOfConfigEntry(entryID string) []string {
+	return d.selectEntities(func(e homeassistant.EntityRegistryEntry) bool {
+		return entryID != "" && e.ConfigEntryID == entryID
+	})
+}
+
 func (d *snapData) selectEntities(match func(homeassistant.EntityRegistryEntry) bool) []string {
 	var out []string
 	for _, id := range d.entityIDs {

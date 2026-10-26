@@ -332,14 +332,16 @@ var wsHelperPlatforms = map[string]bool{
 	"schedule":       true,
 }
 
-// isWSHelperPlatform reports whether platform has real "<platform>/update|delete" WS commands.
-func isWSHelperPlatform(platform string) bool {
+// IsWSHelperPlatform reports whether platform has real "<platform>/update|delete" WS commands.
+// Exported for the access policy layer, which must know which helper platforms
+// the WebSocket path accepts.
+func IsWSHelperPlatform(platform string) bool {
 	return wsHelperPlatforms[platform]
 }
 
 // UpdateHelper updates an existing input helper.
 func (c *wsClientImpl) UpdateHelper(ctx context.Context, helperID string, config HelperConfig) error {
-	if !isWSHelperPlatform(config.Platform) {
+	if !IsWSHelperPlatform(config.Platform) {
 		return fmt.Errorf("cannot update %s helper via websocket: config-entry helpers require options flow (entity may be missing from the registry)", config.Platform)
 	}
 
@@ -378,7 +380,7 @@ func (c *wsClientImpl) DeleteHelper(ctx context.Context, helperID string) error 
 		return fmt.Errorf("unable to determine platform for helper %s", helperID)
 	}
 
-	if !isWSHelperPlatform(platform) {
+	if !IsWSHelperPlatform(platform) {
 		return fmt.Errorf("cannot delete %s helper via websocket: config-entry helpers require the config entry API (entity may be missing from the registry)", platform)
 	}
 
@@ -575,7 +577,7 @@ var ErrHelperNotFoundInStorage = errors.New("not found in storage list")
 // like input_number's "initial" don't appear in state attributes at all
 // for several input_* types).
 func (c *wsClientImpl) GetHelperConfig(ctx context.Context, platform, entityID string) (map[string]any, error) {
-	if !isWSHelperPlatform(platform) {
+	if !IsWSHelperPlatform(platform) {
 		return nil, NewHelperConfigMissingError(platform, entityID)
 	}
 
@@ -610,7 +612,7 @@ func (c *wsClientImpl) GetHelperConfig(ctx context.Context, platform, entityID s
 // ErrHelperNotFoundInStorage. It lets a policy layer answer for an object it
 // hides exactly like the client answers for a missing one.
 func NewHelperConfigMissingError(platform, entityID string) error {
-	if !isWSHelperPlatform(platform) {
+	if !IsWSHelperPlatform(platform) {
 		return fmt.Errorf("cannot get %s helper config via websocket: config-entry helpers have no \"<platform>/list\" command (entity may be missing from the registry)", platform)
 	}
 	return fmt.Errorf("%s not found: %s: %w", platform, entityID, ErrHelperNotFoundInStorage)

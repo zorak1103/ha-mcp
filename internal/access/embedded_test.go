@@ -582,3 +582,40 @@ func TestExtract_TemplatedDataKey_Undecidable(t *testing.T) {
 		}
 	}
 }
+
+func TestExtractFromActionKeys_WalksOnlyNamedKeys(t *testing.T) {
+	def := parseDef(t, `{
+		"turn_on": [{"action": "light.turn_on", "target": {"entity_id": "light.a"}}],
+		"turn_off": {"action": "light.turn_off", "target": {"entity_id": "light.b"}},
+		"state": "{{ is_state('light.a', 'on') }}",
+		"actions": [{"action": "lock.unlock", "target": {"entity_id": "lock.door"}}]
+	}`)
+	calls, err := ExtractCallsFromActionKeys(def, []string{"turn_on", "turn_off", "press"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := callNames(calls)
+	want := []string{"light.turn_on", "light.turn_off"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("calls = %v, want %v (the actions key is not a named key)", got, want)
+	}
+	if calls[1].Targets.EntityIDs[0] != "light.b" {
+		t.Errorf("targets = %+v", calls[1].Targets)
+	}
+}
+
+func TestExtractFromActionKeys_FailsClosed(t *testing.T) {
+	for name, src := range map[string]string{
+		"templated service":   `{"press": [{"action": "{{ svc }}"}]}`,
+		"templated target":    `{"press": [{"action": "light.turn_on", "target": {"entity_id": "{{ x }}"}}]}`,
+		"string action value": `{"press": "light.turn_on"}`,
+		"unknown node":        `{"press": [{"frobnicate": 1}]}`,
+		"blueprint in action": `{"press": {"use_blueprint": {"path": "x"}}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := ExtractCallsFromActionKeys(parseDef(t, src), []string{"press"}); err == nil {
+				t.Fatal("expected an error")
+			}
+		})
+	}
+}
