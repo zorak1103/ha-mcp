@@ -8,6 +8,7 @@ package enforce
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"regexp"
 	"strings"
 
@@ -51,9 +52,26 @@ func (c *client) InvalidateLabelRegistryCache() {
 // yet and returns the error the caller sees. The method name goes to the log
 // only; the message reads "operation not permitted".
 func (c *client) unclassified(method string) error {
-	d := access.Denial{Tool: c.tr.Tool(), Object: method}
+	return c.refuse(method)
+}
+
+// refuse records a denial without capability for object (a method or
+// operation name, shown in the log only) and returns the error the caller sees:
+// "operation not permitted". It is the refusal for anything the policy cannot
+// decide or does not allow without naming an object.
+func (c *client) refuse(object string) error {
+	d := access.Denial{Tool: c.tr.Tool(), Object: object}
 	c.tr.Deny(d)
 	return errors.New(d.Message())
+}
+
+// undecidable is the fail-closed answer when a decision needs registry data
+// that could not be fetched: the cause goes to the log, the caller sees the
+// generic refusal (never snapshot internals, never "not found"). Whether the
+// fetch fails does not depend on the requested object, so this is no oracle.
+func (c *client) undecidable(method string, cause error) error {
+	slog.Warn("access decision failed, refusing", "method", method, "error", cause)
+	return c.refuse(method)
 }
 
 // entityIDRE is the shape of a Home Assistant entity id after normalisation.
@@ -72,19 +90,39 @@ func normalizeEntityID(s string) (string, bool) {
 // fetched only when the policy has area, label or device matchers; a failed
 // fetch returns the zero Grant and the error so the caller fails closed.
 func (c *client) decideEntity(ctx context.Context, entityID string) (access.Grant, error) {
-	id, ok := normalizeEntityID(entityID)
-	if !ok {
+	if _, ok := normalizeEntityID(entityID); !ok {
 		return access.Grant{}, nil
 	}
-	obj := access.Object{Kind: access.KindEntity, ID: id}
-	if c.p.NeedsRegistry() {
-		data, err := c.snap.get(ctx)
-		if err != nil {
-			return access.Grant{}, err
-		}
-		obj = data.objectFor(id)
+	grant, err := c.grantFunc(ctx)
+	if err != nil {
+		return access.Grant{}, err
 	}
-	return c.p.Decide(obj), nil
+	return grant(entityID), nil
+}
+
+// grantFunc returns a function that decides entity ids with the registry view
+// fetched once, for callers that decide many ids (list filters). Same rules as
+// decideEntity: an invalid id is hidden; the registry is fetched only when the
+// policy has attribute matchers, and a failed fetch is returned as an error.
+func (c *client) grantFunc(ctx context.Context) (func(entityID string) access.Grant, error) {
+	var data *snapData
+	if c.p.NeedsRegistry() {
+		var err error
+		if data, err = c.snap.get(ctx); err != nil {
+			return nil, err
+		}
+	}
+	return func(entityID string) access.Grant {
+		id, ok := normalizeEntityID(entityID)
+		if !ok {
+			return access.Grant{}
+		}
+		obj := access.Object{Kind: access.KindEntity, ID: id}
+		if data != nil {
+			obj = data.objectFor(id)
+		}
+		return c.p.Decide(obj)
+	}, nil
 }
 
 // decideDashboard returns the grant on the dashboard with the given url_path;

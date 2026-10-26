@@ -559,7 +559,7 @@ var ErrHelperNotFoundInStorage = errors.New("not found in storage list")
 // for several input_* types).
 func (c *wsClientImpl) GetHelperConfig(ctx context.Context, platform, entityID string) (map[string]any, error) {
 	if !isWSHelperPlatform(platform) {
-		return nil, fmt.Errorf("cannot get %s helper config via websocket: config-entry helpers have no \"<platform>/list\" command (entity may be missing from the registry)", platform)
+		return nil, NewHelperConfigMissingError(platform, entityID)
 	}
 
 	// Extract the object_id part without the "<platform>." prefix.
@@ -584,7 +584,19 @@ func (c *wsClientImpl) GetHelperConfig(ctx context.Context, platform, entityID s
 		}
 	}
 
-	return nil, fmt.Errorf("%s not found: %s: %w", platform, entityID, ErrHelperNotFoundInStorage)
+	return nil, NewHelperConfigMissingError(platform, entityID)
+}
+
+// NewHelperConfigMissingError returns the error GetHelperConfig yields when it
+// cannot return entityID's stored configuration: the config-entry error for a
+// platform without a "<platform>/list" command, else a wrap of
+// ErrHelperNotFoundInStorage. It lets a policy layer answer for an object it
+// hides exactly like the client answers for a missing one.
+func NewHelperConfigMissingError(platform, entityID string) error {
+	if !isWSHelperPlatform(platform) {
+		return fmt.Errorf("cannot get %s helper config via websocket: config-entry helpers have no \"<platform>/list\" command (entity may be missing from the registry)", platform)
+	}
+	return fmt.Errorf("%s not found: %s: %w", platform, entityID, ErrHelperNotFoundInStorage)
 }
 
 // =============================================================================

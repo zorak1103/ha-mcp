@@ -895,6 +895,10 @@ type LogbookEntry struct {
 	Domain        string  `json:"domain,omitempty"`
 	State         string  `json:"state,omitempty"`
 	ContextUserID *string `json:"context_user_id,omitempty"`
+	// ContextEntityID is the entity whose activity caused this entry (HA's
+	// context_entity_id). The object-level access layer drops entries whose
+	// cause is hidden; it is not part of any tool output.
+	ContextEntityID string `json:"context_entity_id,omitempty"`
 }
 
 // SystemLogEntry represents a single entry in the Home Assistant system log ring buffer.

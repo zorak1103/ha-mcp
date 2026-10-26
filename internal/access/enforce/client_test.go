@@ -132,6 +132,9 @@ func TestEveryStubFailsClosed(t *testing.T) {
 	wantMsg := access.Denial{Tool: "some_tool"}.Message()
 	for i := range typ.NumMethod() {
 		m := typ.Method(i)
+		if methodClass[m.Name] != classUnclassified {
+			continue // enforced for real; covered by its own tests
+		}
 		t.Run(m.Name, func(t *testing.T) {
 			args := []reflect.Value{reflect.ValueOf(ctx)}
 			for j := 1; j < m.Type.NumIn(); j++ {

@@ -2,7 +2,6 @@ package enforce
 
 import (
 	"context"
-	"time"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 )
@@ -13,33 +12,11 @@ import (
 
 // Entity operations.
 
-func (c *client) GetStates(context.Context) ([]homeassistant.Entity, error) {
-	return nil, c.unclassified("GetStates")
-}
-
-func (c *client) GetState(context.Context, string) (*homeassistant.Entity, error) {
-	return nil, c.unclassified("GetState")
-}
-
 func (c *client) SetState(context.Context, string, homeassistant.StateUpdate) (*homeassistant.Entity, error) {
 	return nil, c.unclassified("SetState")
 }
 
-// History operations.
-
-func (c *client) GetHistory(context.Context, string, time.Time, time.Time) ([][]homeassistant.HistoryEntry, error) {
-	return nil, c.unclassified("GetHistory")
-}
-
 // Automation operations.
-
-func (c *client) ListAutomations(context.Context) ([]homeassistant.Automation, error) {
-	return nil, c.unclassified("ListAutomations")
-}
-
-func (c *client) GetAutomation(context.Context, string) (*homeassistant.Automation, error) {
-	return nil, c.unclassified("GetAutomation")
-}
 
 func (c *client) CreateAutomation(context.Context, homeassistant.AutomationConfig) error {
 	return c.unclassified("CreateAutomation")
@@ -58,10 +35,6 @@ func (c *client) ToggleAutomation(context.Context, string, bool) error {
 }
 
 // Helper operations.
-
-func (c *client) ListHelpers(context.Context) ([]homeassistant.Entity, error) {
-	return nil, c.unclassified("ListHelpers")
-}
 
 func (c *client) CreateHelper(context.Context, homeassistant.HelperConfig) error {
 	return c.unclassified("CreateHelper")
@@ -85,14 +58,6 @@ func (c *client) SetHelperValue(context.Context, string, any) error {
 
 // Script operations.
 
-func (c *client) ListScripts(context.Context) ([]homeassistant.Entity, error) {
-	return nil, c.unclassified("ListScripts")
-}
-
-func (c *client) GetScript(context.Context, string) (*homeassistant.Script, error) {
-	return nil, c.unclassified("GetScript")
-}
-
 func (c *client) CreateScript(context.Context, string, homeassistant.ScriptConfig) error {
 	return c.unclassified("CreateScript")
 }
@@ -107,14 +72,6 @@ func (c *client) DeleteScript(context.Context, string) error {
 
 // Scene operations.
 
-func (c *client) ListScenes(context.Context) ([]homeassistant.Entity, error) {
-	return nil, c.unclassified("ListScenes")
-}
-
-func (c *client) GetScene(context.Context, string) (*homeassistant.Scene, error) {
-	return nil, c.unclassified("GetScene")
-}
-
 func (c *client) CreateScene(context.Context, string, homeassistant.SceneConfig) error {
 	return c.unclassified("CreateScene")
 }
@@ -127,32 +84,10 @@ func (c *client) DeleteScene(context.Context, string) error {
 	return c.unclassified("DeleteScene")
 }
 
-func (c *client) ConfigFileEntryExists(context.Context, string, string) (bool, error) {
-	return false, c.unclassified("ConfigFileEntryExists")
-}
-
 // Service operations.
 
 func (c *client) CallService(context.Context, string, string, map[string]any) ([]homeassistant.Entity, error) {
 	return nil, c.unclassified("CallService")
-}
-
-// Registry operations.
-
-func (c *client) GetEntityRegistry(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
-	return nil, c.unclassified("GetEntityRegistry")
-}
-
-func (c *client) GetEntityRegistryEntry(context.Context, string) (*homeassistant.EntityRegistryEntry, error) {
-	return nil, c.unclassified("GetEntityRegistryEntry")
-}
-
-func (c *client) GetDeviceRegistry(context.Context) ([]homeassistant.DeviceRegistryEntry, error) {
-	return nil, c.unclassified("GetDeviceRegistry")
-}
-
-func (c *client) GetAreaRegistry(context.Context) ([]homeassistant.AreaRegistryEntry, error) {
-	return nil, c.unclassified("GetAreaRegistry")
 }
 
 // Area registry modification operations.
@@ -279,32 +214,10 @@ func (c *client) UpdateDeviceRegistryEntry(context.Context, string, homeassistan
 	return nil, c.unclassified("UpdateDeviceRegistryEntry")
 }
 
-// Media operations.
-
-func (c *client) SignPath(context.Context, string, int) (string, error) {
-	return "", c.unclassified("SignPath")
-}
-
-func (c *client) GetCameraStream(context.Context, string) (*homeassistant.StreamInfo, error) {
-	return nil, c.unclassified("GetCameraStream")
-}
-
-func (c *client) BrowseMedia(context.Context, string) (*homeassistant.MediaBrowseResult, error) {
-	return nil, c.unclassified("BrowseMedia")
-}
-
 // Dashboard operations.
-
-func (c *client) GetLovelaceConfig(context.Context, string) (map[string]any, error) {
-	return nil, c.unclassified("GetLovelaceConfig")
-}
 
 func (c *client) SaveLovelaceConfig(context.Context, string, map[string]any) error {
 	return c.unclassified("SaveLovelaceConfig")
-}
-
-func (c *client) ListDashboards(context.Context) ([]homeassistant.DashboardEntry, error) {
-	return nil, c.unclassified("ListDashboards")
 }
 
 func (c *client) CreateDashboard(context.Context, homeassistant.DashboardConfig) (*homeassistant.DashboardEntry, error) {
@@ -317,36 +230,6 @@ func (c *client) UpdateDashboard(context.Context, string, homeassistant.Dashboar
 
 func (c *client) DeleteDashboard(context.Context, string) error {
 	return c.unclassified("DeleteDashboard")
-}
-
-// Statistics operations.
-
-func (c *client) GetStatistics(context.Context, []string, string) ([]homeassistant.StatisticsResult, error) {
-	return nil, c.unclassified("GetStatistics")
-}
-
-// Target operations.
-
-func (c *client) GetTriggersForTarget(context.Context, homeassistant.Target, *bool) ([]string, error) {
-	return nil, c.unclassified("GetTriggersForTarget")
-}
-
-func (c *client) GetConditionsForTarget(context.Context, homeassistant.Target, *bool) ([]string, error) {
-	return nil, c.unclassified("GetConditionsForTarget")
-}
-
-func (c *client) GetServicesForTarget(context.Context, homeassistant.Target, *bool) ([]string, error) {
-	return nil, c.unclassified("GetServicesForTarget")
-}
-
-func (c *client) ExtractFromTarget(context.Context, homeassistant.Target, *bool) (*homeassistant.ExtractFromTargetResult, error) {
-	return nil, c.unclassified("ExtractFromTarget")
-}
-
-// Config operations.
-
-func (c *client) GetHelperConfig(context.Context, string, string) (map[string]any, error) {
-	return nil, c.unclassified("GetHelperConfig")
 }
 
 // Config entry operations.
@@ -379,18 +262,6 @@ func (c *client) GetConfig(context.Context) (*homeassistant.Config, error) {
 	return nil, c.unclassified("GetConfig")
 }
 
-// Template operations.
-
-func (c *client) RenderTemplate(context.Context, string) (string, error) {
-	return "", c.unclassified("RenderTemplate")
-}
-
-// Logbook operations.
-
-func (c *client) GetLogbook(context.Context, string, string, []string) ([]homeassistant.LogbookEntry, error) {
-	return nil, c.unclassified("GetLogbook")
-}
-
 // Configuration validation operations.
 
 func (c *client) CheckConfig(context.Context) (*homeassistant.ConfigCheckResult, error) {
@@ -411,32 +282,12 @@ func (c *client) CallServiceWithResponse(context.Context, string, string, map[st
 
 // Recorder statistics operations.
 
-func (c *client) ListStatisticIDs(context.Context, string) ([]homeassistant.StatisticMeta, error) {
-	return nil, c.unclassified("ListStatisticIDs")
-}
-
 func (c *client) ValidateStatistics(context.Context) (map[string][]homeassistant.StatisticValidationIssue, error) {
 	return nil, c.unclassified("ValidateStatistics")
 }
 
 func (c *client) ClearStatistics(context.Context, []string) error {
 	return c.unclassified("ClearStatistics")
-}
-
-// Calendar operations.
-
-func (c *client) GetCalendars(context.Context) ([]homeassistant.CalendarEntry, error) {
-	return nil, c.unclassified("GetCalendars")
-}
-
-func (c *client) GetCalendarEvents(context.Context, string, string, string) ([]homeassistant.CalendarEvent, error) {
-	return nil, c.unclassified("GetCalendarEvents")
-}
-
-// Camera operations.
-
-func (c *client) GetCameraSnapshot(context.Context, string) ([]byte, string, error) {
-	return nil, "", c.unclassified("GetCameraSnapshot")
 }
 
 // System log operations.
