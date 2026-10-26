@@ -76,8 +76,12 @@ func errCameraStreamMissing() error {
 	return fmt.Errorf("get camera stream failed: %w", wsCommandError("start_stream_failed", "Camera not found"))
 }
 
-// errMediaItemMissing is BrowseMedia's error for a media item that does not
-// exist.
+// errMediaItemMissing is BrowseMedia's error for an entity-backed media item
+// of a hidden entity. HA's camera source raises BrowseError("Unknown item")
+// for any media-source://camera/<id>, whether or not the camera exists, so
+// that is also the answer for a camera that does exist but is hidden.
+// LIVE-CHECK: verify the text, the error code and, for the image source, that
+// it answers the same way.
 func errMediaItemMissing() error {
-	return fmt.Errorf("browse media failed: %w", wsCommandError("browse_media_failed", "Unknown media item"))
+	return fmt.Errorf("browse media failed: %w", wsCommandError("browse_media_failed", "Unknown item"))
 }

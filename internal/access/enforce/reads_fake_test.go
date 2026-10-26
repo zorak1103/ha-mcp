@@ -35,6 +35,7 @@ type readFake struct {
 	media       *homeassistant.MediaBrowseResult
 	triggers    []string
 	extract     *homeassistant.ExtractFromTargetResult
+	extractFn   func(homeassistant.Target) *homeassistant.ExtractFromTargetResult
 
 	mu         sync.Mutex
 	seenIDs    []string
@@ -305,5 +306,41 @@ func (f *readFake) GetServicesForTarget(_ context.Context, t homeassistant.Targe
 
 func (f *readFake) ExtractFromTarget(_ context.Context, t homeassistant.Target, _ *bool) (*homeassistant.ExtractFromTargetResult, error) {
 	f.recordTarget(t)
+	if f.extractFn != nil {
+		return f.extractFn(t), nil
+	}
 	return f.extract, nil
+}
+
+// echoExtract answers like HA: explicit entity ids are referenced whether or
+// not they exist; a known device or area is referenced (an area also brings
+// its entities), an unknown one is reported missing.
+func (f *readFake) echoExtract(t homeassistant.Target) *homeassistant.ExtractFromTargetResult {
+	r := &homeassistant.ExtractFromTargetResult{ReferencedEntities: slices.Clone(t.EntityID)}
+	for _, d := range t.DeviceID {
+		if slices.ContainsFunc(f.devices, func(e homeassistant.DeviceRegistryEntry) bool { return e.ID == d }) {
+			r.ReferencedDevices = append(r.ReferencedDevices, d)
+		} else {
+			r.MissingDevices = append(r.MissingDevices, d)
+		}
+	}
+	for _, a := range t.AreaID {
+		if slices.ContainsFunc(f.areas, func(e homeassistant.AreaRegistryEntry) bool { return e.AreaID == a }) {
+			r.ReferencedAreas = append(r.ReferencedAreas, a)
+			r.ReferencedEntities = append(r.ReferencedEntities, f.areaEntities(a)...)
+		} else {
+			r.MissingAreas = append(r.MissingAreas, a)
+		}
+	}
+	return r
+}
+
+func (f *readFake) areaEntities(areaID string) []string {
+	var out []string
+	for _, e := range f.registry {
+		if e.AreaID == areaID {
+			out = append(out, e.EntityID)
+		}
+	}
+	return out
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/zorak1103/ha-mcp/internal/access"
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 )
 
@@ -33,7 +34,27 @@ func (c *client) hiddenFunc(ctx context.Context) (func(entityID string) bool, er
 	if err != nil {
 		return nil, err
 	}
-	return func(entityID string) bool { return grant(entityID).Hidden() }, nil
+	return func(entityID string) bool {
+		return !isPlainEntityID(entityID) || grant(entityID).Hidden()
+	}, nil
+}
+
+// isPlainEntityID reports whether id is already in the form decisions are made
+// on: a valid entity id without padding or upper case. HA validates ids
+// itself (it lower-cases but does not trim, and some commands reject what
+// others accept), so an id that differs from its normalised form would answer
+// differently from the clean form it is decided as. Under a hiding policy such
+// an id is therefore treated as hidden and answered as a missing object,
+// whether or not the clean form exists; it is never forwarded.
+func isPlainEntityID(id string) bool {
+	n, ok := normalizeEntityID(id)
+	return ok && n == id
+}
+
+// globalHidden reports whether objects governed by the default alone (areas,
+// devices without entities) are hidden: only with default none.
+func (c *client) globalHidden() bool {
+	return c.p.Decide(access.Object{Kind: access.KindGlobal}).Hidden()
 }
 
 // entityHidden reports whether the entity is hidden from reads.
@@ -224,7 +245,8 @@ func (c *client) GetEntityRegistryEntry(ctx context.Context, entityID string) (*
 
 // GetDeviceRegistry hides a device only when it has at least one entity and
 // every one of them is hidden. A device without entities has nothing to
-// inherit a decision from and stays visible: it is governed by the default.
+// inherit a decision from: it is governed by the default (hidden only under
+// default none).
 func (c *client) GetDeviceRegistry(ctx context.Context) ([]homeassistant.DeviceRegistryEntry, error) {
 	devices, err := c.inner.GetDeviceRegistry(ctx)
 	if err != nil {
@@ -240,14 +262,19 @@ func (c *client) GetDeviceRegistry(ctx context.Context) ([]homeassistant.DeviceR
 	return filterCopy(devices, func(d homeassistant.DeviceRegistryEntry) bool { return !hidden[d.ID] }), nil
 }
 
-// GetAreaRegistry is unfiltered: areas are objects without a matcher, governed
-// by the default alone.
+// GetAreaRegistry: areas are objects without a matcher, governed by the
+// default alone. Under default none they are hidden (empty list), otherwise the
+// registry is returned unfiltered.
 func (c *client) GetAreaRegistry(ctx context.Context) ([]homeassistant.AreaRegistryEntry, error) {
+	if c.globalHidden() {
+		return []homeassistant.AreaRegistryEntry{}, nil
+	}
 	return c.inner.GetAreaRegistry(ctx)
 }
 
 // hiddenDevices returns the set of device ids hidden from reads (empty when
-// the policy cannot hide anything).
+// the policy cannot hide anything): a device whose entities are all hidden, and
+// under default none a device without entities (governed by the default).
 func (c *client) hiddenDevices(ctx context.Context) (map[string]bool, error) {
 	if !c.p.HidesAnything() {
 		return map[string]bool{}, nil
@@ -261,7 +288,8 @@ func (c *client) hiddenDevices(ctx context.Context) (map[string]bool, error) {
 		return nil, err
 	}
 	out := map[string]bool{}
-	for deviceID, entityIDs := range data.entitiesByDevice() {
+	byDevice := data.entitiesByDevice()
+	for deviceID, entityIDs := range byDevice {
 		all := true
 		for _, id := range entityIDs {
 			if !hidden(id) {
@@ -271,6 +299,13 @@ func (c *client) hiddenDevices(ctx context.Context) (map[string]bool, error) {
 		}
 		if all {
 			out[deviceID] = true
+		}
+	}
+	if c.globalHidden() {
+		for deviceID := range data.devices {
+			if len(byDevice[deviceID]) == 0 {
+				out[deviceID] = true
+			}
 		}
 	}
 	return out, nil

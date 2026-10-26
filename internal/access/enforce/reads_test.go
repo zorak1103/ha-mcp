@@ -62,6 +62,8 @@ func buildFake(withSecret bool) *readFake {
 	add("scene.secret_scene", "homeassistant", "scene_secret_cfg", nil)
 	add("input_number.ok", "input_number", "ok", nil)
 	add("input_number.secret_num", "input_number", "secret_num", nil)
+	add("image.pic", "demo", "u9", nil)
+	add("image.secret_pic", "demo", "u10", nil)
 	add("calendar.ok", "demo", "u7", nil)
 	add("calendar.secret", "demo", "u8", nil)
 
@@ -666,6 +668,17 @@ func TestBrowseMedia_DropsHiddenCameras(t *testing.T) {
 			}},
 			{Title: "Local", MediaContentID: "media-source://media_source/local"},
 			{Title: "Odd", MediaContentID: "media-source://camera/not an entity"},
+			{Title: "Pic", MediaContentID: "media-source://image/image.pic"},
+			{Title: "Secret pic", MediaContentID: "media-source://image/image.secret_pic"},
+			{Title: "Secret pic object id", MediaContentID: "media-source://image/secret_pic"},
+			{Title: "Images", MediaContentID: "media-source://image", Children: []*homeassistant.MediaBrowseResult{
+				{Title: "Nested secret pic", MediaContentID: "media-source://image/image.secret_pic?x=1"},
+				{Title: "Nested pic", MediaContentID: "media-source://image/image.pic"},
+				{Title: "Deeper", MediaContentID: "media-source://image/dir", Children: []*homeassistant.MediaBrowseResult{
+					{Title: "Deep secret", MediaContentID: "media-source://camera/camera.secret"},
+					{Title: "Deep pic", MediaContentID: "media-source://image/image.pic"},
+				}},
+			}},
 		},
 	}
 	w, tr, ctx := wrapFake(t, hidingPolicy(t), full)
@@ -682,10 +695,11 @@ func TestBrowseMedia_DropsHiddenCameras(t *testing.T) {
 		}
 	}
 	walk(got)
-	if want := []string{"root", "Front", "Folder", "Nested front", "Local"}; !reflect.DeepEqual(titles, want) {
+	want := []string{"root", "Front", "Folder", "Nested front", "Local", "Pic", "Images", "Nested pic", "Deeper", "Deep pic"}
+	if !reflect.DeepEqual(titles, want) {
 		t.Errorf("tree = %v, want %v", titles, want)
 	}
-	if len(full.media.Children) != 6 || len(full.media.Children[3].Children) != 2 {
+	if len(full.media.Children) != 10 || len(full.media.Children[3].Children) != 2 || len(full.media.Children[9].Children) != 3 {
 		t.Error("the shared tree returned by the inner client was mutated")
 	}
 	if tr.First() != nil {
@@ -696,12 +710,19 @@ func TestBrowseMedia_DropsHiddenCameras(t *testing.T) {
 func TestBrowseMedia_HiddenCameraItemLooksMissing(t *testing.T) {
 	full := buildFake(true)
 	w, tr, ctx := wrapFake(t, hidingPolicy(t), full)
-	res, err := w.BrowseMedia(ctx, "media-source://camera/camera.secret")
-	if err == nil || res != nil {
-		t.Fatalf("browsing a hidden camera must fail, got %v, %v", res, err)
+	// HA's camera source answers "Unknown item" for any camera id.
+	wantMsg := "browse media failed: command failed: browse_media_failed - Unknown item"
+	for _, id := range []string{"media-source://camera/camera.secret", "media-source://image/image.secret_pic"} {
+		res, err := w.BrowseMedia(ctx, id)
+		if err == nil || res != nil {
+			t.Fatalf("browsing %s must fail, got %v, %v", id, res, err)
+		}
+		if err.Error() != wantMsg {
+			t.Errorf("%s: error = %q, want %q", id, err, wantMsg)
+		}
 	}
 	if full.called("BrowseMedia") {
-		t.Error("hidden camera browse reached the inner client")
+		t.Error("hidden item browse reached the inner client")
 	}
 	if tr.First() != nil {
 		t.Error("recorded a denial")
@@ -722,9 +743,14 @@ func TestTargets_FilterInputs(t *testing.T) {
 		in        homeassistant.Target
 		wantCalls []homeassistant.Target
 	}{
-		{"only hidden entity", homeassistant.Target{EntityID: []string{"light.secret"}}, nil},
-		{"hidden dropped from mixed list", homeassistant.Target{EntityID: []string{"light.kitchen", "Light.Secret"}},
-			[]homeassistant.Target{{EntityID: []string{"light.kitchen"}}}},
+		// A hidden explicit id is sent as an absent twin of the same domain, so
+		// HA answers exactly as for a missing id.
+		{"only hidden entity", homeassistant.Target{EntityID: []string{"light.secret"}},
+			[]homeassistant.Target{{EntityID: []string{"light.ha_mcp_absent_0"}}}},
+		{"hidden replaced in mixed list", homeassistant.Target{EntityID: []string{"light.kitchen", "Light.Secret"}},
+			[]homeassistant.Target{{EntityID: []string{"light.kitchen", "light.ha_mcp_absent_0"}}}},
+		{"padded visible id is answered as missing too", homeassistant.Target{EntityID: []string{"light.kitchen "}},
+			[]homeassistant.Target{{EntityID: []string{"light.ha_mcp_absent_0"}}}},
 		{"area expands to visible entities only", homeassistant.Target{AreaID: []string{"kitchen"}},
 			[]homeassistant.Target{{EntityID: []string{"light.kitchen"}}}},
 		{"device whose entities are all hidden", homeassistant.Target{DeviceID: []string{"dev_hidden"}}, nil},
@@ -770,7 +796,7 @@ func TestTargets_FilterInputs(t *testing.T) {
 	}
 }
 
-func TestExtractFromTarget_FiltersInputsAndResults(t *testing.T) {
+func TestExtractFromTarget_FiltersResults(t *testing.T) {
 	full := buildFake(true)
 	full.extract = &homeassistant.ExtractFromTargetResult{
 		ReferencedEntities: []string{"light.kitchen", "light.secret", "sensor.secret_temp"},
@@ -780,13 +806,9 @@ func TestExtractFromTarget_FiltersInputsAndResults(t *testing.T) {
 	}
 	w, _, ctx := wrapFake(t, hidingPolicy(t), full)
 
-	got, err := w.ExtractFromTarget(ctx, homeassistant.Target{AreaID: []string{"kitchen"}, EntityID: []string{"light.secret", "light.kitchen"}}, nil)
+	got, err := w.ExtractFromTarget(ctx, homeassistant.Target{LabelID: []string{"lbl_x"}}, nil)
 	if err != nil {
 		t.Fatal(err)
-	}
-	wantIn := homeassistant.Target{AreaID: []string{"kitchen"}, EntityID: []string{"light.kitchen"}}
-	if !reflect.DeepEqual(full.targets, []homeassistant.Target{wantIn}) {
-		t.Errorf("inner target = %+v, want %+v", full.targets, wantIn)
 	}
 	if !reflect.DeepEqual(got.ReferencedEntities, []string{"light.kitchen"}) {
 		t.Errorf("entities = %v", got.ReferencedEntities)
@@ -800,11 +822,78 @@ func TestExtractFromTarget_FiltersInputsAndResults(t *testing.T) {
 	if len(full.extract.ReferencedEntities) != 3 {
 		t.Error("the inner result was mutated")
 	}
+}
 
-	full.targets = nil
-	got, err = w.ExtractFromTarget(ctx, homeassistant.Target{EntityID: []string{"light.secret"}}, nil)
-	if err != nil || got == nil || len(got.ReferencedEntities) != 0 || len(full.targets) != 0 {
-		t.Errorf("all-hidden input: %+v, %v, inner calls %v", got, err, full.targets)
+// A hidden explicit entity, device or area must be answered exactly as HA
+// answers for a missing one: the hidden id is swapped for an absent twin in the
+// request and swapped back in the result.
+func TestExtractFromTarget_HiddenExplicitIDsLookMissing(t *testing.T) {
+	full := buildFake(true)
+	full.extractFn = full.echoExtract
+	w, _, ctx := wrapFake(t, hidingPolicy(t), full)
+
+	absent := buildFake(false)
+	absent.extractFn = absent.echoExtract
+	other := mustCompile(t, config.AccessConfig{
+		Default: "read",
+		Rules:   []config.AccessRule{{Match: config.AccessMatch{Entities: []string{"zzz.*"}}, Allow: config.CapList{"none"}}},
+	})
+	wAbsent, _, ctxAbsent := wrapFake(t, other, absent)
+
+	in := homeassistant.Target{
+		EntityID: []string{"light.kitchen", "light.secret", "sensor.secret_temp"},
+		DeviceID: []string{"dev_hidden", "dev_visible"},
+	}
+	got, err := w.ExtractFromTarget(ctx, in, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := wAbsent.ExtractFromTarget(ctxAbsent, in, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("hidden answer differs from the missing answer\n got %+v\nwant %+v", got, want)
+	}
+	if !reflect.DeepEqual(got.MissingDevices, []string{"dev_hidden"}) || !slices.Contains(got.ReferencedEntities, "light.secret") {
+		t.Errorf("hidden ids must be reported like missing ones: %+v", got)
+	}
+	for _, tg := range full.targets {
+		for _, id := range append(slices.Clone(tg.EntityID), tg.DeviceID...) {
+			if strings.Contains(id, "secret") || id == "dev_hidden" {
+				t.Errorf("hidden id %q reached the inner client", id)
+			}
+		}
+	}
+}
+
+func TestExtractFromTarget_AreaExpansionDropsHiddenWithoutEcho(t *testing.T) {
+	full := buildFake(true)
+	full.extractFn = full.echoExtract
+	w, _, ctx := wrapFake(t, hidingPolicy(t), full)
+	got, err := w.ExtractFromTarget(ctx, homeassistant.Target{AreaID: []string{"kitchen"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// light.secret came from the area, not from the caller: dropped, not echoed.
+	if !reflect.DeepEqual(got.ReferencedEntities, []string{"light.kitchen"}) || !reflect.DeepEqual(got.ReferencedAreas, []string{"kitchen"}) {
+		t.Errorf("result = %+v", got)
+	}
+}
+
+func TestExtractFromTarget_AllHiddenIsAMissingAnswer(t *testing.T) {
+	full := buildFake(true)
+	full.extractFn = full.echoExtract
+	w, _, ctx := wrapFake(t, hidingPolicy(t), full)
+	got, err := w.ExtractFromTarget(ctx, homeassistant.Target{EntityID: []string{"light.secret"}}, nil)
+	if err != nil || got == nil {
+		t.Fatalf("%+v, %v", got, err)
+	}
+	if !reflect.DeepEqual(got.ReferencedEntities, []string{"light.secret"}) {
+		t.Errorf("a hidden id is reported like a missing id: %+v", got)
+	}
+	if len(full.targets) != 1 || !reflect.DeepEqual(full.targets[0].EntityID, []string{"light.ha_mcp_absent_0"}) {
+		t.Errorf("inner must be asked about an absent twin: %+v", full.targets)
 	}
 }
 

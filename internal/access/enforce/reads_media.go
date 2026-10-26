@@ -12,7 +12,7 @@ import (
 const (
 	signCameraPrefix  = "/api/camera_proxy/"
 	signMediaPrefix   = "/media/"
-	cameraMediaPrefix = "media-source://camera/"
+	mediaSourcePrefix = "media-source://"
 )
 
 // Cameras.
@@ -114,7 +114,7 @@ func hasDotSegment(p string) bool {
 
 // Media browsing.
 
-// BrowseMedia drops camera items of hidden cameras (media-source://camera/<id>)
+// BrowseMedia drops entity-backed items of hidden entities (camera, image, ...)
 // from the returned tree, at any depth. Browsing a hidden camera item directly
 // answers like an unknown item. The shared tree is copied, never modified.
 func (c *client) BrowseMedia(ctx context.Context, mediaContentID string) (*homeassistant.MediaBrowseResult, error) {
@@ -125,26 +125,46 @@ func (c *client) BrowseMedia(ctx context.Context, mediaContentID string) (*homea
 	if err != nil {
 		return nil, c.undecidable("BrowseMedia", err)
 	}
-	if hiddenCameraItem(mediaContentID, hidden) {
+	if hiddenMediaItem(mediaContentID, hidden) {
 		return nil, errMediaItemMissing()
 	}
 	tree, err := c.inner.BrowseMedia(ctx, mediaContentID)
 	if err != nil || tree == nil {
 		return tree, err
 	}
-	return filterMediaTree(tree, func(id string) bool { return hiddenCameraItem(id, hidden) }), nil
+	return filterMediaTree(tree, func(id string) bool { return hiddenMediaItem(id, hidden) }), nil
 }
 
-// hiddenCameraItem reports whether a media content id addresses a camera that
-// is hidden (or is not a valid entity id, which is treated as hidden). The
-// camera folder itself (no id after the prefix) and other sources are kept.
-func hiddenCameraItem(mediaContentID string, hidden func(string) bool) bool {
-	rest, ok := strings.CutPrefix(strings.ToLower(strings.TrimSpace(mediaContentID)), cameraMediaPrefix)
+// hiddenMediaItem reports whether a media content id media-source://<domain>/<id>
+// addresses an entity that is hidden. A camera item (whose id is the entity id)
+// whose id is not a valid entity id counts as hidden. For every other source the
+// first path segment is tried as an entity id of its own and as an object id in
+// the source's domain (entity-backed sources such as image); only shape-valid
+// candidates are decided, so folders and plain media sources are kept. Source
+// folders without an id are kept.
+func hiddenMediaItem(mediaContentID string, hidden func(string) bool) bool {
+	rest, ok := strings.CutPrefix(strings.ToLower(strings.TrimSpace(mediaContentID)), mediaSourcePrefix)
 	if !ok {
 		return false
 	}
-	rest, _, _ = strings.Cut(rest, "?")
-	return rest != "" && hidden(rest)
+	domain, id, hasID := strings.Cut(rest, "/")
+	if !hasID {
+		return false
+	}
+	id, _, _ = strings.Cut(id, "?")
+	id, _, _ = strings.Cut(id, "/")
+	if id == "" {
+		return false
+	}
+	if domain == "camera" {
+		return hidden(id)
+	}
+	for _, candidate := range []string{id, domain + "." + id} {
+		if _, valid := normalizeEntityID(candidate); valid && hidden(candidate) {
+			return true
+		}
+	}
+	return false
 }
 
 // filterMediaTree returns a copy of n without the descendants for which drop is

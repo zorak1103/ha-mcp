@@ -15,9 +15,6 @@ const (
 	// classReadLookup looks up one object: a hidden object gets the error of
 	// a missing one.
 	classReadLookup
-	// classReadPassthrough reads data the policy does not restrict (objects
-	// governed by the default only).
-	classReadPassthrough
 	// classReadRestricted reads an operation that is refused or checked as a
 	// whole, because it can reach any object.
 	classReadRestricted
@@ -58,7 +55,7 @@ var methodClass = map[string]class{
 	"GetEntityRegistry":         classReadFiltered,
 	"GetEntityRegistryEntry":    classReadLookup,
 	"GetDeviceRegistry":         classReadFiltered,
-	"GetAreaRegistry":           classReadPassthrough,
+	"GetAreaRegistry":           classReadFiltered,
 	"CreateArea":                classUnclassified,
 	"UpdateArea":                classUnclassified,
 	"DeleteArea":                classUnclassified,
