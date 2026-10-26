@@ -698,7 +698,7 @@ func (c *HybridClient) determineEntityDomainForConfigEntry(config HelperConfig) 
 	switch config.Platform {
 	case platformTemplate:
 		// Template can be sensor or binary_sensor
-		return c.determineTemplateSubtype(config)
+		return DetermineTemplateSubtype(config)
 	case platformGroup:
 		// Group type depends on member entities
 		return c.determineGroupSubtype(config)
@@ -948,7 +948,7 @@ func (c *HybridClient) determineHelperSubtype(config HelperConfig) string {
 
 	switch config.Platform {
 	case platformTemplate:
-		return c.determineTemplateSubtype(config)
+		return DetermineTemplateSubtype(config)
 	case platformGroup:
 		return c.determineGroupSubtype(config)
 	case platformRandom:
@@ -965,18 +965,26 @@ func (c *HybridClient) determineHelperSubtype(config HelperConfig) string {
 	return ""
 }
 
-// determineTemplateSubtype determines whether a platformTemplate is a sensor or binary_sensor.
-func (c *HybridClient) determineTemplateSubtype(config HelperConfig) string {
+// TemplateTypeConfigKey is the config key that carries a template helper's
+// subtype (the entity domain it creates). The manage_helper builders in
+// internal/handlers write it; DetermineTemplateSubtype reads it. It is also
+// HA's own config key (validate_user_input injects it into stored options),
+// and is stripped from the submitted payload before it reaches HA by
+// platformSkipFields[platformTemplate].
+const TemplateTypeConfigKey = "template_type"
+
+// DetermineTemplateSubtype determines which entity domain a platformTemplate
+// helper creates (sensor, binary_sensor, or one of the other template
+// domains). Exported so internal/handlers can pin that every template
+// builder's output round-trips through it.
+func DetermineTemplateSubtype(config HelperConfig) string {
 	// Check explicit type field first (for backward compatibility)
 	if t, ok := config.Config["type"].(string); ok {
 		return t
 	}
-	// Check template_type field, written by buildTemplateSensorConfig /
-	// buildTemplateBinarySensorConfig (internal/handlers/helpers_consolidated.go).
-	// This is also HA's own config key (validate_user_input injects it into
-	// stored options) and is stripped from the submitted payload before it
-	// reaches HA by platformSkipFields[platformTemplate].
-	if tt, ok := config.Config["template_type"].(string); ok {
+	// Check the template_type field, written by the manage_helper template
+	// builders (internal/handlers).
+	if tt, ok := config.Config[TemplateTypeConfigKey].(string); ok {
 		return tt
 	}
 	// Infer from device_class
@@ -1056,7 +1064,7 @@ func extractEntityDomain(entityID string) string {
 // never claim them, and HA rejected the submission with "required key not
 // provided".
 var platformSkipFields = map[string]map[string]bool{
-	platformTemplate:          {"type": true, "template_type": true},
+	platformTemplate:          {"type": true, TemplateTypeConfigKey: true},
 	platformRandom:            {"type": true},
 	platformGenericThermostat: {"heater_entity_id": true, "target_sensor_entity_id": true},
 	platformGenericHygrostat:  {"humidifier_entity_id": true, "target_sensor_entity_id": true},

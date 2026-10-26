@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"slices"
 	"testing"
 )
 
@@ -285,28 +286,58 @@ func TestParseHelperEntityID(t *testing.T) {
 	}
 }
 
-// TestHelperPlatforms_CoversEveryHelperTypeValidEntityDomain pins that
-// HelperPlatforms (this file) lists every entity domain any helperTypes
-// entry declares in validEntityDomains (helpers_consolidated.go). A domain
-// missing from HelperPlatforms breaks ParseHelperEntityID for that type's
-// entities outright (issue #211's regression class); a domain present here
-// but never checked against buildGuardedHelperDomains'
-// unguardedHelperDomains would silently widen checkHelperOnlyDomain's
-// gated set too - this test is the trip wire for the first half of that,
-// so a future helper type addition can't forget HelperPlatforms the way
-// this branch had to add 16 domains for by hand.
-func TestHelperPlatforms_CoversEveryHelperTypeValidEntityDomain(t *testing.T) {
+// TestHelperPlatforms_ParsesEveryHelperTypeValidEntityDomain pins that
+// ParseHelperEntityID accepts an entity of every domain any helperTypes entry
+// declares in validEntityDomains (helpers_consolidated.go). HelperPlatforms is
+// derived from helperTypes (buildHelperPlatforms), so this can only fail if
+// the derivation breaks; a domain that ParseHelperEntityID could not parse
+// would break update/delete for that type's entities outright while create
+// still works (issue #211's regression class).
+func TestHelperPlatforms_ParsesEveryHelperTypeValidEntityDomain(t *testing.T) {
 	t.Parallel()
 
-	platforms := make(map[string]bool, len(HelperPlatforms))
-	for _, p := range HelperPlatforms {
-		platforms[p] = true
-	}
 	for typeName, meta := range helperTypes {
 		for _, domain := range meta.validEntityDomains {
-			if !platforms[domain] {
-				t.Errorf("helper type %q declares validEntityDomains domain %q, missing from HelperPlatforms", typeName, domain)
+			gotPlatform, gotID := ParseHelperEntityID(domain + ".some_helper")
+			if gotPlatform != domain || gotID != "some_helper" {
+				t.Errorf("helper type %q declares validEntityDomains domain %q: ParseHelperEntityID(%q) = (%q, %q), want (%q, %q)",
+					typeName, domain, domain+".some_helper", gotPlatform, gotID, domain, "some_helper")
 			}
 		}
+	}
+}
+
+// TestHelperPlatforms_IncludesPlatformNamePrefixes pins the config-entry
+// platform names that are not entity domains of any helperTypes entry but
+// that ParseHelperEntityID has always accepted as a prefix.
+func TestHelperPlatforms_IncludesPlatformNamePrefixes(t *testing.T) {
+	t.Parallel()
+
+	for _, platform := range []string{"template", "threshold", "derivative", "integration"} {
+		gotPlatform, gotID := ParseHelperEntityID(platform + ".x")
+		if gotPlatform != platform || gotID != "x" {
+			t.Errorf("ParseHelperEntityID(%q) = (%q, %q), want (%q, %q)", platform+".x", gotPlatform, gotID, platform, "x")
+		}
+	}
+}
+
+// TestHelperPlatforms_SortedAndUnique pins a deterministic prefix order: the
+// list is derived from the helperTypes map, whose range order is randomized
+// per iteration, so buildHelperPlatforms must sort and de-duplicate.
+func TestHelperPlatforms_SortedAndUnique(t *testing.T) {
+	t.Parallel()
+
+	if !slices.IsSorted(HelperPlatforms) {
+		t.Errorf("HelperPlatforms is not sorted: %v", HelperPlatforms)
+	}
+	seen := make(map[string]bool, len(HelperPlatforms))
+	for _, p := range HelperPlatforms {
+		if seen[p] {
+			t.Errorf("HelperPlatforms contains duplicate %q", p)
+		}
+		seen[p] = true
+	}
+	if got := buildHelperPlatforms(); !slices.Equal(got, buildHelperPlatforms()) {
+		t.Error("buildHelperPlatforms() is not deterministic across calls")
 	}
 }

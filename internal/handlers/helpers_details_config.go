@@ -90,7 +90,7 @@ func applyTemplateEnrichment(entityDomain string, options, details map[string]an
 // configurationSkipKeys are stored-config keys never shown in the
 // configuration block: the storage id and the template subtype selector are
 // internal identifiers, not fields update can write.
-var configurationSkipKeys = map[string]bool{"id": true, "template_type": true}
+var configurationSkipKeys = map[string]bool{"id": true, homeassistant.TemplateTypeConfigKey: true}
 
 // shownAtTopLevel reports whether value is already shown in details under the
 // same key (or, for "name", as friendly_name). Comparison is via fmt.Sprint,
