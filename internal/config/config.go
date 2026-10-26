@@ -42,6 +42,9 @@ type Config struct {
 	HomeAssistant HomeAssistantConfig `mapstructure:"homeassistant"`
 	Server        ServerConfig        `mapstructure:"server"`
 	Logging       LoggingConfig       `mapstructure:"logging"`
+	// Access is the object-level access policy. It is read from the YAML file
+	// by loadAccess (strict, no env/flag overrides), never by viper.
+	Access AccessConfig `mapstructure:"-"`
 }
 
 // LoggingConfig holds logging settings.
@@ -204,10 +207,9 @@ func Load(configFile string) (*Config, error) {
 		return nil, err
 	}
 
-	// Unmarshal into struct
-	cfg := &Config{}
-	if err := v.Unmarshal(cfg); err != nil {
-		return nil, fmt.Errorf("unmarshaling config: %w", err)
+	cfg, err := unmarshalConfig(v, configFile)
+	if err != nil {
+		return nil, err
 	}
 
 	// Validate required fields
@@ -215,6 +217,21 @@ func Load(configFile string) (*Config, error) {
 		return nil, err
 	}
 
+	return cfg, nil
+}
+
+// unmarshalConfig decodes the viper settings into a Config and loads the
+// strictly parsed access section from the same file.
+func unmarshalConfig(v *viper.Viper, configFile string) (*Config, error) {
+	cfg := &Config{}
+	if err := v.Unmarshal(cfg); err != nil {
+		return nil, fmt.Errorf("unmarshaling config: %w", err)
+	}
+	access, err := loadAccess(configFile)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Access = access
 	return cfg, nil
 }
 
@@ -302,10 +319,9 @@ func LoadWithViper(v *viper.Viper, configFile string) (*Config, error) {
 	mustBindEnv(v, "server.tool_filter.blacklist", "HA_MCP_TOOL_FILTER_BLACKLIST")
 	mustBindEnv(v, "logging.level", "HA_MCP_LOG_LEVEL")
 
-	// Unmarshal into struct
-	cfg := &Config{}
-	if err := v.Unmarshal(cfg); err != nil {
-		return nil, fmt.Errorf("unmarshaling config: %w", err)
+	cfg, err := unmarshalConfig(v, configFile)
+	if err != nil {
+		return nil, err
 	}
 
 	// Validate required fields
@@ -324,14 +340,8 @@ func LoadForDisplay(configFile string) (*Config, error) {
 		return nil, err
 	}
 
-	// Unmarshal into struct
-	cfg := &Config{}
-	if err := v.Unmarshal(cfg); err != nil {
-		return nil, fmt.Errorf("unmarshaling config: %w", err)
-	}
-
 	// Skip validation for display purposes
-	return cfg, nil
+	return unmarshalConfig(v, configFile)
 }
 
 // MaskedConfig returns a copy of the config with sensitive data masked.
@@ -365,5 +375,5 @@ func (c *Config) validate() error {
 	if len(c.Server.ToolFilter.Whitelist) > 0 && len(c.Server.ToolFilter.Blacklist) > 0 {
 		return fmt.Errorf("server.tool_filter: cannot specify both whitelist and blacklist")
 	}
-	return nil
+	return c.Access.Validate()
 }

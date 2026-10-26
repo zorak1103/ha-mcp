@@ -67,7 +67,7 @@ and helpers through the MCP protocol over HTTP.`,
 
 // setupFlags configures CLI flags and binds them to viper.
 func (a *App) setupFlags() {
-	a.rootCmd.PersistentFlags().StringVar(&a.cfgFile, "config", "", "config file (default: ./config.yaml)")
+	a.rootCmd.PersistentFlags().StringVar(&a.cfgFile, "config", "", "path to the YAML config file (no config file is read unless this flag is set)")
 	a.rootCmd.PersistentFlags().StringVar(&a.haURL, "ha-url", "", "Home Assistant URL")
 	a.rootCmd.PersistentFlags().StringVar(&a.haToken, "ha-token", "", "Home Assistant long-lived access token")
 	a.rootCmd.PersistentFlags().IntVar(&a.port, "port", 0, "MCP server port")
