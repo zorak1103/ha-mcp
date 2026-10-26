@@ -132,6 +132,22 @@ func (c *CachedClient) InvalidateRegistryCaches() {
 	c.logger.Debug("Registry caches invalidated")
 }
 
+// invalidateAllCaches clears every cache, including the services and config
+// caches that no write path invalidates. It runs after a WebSocket reconnect,
+// when Home Assistant may have restarted with new integrations or services.
+func (c *CachedClient) invalidateAllCaches() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.servicesCache = nil
+	c.configCache = nil
+	c.entityRegistryCache = nil
+	c.deviceRegistryCache = nil
+	c.areaRegistryCache = nil
+	c.labelRegistryCache = nil
+	c.floorRegistryCache = nil
+	c.logger.Debug("All caches invalidated")
+}
+
 // GetServices returns cached services or fetches from API.
 // Uses singleflight to prevent duplicate API calls during concurrent access.
 func (c *CachedClient) GetServices(ctx context.Context) ([]Service, error) {
@@ -764,18 +780,22 @@ func (c *CachedClient) GetAutomation(ctx context.Context, automationID string) (
 	return c.client.GetAutomation(ctx, automationID)
 }
 
-//nolint:revive // Delegated method
+// CreateAutomation delegates to the underlying client and invalidates the registry caches, since the write adds, removes or changes the entity registry entries of the config.
 func (c *CachedClient) CreateAutomation(ctx context.Context, automation AutomationConfig) error {
+	// Unconditional, like CreateHelperEntity: a failed write can still have been applied (unknown outcome); a spurious invalidation costs one lazy refetch.
+	defer c.InvalidateRegistryCaches()
 	return c.client.CreateAutomation(ctx, automation)
 }
 
-//nolint:revive // Delegated method
+// UpdateAutomation delegates to the underlying client and invalidates the registry caches, since the write adds, removes or changes the entity registry entries of the config.
 func (c *CachedClient) UpdateAutomation(ctx context.Context, automationID string, automation AutomationConfig) error {
+	defer c.InvalidateRegistryCaches()
 	return c.client.UpdateAutomation(ctx, automationID, automation)
 }
 
-//nolint:revive // Delegated method
+// DeleteAutomation delegates to the underlying client and invalidates the registry caches, since the write adds, removes or changes the entity registry entries of the config.
 func (c *CachedClient) DeleteAutomation(ctx context.Context, automationID string) error {
+	defer c.InvalidateRegistryCaches()
 	return c.client.DeleteAutomation(ctx, automationID)
 }
 
@@ -789,8 +809,9 @@ func (c *CachedClient) ListHelpers(ctx context.Context) ([]Entity, error) {
 	return c.client.ListHelpers(ctx)
 }
 
-//nolint:revive // Delegated method
+// UpdateHelper delegates to the underlying client and invalidates the registry caches, since a rename or domain-changing update changes the entity registry entries.
 func (c *CachedClient) UpdateHelper(ctx context.Context, helperID string, helper HelperConfig) error {
+	defer c.InvalidateRegistryCaches()
 	return c.client.UpdateHelper(ctx, helperID, helper)
 }
 
@@ -809,18 +830,21 @@ func (c *CachedClient) GetScript(ctx context.Context, scriptID string) (*Script,
 	return c.client.GetScript(ctx, scriptID)
 }
 
-//nolint:revive // Delegated method
+// CreateScript delegates to the underlying client and invalidates the registry caches, since the write adds, removes or changes the entity registry entries of the config.
 func (c *CachedClient) CreateScript(ctx context.Context, scriptID string, script ScriptConfig) error {
+	defer c.InvalidateRegistryCaches()
 	return c.client.CreateScript(ctx, scriptID, script)
 }
 
-//nolint:revive // Delegated method
+// UpdateScript delegates to the underlying client and invalidates the registry caches, since the write adds, removes or changes the entity registry entries of the config.
 func (c *CachedClient) UpdateScript(ctx context.Context, scriptID string, script ScriptConfig) error {
+	defer c.InvalidateRegistryCaches()
 	return c.client.UpdateScript(ctx, scriptID, script)
 }
 
-//nolint:revive // Delegated method
+// DeleteScript delegates to the underlying client and invalidates the registry caches, since the write adds, removes or changes the entity registry entries of the config.
 func (c *CachedClient) DeleteScript(ctx context.Context, scriptID string) error {
+	defer c.InvalidateRegistryCaches()
 	return c.client.DeleteScript(ctx, scriptID)
 }
 
@@ -834,18 +858,21 @@ func (c *CachedClient) GetScene(ctx context.Context, sceneID string) (*Scene, er
 	return c.client.GetScene(ctx, sceneID)
 }
 
-//nolint:revive // Delegated method
+// CreateScene delegates to the underlying client and invalidates the registry caches, since the write adds, removes or changes the entity registry entries of the config.
 func (c *CachedClient) CreateScene(ctx context.Context, sceneID string, scene SceneConfig) error {
+	defer c.InvalidateRegistryCaches()
 	return c.client.CreateScene(ctx, sceneID, scene)
 }
 
-//nolint:revive // Delegated method
+// UpdateScene delegates to the underlying client and invalidates the registry caches, since the write adds, removes or changes the entity registry entries of the config.
 func (c *CachedClient) UpdateScene(ctx context.Context, sceneID string, scene SceneConfig) error {
+	defer c.InvalidateRegistryCaches()
 	return c.client.UpdateScene(ctx, sceneID, scene)
 }
 
-//nolint:revive // Delegated method
+// DeleteScene delegates to the underlying client and invalidates the registry caches, since the write adds, removes or changes the entity registry entries of the config.
 func (c *CachedClient) DeleteScene(ctx context.Context, sceneID string) error {
+	defer c.InvalidateRegistryCaches()
 	return c.client.DeleteScene(ctx, sceneID)
 }
 
@@ -856,13 +883,15 @@ func (c *CachedClient) ConfigFileEntryExists(ctx context.Context, domain, config
 	return c.client.ConfigFileEntryExists(ctx, domain, configID)
 }
 
-//nolint:revive // Delegated method
+// CallService delegates to the underlying client and invalidates the registry caches, since a service call (e.g. automation.reload) can create, rename or remove entities.
 func (c *CachedClient) CallService(ctx context.Context, domain, service string, data map[string]any) ([]Entity, error) {
+	defer c.InvalidateRegistryCaches()
 	return c.client.CallService(ctx, domain, service, data)
 }
 
-//nolint:revive // Delegated method
+// CallServiceWithResponse delegates to the underlying client and invalidates the registry caches, since a service call (e.g. automation.reload) can create, rename or remove entities.
 func (c *CachedClient) CallServiceWithResponse(ctx context.Context, domain, service string, data map[string]any) (map[string]any, error) {
+	defer c.InvalidateRegistryCaches()
 	return c.client.CallServiceWithResponse(ctx, domain, service, data)
 }
 

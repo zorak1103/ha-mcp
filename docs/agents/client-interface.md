@@ -9,7 +9,7 @@ The `homeassistant.Client` interface abstracts all HA operations. Implementation
 - **CachedClient** (`cached_client.go`): Optional caching layer for static data (services, config, registries)
   - Uses `golang.org/x/sync/singleflight` to prevent thundering herd (duplicate concurrent API calls)
   - Thread-safe with configurable TTLs per cache type
-  - Automatically invalidates registry caches after helper create/delete operations
+  - Invalidates the registry caches after helper create/update/delete, automation/script/scene create/update/delete and every `CallService*` (unconditionally, even on error: the outcome of a failed write is unknown); the services and config caches are cleared only on WebSocket reconnect (`withReconnectInvalidation` in `factory.go`, wired into `WSClientConfig.OnReconnect` before `Connect`). Per-instance cache - pooled and default clients do not invalidate each other. User-facing coverage table: `docs/configuration.md` "Cache behavior"
 
 **API Routing:**
 - WebSocket: Helpers (`manage_helper`, `helper_action`), state queries, service calls, registry access, config entries, HACS (`manage_hacs`)
