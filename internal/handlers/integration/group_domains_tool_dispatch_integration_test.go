@@ -19,13 +19,13 @@ func TestGroupDomainsToolDispatch(t *testing.T) {
 }
 
 // TestConfigEntryGroupUpdateDeleteViaTool pins that manage_helper update and
-// delete accept a config-entry group helper in the light, cover, fan and lock
-// domains (issue #345): checkHelperOnlyDomain only allowed the group platform
-// for sensor/binary_sensor, so these were rejected as "not a helper entity".
-// Group members only need to be valid entity IDs of the group's domain, so no
-// real member entities are created.
+// delete accept a config-entry group helper in the light, cover, fan, lock and
+// switch domains (issues #345, #350): checkHelperOnlyDomain only allowed the
+// group platform for sensor/binary_sensor, so these were rejected as "not a
+// helper entity". Group members only need to be valid entity IDs of the group's
+// domain, so no real member entities are created.
 func (s *GroupDomainsToolDispatchTestSuite) TestConfigEntryGroupUpdateDeleteViaTool() {
-	for _, domain := range []string{"light", "cover", "fan", "lock"} {
+	for _, domain := range []string{"light", "cover", "fan", "lock", "switch"} {
 		s.Run(domain, func() {
 			member1 := BuildEntityID(domain, GenerateTestID("grpd_"+domain+"_m1"))
 			member2 := BuildEntityID(domain, GenerateTestID("grpd_"+domain+"_m2"))

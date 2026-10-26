@@ -3032,13 +3032,14 @@ func buildGuardedHelperDomains() map[string]bool {
 }
 
 // configEntryGroupDomains are the guarded entity domains the config-entry
-// "group" helper (sensor, binary_sensor, light, cover, fan and lock groups)
-// creates entities in; it mirrors the group types in entityDomainToGroupType
-// (internal/homeassistant/hybrid_client.go) that are guarded here.
-// helperTypes["group"] only declares the legacy "group" entity domain, so this
-// platform is not derivable from validEntityDomains and has to be allowed here
-// explicitly.
-var configEntryGroupDomains = []string{"sensor", "binary_sensor", "light", "cover", "fan", "lock"}
+// "group" helper (sensor, binary_sensor, light, cover, fan, lock and switch
+// groups) creates entities in; it mirrors the group types in
+// entityDomainToGroupType (internal/homeassistant/hybrid_client.go) that are
+// guarded here, which TestConfigEntryGroupDomains_CoverEveryGuardedGroupType
+// pins. helperTypes["group"] only declares the legacy "group" entity domain, so
+// this platform is not derivable from validEntityDomains and has to be allowed
+// here explicitly.
+var configEntryGroupDomains = []string{"sensor", "binary_sensor", "light", "cover", "fan", "lock", "switch"}
 
 // helperPlatformsByDomain maps each of guardedHelperDomains to the set of real
 // HA integration platforms allowed to own an entity there, derived from

@@ -1453,7 +1453,8 @@ func TestManageHelper_UpdateDelete_AllowsHelperEntityInSharedDomain(t *testing.T
 // configEntryGroupHelperCases pairs each entity domain the config-entry "group"
 // helper can create entities in (entityDomainToGroupType in
 // internal/homeassistant/hybrid_client.go; the issue #345 domains light, cover,
-// fan and lock on top of sensor/binary_sensor) with a real integration's entity
+// fan and lock and the issue #350 domain switch on top of
+// sensor/binary_sensor) with a real integration's entity
 // in that domain that must still be rejected.
 var configEntryGroupHelperCases = []struct {
 	groupEntityID string
@@ -1466,11 +1467,12 @@ var configEntryGroupHelperCases = []struct {
 	{"cover.my_group", "cover.garage_door", "somfy"},
 	{"fan.my_group", "fan.bedroom_fan", "tuya"},
 	{"lock.my_group", "lock.front_door", "nuki"},
+	{"switch.my_group", "switch.zigbee_plug", "zha"},
 }
 
 // TestManageHelper_UpdateDelete_RejectsNonHelperEntityInConfigEntryGroupDomain
 // is the negative complement: allowing the config-entry group platform in
-// light/cover/fan/lock must not let a real integration's entity in the same
+// light/cover/fan/lock/switch must not let a real integration's entity in the same
 // domain through, and no write call may be issued for it.
 func TestManageHelper_UpdateDelete_RejectsNonHelperEntityInConfigEntryGroupDomain(t *testing.T) {
 	t.Parallel()
@@ -1516,10 +1518,10 @@ func TestManageHelper_UpdateDelete_RejectsNonHelperEntityInConfigEntryGroupDomai
 }
 
 // TestManageHelper_UpdateDelete_AllowsConfigEntryGroupHelper pins that the
-// config-entry "group" helper (sensor, binary_sensor, light, cover, fan and
-// lock groups) stays manageable: helperTypes["group"] only declares the "group"
+// config-entry "group" helper (sensor, binary_sensor, light, cover, fan, lock
+// and switch groups) stays manageable: helperTypes["group"] only declares the "group"
 // entity domain, so the platform has to be allowed for these domains
-// explicitly (issue #345 for light/cover/fan/lock).
+// explicitly (issue #345 for light/cover/fan/lock, issue #350 for switch).
 func TestManageHelper_UpdateDelete_AllowsConfigEntryGroupHelper(t *testing.T) {
 	t.Parallel()
 
@@ -1554,6 +1556,24 @@ func TestManageHelper_UpdateDelete_AllowsConfigEntryGroupHelper(t *testing.T) {
 					t.Fatalf("expected %s on config-entry group %s to succeed, got: %s", action, entityID, result.Content[0].Text)
 				}
 			})
+		}
+	}
+}
+
+// TestConfigEntryGroupDomains_CoverEveryGuardedGroupType pins that every entity
+// domain the config-entry group helper can create (homeassistant.GroupEntityDomains,
+// derived from entityDomainToGroupType) that checkHelperOnlyDomain guards is
+// allowed for the group platform, so a new group type cannot be rejected as
+// "not a helper entity" again (issues #345, #350).
+func TestConfigEntryGroupDomains_CoverEveryGuardedGroupType(t *testing.T) {
+	t.Parallel()
+
+	for _, domain := range homeassistant.GroupEntityDomains() {
+		if !guardedHelperDomains[domain] {
+			continue
+		}
+		if !helperPlatformsByDomain[domain][platformGroup] {
+			t.Errorf("group type %q is guarded by checkHelperOnlyDomain but missing from configEntryGroupDomains", domain)
 		}
 	}
 }

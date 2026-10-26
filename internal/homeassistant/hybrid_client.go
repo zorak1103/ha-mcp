@@ -6,7 +6,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -66,6 +68,18 @@ var entityDomainToGroupType = map[string]string{
 	domainCover:        domainCover,
 	domainFan:          domainFan,
 	domainLock:         domainLock,
+}
+
+// GroupEntityDomains returns the sorted, de-duplicated entity domains a
+// config-entry group helper creates entities in (the group types in
+// entityDomainToGroupType). Handlers use it to check their own group-domain
+// allow-lists against it.
+func GroupEntityDomains() []string {
+	seen := make(map[string]bool, len(entityDomainToGroupType))
+	for _, groupType := range entityDomainToGroupType {
+		seen[groupType] = true
+	}
+	return slices.Sorted(maps.Keys(seen))
 }
 
 // sensorGroupDomains are entity domains that result in sensor groups.

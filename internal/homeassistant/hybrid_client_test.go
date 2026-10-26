@@ -4762,3 +4762,15 @@ func TestGetConfigEntryOptions_BenignWalkEndingsReturnMergedOptions(t *testing.T
 		})
 	}
 }
+
+// TestGroupEntityDomains pins that GroupEntityDomains lists each group type's
+// entity domain once, sorted, and includes every domain handlers allow for the
+// config-entry group helper (issue #350 added switch).
+func TestGroupEntityDomains(t *testing.T) {
+	t.Parallel()
+
+	want := []string{"binary_sensor", "cover", "fan", "light", "lock", "sensor", "switch"}
+	if got := GroupEntityDomains(); !slices.Equal(got, want) {
+		t.Errorf("GroupEntityDomains() = %v, want %v", got, want)
+	}
+}
