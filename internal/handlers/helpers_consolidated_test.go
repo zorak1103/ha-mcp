@@ -767,7 +767,11 @@ func TestManageHelper_Update_SourceDomainMismatch(t *testing.T) {
 			wantContains: []string{"updated"},
 		},
 		{
-			name: "registry lookup failure degrades to unchecked update",
+			// checkHelperOnlyDomain (sensor is a guarded domain since issue #334)
+			// runs first and hard-fails; the degrade-to-unchecked behavior of
+			// checkUpdateSourceEntityDomain itself is pinned directly in
+			// TestCheckUpdateSourceEntityDomain_RegistryFetchFailureDegrades.
+			name: "registry lookup failure hard-fails at the helper-only guard",
 			args: map[string]any{
 				"action":    "update",
 				"entity_id": "sensor.my_meter",
@@ -778,11 +782,11 @@ func TestManageHelper_Update_SourceDomainMismatch(t *testing.T) {
 					return nil, errors.New("registry unavailable")
 				}
 				m.UpdateHelperFn = func(context.Context, string, homeassistant.HelperConfig) error {
-					return nil
+					return errors.New("UpdateHelper must not be called when the entity can't be verified as a helper")
 				}
 			},
-			wantError:    false,
-			wantContains: []string{"updated"},
+			wantError:    true,
+			wantContains: []string{"entity registry fetch failed"},
 		},
 		{
 			name: "generic_thermostat update with wrong device_class target_sensor_entity_id rejected",
@@ -891,6 +895,28 @@ func TestCheckUpdateSourceEntityDomain_FetchesRegistryWithConstrainedField(t *te
 	}
 	if err == nil {
 		t.Error("checkUpdateSourceEntityDomain() = nil, want a domain-mismatch error")
+	}
+}
+
+// TestCheckUpdateSourceEntityDomain_RegistryFetchFailureDegrades pins
+// checkUpdateSourceEntityDomain's own convention (a registry lookup failure
+// skips the validation instead of blocking the edit), independent of
+// checkHelperOnlyDomain's stricter hard-fail that runs before it in
+// handleUpdate.
+func TestCheckUpdateSourceEntityDomain_RegistryFetchFailureDegrades(t *testing.T) {
+	t.Parallel()
+
+	client := &UniversalMockClient{
+		GetEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+			return nil, errors.New("registry unavailable")
+		},
+	}
+
+	err := checkUpdateSourceEntityDomain(context.Background(), client, "sensor.my_meter", map[string]any{
+		"source": "input_number.x",
+	})
+	if err != nil {
+		t.Errorf("checkUpdateSourceEntityDomain() = %v, want nil (degrades to unchecked)", err)
 	}
 }
 
@@ -1296,6 +1322,244 @@ func TestManageHelper_Delete_AllowsHelperEntityInWidenedDomain(t *testing.T) {
 	}
 }
 
+// helperRegistryFn returns a GetEntityRegistryFn serving a single config-entry
+// backed entity of the given platform, enough to satisfy checkHelperOnlyDomain
+// in tests that exercise update/delete on a guarded-domain helper entity.
+func helperRegistryFn(entityID, platform string) func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+	return func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+		return []homeassistant.EntityRegistryEntry{
+			{EntityID: entityID, Platform: platform, ConfigEntryID: "helper_config_entry"},
+		}, nil
+	}
+}
+
+// sharedHelperDomainCases pairs each of the five entity domains that helpers
+// share with real integrations (issue #334) with a representative real
+// integration platform that must be rejected and one genuine helper platform
+// that must still be accepted.
+var sharedHelperDomainCases = []struct {
+	domain         string
+	realEntityID   string
+	realPlatform   string
+	helperEntityID string
+	helperPlatform string
+}{
+	{"sensor", "sensor.hue_temperature", "hue", "sensor.my_template", platformTemplate},
+	{"binary_sensor", "binary_sensor.hue_motion", "hue", "binary_sensor.my_threshold", "threshold"},
+	{"climate", "climate.living_room_hvac", "daikin", "climate.my_thermostat", platformGenericThermostat},
+	{"humidifier", "humidifier.bedroom", "tuya", "humidifier.my_hygrostat", platformGenericHygrostat},
+	{"select", "select.zigbee_mode", "mqtt", "select.my_template_select", platformTemplate},
+}
+
+// TestManageHelper_UpdateDelete_RejectsNonHelperEntityInSharedDomain is the
+// regression test for issue #334: sensor/binary_sensor/climate/humidifier/
+// select were left out of checkHelperOnlyDomain, so DeleteHelper deleted the
+// real integration's whole config entry and UpdateHelper submitted an Options
+// Flow against it. Neither write may be issued for a non-helper platform.
+func TestManageHelper_UpdateDelete_RejectsNonHelperEntityInSharedDomain(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range sharedHelperDomainCases {
+		for _, action := range []string{"update", "delete"} {
+			t.Run(tt.domain+"/"+action, func(t *testing.T) {
+				t.Parallel()
+
+				client := &UniversalMockClient{
+					GetEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+						return []homeassistant.EntityRegistryEntry{
+							{EntityID: tt.realEntityID, Platform: tt.realPlatform, ConfigEntryID: "real_config_entry"},
+						}, nil
+					},
+					UpdateHelperFn: func(context.Context, string, homeassistant.HelperConfig) error {
+						t.Fatal("UpdateHelper must not be called for an entity that isn't a helper")
+						return nil
+					},
+					DeleteHelperFn: func(context.Context, string) error {
+						t.Fatal("DeleteHelper must not be called for an entity that isn't a helper")
+						return nil
+					},
+				}
+
+				result, err := NewConsolidatedHelperHandlers().handleManageHelper(context.Background(), client, map[string]any{
+					"action":    action,
+					"entity_id": tt.realEntityID,
+					"name":      "renamed",
+				})
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if !result.IsError {
+					t.Fatalf("expected %s on %s (platform %q) to be rejected", action, tt.realEntityID, tt.realPlatform)
+				}
+				if !strings.Contains(result.Content[0].Text, tt.realPlatform) {
+					t.Errorf("error message = %q, want it to name the owning platform %q", result.Content[0].Text, tt.realPlatform)
+				}
+			})
+		}
+	}
+}
+
+// TestManageHelper_UpdateDelete_AllowsHelperEntityInSharedDomain is the
+// positive-path complement: genuine helpers in the five shared domains still
+// update and delete.
+func TestManageHelper_UpdateDelete_AllowsHelperEntityInSharedDomain(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range sharedHelperDomainCases {
+		for _, action := range []string{"update", "delete"} {
+			t.Run(tt.domain+"/"+action, func(t *testing.T) {
+				t.Parallel()
+
+				var written bool
+				client := &UniversalMockClient{
+					GetEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+						return []homeassistant.EntityRegistryEntry{
+							{EntityID: tt.helperEntityID, Platform: tt.helperPlatform, ConfigEntryID: "helper_config_entry"},
+						}, nil
+					},
+					UpdateHelperFn: func(context.Context, string, homeassistant.HelperConfig) error {
+						written = true
+						return nil
+					},
+					DeleteHelperFn: func(context.Context, string) error {
+						written = true
+						return nil
+					},
+					GetStateFn: func(context.Context, string) (*homeassistant.Entity, error) {
+						return nil, fmt.Errorf("not found")
+					},
+				}
+
+				result, err := NewConsolidatedHelperHandlers().handleManageHelper(context.Background(), client, map[string]any{
+					"action":    action,
+					"entity_id": tt.helperEntityID,
+					"icon":      "mdi:test",
+				})
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if result.IsError {
+					t.Fatalf("expected %s on genuine helper %s (platform %q) to succeed, got: %s",
+						action, tt.helperEntityID, tt.helperPlatform, result.Content[0].Text)
+				}
+				if !written {
+					t.Errorf("expected %s to reach the client write call", action)
+				}
+			})
+		}
+	}
+}
+
+// TestManageHelper_UpdateDelete_AllowsConfigEntryGroupHelper pins that the
+// config-entry "group" helper (sensor/binary_sensor groups) stays manageable:
+// helperTypes["group"] only declares the "group" entity domain, so the
+// platform has to be allowed for these two domains explicitly.
+func TestManageHelper_UpdateDelete_AllowsConfigEntryGroupHelper(t *testing.T) {
+	t.Parallel()
+
+	for _, entityID := range []string{"sensor.my_group", "binary_sensor.my_group"} {
+		for _, action := range []string{"update", "delete"} {
+			t.Run(entityID+"/"+action, func(t *testing.T) {
+				t.Parallel()
+
+				client := &UniversalMockClient{
+					GetEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+						return []homeassistant.EntityRegistryEntry{
+							{EntityID: entityID, Platform: platformGroup, ConfigEntryID: "group_config_entry"},
+						}, nil
+					},
+					UpdateHelperFn: func(context.Context, string, homeassistant.HelperConfig) error { return nil },
+					DeleteHelperFn: func(context.Context, string) error { return nil },
+					GetStateFn: func(context.Context, string) (*homeassistant.Entity, error) {
+						return nil, fmt.Errorf("not found")
+					},
+				}
+
+				result, err := NewConsolidatedHelperHandlers().handleManageHelper(context.Background(), client, map[string]any{
+					"action":    action,
+					"entity_id": entityID,
+					"icon":      "mdi:test",
+				})
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if result.IsError {
+					t.Fatalf("expected %s on config-entry group %s to succeed, got: %s", action, entityID, result.Content[0].Text)
+				}
+			})
+		}
+	}
+}
+
+// TestManageHelper_UpdateDelete_SharedDomainHardFailsWithoutRegistryEntry
+// extends checkHelperOnlyDomain's hard-fail convention to the shared domains:
+// a registry fetch error or an unknown entity must not degrade to an
+// unchecked write.
+func TestManageHelper_UpdateDelete_SharedDomainHardFailsWithoutRegistryEntry(t *testing.T) {
+	t.Parallel()
+
+	registries := map[string]func(context.Context) ([]homeassistant.EntityRegistryEntry, error){
+		"fetch error": func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+			return nil, fmt.Errorf("registry unavailable")
+		},
+		"entity not in registry": func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+			return []homeassistant.EntityRegistryEntry{}, nil
+		},
+	}
+
+	for regName, registryFn := range registries {
+		for _, action := range []string{"update", "delete"} {
+			t.Run(regName+"/"+action, func(t *testing.T) {
+				t.Parallel()
+
+				client := &UniversalMockClient{
+					GetEntityRegistryFn: registryFn,
+					UpdateHelperFn: func(context.Context, string, homeassistant.HelperConfig) error {
+						t.Fatal("UpdateHelper must not be called when the entity can't be verified as a helper")
+						return nil
+					},
+					DeleteHelperFn: func(context.Context, string) error {
+						t.Fatal("DeleteHelper must not be called when the entity can't be verified as a helper")
+						return nil
+					},
+				}
+
+				result, err := NewConsolidatedHelperHandlers().handleManageHelper(context.Background(), client, map[string]any{
+					"action":    action,
+					"entity_id": "sensor.mystery",
+					"name":      "renamed",
+				})
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if !result.IsError {
+					t.Fatalf("expected %s to hard-fail when the entity can't be verified", action)
+				}
+			})
+		}
+	}
+}
+
+// TestGuardedHelperDomains_PartitionsHelperEntityDomains pins the split
+// between domains checkHelperOnlyDomain gates and the WS-managed domains it
+// leaves alone: every helperTypes entity domain is exactly one of the two, and
+// the five shared domains of issue #334 are on the guarded side.
+func TestGuardedHelperDomains_PartitionsHelperEntityDomains(t *testing.T) {
+	t.Parallel()
+
+	for domain := range helperEntityDomains {
+		if guardedHelperDomains[domain] == unguardedHelperDomains[domain] {
+			t.Errorf("domain %q: guarded=%v unguarded=%v, want exactly one", domain,
+				guardedHelperDomains[domain], unguardedHelperDomains[domain])
+		}
+	}
+	for _, domain := range []string{"sensor", "binary_sensor", "climate", "humidifier", "select"} {
+		if !guardedHelperDomains[domain] {
+			t.Errorf("shared domain %q must be guarded", domain)
+		}
+	}
+}
+
 // =============================================================================
 // manage_helper - ID vs Name Entity Slug Tests
 // =============================================================================
@@ -1671,7 +1935,7 @@ func TestManageHelper_Update(t *testing.T) {
 			setupMock: func(m *UniversalMockClient) {
 				m.GetEntityRegistryFn = func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
 					return []homeassistant.EntityRegistryEntry{
-						{EntityID: "binary_sensor.threshold_test", ConfigEntryID: "config123"},
+						{EntityID: "binary_sensor.threshold_test", Platform: "threshold", ConfigEntryID: "config123"},
 					}, nil
 				}
 				m.UpdateHelperFn = func(context.Context, string, homeassistant.HelperConfig) error {
@@ -1711,7 +1975,7 @@ func TestManageHelper_Update(t *testing.T) {
 			setupMock: func(m *UniversalMockClient) {
 				m.GetEntityRegistryFn = func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
 					return []homeassistant.EntityRegistryEntry{
-						{EntityID: "sensor.my_template", ConfigEntryID: "config789"},
+						{EntityID: "sensor.my_template", Platform: platformTemplate, ConfigEntryID: "config789"},
 					}, nil
 				}
 				m.UpdateHelperFn = func(context.Context, string, homeassistant.HelperConfig) error {
@@ -1731,7 +1995,7 @@ func TestManageHelper_Update(t *testing.T) {
 			setupMock: func(m *UniversalMockClient) {
 				m.GetEntityRegistryFn = func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
 					return []homeassistant.EntityRegistryEntry{
-						{EntityID: "sensor.my_template", ConfigEntryID: "config789"},
+						{EntityID: "sensor.my_template", Platform: platformTemplate, ConfigEntryID: "config789"},
 					}, nil
 				}
 				m.UpdateHelperFn = func(context.Context, string, homeassistant.HelperConfig) error {
@@ -1753,7 +2017,7 @@ func TestManageHelper_Update(t *testing.T) {
 			setupMock: func(m *UniversalMockClient) {
 				m.GetEntityRegistryFn = func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
 					return []homeassistant.EntityRegistryEntry{
-						{EntityID: "binary_sensor.threshold_test", ConfigEntryID: "config123"},
+						{EntityID: "binary_sensor.threshold_test", Platform: "threshold", ConfigEntryID: "config123"},
 					}, nil
 				}
 				m.UpdateHelperFn = func(context.Context, string, homeassistant.HelperConfig) error {
@@ -1813,6 +2077,11 @@ func TestManageHelper_Update(t *testing.T) {
 			},
 			setupMock: func(m *UniversalMockClient) {
 				registry := map[string]string{"sensor.my_template": "config789"} // EntityID -> ConfigEntryID
+				m.GetEntityRegistryFn = func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+					return []homeassistant.EntityRegistryEntry{
+						{EntityID: "sensor.my_template", Platform: platformTemplate, ConfigEntryID: registry["sensor.my_template"]},
+					}, nil
+				}
 				m.UpdateHelperFn = func(_ context.Context, id string, config homeassistant.HelperConfig) error {
 					if _, ok := registry[id]; ok {
 						return nil // options-flow success
@@ -1935,7 +2204,7 @@ func TestManageHelper_Update_SuccessMessageOmitsFieldsThatNeverReachedThePayload
 func TestManageHelper_Update_SuccessMessageHandlesAPIFieldRenames(t *testing.T) {
 	t.Parallel()
 
-	client := &UniversalMockClient{}
+	client := &UniversalMockClient{GetEntityRegistryFn: helperRegistryFn("climate.thermo", platformGenericThermostat)}
 	client.UpdateHelperFn = func(context.Context, string, homeassistant.HelperConfig) error {
 		return nil
 	}
@@ -2243,7 +2512,7 @@ func TestManageHelper_Create_PartialApplyRendersSuccessWithWarning(t *testing.T)
 func TestManageHelper_Update_PartialApplyRendersSuccessWithWarning(t *testing.T) {
 	t.Parallel()
 
-	client := &UniversalMockClient{}
+	client := &UniversalMockClient{GetEntityRegistryFn: helperRegistryFn("climate.thermo", platformGenericThermostat)}
 	client.UpdateHelperFn = func(context.Context, string, homeassistant.HelperConfig) error {
 		return &homeassistant.PartialApplyError{
 			Op:     homeassistant.PartialApplyUpdate,
@@ -2485,7 +2754,7 @@ func TestManageHelper_Update_ConfigEntryDoesNotLeakEntityID(t *testing.T) {
 	t.Parallel()
 
 	var capturedConfig homeassistant.HelperConfig
-	client := &UniversalMockClient{}
+	client := &UniversalMockClient{GetEntityRegistryFn: helperRegistryFn("sensor.my_template", platformTemplate)}
 	client.UpdateHelperFn = func(_ context.Context, _ string, cfg homeassistant.HelperConfig) error {
 		capturedConfig = cfg
 		return nil
@@ -2523,7 +2792,7 @@ func TestManageHelper_Update_ConfigEntryDoesNotDefaultDeviceClassForNonHygrostat
 	t.Parallel()
 
 	var capturedConfig homeassistant.HelperConfig
-	client := &UniversalMockClient{}
+	client := &UniversalMockClient{GetEntityRegistryFn: helperRegistryFn("sensor.my_template", platformTemplate)}
 	client.UpdateHelperFn = func(_ context.Context, _ string, cfg homeassistant.HelperConfig) error {
 		capturedConfig = cfg
 		return nil
@@ -2559,7 +2828,7 @@ func TestManageHelper_Update_GenericHygrostatStillDefaultsDeviceClass(t *testing
 	t.Parallel()
 
 	var capturedConfig homeassistant.HelperConfig
-	client := &UniversalMockClient{}
+	client := &UniversalMockClient{GetEntityRegistryFn: helperRegistryFn("humidifier.my_hygrostat", platformGenericHygrostat)}
 	client.UpdateHelperFn = func(_ context.Context, _ string, cfg homeassistant.HelperConfig) error {
 		capturedConfig = cfg
 		return nil
@@ -3047,6 +3316,9 @@ func TestManageHelper_Delete(t *testing.T) {
 			args: map[string]any{
 				"action":    "delete",
 				"entity_id": "sensor.my_template",
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetEntityRegistryFn = helperRegistryFn("sensor.my_template", platformTemplate)
 			},
 			wantError:    false,
 			wantContains: []string{"deleted"},

@@ -1697,7 +1697,7 @@ func (h *ConsolidatedHelperHandlers) handleGetDetails(ctx context.Context, clien
 			// (an update/delete on a non-helper entity mutates or deletes a
 			// real integration's entity), which a read has none of. Wiring it
 			// in would also newly reject get_details on ordinary light/cover/
-			// fan/lock entities that work today (widenedHelperOnlyDomains
+			// fan/lock/sensor entities that work today (helperPlatformsByDomain
 			// covers more than just the two domains any single review round
 			// has flagged), and would hard-fail a read on a transient entity
 			// registry fetch error. See AGENTS.md's "API & Type Gotchas".
@@ -2988,42 +2988,35 @@ func hasAnyUpdatableSourceEntityField(args map[string]any) bool {
 	return false
 }
 
-// preExistingHelperOnlyDomains are the entity domains helperTypes already
-// legitimately owned before issue #206's 15 template_* subtypes (sensor,
-// binary_sensor, climate, humidifier, select) plus the original WS-helper
-// domains (input_*, counter, timer, schedule, group) - domains
-// checkHelperOnlyDomain deliberately does NOT gate. They have the same
-// real-integration-collision ambiguity in principle (sensor/binary_sensor
-// already had it before this branch), but are partially covered by
-// checkUpdateSourceEntityDomain/resolveConfigEntryPlatformForMinMaxType
-// already; conflating the two would grow this fix well beyond the
-// regression it's closing. This is the one hand-maintained literal in this
-// group - newlyWidenedHelperDomains below is derived from it plus
-// helperTypes so it can't drift out of sync with a newly added helper type.
-var preExistingHelperOnlyDomains = map[string]bool{
-	"sensor": true, "binary_sensor": true, "climate": true, "humidifier": true, "select": true,
+// unguardedHelperDomains are the entity domains checkHelperOnlyDomain leaves
+// alone: the WS-managed helper domains (input_*, counter, timer, schedule,
+// group), where the entity domain is the helper platform itself, so a real
+// integration has no entity there to collide with. Every other helperTypes
+// entity domain is guarded. This and configEntryGroupDomains below are the only
+// hand-maintained literals in this group; guardedHelperDomains is derived from
+// this one plus helperTypes so it can't drift out of sync with a newly added
+// helper type.
+var unguardedHelperDomains = map[string]bool{
 	"input_boolean": true, "input_number": true, "input_text": true, "input_select": true,
 	"input_datetime": true, "input_button": true, "counter": true, "timer": true,
 	"schedule": true, "group": true,
 }
 
-// newlyWidenedHelperDomains is the set of entity domains HelperPlatforms
-// (helper_common.go) gained for the 15 new template_* subtypes (issue
-// #206) plus switch_as_x's siren/valve targets - domains a real,
-// non-helper integration can also create entities in (a Hue light is
-// domain "light" too, a Zigbee plug is domain "switch"). Derived from
-// helperTypes' validEntityDomains minus preExistingHelperOnlyDomains, so a
-// future helper type touching a new domain is automatically covered by
-// checkHelperOnlyDomain without anyone having to remember to update this
-// set by hand - the exact drift risk a hand-maintained list here would
-// otherwise reopen.
-var newlyWidenedHelperDomains = buildNewlyWidenedHelperDomains()
+// guardedHelperDomains is the set of entity domains a real, non-helper
+// integration can also create entities in (a Hue light is domain "light", a
+// Hue temperature sensor is domain "sensor", a Zigbee plug is domain "switch").
+// Derived from helperTypes' validEntityDomains minus unguardedHelperDomains, so
+// a future helper type touching a new domain is automatically covered by
+// checkHelperOnlyDomain without anyone having to remember to update this set
+// by hand - the exact drift risk a hand-maintained list here would otherwise
+// reopen.
+var guardedHelperDomains = buildGuardedHelperDomains()
 
-func buildNewlyWidenedHelperDomains() map[string]bool {
+func buildGuardedHelperDomains() map[string]bool {
 	m := map[string]bool{}
 	for _, meta := range helperTypes {
 		for _, domain := range meta.validEntityDomains {
-			if !preExistingHelperOnlyDomains[domain] {
+			if !unguardedHelperDomains[domain] {
 				m[domain] = true
 			}
 		}
@@ -3031,18 +3024,26 @@ func buildNewlyWidenedHelperDomains() map[string]bool {
 	return m
 }
 
-// widenedHelperOnlyDomains maps each of newlyWidenedHelperDomains to the
-// set of real HA integration platforms allowed to own an entity there,
-// derived from helperTypes' validEntityDomains so it can't drift (e.g.
-// switch_as_x legitimately owns light.*/cover.*/.../valve.*, the 15
-// template_* subtypes each legitimately own exactly their own domain).
-var widenedHelperOnlyDomains = buildWidenedHelperOnlyDomains()
+// configEntryGroupDomains are the guarded entity domains the config-entry
+// "group" helper (sensor groups, binary_sensor groups) creates entities in.
+// helperTypes["group"] only declares the legacy "group" entity domain, so this
+// platform is not derivable from validEntityDomains and has to be allowed here
+// explicitly.
+var configEntryGroupDomains = []string{"sensor", "binary_sensor"}
 
-func buildWidenedHelperOnlyDomains() map[string]map[string]bool {
-	m := make(map[string]map[string]bool, len(newlyWidenedHelperDomains))
+// helperPlatformsByDomain maps each of guardedHelperDomains to the set of real
+// HA integration platforms allowed to own an entity there, derived from
+// helperTypes' validEntityDomains so it can't drift (e.g. switch_as_x
+// legitimately owns light.*/cover.*/.../valve.*, the 15 template_* subtypes
+// each legitimately own exactly their own domain), plus the config-entry group
+// platform for configEntryGroupDomains.
+var helperPlatformsByDomain = buildHelperPlatformsByDomain()
+
+func buildHelperPlatformsByDomain() map[string]map[string]bool {
+	m := make(map[string]map[string]bool, len(guardedHelperDomains))
 	for _, meta := range helperTypes {
 		for _, domain := range meta.validEntityDomains {
-			if !newlyWidenedHelperDomains[domain] {
+			if !guardedHelperDomains[domain] {
 				continue
 			}
 			if m[domain] == nil {
@@ -3051,24 +3052,32 @@ func buildWidenedHelperOnlyDomains() map[string]map[string]bool {
 			m[domain][meta.platform] = true
 		}
 	}
+	for _, domain := range configEntryGroupDomains {
+		if m[domain] == nil {
+			m[domain] = map[string]bool{}
+		}
+		m[domain][platformGroup] = true
+	}
 	return m
 }
 
-// checkHelperOnlyDomain rejects handleUpdate's target entity when its
-// domain is one of newlyWidenedHelperDomains and the entity registry's
-// actual platform isn't one of the platforms widenedHelperOnlyDomains
-// allows for that domain. Before this check, ParseHelperEntityID's
-// domain-only match was handleUpdate's only gate: a real, non-helper
-// entity sharing one of these domains (light.hue_office, a Zigbee
-// switch.*, ...) would reach client.UpdateHelper, which routes any entity
-// with a config_entry_id to an Options Flow submission against THAT
-// entity's real config entry - silently editing/reloading a real
+// checkHelperOnlyDomain rejects an update/delete target entity when its
+// domain is one of guardedHelperDomains and the entity registry's actual
+// platform isn't one of the platforms helperPlatformsByDomain allows for that
+// domain. Before this check, ParseHelperEntityID's domain-only match was the
+// handlers' only gate: a real, non-helper entity sharing one of these domains
+// (light.hue_office, a Zigbee switch.*, sensor.hue_temperature, ...) would
+// reach client.UpdateHelper/DeleteHelper, which route any entity with a
+// config_entry_id to an Options Flow submission against / deletion of THAT
+// entity's real config entry - silently editing, reloading or removing a real
 // integration instead of a helper. Unlike checkUpdateSourceEntityDomain, a
 // registry fetch failure or a not-found entity hard-fails rather than
-// degrading to an unchecked update: proceeding unchecked is exactly the
-// gap this closes, so there is nothing safe to degrade to.
+// degrading to an unchecked write: proceeding unchecked is exactly the gap
+// this closes, so there is nothing safe to degrade to. That includes
+// YAML-defined entities, which have no registry entry and no config entry to
+// route to, so the write would not have worked on them anyway.
 func checkHelperOnlyDomain(ctx context.Context, client homeassistant.Client, entityID, entityDomain string) error {
-	allowed, gated := widenedHelperOnlyDomains[entityDomain]
+	allowed, gated := helperPlatformsByDomain[entityDomain]
 	if !gated {
 		return nil
 	}
@@ -3107,7 +3116,7 @@ func checkHelperOnlyDomain(ctx context.Context, client homeassistant.Client, ent
 // (bypassing CachedClient by construction, the same way DeleteHelper's
 // routing fetch does), so even routing this call through a caching client
 // would not save that round-trip; checkHelperOnlyDomain's fetch only fires
-// for the 16 domains gated in widenedHelperOnlyDomains. Sharing one fetch
+// for the domains gated in helperPlatformsByDomain. Sharing one fetch
 // across the handlers/homeassistant package boundary would mean threading
 // entity-registry entries through the Client interface's UpdateHelper
 // signature - a bigger interface change than the fetch cost justifies
