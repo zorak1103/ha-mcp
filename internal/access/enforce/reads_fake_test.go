@@ -36,6 +36,7 @@ type readFake struct {
 	triggers    []string
 	extract     *homeassistant.ExtractFromTargetResult
 	extractFn   func(homeassistant.Target) *homeassistant.ExtractFromTargetResult
+	targetErrFn func(homeassistant.Target) error
 
 	mu         sync.Mutex
 	seenIDs    []string
@@ -289,23 +290,51 @@ func (f *readFake) recordTarget(t homeassistant.Target) {
 	f.targets = append(f.targets, t)
 }
 
-func (f *readFake) GetTriggersForTarget(_ context.Context, t homeassistant.Target, _ *bool) ([]string, error) {
+// targetErr records t and returns the injected error, if any.
+func (f *readFake) targetErr(t homeassistant.Target) error {
 	f.recordTarget(t)
+	if f.targetErrFn != nil {
+		return f.targetErrFn(t)
+	}
+	return nil
+}
+
+func (f *readFake) GetTriggersForTarget(_ context.Context, t homeassistant.Target, _ *bool) ([]string, error) {
+	if err := f.targetErr(t); err != nil {
+		return nil, err
+	}
 	return f.triggers, nil
 }
 
 func (f *readFake) GetConditionsForTarget(_ context.Context, t homeassistant.Target, _ *bool) ([]string, error) {
-	f.recordTarget(t)
+	if err := f.targetErr(t); err != nil {
+		return nil, err
+	}
 	return f.triggers, nil
 }
 
 func (f *readFake) GetServicesForTarget(_ context.Context, t homeassistant.Target, _ *bool) ([]string, error) {
-	f.recordTarget(t)
+	if err := f.targetErr(t); err != nil {
+		return nil, err
+	}
 	return f.triggers, nil
 }
 
+// reverseLists mimics HA's set-order output: not the request order, not sorted.
+func reverseLists(r *homeassistant.ExtractFromTargetResult) *homeassistant.ExtractFromTargetResult {
+	for _, l := range [][]string{
+		r.ReferencedEntities, r.ReferencedDevices, r.ReferencedAreas,
+		r.MissingDevices, r.MissingAreas, r.MissingFloors, r.MissingLabels,
+	} {
+		slices.Reverse(l)
+	}
+	return r
+}
+
 func (f *readFake) ExtractFromTarget(_ context.Context, t homeassistant.Target, _ *bool) (*homeassistant.ExtractFromTargetResult, error) {
-	f.recordTarget(t)
+	if err := f.targetErr(t); err != nil {
+		return nil, err
+	}
 	if f.extractFn != nil {
 		return f.extractFn(t), nil
 	}
@@ -332,6 +361,7 @@ func (f *readFake) echoExtract(t homeassistant.Target) *homeassistant.ExtractFro
 			r.MissingAreas = append(r.MissingAreas, a)
 		}
 	}
+	r.MissingLabels = slices.Clone(t.LabelID) // the fake knows no labels
 	return r
 }
 

@@ -135,36 +135,43 @@ func (c *client) BrowseMedia(ctx context.Context, mediaContentID string) (*homea
 	return filterMediaTree(tree, func(id string) bool { return hiddenMediaItem(id, hidden) }), nil
 }
 
+// entityMediaDomains are the media sources backed by entities; every other
+// source (local media, tts, radio, ...) has no entity mapping and is never
+// hidden.
+var entityMediaDomains = map[string]bool{"camera": true, "image": true}
+
 // hiddenMediaItem reports whether a media content id media-source://<domain>/<id>
-// addresses an entity that is hidden. A camera item (whose id is the entity id)
-// whose id is not a valid entity id counts as hidden. For every other source the
-// first path segment is tried as an entity id of its own and as an object id in
-// the source's domain (entity-backed sources such as image); only shape-valid
-// candidates are decided, so folders and plain media sources are kept. Source
-// folders without an id are kept.
+// of an entity-backed source (camera, image) addresses a hidden entity. The
+// id is the first path segment with any #fragment and ?query removed, then
+// percent-decoded; the entity is <id> when it holds a dot, else <domain>.<id>.
+// Under a hiding policy hiddenFunc treats any candidate that is not a plain
+// (valid, lower-case, unpadded) entity id as hidden, so odd, upper-case,
+// whitespace or percent-encoded forms never slip past the parse differential
+// between this check and HA. A source folder without an id is kept.
 func hiddenMediaItem(mediaContentID string, hidden func(string) bool) bool {
-	rest, ok := strings.CutPrefix(strings.ToLower(strings.TrimSpace(mediaContentID)), mediaSourcePrefix)
-	if !ok {
+	s := strings.TrimSpace(mediaContentID)
+	if len(s) < len(mediaSourcePrefix) || !strings.EqualFold(s[:len(mediaSourcePrefix)], mediaSourcePrefix) {
 		return false
 	}
-	domain, id, hasID := strings.Cut(rest, "/")
-	if !hasID {
+	domain, id, hasID := strings.Cut(s[len(mediaSourcePrefix):], "/")
+	domain = strings.ToLower(domain)
+	if !hasID || !entityMediaDomains[domain] {
 		return false
 	}
+	id, _, _ = strings.Cut(id, "#")
 	id, _, _ = strings.Cut(id, "?")
 	id, _, _ = strings.Cut(id, "/")
 	if id == "" {
 		return false
 	}
-	if domain == "camera" {
-		return hidden(id)
+	decoded, err := url.PathUnescape(id)
+	if err != nil {
+		return true
 	}
-	for _, candidate := range []string{id, domain + "." + id} {
-		if _, valid := normalizeEntityID(candidate); valid && hidden(candidate) {
-			return true
-		}
+	if !strings.Contains(decoded, ".") {
+		decoded = domain + "." + decoded
 	}
-	return false
+	return hidden(decoded)
 }
 
 // filterMediaTree returns a copy of n without the descendants for which drop is

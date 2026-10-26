@@ -738,6 +738,7 @@ func targetFixture(t *testing.T) (*client, *readFake, context.Context) {
 }
 
 func TestTargets_FilterInputs(t *testing.T) {
+	setNonces(t, "abcd1234")
 	tests := []struct {
 		name      string
 		in        homeassistant.Target
@@ -746,11 +747,11 @@ func TestTargets_FilterInputs(t *testing.T) {
 		// A hidden explicit id is sent as an absent twin of the same domain, so
 		// HA answers exactly as for a missing id.
 		{"only hidden entity", homeassistant.Target{EntityID: []string{"light.secret"}},
-			[]homeassistant.Target{{EntityID: []string{"light.ha_mcp_absent_0"}}}},
+			[]homeassistant.Target{{EntityID: []string{"light.ha_mcp_abcd1234_0"}}}},
 		{"hidden replaced in mixed list", homeassistant.Target{EntityID: []string{"light.kitchen", "Light.Secret"}},
-			[]homeassistant.Target{{EntityID: []string{"light.kitchen", "light.ha_mcp_absent_0"}}}},
+			[]homeassistant.Target{{EntityID: []string{"light.kitchen", "light.ha_mcp_abcd1234_0"}}}},
 		{"padded visible id is answered as missing too", homeassistant.Target{EntityID: []string{"light.kitchen "}},
-			[]homeassistant.Target{{EntityID: []string{"light.ha_mcp_absent_0"}}}},
+			[]homeassistant.Target{{EntityID: []string{"light.ha_mcp_abcd1234_0"}}}},
 		{"area expands to visible entities only", homeassistant.Target{AreaID: []string{"kitchen"}},
 			[]homeassistant.Target{{EntityID: []string{"light.kitchen"}}}},
 		{"device whose entities are all hidden", homeassistant.Target{DeviceID: []string{"dev_hidden"}}, nil},
@@ -813,7 +814,7 @@ func TestExtractFromTarget_FiltersResults(t *testing.T) {
 	if !reflect.DeepEqual(got.ReferencedEntities, []string{"light.kitchen"}) {
 		t.Errorf("entities = %v", got.ReferencedEntities)
 	}
-	if !reflect.DeepEqual(got.ReferencedDevices, []string{"dev_mixed", "dev_visible", "dev_empty"}) {
+	if !reflect.DeepEqual(got.ReferencedDevices, []string{"dev_empty", "dev_mixed", "dev_visible"}) {
 		t.Errorf("devices = %v", got.ReferencedDevices)
 	}
 	if !reflect.DeepEqual(got.ReferencedAreas, []string{"kitchen"}) || !reflect.DeepEqual(got.MissingDevices, []string{"dev_gone"}) {
@@ -882,6 +883,7 @@ func TestExtractFromTarget_AreaExpansionDropsHiddenWithoutEcho(t *testing.T) {
 }
 
 func TestExtractFromTarget_AllHiddenIsAMissingAnswer(t *testing.T) {
+	setNonces(t, "abcd1234")
 	full := buildFake(true)
 	full.extractFn = full.echoExtract
 	w, _, ctx := wrapFake(t, hidingPolicy(t), full)
@@ -892,7 +894,7 @@ func TestExtractFromTarget_AllHiddenIsAMissingAnswer(t *testing.T) {
 	if !reflect.DeepEqual(got.ReferencedEntities, []string{"light.secret"}) {
 		t.Errorf("a hidden id is reported like a missing id: %+v", got)
 	}
-	if len(full.targets) != 1 || !reflect.DeepEqual(full.targets[0].EntityID, []string{"light.ha_mcp_absent_0"}) {
+	if len(full.targets) != 1 || !reflect.DeepEqual(full.targets[0].EntityID, []string{"light.ha_mcp_abcd1234_0"}) {
 		t.Errorf("inner must be asked about an absent twin: %+v", full.targets)
 	}
 }
