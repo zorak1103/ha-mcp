@@ -19,7 +19,7 @@ task --list
 # Build and test
 task build                  # go build -o ha-mcp[.exe] ./cmd/ha-mcp
 task test                   # go test ./... (no race detector, Windows-safe)
-task test:race              # go test -race ./... (CGO_ENABLED=1, Linux/CI)
+task test:race              # go test -race ./... (CGO_ENABLED=1 + C compiler, e.g. Linux/CI or Windows with MinGW gcc)
 task test:coverage          # race + coverprofile + per-file 80% enforcement
 task test:integration       # go test -tags=integration -v ./internal/handlers/integration/...
 

@@ -19,7 +19,7 @@ tasks:
       - go test ./...
 
   test:race:
-    desc: Run unit tests with race detector (requires CGO_ENABLED=1, Linux/CI)
+    desc: Run unit tests with race detector (requires CGO_ENABLED=1 and a C compiler, e.g. Linux/CI or Windows with MinGW gcc)
     env:
       CGO_ENABLED: "1"
     cmds:
