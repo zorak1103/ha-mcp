@@ -10,12 +10,6 @@ import (
 // client.go. Each records a denial and returns zero values until its real
 // enforcement replaces it (and the stub is deleted from this file).
 
-// Entity operations.
-
-func (c *client) SetState(context.Context, string, homeassistant.StateUpdate) (*homeassistant.Entity, error) {
-	return nil, c.unclassified("SetState")
-}
-
 // Automation operations.
 
 func (c *client) CreateAutomation(context.Context, homeassistant.AutomationConfig) error {
@@ -28,10 +22,6 @@ func (c *client) UpdateAutomation(context.Context, string, homeassistant.Automat
 
 func (c *client) DeleteAutomation(context.Context, string) error {
 	return c.unclassified("DeleteAutomation")
-}
-
-func (c *client) ToggleAutomation(context.Context, string, bool) error {
-	return c.unclassified("ToggleAutomation")
 }
 
 // Helper operations.
@@ -50,10 +40,6 @@ func (c *client) UpdateHelper(context.Context, string, homeassistant.HelperConfi
 
 func (c *client) DeleteHelper(context.Context, string) error {
 	return c.unclassified("DeleteHelper")
-}
-
-func (c *client) SetHelperValue(context.Context, string, any) error {
-	return c.unclassified("SetHelperValue")
 }
 
 // Script operations.
@@ -82,12 +68,6 @@ func (c *client) UpdateScene(context.Context, string, homeassistant.SceneConfig)
 
 func (c *client) DeleteScene(context.Context, string) error {
 	return c.unclassified("DeleteScene")
-}
-
-// Service operations.
-
-func (c *client) CallService(context.Context, string, string, map[string]any) ([]homeassistant.Entity, error) {
-	return nil, c.unclassified("CallService")
 }
 
 // Area registry modification operations.
@@ -246,10 +226,6 @@ func (c *client) GetConfigEntryOptions(context.Context, string) (map[string]any,
 	return nil, c.unclassified("GetConfigEntryOptions")
 }
 
-func (c *client) DeleteConfigEntry(context.Context, string) (bool, error) {
-	return false, c.unclassified("DeleteConfigEntry")
-}
-
 // Service discovery operations.
 
 func (c *client) GetServices(context.Context) ([]homeassistant.Service, error) {
@@ -268,34 +244,14 @@ func (c *client) CheckConfig(context.Context) (*homeassistant.ConfigCheckResult,
 	return nil, c.unclassified("CheckConfig")
 }
 
-// HACS operations.
-
-func (c *client) SendHACSCommand(context.Context, string, map[string]any) (any, error) {
-	return nil, c.unclassified("SendHACSCommand")
-}
-
-// Service call with response.
-
-func (c *client) CallServiceWithResponse(context.Context, string, string, map[string]any) (map[string]any, error) {
-	return nil, c.unclassified("CallServiceWithResponse")
-}
-
 // Recorder statistics operations.
 
 func (c *client) ValidateStatistics(context.Context) (map[string][]homeassistant.StatisticValidationIssue, error) {
 	return nil, c.unclassified("ValidateStatistics")
 }
 
-func (c *client) ClearStatistics(context.Context, []string) error {
-	return c.unclassified("ClearStatistics")
-}
-
 // System log operations.
 
 func (c *client) GetSystemLog(context.Context) ([]homeassistant.SystemLogEntry, error) {
 	return nil, c.unclassified("GetSystemLog")
-}
-
-func (c *client) ClearSystemLog(context.Context) error {
-	return c.unclassified("ClearSystemLog")
 }

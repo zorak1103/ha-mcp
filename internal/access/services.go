@@ -74,6 +74,8 @@ var indirectServices = map[string]ServiceClass{
 	"input_select.set_options": {Kind: ServiceConfigure},
 	"scene.apply":              {Kind: ServiceControl, EntityDataKeys: []string{"entities"}},
 	"media_player.join":        {Kind: ServiceControl, EntityDataKeys: []string{"group_members"}},
+	"tts.speak":                {Kind: ServiceControl, EntityDataKeys: []string{"media_player_entity_id"}},
+	"camera.play_stream":       {Kind: ServiceControl, EntityDataKeys: []string{"media_player"}},
 }
 
 // readServices are the services that only read.

@@ -37,6 +37,10 @@ type readFake struct {
 	extract     *homeassistant.ExtractFromTargetResult
 	extractFn   func(homeassistant.Target) *homeassistant.ExtractFromTargetResult
 	targetErrFn func(homeassistant.Target) error
+	labels      []homeassistant.LabelRegistryEntry
+	floors      []homeassistant.FloorRegistryEntry
+	hacsFn      func(command string, data map[string]any) (any, error)
+	writes      []writeCall // see writes_fake_test.go
 
 	mu         sync.Mutex
 	seenIDs    []string
@@ -111,11 +115,11 @@ func (f *readFake) GetAreaRegistry(context.Context) ([]homeassistant.AreaRegistr
 }
 
 func (f *readFake) GetLabelRegistry(context.Context) ([]homeassistant.LabelRegistryEntry, error) {
-	return nil, nil
+	return f.labels, nil
 }
 
 func (f *readFake) GetFloorRegistry(context.Context) ([]homeassistant.FloorRegistryEntry, error) {
-	return nil, nil
+	return f.floors, nil
 }
 
 func (f *readFake) ListDashboards(context.Context) ([]homeassistant.DashboardEntry, error) {

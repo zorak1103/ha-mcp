@@ -18,6 +18,14 @@ const (
 	// classReadRestricted reads an operation that is refused or checked as a
 	// whole, because it can reach any object.
 	classReadRestricted
+	// classWriteChecked acts on objects: every object the call reaches,
+	// explicit or expanded, must be granted the needed capability, else the
+	// whole call is refused before the inner client sees it.
+	classWriteChecked
+	// classSystem is an object-less system operation gated by a system value.
+	classSystem
+	// classCommand is the WebSocket passthrough, decided per command name.
+	classCommand
 )
 
 // methodClass has exactly one entry per homeassistant.Client method, keyed by
@@ -26,20 +34,20 @@ const (
 var methodClass = map[string]class{
 	"GetStates":                 classReadFiltered,
 	"GetState":                  classReadLookup,
-	"SetState":                  classUnclassified,
+	"SetState":                  classWriteChecked,
 	"GetHistory":                classReadFiltered,
 	"ListAutomations":           classReadFiltered,
 	"GetAutomation":             classReadLookup,
 	"CreateAutomation":          classUnclassified,
 	"UpdateAutomation":          classUnclassified,
 	"DeleteAutomation":          classUnclassified,
-	"ToggleAutomation":          classUnclassified,
+	"ToggleAutomation":          classWriteChecked,
 	"ListHelpers":               classReadFiltered,
 	"CreateHelper":              classUnclassified,
 	"CreateHelperEntity":        classUnclassified,
 	"UpdateHelper":              classUnclassified,
 	"DeleteHelper":              classUnclassified,
-	"SetHelperValue":            classUnclassified,
+	"SetHelperValue":            classWriteChecked,
 	"ListScripts":               classReadFiltered,
 	"GetScript":                 classReadLookup,
 	"CreateScript":              classUnclassified,
@@ -51,7 +59,7 @@ var methodClass = map[string]class{
 	"UpdateScene":               classUnclassified,
 	"DeleteScene":               classUnclassified,
 	"ConfigFileEntryExists":     classReadLookup,
-	"CallService":               classUnclassified,
+	"CallService":               classWriteChecked,
 	"GetEntityRegistry":         classReadFiltered,
 	"GetEntityRegistryEntry":    classReadLookup,
 	"GetDeviceRegistry":         classReadFiltered,
@@ -101,20 +109,20 @@ var methodClass = map[string]class{
 	"GetConfigEntries":          classUnclassified,
 	"GetConfigEntry":            classUnclassified,
 	"GetConfigEntryOptions":     classUnclassified,
-	"DeleteConfigEntry":         classUnclassified,
+	"DeleteConfigEntry":         classSystem,
 	"GetServices":               classUnclassified,
 	"GetConfig":                 classUnclassified,
 	"RenderTemplate":            classReadRestricted,
 	"GetLogbook":                classReadFiltered,
 	"CheckConfig":               classUnclassified,
-	"SendHACSCommand":           classUnclassified,
-	"CallServiceWithResponse":   classUnclassified,
+	"SendHACSCommand":           classCommand,
+	"CallServiceWithResponse":   classWriteChecked,
 	"ListStatisticIDs":          classReadFiltered,
 	"ValidateStatistics":        classUnclassified,
-	"ClearStatistics":           classUnclassified,
+	"ClearStatistics":           classSystem,
 	"GetCalendars":              classReadFiltered,
 	"GetCalendarEvents":         classReadLookup,
 	"GetCameraSnapshot":         classReadLookup,
 	"GetSystemLog":              classUnclassified,
-	"ClearSystemLog":            classUnclassified,
+	"ClearSystemLog":            classSystem,
 }

@@ -98,6 +98,9 @@ func TestClassifyService_ConfigureEntityDataKeys(t *testing.T) {
 		{"scene", "create", ServiceClass{Kind: ServiceConfigure, ObjectFromData: "scene_id", EntityDataKeys: []string{"entities", "snapshot_entities"}}},
 		{"group", "set", ServiceClass{Kind: ServiceConfigure, ObjectFromData: "object_id", EntityDataKeys: []string{"entities", "add_entities"}}},
 		{"group", "remove", ServiceClass{Kind: ServiceConfigure, ObjectFromData: "object_id"}},
+		// Control services that name a further entity in a plain data field.
+		{"tts", "speak", ServiceClass{Kind: ServiceControl, EntityDataKeys: []string{"media_player_entity_id"}}},
+		{"camera", "play_stream", ServiceClass{Kind: ServiceControl, EntityDataKeys: []string{"media_player"}}},
 	}
 	for _, tt := range tests {
 		if got := ClassifyService(tt.domain, tt.service); !reflect.DeepEqual(got, tt.want) {
