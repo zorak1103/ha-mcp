@@ -10,9 +10,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"unicode"
-
-	"golang.org/x/text/unicode/norm"
 
 	"github.com/zorak1103/ha-mcp/internal/handlers/formatter"
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
@@ -1204,28 +1201,7 @@ func normalizeAutomationID(automationID string) (entityID, configID string) {
 // their ASCII base (e.g. u->u, o->o). We replicate this with NFD decomposition:
 // decompose accented runes into base letter + combining mark, then drop combining marks.
 func generateAutomationID(alias string) string {
-	// NFD decomposes e.g. u (U+00FC) into u (U+0075) + combining umlaut (U+0308)
-	normalized := norm.NFD.String(alias)
-	var result strings.Builder
-	prevUnderscore := false
-
-	for _, r := range normalized {
-		if unicode.Is(unicode.Mn, r) {
-			continue // skip combining marks (accents, umlauts, etc.)
-		}
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
-			result.WriteRune(unicode.ToLower(r))
-			prevUnderscore = false
-		} else if unicode.IsSpace(r) || r == '-' || r == '_' {
-			if !prevUnderscore && result.Len() > 0 {
-				result.WriteRune('_')
-				prevUnderscore = true
-			}
-		}
-	}
-
-	s := result.String()
-	return strings.TrimSuffix(s, "_")
+	return homeassistant.Slugify(alias)
 }
 
 // isValidSlugID reports whether id consists only of lowercase ASCII letters,

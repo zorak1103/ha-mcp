@@ -74,7 +74,7 @@ func (c *wsClientImpl) GetState(ctx context.Context, entityID string) (*Entity, 
 		}
 	}
 
-	return nil, fmt.Errorf("entity not found: %s", entityID)
+	return nil, NewEntityNotFoundError(entityID)
 }
 
 // SetState sets the state of an entity (uses call_service internally).

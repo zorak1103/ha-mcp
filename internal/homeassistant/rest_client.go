@@ -41,10 +41,7 @@ func handleConfigError(statusCode int, body []byte, info configErrorInfo) error 
 			Message:    fmt.Sprintf("invalid %s config: %s", info.typeName, bodyStr),
 		}
 	case http.StatusNotFound:
-		return &APIError{
-			StatusCode: statusCode,
-			Message:    fmt.Sprintf("%s not found: %s", info.typeName, info.entityID),
-		}
+		return NewConfigNotFoundError(info.typeName, info.entityID)
 	case http.StatusUnauthorized:
 		return &APIError{
 			StatusCode: statusCode,
@@ -337,10 +334,7 @@ func (c *RESTClient) DeleteAutomation(ctx context.Context, automationID string) 
 
 	switch resp.StatusCode {
 	case http.StatusNotFound:
-		return &APIError{
-			StatusCode: resp.StatusCode,
-			Message:    fmt.Sprintf("automation not found: %s", automationID),
-		}
+		return NewConfigNotFoundError("automation", automationID)
 	case http.StatusUnauthorized:
 		return &APIError{
 			StatusCode: resp.StatusCode,
@@ -473,10 +467,7 @@ func (c *RESTClient) DeleteScript(ctx context.Context, scriptID string) error {
 
 	switch resp.StatusCode {
 	case http.StatusNotFound:
-		return &APIError{
-			StatusCode: resp.StatusCode,
-			Message:    fmt.Sprintf("script not found: %s", scriptID),
-		}
+		return NewConfigNotFoundError("script", scriptID)
 	case http.StatusUnauthorized:
 		return &APIError{
 			StatusCode: resp.StatusCode,
@@ -723,10 +714,7 @@ func (c *RESTClient) DeleteScene(ctx context.Context, sceneID string) error {
 
 	switch resp.StatusCode {
 	case http.StatusNotFound:
-		return &APIError{
-			StatusCode: resp.StatusCode,
-			Message:    fmt.Sprintf("scene not found: %s", sceneID),
-		}
+		return NewConfigNotFoundError("scene", sceneID)
 	case http.StatusUnauthorized:
 		return &APIError{
 			StatusCode: resp.StatusCode,
@@ -1119,10 +1107,7 @@ func (c *RESTClient) DeleteConfigEntry(ctx context.Context, entryID string) (boo
 
 	switch resp.StatusCode {
 	case http.StatusNotFound:
-		return false, &APIError{
-			StatusCode: resp.StatusCode,
-			Message:    fmt.Sprintf("config entry not found: %s", entryID),
-		}
+		return false, NewConfigNotFoundError("config entry", entryID)
 	case http.StatusUnauthorized:
 		return false, &APIError{
 			StatusCode: resp.StatusCode,
