@@ -2774,7 +2774,7 @@ func buildTemplateSensorConfig(config, args map[string]any) error {
 	r.str("state")
 	r.str("unit_of_measurement")
 	r.str("state_class")
-	config["template_type"] = "sensor"
+	config[homeassistant.TemplateTypeConfigKey] = "sensor"
 	r.str("device_class")
 	return r.err()
 }
@@ -2788,7 +2788,7 @@ func buildTemplateBinarySensorConfig(config, args map[string]any) error {
 	r.str("state")
 	r.str("delay_on")
 	r.str("delay_off")
-	config["template_type"] = "binary_sensor"
+	config[homeassistant.TemplateTypeConfigKey] = "binary_sensor"
 	r.str("device_class")
 	return r.err()
 }

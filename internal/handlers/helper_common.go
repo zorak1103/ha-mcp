@@ -1,58 +1,43 @@
 // Package handlers provides MCP tool handlers for Home Assistant operations.
 package handlers
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // VerboseHint is the hint message shown when verbose mode is available.
 const VerboseHint = " (use verbose=true for full details)"
 
-// HelperPlatforms defines all known helper platform prefixes.
-// This list is used across helper handlers for entity ID parsing and validation.
-var HelperPlatforms = []string{
-	// Input helpers
-	"input_boolean",
-	"input_number",
-	"input_text",
-	"input_select",
-	"input_datetime",
-	"input_button",
-	// Other helpers
-	"counter",
-	"timer",
-	"schedule",
-	"group",
+// helperPlatformNamePrefixes are the config-entry platform names that
+// ParseHelperEntityID accepts as an entity_id prefix without being an entity
+// domain of any helperTypes entry. Every other prefix is derived from
+// helperTypes' validEntityDomains, so a new helper type needs no edit here.
+var helperPlatformNamePrefixes = []string{
 	"template",
 	"threshold",
 	"derivative",
-	"integration", // Note: Home Assistant uses "integration" not "integral"
-	// Entity platforms created by derivative/integral/threshold helpers
-	"sensor",
-	"binary_sensor",
-	// Entity platforms created by new Config Entry helpers
-	"climate",
-	"humidifier",
-	"select",
-	// Entity platforms created by the 15 new template_* subtypes (issue #206)
-	"alarm_control_panel",
-	"button",
-	"cover",
-	"device_tracker",
-	"event",
-	"fan",
-	"image",
-	"light",
-	"lock",
-	"number",
-	"switch",
-	"update",
-	"vacuum",
-	"weather",
-	// cover/fan/light/lock above are also switch_as_x target domains
-	// (helperTypes["switch_as_x"].validEntityDomains); siren/valve complete
-	// that set - switch_as_x's manage_helper update/delete on a helper
-	// targeting either was broken by this same gap before this fix.
-	"siren",
-	"valve",
+	platformIntegration, // Note: Home Assistant uses "integration" not "integral"
+}
+
+// HelperPlatforms defines all known helper platform prefixes, sorted.
+// This list is used across helper handlers for entity ID parsing and validation.
+var HelperPlatforms = buildHelperPlatforms()
+
+// buildHelperPlatforms derives the ParseHelperEntityID prefix list from every
+// helperTypes entry's validEntityDomains plus helperPlatformNamePrefixes -
+// the same single-source pattern as helperEntityDomains and
+// templateSubtypeDomains. A domain missing from a hand-written list broke
+// update/delete with "invalid entity_id format" while create still worked
+// (issue #211). The result is sorted and de-duplicated: helperTypes is a map,
+// so its range order is randomized per iteration.
+func buildHelperPlatforms() []string {
+	platforms := slices.Clone(helperPlatformNamePrefixes)
+	for _, meta := range helperTypes {
+		platforms = append(platforms, meta.validEntityDomains...)
+	}
+	slices.Sort(platforms)
+	return slices.Compact(platforms)
 }
 
 // ParseHelperEntityID extracts platform and ID from an entity_id like "input_boolean.my_switch".

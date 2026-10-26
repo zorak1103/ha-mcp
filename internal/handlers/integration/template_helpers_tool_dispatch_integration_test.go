@@ -84,8 +84,8 @@ func (s *TemplateHelperToolDispatchTestSuite) TestTemplateSensorUpdateViaTool() 
 	s.Equal("100.0", entity.State, "Template sensor should show doubled value (source=50) after tool-driven update")
 }
 
-// TestTemplateBinarySensorCreateViaTool reproduces issue #211: determineTemplateSubtype
-// read a dead config key ("platformTemplate_type" instead of "template_type"),
+// TestTemplateBinarySensorCreateViaTool reproduces issue #211: DetermineTemplateSubtype
+// (then the determineTemplateSubtype method) read a dead config key ("platformTemplate_type" instead of "template_type"),
 // so a manage_helper create of type=template_binary_sensor with no
 // binary-inferrable device_class fell through to device-class guessing,
 // which created a sensor while the tool reported a binary_sensor.* entity id

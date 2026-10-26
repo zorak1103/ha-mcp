@@ -5,6 +5,7 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
 
@@ -306,8 +307,8 @@ func deviceClassSupportedOnTemplateUpdate(entityDomain string) bool {
 // template_* type name, shared by every subtype: read each declared field
 // with the reader its kind selects, apply device_class if this subtype's
 // CONFIG_FLOW schema supports it, enforce any HA vol.Inclusive field
-// pairing, then stamp template_type - the routing key
-// determineTemplateSubtype (internal/homeassistant/hybrid_client.go) reads
+// pairing, then stamp homeassistant.TemplateTypeConfigKey - the routing key
+// DetermineTemplateSubtype (internal/homeassistant/hybrid_client.go) reads
 // to pick the create-flow menu option and predict the entity domain.
 func buildTemplateHelperConfig(typeName string) configBuilderFunc {
 	return func(config, args map[string]any) error {
@@ -328,7 +329,7 @@ func buildTemplateHelperConfig(typeName string) configBuilderFunc {
 		if err := checkInclusivePairs(subtype, config); err != nil {
 			return err
 		}
-		config["template_type"] = subtype.domain
+		config[homeassistant.TemplateTypeConfigKey] = subtype.domain
 		return nil
 	}
 }

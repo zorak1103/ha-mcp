@@ -5,8 +5,6 @@ import "testing"
 func TestDetermineTemplateSubtype(t *testing.T) {
 	t.Parallel()
 
-	c := NewHybridClientWithInterfaces(&mockWSOperations{}, &mockRESTOperations{})
-
 	tests := []struct {
 		name   string
 		config map[string]any
@@ -52,9 +50,9 @@ func TestDetermineTemplateSubtype(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := c.determineTemplateSubtype(HelperConfig{Platform: platformTemplate, Config: tt.config})
+			got := DetermineTemplateSubtype(HelperConfig{Platform: platformTemplate, Config: tt.config})
 			if got != tt.want {
-				t.Errorf("determineTemplateSubtype(%v) = %q, want %q", tt.config, got, tt.want)
+				t.Errorf("DetermineTemplateSubtype(%v) = %q, want %q", tt.config, got, tt.want)
 			}
 		})
 	}
@@ -70,7 +68,7 @@ func TestPredictEntityIDForConfigEntry_TemplateBinarySensor(t *testing.T) {
 	// binary_sensor.* entity id, matching what createConfigEntryHelper reports
 	// to the caller and what HA actually creates. Regression test for #211's
 	// second victim: the icon-write target derived here shares the same
-	// determineTemplateSubtype call as the entity-id report.
+	// DetermineTemplateSubtype call as the entity-id report.
 	got, err := c.predictEntityIDForConfigEntry(t.Context(), HelperConfig{
 		Platform: platformTemplate,
 		Config: map[string]any{

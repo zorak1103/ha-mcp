@@ -4,7 +4,55 @@ import (
 	"reflect"
 	"slices"
 	"testing"
+
+	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 )
+
+// TestTemplateTypeKey_RoundTripsThroughDetermineTemplateSubtype pins that every
+// helper type on the "template" platform stamps a config that
+// homeassistant.DetermineTemplateSubtype maps back to the entity domain the
+// type declares. The builders (this package) write the template_type key and
+// DetermineTemplateSubtype (internal/homeassistant) reads it; both reference
+// homeassistant.TemplateTypeConfigKey, and this test fails if a builder stops
+// stamping it (the read side would then guess "sensor") or the two sides
+// drift apart in meaning.
+func TestTemplateTypeKey_RoundTripsThroughDetermineTemplateSubtype(t *testing.T) {
+	t.Parallel()
+
+	var checked int
+	for typeName, meta := range helperTypes {
+		if meta.platform != platformTemplate {
+			continue
+		}
+		checked++
+		t.Run(typeName, func(t *testing.T) {
+			t.Parallel()
+
+			if len(meta.validEntityDomains) != 1 {
+				t.Fatalf("helper type %q declares %d validEntityDomains, want exactly 1", typeName, len(meta.validEntityDomains))
+			}
+			wantDomain := meta.validEntityDomains[0]
+
+			config, err := buildHelperConfig(typeName, "round trip", map[string]any{})
+			if err != nil {
+				t.Fatalf("buildHelperConfig(%q) error = %v", typeName, err)
+			}
+			if _, ok := config[homeassistant.TemplateTypeConfigKey]; !ok {
+				t.Fatalf("buildHelperConfig(%q) did not stamp %q: config = %v", typeName, homeassistant.TemplateTypeConfigKey, config)
+			}
+
+			got := homeassistant.DetermineTemplateSubtype(homeassistant.HelperConfig{Platform: platformTemplate, Config: config})
+			if got != wantDomain {
+				t.Errorf("DetermineTemplateSubtype(built config of %q) = %q, want %q", typeName, got, wantDomain)
+			}
+		})
+	}
+
+	// 15 table-driven subtypes plus template_sensor/template_binary_sensor.
+	if want := len(templateSubtypes) + 2; checked != want {
+		t.Errorf("round-tripped %d template helper types, want %d (templateSubtypes + sensor + binary_sensor)", checked, want)
+	}
+}
 
 // TestTemplateSubtypeTable_CoversHATemplateTypes pins the templateSubtypes
 // table's shape: exactly the 15 domains HA's TEMPLATE_TYPES declares
