@@ -1,0 +1,111 @@
+// Package enforce wraps a homeassistant.Client so every call is checked against
+// an access.Policy. The wrapper lists every Client method explicitly (no
+// embedding): a method added to the interface breaks the build here until it
+// is given an enforcement decision, so no new operation can slip past the
+// policy. A method that has no decision yet fails closed.
+package enforce
+
+import (
+	"context"
+	"errors"
+	"regexp"
+	"strings"
+
+	"github.com/zorak1103/ha-mcp/internal/access"
+	"github.com/zorak1103/ha-mcp/internal/homeassistant"
+)
+
+// client enforces p on every call to inner. It is created per MCP tool call,
+// so snap is a per-request view of the registries. It deliberately does not
+// implement Close: the factory closes the unwrapped client.
+type client struct {
+	inner homeassistant.Client
+	p     *access.Policy
+	tr    *access.Tracker
+	snap  *snapshot
+}
+
+var _ homeassistant.Client = (*client)(nil)
+
+// Wrap returns a client that enforces p on inner and records denials on tr.
+// An unrestricted (or nil) policy returns inner itself, so the common
+// default-write configuration pays no cost.
+func Wrap(p *access.Policy, inner homeassistant.Client, tr *access.Tracker) homeassistant.Client {
+	if p == nil || p.Unrestricted() {
+		return inner
+	}
+	return &client{inner: inner, p: p, tr: tr, snap: &snapshot{inner: inner}}
+}
+
+// InvalidateLabelRegistryCache forwards to the inner client when it supports
+// the optional method and drops the registry snapshot, whose label view is
+// stale after a label write.
+func (c *client) InvalidateLabelRegistryCache() {
+	if r, ok := c.inner.(interface{ InvalidateLabelRegistryCache() }); ok {
+		r.InvalidateLabelRegistryCache()
+	}
+	c.snap.invalidate()
+}
+
+// unclassified records a denial for a method that has no enforcement decision
+// yet and returns the error the caller sees. The method name goes to the log
+// only; the message reads "operation not permitted".
+func (c *client) unclassified(method string) error {
+	d := access.Denial{Tool: c.tr.Tool(), Object: method}
+	c.tr.Deny(d)
+	return errors.New(d.Message())
+}
+
+// entityIDRE is the shape of a Home Assistant entity id after normalisation.
+var entityIDRE = regexp.MustCompile(`^[a-z0-9_]+\.[a-z0-9_]+$`)
+
+// normalizeEntityID trims and lower-cases s and reports whether the result is
+// a valid entity id. The policy engine does not validate id shapes, so every
+// decision goes through here first.
+func normalizeEntityID(s string) (string, bool) {
+	id := strings.ToLower(strings.TrimSpace(s))
+	return id, entityIDRE.MatchString(id)
+}
+
+// decideEntity returns the grant on the entity entityID. An id that is not a
+// valid entity id is hidden (the zero Grant). Registry attributes are
+// fetched only when the policy has area, label or device matchers; a failed
+// fetch returns the zero Grant and the error so the caller fails closed.
+func (c *client) decideEntity(ctx context.Context, entityID string) (access.Grant, error) {
+	id, ok := normalizeEntityID(entityID)
+	if !ok {
+		return access.Grant{}, nil
+	}
+	obj := access.Object{Kind: access.KindEntity, ID: id}
+	if c.p.NeedsRegistry() {
+		data, err := c.snap.get(ctx)
+		if err != nil {
+			return access.Grant{}, err
+		}
+		obj = data.objectFor(id)
+	}
+	return c.p.Decide(obj), nil
+}
+
+// decideDashboard returns the grant on the dashboard with the given url_path;
+// the empty path is the default dashboard.
+func (c *client) decideDashboard(urlPath string) access.Grant {
+	id := strings.ToLower(strings.TrimSpace(urlPath))
+	if id == "" {
+		id = access.DefaultDashboardID
+	}
+	return c.p.Decide(access.Object{Kind: access.KindDashboard, ID: id})
+}
+
+// filterCopy returns the elements of in for which keep is true in a new
+// slice. It never modifies in or its backing array: cached clients hand out
+// shared slices.
+func filterCopy[T any](in []T, keep func(T) bool) []T {
+	out := make([]T, 0, len(in))
+	for _, v := range in {
+		if keep(v) {
+			out = append(out, v)
+		}
+	}
+	return out
+}
