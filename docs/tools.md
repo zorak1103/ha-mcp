@@ -181,6 +181,11 @@ Universal tool for runtime helper operations:
 | `browse_media`    | Browse media sources and libraries         |
 | `sign_media_path` | Sign a media path for authenticated access |
 
+`sign_media_path` is classified as a read tool, so it stays available under `read_only` and `*:read` filters. To keep it from minting long-lived or broad token-free URLs there, it enforces two limits and rejects anything else with an error before contacting Home Assistant:
+
+- `expires` must be a whole number from 1 to 300 seconds (default: 30).
+- `path` must start with `/api/camera_proxy/` or `/media/`. Absolute URLs, `..` traversal (also percent-encoded), backslashes, control characters and `#` fragments are rejected; a query string such as `?width=640` is allowed.
+
 ### Dashboard Tools
 
 | Tool               | Description                                                                        |
