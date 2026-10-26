@@ -1,6 +1,7 @@
 package access
 
 import (
+	"errors"
 	"fmt"
 	"path"
 	"slices"
@@ -112,9 +113,12 @@ func (p *Policy) compileSystem(list *config.CapList) {
 }
 
 func compileRule(r config.AccessRule) (rule, error) {
+	m := r.Match
+	if entityKinds(m) > 1 {
+		return rule{}, errors.New(msgSeveralEntityMatcherKinds)
+	}
 	var cr rule
 	var err error
-	m := r.Match
 	if cr.globs, err = normalize("entities", m.Entities); err != nil {
 		return rule{}, err
 	}
@@ -139,6 +143,24 @@ func compileRule(r config.AccessRule) (rule, error) {
 	cr.noCreate = r.Create != nil && !*r.Create
 	cr.noDelete = r.Delete != nil && !*r.Delete
 	return cr, nil
+}
+
+// msgSeveralEntityMatcherKinds mirrors config's validation message. A rule
+// with more than one entity-selecting matcher kind has no safe meaning (OR
+// over-grants an allow, AND under-applies a deny), so it is rejected here too,
+// independent of Validate.
+const msgSeveralEntityMatcherKinds = "rule combines several entity matcher kinds " +
+	"(entities, areas, labels, devices): split into separate rules"
+
+// entityKinds counts the entity-selecting matcher kinds m uses.
+func entityKinds(m config.AccessMatch) int {
+	n := 0
+	for _, vals := range [][]string{m.Entities, m.Areas, m.Labels, m.Devices} {
+		if len(vals) > 0 {
+			n++
+		}
+	}
+	return n
 }
 
 // normalize trims and lower-cases matcher values. A blank value would silently
@@ -193,9 +215,10 @@ func compileDeny(list config.CapList) (capSet, error) {
 	return s, nil
 }
 
-// matches reports whether the rule selects o. Within one rule the matcher
-// kinds are alternatives: entity matchers select entities, dashboards select
-// dashboards, and KindGlobal objects are never selected.
+// matches reports whether the rule selects o. Entity matchers select entities,
+// dashboards select dashboards, and KindGlobal objects are never selected. A
+// rule has at most one entity matcher kind (compileRule rejects more); several
+// values of that kind are alternatives.
 func (r *rule) matches(o Object) bool {
 	switch o.Kind {
 	case KindEntity:

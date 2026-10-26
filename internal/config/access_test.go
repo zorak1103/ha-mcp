@@ -224,6 +224,12 @@ func TestValidate_Errors(t *testing.T) {
 		{"invalid glob", rule(AccessRule{Match: AccessMatch{Entities: []string{"light.[a"}}, Allow: CapList{"read"}}), "light.[a"},
 		{"uppercase entity glob", rule(AccessRule{Match: AccessMatch{Entities: []string{"Light.*"}}, Allow: CapList{"read"}}), "Light.*"},
 		{"empty matcher value", rule(AccessRule{Match: AccessMatch{Areas: []string{""}}, Allow: CapList{"read"}}), "empty"},
+		{"entities plus areas", rule(AccessRule{Match: AccessMatch{Entities: []string{"light.*"}, Areas: []string{"kitchen"}}, Allow: CapList{"write"}}), "split into separate rules"},
+		{"labels plus devices", rule(AccessRule{Match: AccessMatch{Labels: []string{"a"}, Devices: []string{"d"}}, Deny: CapList{"control"}}), "split into separate rules"},
+		{"several kinds names rule index", AccessConfig{Default: "read", Rules: []AccessRule{
+			{Match: ent, Allow: CapList{"control"}},
+			{Match: AccessMatch{Areas: []string{"x"}, Labels: []string{"y"}, Dashboards: []string{"z"}}, Allow: CapList{"read"}},
+		}}, "access.rules[1]"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -252,6 +258,7 @@ func TestValidate_Valid(t *testing.T) {
 			{Match: AccessMatch{Entities: []string{"light.*", "sensor.temp_?"}}, Allow: CapList{"write"}, Create: &falseVal, Delete: &falseVal},
 			{Match: AccessMatch{Dashboards: []string{"lovelace-kitchen"}, Labels: []string{"public"}}, Allow: CapList{"none"}},
 			{Match: AccessMatch{Devices: []string{"abc123"}}, Allow: CapList{"read", "control"}, Deny: CapList{"configure"}},
+			{Match: AccessMatch{Entities: []string{"automation.*"}, Dashboards: []string{"ops"}}, Allow: CapList{"configure"}},
 		}},
 	}
 	for i, c := range valid {

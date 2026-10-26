@@ -497,6 +497,36 @@ func TestCompile_RejectsInvalidConfig(t *testing.T) {
 	}
 }
 
+func TestCompile_RejectsSeveralEntityMatcherKinds(t *testing.T) {
+	multi := map[string]config.AccessMatch{
+		"entities+areas":   {Entities: []string{"light.*"}, Areas: []string{"kitchen"}},
+		"entities+labels":  {Entities: []string{"light.*"}, Labels: []string{"x"}},
+		"areas+devices":    {Areas: []string{"kitchen"}, Devices: []string{"d"}},
+		"labels+devices":   {Labels: []string{"x"}, Devices: []string{"d"}},
+		"all four+dashbrd": {Entities: []string{"a.*"}, Areas: []string{"b"}, Labels: []string{"c"}, Devices: []string{"d"}, Dashboards: []string{"e"}},
+	}
+	for name, m := range multi {
+		t.Run(name, func(t *testing.T) {
+			r := config.AccessRule{Match: m, Allow: capList("write")}
+			p, err := Compile(config.AccessConfig{Default: "read", Rules: []config.AccessRule{r}})
+			if err == nil || p != nil || !strings.Contains(err.Error(), "split into separate rules") {
+				t.Fatalf("Compile: policy %v, err %v; want split error", p, err)
+			}
+			// Defense in depth: the compiler itself rejects it, independent of Validate.
+			if _, err := compileRule(r); err == nil || !strings.Contains(err.Error(), "split into separate rules") {
+				t.Errorf("compileRule err %v; want split error", err)
+			}
+		})
+	}
+	// One entity-selecting kind with several values stays an OR over values.
+	p := mustCompile(t, config.AccessConfig{Default: "read", Rules: []config.AccessRule{
+		{Match: config.AccessMatch{Areas: []string{"kitchen", "hall"}}, Allow: capList("control")},
+	}})
+	assertGrant(t, "kitchen", p.Decide(Object{Kind: KindEntity, ID: "light.a", Areas: []string{"kitchen"}}), grantCtl)
+	assertGrant(t, "hall", p.Decide(Object{Kind: KindEntity, ID: "light.b", Areas: []string{"hall"}}), grantCtl)
+	assertGrant(t, "garage", p.Decide(Object{Kind: KindEntity, ID: "light.c", Areas: []string{"garage"}}), grantRead)
+}
+
 func TestCompile_DoesNotAliasInput(t *testing.T) {
 	cfg := config.AccessConfig{Default: "read", Rules: []config.AccessRule{
 		{Match: config.AccessMatch{Entities: []string{"light.*"}}, Allow: capList("control")},

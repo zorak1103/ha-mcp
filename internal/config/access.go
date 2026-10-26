@@ -76,6 +76,25 @@ func (m AccessMatch) isEmpty() bool {
 	return len(m.Entities)+len(m.Dashboards)+len(m.Areas)+len(m.Labels)+len(m.Devices) == 0
 }
 
+// msgSeveralEntityMatcherKinds is the message for a rule that combines more
+// than one entity-selecting matcher kind. Combining them has no safe meaning:
+// OR over-grants an allow, AND under-applies a deny. dashboards selects a
+// disjoint object kind and may be combined with one entity matcher kind.
+// internal/access rejects the same rules again when compiling.
+const msgSeveralEntityMatcherKinds = "rule combines several entity matcher kinds " +
+	"(entities, areas, labels, devices): split into separate rules"
+
+// entityKinds counts the entity-selecting matcher kinds in use.
+func (m AccessMatch) entityKinds() int {
+	n := 0
+	for _, vals := range [][]string{m.Entities, m.Areas, m.Labels, m.Devices} {
+		if len(vals) > 0 {
+			n++
+		}
+	}
+	return n
+}
+
 // AccessRule grants or removes capabilities for the objects it matches.
 type AccessRule struct {
 	Match  AccessMatch `yaml:"match"`
@@ -184,6 +203,9 @@ func (a AccessConfig) Validate() error {
 func (r AccessRule) validate() error {
 	if r.Match.isEmpty() {
 		return errors.New("rule has no matcher: set at least one of match.entities, dashboards, areas, labels, devices")
+	}
+	if r.Match.entityKinds() > 1 {
+		return errors.New(msgSeveralEntityMatcherKinds)
 	}
 	if len(r.Allow) == 0 && len(r.Deny) == 0 {
 		return errors.New("rule has neither allow nor deny")
