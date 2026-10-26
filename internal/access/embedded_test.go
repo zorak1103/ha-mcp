@@ -135,7 +135,7 @@ func TestExtract_SceneShorthandAndDeviceAction(t *testing.T) {
 	calls := mustExtract(t, `{"actions": [
 	  {"scene": "scene.movie"},
 	  {"scene": "Evening"},
-	  {"device_id": "abc123", "domain": "Light", "entity_id": "reg-uuid", "type": "turn_on"},
+	  {"device_id": "abc123", "domain": "Light", "entity_id": "0123456789abcdef0123456789ABCDEF", "type": "turn_on"},
 	  {"event": "my_event", "event_data": {"a": 1}}
 	]}`)
 	if len(calls) != 4 {
@@ -277,6 +277,180 @@ func TestExtract_MixedNodeKeysAreAllWalked(t *testing.T) {
 	}]}`)
 	if got := callNames(calls); !reflect.DeepEqual(got, []string{"light.turn_on", "switch.turn_on"}) {
 		t.Errorf("calls = %v", got)
+	}
+}
+
+const regID = "0123456789abcdef0123456789abcdef"
+
+func TestExtract_JinjaComment_Undecidable(t *testing.T) {
+	for name, src := range map[string]string{
+		"service name":    `{"actions": [{"action": "{# x #}lock.unlock"}]}`,
+		"service middle":  `{"actions": [{"action": "lock.{# x #}unlock"}]}`,
+		"target entity":   `{"actions": [{"action": "lock.unlock", "target": {"entity_id": "{# #}lock.front"}}]}`,
+		"data entity":     `{"actions": [{"action": "lock.unlock", "data": {"entity_id": "{# #}lock.front"}}]}`,
+		"target device":   `{"actions": [{"action": "lock.unlock", "target": {"device_id": "{# #}abc"}}]}`,
+		"device action":   `{"actions": [{"device_id": "{# #}abc", "domain": "lock", "type": "unlock"}]}`,
+		"device entity":   `{"actions": [{"device_id": "abc", "domain": "lock", "type": "unlock", "entity_id": "{# #}` + regID + `"}]}`,
+		"scene shorthand": `{"actions": [{"scene": "{# #}scene.x"}]}`,
+		"entity data":     `{"actions": [{"action": "scene.apply", "data": {"entities": ["{# #}light.a"]}}]}`,
+		"entity data key": `{"actions": [{"action": "scene.apply", "data": {"entities": {"{# #}light.a": "on"}}}]}`,
+		"object id":       `{"actions": [{"action": "scene.create", "data": {"scene_id": "{# #}x", "entities": {}}}]}`,
+	} {
+		if _, err := ExtractCalls(parseDef(t, src)); err == nil {
+			t.Errorf("%s: expected error", name)
+		}
+	}
+}
+
+func TestExtract_ShapesFailClosed(t *testing.T) {
+	for name, src := range map[string]string{
+		"service space":        `{"actions": [{"action": "light.turn on"}]}`,
+		"service three parts":  `{"actions": [{"action": "light.turn_on.x"}]}`,
+		"service odd char":     `{"actions": [{"action": "light.turn-on"}]}`,
+		"service unicode":      "{\"actions\": [{\"action\": \"lig\\u200bht.turn_on\"}]}",
+		"entity embedded ws":   `{"actions": [{"action": "light.turn_on", "target": {"entity_id": "light. a"}}]}`,
+		"entity embedded ws 2": `{"actions": [{"action": "light.turn_on", "target": {"entity_id": "light.a b"}}]}`,
+		"entity no domain":     `{"actions": [{"action": "light.turn_on", "target": {"entity_id": "a"}}]}`,
+		"entity three parts":   `{"actions": [{"action": "light.turn_on", "target": {"entity_id": "light.a.b"}}]}`,
+		"entity odd char":      `{"actions": [{"action": "light.turn_on", "data": {"entity_id": "light.a/b"}}]}`,
+		"entity top-level":     `{"actions": [{"action": "light.turn_on", "entity_id": "light.a$"}]}`,
+		"entity data":          `{"actions": [{"action": "scene.apply", "data": {"entities": ["light a"]}}]}`,
+		"entity data all":      `{"actions": [{"action": "scene.apply", "data": {"entities": "all"}}]}`,
+		"scene shorthand":      `{"actions": [{"scene": "my scene"}]}`,
+		"area":                 `{"actions": [{"action": "light.turn_on", "target": {"area_id": "a b"}}]}`,
+		"floor":                `{"actions": [{"action": "light.turn_on", "target": {"floor_id": "a/b"}}]}`,
+		"label":                `{"actions": [{"action": "light.turn_on", "target": {"label_id": "a.b"}}]}`,
+		"device":               `{"actions": [{"action": "light.turn_on", "target": {"device_id": "a b"}}]}`,
+		"device action id":     `{"actions": [{"device_id": "a b", "domain": "light", "type": "turn_on"}]}`,
+	} {
+		if _, err := ExtractCalls(parseDef(t, src)); err == nil {
+			t.Errorf("%s: expected error", name)
+		}
+	}
+}
+
+func TestExtract_ShapesAccepted(t *testing.T) {
+	calls := mustExtract(t, `{"actions": [
+	  {"action": "light.turn_on", "target": {"entity_id": ["LIGHT.A", " light.b "], "area_id": "Living-Room", "label_id": "x_1", "floor_id": "f1", "device_id": "ABC-123"}},
+	  {"action": "light.turn_off", "target": {"entity_id": "all"}},
+	  {"action": "light.turn_off", "data": {"entity_id": "ALL"}}
+	]}`)
+	if got := calls[0].Targets.EntityIDs; !reflect.DeepEqual(got, []string{"light.a", "light.b"}) {
+		t.Errorf("entity ids = %v", got)
+	}
+	if got := calls[0].Targets.AreaIDs; !reflect.DeepEqual(got, []string{"living-room"}) {
+		t.Errorf("area ids = %v", got)
+	}
+	if !calls[1].Targets.All || !calls[2].Targets.All {
+		t.Errorf("literal all not accepted: %+v %+v", calls[1].Targets, calls[2].Targets)
+	}
+}
+
+func TestExtract_DeviceActionEntityID(t *testing.T) {
+	const prefix = `{"actions": [{"device_id": "abc", "domain": "light", "type": "turn_on"`
+	calls := mustExtract(t, prefix+`}]}`)
+	if len(calls[0].EntityRegistryIDs) != 0 || len(calls[0].Targets.EntityIDs) != 0 {
+		t.Errorf("device-level action got entity ids: %+v", calls[0])
+	}
+	calls = mustExtract(t, prefix+`, "entity_id": "`+strings.ToUpper(regID)+`"}]}`)
+	if !reflect.DeepEqual(calls[0].EntityRegistryIDs, []string{regID}) || len(calls[0].Targets.EntityIDs) != 0 {
+		t.Errorf("registry id: %+v", calls[0])
+	}
+	calls = mustExtract(t, prefix+`, "entity_id": "Light.Kitchen"}]}`)
+	if !reflect.DeepEqual(calls[0].Targets.EntityIDs, []string{"light.kitchen"}) || len(calls[0].EntityRegistryIDs) != 0 {
+		t.Errorf("real entity id: %+v", calls[0])
+	}
+	for name, v := range map[string]string{
+		"garbage":       `"reg-uuid"`,
+		"short hex":     `"0123456789abcdef"`,
+		"long hex":      `"0123456789abcdef0123456789abcdef0"`,
+		"non hex":       `"0123456789abcdef0123456789abcdeg"`,
+		"templated":     `"{{ x }}"`,
+		"number":        `5`,
+		"null":          `null`,
+		"list":          `["` + regID + `"]`,
+		"hex with dash": `"0123456789abcdef-123456789abcdef"`,
+	} {
+		if _, err := ExtractCalls(parseDef(t, prefix+`, "entity_id": `+v+`}]}`)); err == nil {
+			t.Errorf("%s: expected error", name)
+		}
+	}
+}
+
+func TestExtract_ObjectFromData(t *testing.T) {
+	for _, tc := range []struct{ svc, key, want string }{
+		{"scene.create", "scene_id", "scene.movie"},
+		{"group.set", "object_id", "group.lights"},
+		{"group.remove", "object_id", "group.lights"},
+	} {
+		domain := strings.SplitN(tc.svc, ".", 2)[0]
+		val := strings.SplitN(tc.want, ".", 2)[1]
+		ok := `{"actions": [{"action": "` + tc.svc + `", "data": {"` + tc.key + `": " ` + strings.ToUpper(val) + ` "}}]}`
+		calls := mustExtract(t, ok)
+		if !reflect.DeepEqual(calls[0].Targets.EntityIDs, []string{tc.want}) {
+			t.Errorf("%s: entity ids = %v, want %s", tc.svc, calls[0].Targets.EntityIDs, tc.want)
+		}
+		legacy := `{"actions": [{"action": "` + tc.svc + `", "data_template": {"` + tc.key + `": "` + val + `"}}]}`
+		if calls := mustExtract(t, legacy); !reflect.DeepEqual(calls[0].Targets.EntityIDs, []string{tc.want}) {
+			t.Errorf("%s data_template: %v", tc.svc, calls[0].Targets.EntityIDs)
+		}
+		for name, data := range map[string]string{
+			"missing":   `{}`,
+			"templated": `{"` + tc.key + `": "{{ x }}"}`,
+			"comment":   `{"` + tc.key + `": "{# #}x"}`,
+			"number":    `{"` + tc.key + `": 5}`,
+			"null":      `{"` + tc.key + `": null}`,
+			"list":      `{"` + tc.key + `": ["x"]}`,
+			"dotted":    `{"` + tc.key + `": "` + domain + `.x"}`,
+			"space":     `{"` + tc.key + `": "a b"}`,
+			"empty":     `{"` + tc.key + `": ""}`,
+		} {
+			src := `{"actions": [{"action": "` + tc.svc + `", "data": ` + data + `}]}`
+			if _, err := ExtractCalls(parseDef(t, src)); err == nil {
+				t.Errorf("%s %s: expected error", tc.svc, name)
+			}
+		}
+		noData := `{"actions": [{"action": "` + tc.svc + `"}]}`
+		if _, err := ExtractCalls(parseDef(t, noData)); err == nil {
+			t.Errorf("%s without data: expected error", tc.svc)
+		}
+	}
+}
+
+func TestContainsTemplate_FailsClosedOnUnknownTypes(t *testing.T) {
+	for name, v := range map[string]any{
+		"struct":             struct{}{},
+		"map any any":        map[any]any{"k": "{# #}"},
+		"map any any key":    map[any]any{"{# #}": 1},
+		"typed map slice":    []map[string]any{{"k": "{{ x }}"}},
+		"int slice":          []int{1},
+		"nested unknown":     []any{map[string]any{"k": struct{}{}}},
+		"string slice":       []string{"{# #}"},
+		"non-string any key": map[any]any{5: "x"},
+	} {
+		if !containsTemplate(v) {
+			t.Errorf("%s: containsTemplate = false, want true", name)
+		}
+	}
+	for name, v := range map[string]any{
+		"nil": nil, "bool": true, "float": 1.5, "int": 3, "string": "light.a",
+		"clean map":     map[string]any{"k": []any{"a", 1.0}},
+		"clean any map": map[any]any{"k": "v"},
+	} {
+		if containsTemplate(v) {
+			t.Errorf("%s: containsTemplate = true, want false", name)
+		}
+	}
+}
+
+func TestExtract_DepthBoundary(t *testing.T) {
+	// the innermost node of nestedSequence(n) sits at depth 1+2n
+	deepestOK := (maxActionDepth - 1) / 2
+	if _, err := ExtractCalls(nestedSequence(deepestOK)); err != nil {
+		t.Errorf("depth %d rejected: %v", deepestOK, err)
+	}
+	if _, err := ExtractCalls(nestedSequence(deepestOK + 1)); err == nil {
+		t.Errorf("depth %d accepted", deepestOK+1)
 	}
 }
 

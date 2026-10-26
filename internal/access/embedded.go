@@ -8,24 +8,36 @@ import (
 	"strings"
 )
 
-// Call is one service call that a definition (automation, script, scene,
-// template helper) would make. Targets holds the objects named by the node's
-// target, its top-level id keys and the id keys of its data. EntityData holds
-// the entities named under the service's EntityDataKeys (see ClassifyService).
+// Call is one service call that an automation, script or scene definition
+// would make. ExtractCalls is for those definition shapes only; callers must
+// not pass other shapes (a template helper keeps its actions under its own
+// keys, which ExtractCalls does not walk, so it would yield no calls and no
+// error).
+//
+// Targets holds the objects named by the node's target, its top-level id keys,
+// the id keys of its data and, for services that carry the object id in their
+// data (ServiceClass.ObjectFromData), that object. EntityData holds the
+// entities named under the service's EntityDataKeys (see ClassifyService).
 // DataMalformed is always false in a result of ExtractCalls, which returns an
 // error instead; the field exists so a caller never has to assume that.
+//
+// EntityRegistryIDs holds entity-registry ids (32 lowercase hex characters, not
+// entity ids) that a device action names in its entity_id field. The caller
+// MUST resolve each through the entity registry to an entity id and refuse the
+// definition when one cannot be resolved.
 //
 // Raw is the canonical JSON encoding of the action node (object keys sorted)
 // and is the identity NewCalls compares by. A device action is modeled as a
 // call whose Domain is the device action's domain, whose Service is
 // deviceActionService and whose Targets.DeviceIDs names the device.
 type Call struct {
-	Domain        string
-	Service       string
-	Targets       TargetSpec
-	EntityData    []string
-	DataMalformed bool
-	Raw           string
+	Domain            string
+	Service           string
+	Targets           TargetSpec
+	EntityData        []string
+	EntityRegistryIDs []string
+	DataMalformed     bool
+	Raw               string
 }
 
 const (
@@ -60,7 +72,7 @@ const (
 )
 
 // templateMarkers open a Jinja expression or statement.
-var templateMarkers = []string{"{{", "{%"}
+var templateMarkers = []string{"{{", "{%", "{#"}
 
 // noCallKeys mark action nodes that make no service call.
 var noCallKeys = []string{
@@ -245,11 +257,68 @@ func parseServiceName(name string) (domain, service string, err error) {
 		return "", "", errors.New("service name is a template")
 	}
 	domain, service, found := strings.Cut(strings.ToLower(strings.TrimSpace(name)), ".")
-	domain, service = strings.TrimSpace(domain), strings.TrimSpace(service)
-	if !found || domain == "" || service == "" {
+	if !found || !isSlug(domain) || !isSlug(service) {
 		return "", "", fmt.Errorf("service name %q is not domain.service", name)
 	}
 	return domain, service, nil
+}
+
+// isSlug reports whether s is non-empty and made of [a-z0-9_] only.
+func isSlug(s string) bool {
+	return s != "" && !strings.ContainsFunc(s, func(r rune) bool {
+		return !isSlugRune(r)
+	})
+}
+
+func isSlugRune(r rune) bool {
+	return r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_'
+}
+
+// isEntityID reports whether s has the shape [a-z0-9_]+.[a-z0-9_]+.
+func isEntityID(s string) bool {
+	domain, object, found := strings.Cut(s, ".")
+	return found && isSlug(domain) && isSlug(object)
+}
+
+// isRefID reports whether s is non-empty and made of [a-z0-9_-] only, the
+// shape of area, floor, label and device ids.
+func isRefID(s string) bool {
+	return s != "" && !strings.ContainsFunc(s, func(r rune) bool {
+		return !isSlugRune(r) && r != '-'
+	})
+}
+
+// isRegistryID reports whether s is an entity-registry id: 32 lowercase hex
+// characters.
+func isRegistryID(s string) bool {
+	const registryIDLen = 32
+	if len(s) != registryIDLen {
+		return false
+	}
+	return !strings.ContainsFunc(s, func(r rune) bool {
+		return (r < '0' || r > '9') && (r < 'a' || r > 'f')
+	})
+}
+
+// validateTargets fails closed on any id that does not have the shape HA
+// itself would use, so no id can hide behind characters the policy globs would
+// not see. Entity ids must be domain.object slugs; the literal "all" is already
+// folded into TargetSpec.All by ParseTarget.
+func validateTargets(t TargetSpec) error {
+	for _, id := range t.EntityIDs {
+		if !isEntityID(id) {
+			return fmt.Errorf("entity id %q has an unsupported form", id)
+		}
+	}
+	groups := [][]string{t.DeviceIDs, t.AreaIDs, t.FloorIDs, t.LabelIDs}
+	for _, ids := range groups {
+		for _, id := range ids {
+			if !isRefID(id) {
+				return fmt.Errorf("id %q has an unsupported form", id)
+			}
+		}
+	}
+	return nil
 }
 
 // fillTargets resolves the objects of a service call from the node itself
@@ -259,7 +328,8 @@ func fillTargets(call *Call, node map[string]any) error {
 		return err
 	}
 	mergeTargets(&call.Targets, ParseTarget(node))
-	keys := ClassifyService(call.Domain, call.Service).EntityDataKeys
+	class := ClassifyService(call.Domain, call.Service)
+	objectFound := false
 	for _, dataKey := range []string{keyData, "data_template"} {
 		data, present, err := dataMap(node, dataKey)
 		if err != nil {
@@ -268,24 +338,61 @@ func fillTargets(call *Call, node map[string]any) error {
 		if !present {
 			continue
 		}
-		if err := rejectTemplatedFields(data, keys); err != nil {
+		found, err := fillFromData(call, data, class)
+		if err != nil {
 			return err
 		}
-		mergeTargets(&call.Targets, ParseTarget(data))
-		ids, malformed := EntityIDsFromData(data, keys)
-		if malformed {
-			return errors.New("entity data is malformed")
-		}
-		for _, id := range ids {
-			if !slices.Contains(call.EntityData, id) {
-				call.EntityData = append(call.EntityData, id)
-			}
-		}
+		objectFound = objectFound || found
 	}
+	if class.ObjectFromData != "" && !objectFound {
+		return fmt.Errorf("%s is missing", class.ObjectFromData)
+	}
+	return validateCallIDs(call)
+}
+
+// validateCallIDs checks the ids a call resolved to.
+func validateCallIDs(call *Call) error {
 	if call.Targets.Malformed {
 		return errors.New("target is malformed")
 	}
+	if err := validateTargets(call.Targets); err != nil {
+		return err
+	}
+	for _, id := range call.EntityData {
+		if !isEntityID(id) {
+			return fmt.Errorf("entity id %q has an unsupported form", id)
+		}
+	}
 	return nil
+}
+
+// fillFromData merges the targets, entity-data ids and object id found in one
+// data map into call. objectFound reports whether the service's ObjectFromData
+// key was present.
+func fillFromData(call *Call, data map[string]any, class ServiceClass) (objectFound bool, err error) {
+	if err := rejectTemplatedFields(data, class.EntityDataKeys); err != nil {
+		return false, err
+	}
+	mergeTargets(&call.Targets, ParseTarget(data))
+	ids, malformed := EntityIDsFromData(data, class.EntityDataKeys)
+	if malformed {
+		return false, errors.New("entity data is malformed")
+	}
+	call.EntityData = mergeIDs(call.EntityData, ids)
+	if class.ObjectFromData == "" {
+		return false, nil
+	}
+	raw, ok := data[class.ObjectFromData]
+	if !ok {
+		return false, nil
+	}
+	object, isStr := raw.(string)
+	object = strings.ToLower(strings.TrimSpace(object))
+	if !isStr || hasTemplate(object) || !isSlug(object) {
+		return true, fmt.Errorf("%s is not a plain object id", class.ObjectFromData)
+	}
+	call.Targets.EntityIDs = mergeIDs(call.Targets.EntityIDs, []string{call.Domain + "." + object})
+	return true, nil
 }
 
 // dataMap returns node[key] as a map; present is false when the key is absent
@@ -363,20 +470,48 @@ func hasTemplate(s string) bool {
 }
 
 // containsTemplate reports whether any string inside v, or any map key, holds
-// a template marker.
+// a template marker. It fails closed: a value of a type it does not know how to
+// inspect counts as a template.
 func containsTemplate(v any) bool {
 	switch x := v.(type) {
+	case nil, bool, int, int64, float64, json.Number:
+		return false
 	case string:
 		return hasTemplate(x)
 	case []string:
 		return slices.ContainsFunc(x, hasTemplate)
 	case []any:
 		return slices.ContainsFunc(x, containsTemplate)
-	case map[string]any:
-		for k, val := range x {
-			if hasTemplate(k) || containsTemplate(val) {
+	case []map[string]any:
+		for _, m := range x {
+			if containsTemplate(m) {
 				return true
 			}
+		}
+		return false
+	case map[string]any:
+		return stringMapHasTemplate(x)
+	case map[any]any:
+		return anyMapHasTemplate(x)
+	default:
+		return true
+	}
+}
+
+func stringMapHasTemplate(m map[string]any) bool {
+	for k, val := range m {
+		if hasTemplate(k) || containsTemplate(val) {
+			return true
+		}
+	}
+	return false
+}
+
+// anyMapHasTemplate treats a non-string key as a template: it cannot be an id.
+func anyMapHasTemplate(m map[any]any) bool {
+	for k, val := range m {
+		if _, isStr := k.(string); !isStr || containsTemplate(k) || containsTemplate(val) {
+			return true
 		}
 	}
 	return false
@@ -396,6 +531,9 @@ func (e *extractor) sceneNode(m map[string]any, _ int) (bool, error) {
 	for _, id := range splitIDs(name) {
 		if !strings.HasPrefix(id, sceneEntityPrefix) {
 			id = sceneEntityPrefix + id
+		}
+		if !isEntityID(id) {
+			return true, fmt.Errorf("scene %q has an unsupported form", id)
 		}
 		ids = append(ids, id)
 	}
@@ -426,8 +564,9 @@ func (e *extractor) deviceNode(m map[string]any, _ int) (bool, error) {
 		return false, nil
 	}
 	domain, isStr := m[keyDomain].(string)
-	if !isStr {
-		return true, errors.New("device action domain is not a string")
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	if !isStr || !isSlug(domain) {
+		return true, errors.New("device action domain is not a plain domain")
 	}
 	if err := rejectTemplatedFields(m, nil); err != nil {
 		return true, err
@@ -436,8 +575,37 @@ func (e *extractor) deviceNode(m map[string]any, _ int) (bool, error) {
 	if t.Malformed || (len(t.DeviceIDs) == 0 && !t.All) {
 		return true, errors.New("device action names no usable device")
 	}
-	call := Call{Domain: strings.ToLower(strings.TrimSpace(domain)), Service: deviceActionService, Targets: t}
+	call := Call{Domain: domain, Service: deviceActionService, Targets: t}
+	if err := fillDeviceEntity(&call, m); err != nil {
+		return true, err
+	}
+	if err := validateCallIDs(&call); err != nil {
+		return true, err
+	}
 	return true, e.appendCall(call, m)
+}
+
+// fillDeviceEntity reads the optional entity_id of a device action: a real
+// entity id goes to Targets.EntityIDs, an entity-registry id to
+// EntityRegistryIDs; anything else is undecidable.
+func fillDeviceEntity(call *Call, m map[string]any) error {
+	v, ok := m[keyEntityID]
+	if !ok {
+		return nil
+	}
+	s, isStr := v.(string)
+	id := strings.ToLower(strings.TrimSpace(s))
+	switch {
+	case !isStr || hasTemplate(id):
+		return errors.New("device action entity_id is not a plain id")
+	case isEntityID(id):
+		call.Targets.EntityIDs = []string{id}
+	case isRegistryID(id):
+		call.EntityRegistryIDs = []string{id}
+	default:
+		return fmt.Errorf("device action entity_id %q is neither an entity id nor a registry id", id)
+	}
+	return nil
 }
 
 func hasKeys(m map[string]any, keys ...string) bool {
