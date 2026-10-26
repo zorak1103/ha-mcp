@@ -72,6 +72,7 @@ var indirectServices = map[string]ServiceClass{
 	"group.set":                {Kind: ServiceConfigure, ObjectFromData: "object_id", EntityDataKeys: []string{"entities", "add_entities"}},
 	"group.remove":             {Kind: ServiceConfigure, ObjectFromData: "object_id"},
 	"input_select.set_options": {Kind: ServiceConfigure},
+	"device_tracker.see":       {Kind: ServiceConfigure, ObjectFromData: "dev_id"},
 	"scene.apply":              {Kind: ServiceControl, EntityDataKeys: []string{"entities"}},
 	"media_player.join":        {Kind: ServiceControl, EntityDataKeys: []string{"group_members"}},
 	"tts.speak":                {Kind: ServiceControl, EntityDataKeys: []string{"media_player_entity_id"}},

@@ -160,6 +160,8 @@ func buildWriteFake(withSecret bool) *readFake {
 	add("group.existing", "group", "existing", nil)
 	add("input_number.ok", "input_number", "ok", nil)
 	add("input_number.secret_num", "input_number", "secret_num", nil)
+	add("input_datetime.ok", "input_datetime", "dt_ok", nil)
+	add("input_datetime.secret_dt", "input_datetime", "dt_secret", nil)
 	add("media_player.living", "demo", "m1", nil)
 	add("media_player.ro", "demo", "m2", nil)
 	add("media_player.secret_mp", "demo", "m3", nil)
@@ -191,7 +193,7 @@ func buildWriteFake(withSecret bool) *readFake {
 }
 
 // writePolicy: default read; every *.secret* entity hidden; control on
-// lights, input booleans, input numbers, media players, tts, cameras,
+// lights, input booleans, numbers and datetimes, media players, tts, cameras,
 // automations and script.ok; configure on scenes and groups.
 func writePolicy(t *testing.T, system ...string) *access.Policy {
 	t.Helper()
@@ -199,7 +201,7 @@ func writePolicy(t *testing.T, system ...string) *access.Policy {
 		Default: "read",
 		Rules: []config.AccessRule{
 			{Match: config.AccessMatch{Entities: []string{
-				"light.*", "input_boolean.*", "input_number.*", "media_player.*", "tts.*",
+				"light.*", "input_boolean.*", "input_number.*", "input_datetime.*", "media_player.*", "tts.*",
 				"camera.*", "automation.*", "script.ok",
 			}}, Allow: config.CapList{"control"}},
 			{Match: config.AccessMatch{Entities: []string{"scene.*", "group.*"}}, Allow: config.CapList{"configure"}},

@@ -22,9 +22,12 @@ import (
 //     alike, and no denial is recorded. All ids are judged in one pass in
 //     request order, so the first failing id is the same as in a home without
 //     the hidden entity.
-//   - Entities reached by expansion (targets.go) need the capability too. A
-//     hidden one refuses the call with the generic denial naming only the
-//     service; a visible blocked entity is named in the denial.
+//   - Entities reached by expansion (targets.go, filtered to the service's
+//     domain or platform) need the capability too. A hidden one refuses the
+//     call with the generic denial naming only the service; a visible blocked
+//     entity is named in the denial. An expansion that reaches nothing of the
+//     service's own (All reaching nothing, or only other domains) refuses the
+//     call generically; it is never left to the default.
 //   - The object a configure service names in its data (scene.create scene_id,
 //     group.set/remove object_id) needs configure, create when it does not
 //     exist yet, delete for group.remove. It is refused with the generic
@@ -100,8 +103,23 @@ func (c *client) SetHelperValue(ctx context.Context, entityID string, value any)
 	if err := c.checkEntityControl(ctx, "SetHelperValue", entityID); err != nil {
 		return err
 	}
+	// The real client merges a map value into the service data
+	// (input_datetime), so a key such as entity_id would retarget the call.
+	// Only the datetime fields are accepted. Checked after the entity, so a
+	// hidden helper still answers as missing.
+	if m, ok := value.(map[string]any); ok {
+		for k := range m {
+			if !helperValueKeys[k] {
+				return c.denyObject(normName(entityID), access.CapControl)
+			}
+		}
+	}
 	return c.inner.SetHelperValue(ctx, entityID, value)
 }
+
+// helperValueKeys are the keys a map helper value may carry
+// (input_datetime.set_datetime fields).
+var helperValueKeys = map[string]bool{"date": true, "time": true, "datetime": true, "timestamp": true}
 
 func (c *client) ToggleAutomation(ctx context.Context, entityID string, enabled bool) error {
 	if err := c.checkEntityControl(ctx, "ToggleAutomation", entityID); err != nil {
@@ -221,14 +239,17 @@ func (c *client) checkObjects(ctx context.Context, req callRequest, primary acce
 	if refusal := c.checkExplicit(ctx, req, grant, states); refusal != nil {
 		return refusal
 	}
-	expanded, err := c.expandTargets(ctx, req.domain, req.targets, states)
+	x, err := c.expandTargets(ctx, req.domain, req.targets, states)
 	if err != nil {
 		return c.undecidable(req.name(), err)
 	}
-	if len(req.targets.EntityIDs)+len(req.entityData)+len(expanded) == 0 && req.object == "" {
+	if x.unresolved(req.targets) {
+		return c.refuse(req.name())
+	}
+	if len(req.targets.EntityIDs)+len(req.entityData)+len(x.ids) == 0 && req.object == "" {
 		return c.checkObjectLess(req, primary)
 	}
-	return c.checkGrants(ctx, req, primary, grant, expanded, states)
+	return c.checkGrants(ctx, req, primary, grant, x.ids, states)
 }
 
 // checkExplicit answers the first explicit id that is not plain, hidden or

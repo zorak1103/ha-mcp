@@ -26,9 +26,17 @@ import (
 //
 // Ids are compared case-insensitively (ParseTarget lower-cases them; matching
 // more than HA would only adds checks). Unknown ids expand to nothing, as in HA.
-// Device, area, floor and label expansions are deliberately not narrowed to the
-// service's domain: a platform service acts on entities of another domain, so
-// a domain filter could skip an entity the call really reaches.
+// An area or label id literally named "all" is folded into All by ParseTarget:
+// a superset, so safe.
+//
+// An expanded entity is kept only when it belongs to the service: its entity
+// domain or its registry platform equals the service domain (the platform
+// covers platform services such as sonos.* or squeezebox.* acting on
+// media_player entities); homeassistant.* services act across domains and are
+// not filtered. Explicit ids are never filtered. When the unfiltered expansion
+// reached entities but none belongs to the service, or All reaches nothing,
+// the call is refused (checkObjects): a non-entity service may resolve such a
+// target itself, so it must not fall to the object-less default.
 
 // stateSet is the set of entity ids in the state machine, fetched from the
 // inner client at most once per checked call.
@@ -57,30 +65,68 @@ func expandable(t access.TargetSpec) bool {
 	return t.All || len(t.DeviceIDs)+len(t.AreaIDs)+len(t.FloorIDs)+len(t.LabelIDs) > 0
 }
 
-// expandTargets returns the entities the expandable part of t reaches, sorted
-// and de-duplicated. The explicit entity ids of t are not included.
-func (c *client) expandTargets(ctx context.Context, domain string, t access.TargetSpec, states *stateSet) ([]string, error) {
+// expansion is what the expandable part of a target reaches. ids are the
+// entities that belong to the service, sorted and de-duplicated; reached
+// reports whether the device, area, floor and label ids reached any entity
+// before that filter.
+type expansion struct {
+	ids     []string
+	reached bool
+}
+
+// unresolved reports whether the target expands but nothing of the service's
+// own was found: All reaching nothing, or entities reached only outside the
+// service. Such a call is refused.
+func (x expansion) unresolved(t access.TargetSpec) bool {
+	return len(x.ids) == 0 && (t.All || x.reached)
+}
+
+// expandTargets returns what the expandable part of t reaches for a service of
+// domain. The explicit entity ids of t are not included.
+func (c *client) expandTargets(ctx context.Context, domain string, t access.TargetSpec, states *stateSet) (expansion, error) {
 	if !expandable(t) {
-		return nil, nil
+		return expansion{}, nil
 	}
 	data, err := c.snap.get(ctx)
 	if err != nil {
-		return nil, err
+		return expansion{}, err
 	}
-	out := data.expandRegistry(t)
-	if t.All {
-		all, err := c.allOfDomain(ctx, domain, data, states)
-		if err != nil {
-			return nil, err
+	belongs := serviceFilter(domain)
+	reached := data.expandRegistry(t)
+	x := expansion{reached: len(reached) > 0}
+	for _, id := range reached {
+		if e, _ := data.entity(id); belongs(id, e.Platform) {
+			x.ids = append(x.ids, id)
 		}
-		out = append(out, all...)
 	}
-	slices.Sort(out)
-	return slices.Compact(out), nil
+	if t.All {
+		all, err := c.allOfDomain(ctx, data, states, belongs)
+		if err != nil {
+			return expansion{}, err
+		}
+		x.ids = append(x.ids, all...)
+	}
+	slices.Sort(x.ids)
+	x.ids = slices.Compact(x.ids)
+	return x, nil
+}
+
+// serviceFilter returns the predicate telling whether an entity (id, registry
+// platform) belongs to a service of domain; everything belongs to
+// homeassistant.
+func serviceFilter(domain string) func(entityID, platform string) bool {
+	dom := strings.ToLower(strings.TrimSpace(domain))
+	if dom == domainHomeAssistant {
+		return func(string, string) bool { return true }
+	}
+	prefix := dom + "."
+	return func(entityID, platform string) bool {
+		return strings.HasPrefix(strings.ToLower(entityID), prefix) || strings.EqualFold(platform, dom)
+	}
 }
 
 // expandRegistry lists the registered entities reached by the device, area,
-// floor and label ids of t.
+// floor and label ids of t, unfiltered.
 func (d *snapData) expandRegistry(t access.TargetSpec) []string {
 	areas := slices.Clone(t.AreaIDs)
 	for _, a := range d.areas {
@@ -95,20 +141,19 @@ func (d *snapData) expandRegistry(t access.TargetSpec) []string {
 	})
 }
 
-// allOfDomain lists what entity_id "all" reaches for a service of domain.
-func (c *client) allOfDomain(ctx context.Context, domain string, d *snapData, states *stateSet) ([]string, error) {
-	dom := strings.ToLower(strings.TrimSpace(domain))
-	every := dom == domainHomeAssistant
-	prefix := dom + "."
+// allOfDomain lists what entity_id "all" reaches: every registered or
+// state-machine entity that belongs to the service.
+func (c *client) allOfDomain(ctx context.Context, d *snapData, states *stateSet, belongs func(string, string) bool) ([]string, error) {
 	out := d.selectEntities(func(e homeassistant.EntityRegistryEntry) bool {
-		return every || strings.HasPrefix(strings.ToLower(e.EntityID), prefix) || strings.EqualFold(e.Platform, dom)
+		return belongs(e.EntityID, e.Platform)
 	})
 	ids, err := states.load(ctx, c.inner)
 	if err != nil {
 		return nil, err
 	}
 	for id := range ids {
-		if every || strings.HasPrefix(id, prefix) {
+		e, _ := d.entity(id)
+		if belongs(id, e.Platform) {
 			out = append(out, id)
 		}
 	}

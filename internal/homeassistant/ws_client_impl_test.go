@@ -1968,6 +1968,36 @@ func TestWSClientImplWithSender_SetHelperValue_DatetimeMap(t *testing.T) {
 	}
 }
 
+func TestWSClientImplWithSender_SetHelperValue_DatetimeMapCannotRetarget(t *testing.T) {
+	t.Parallel()
+
+	var got map[string]any
+	mock := &mockWSClientSender{
+		sendCommandFunc: func(_ context.Context, _ string, params map[string]any) (*WSResultMessage, error) {
+			got = params["service_data"].(map[string]any)
+			return makeWSResultMsg(map[string]any{}), nil
+		},
+	}
+
+	client := newWSClientImplWithSender(mock)
+	err := client.SetHelperValue(context.Background(), "input_datetime.test", map[string]any{
+		"time":      "08:00",
+		"entity_id": "lock.front_door",
+		"device_id": "dev1",
+		"area_id":   "kitchen",
+		"floor_id":  "ground",
+		"label_id":  "lbl",
+		"target":    map[string]any{"entity_id": "lock.front_door"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := map[string]any{"entity_id": "input_datetime.test", "time": "08:00"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("service data = %v, want %v", got, want)
+	}
+}
+
 func TestWSClientImplWithSender_SetHelperValue_InvalidBoolean(t *testing.T) {
 	t.Parallel()
 

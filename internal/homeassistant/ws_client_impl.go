@@ -429,23 +429,40 @@ func (c *wsClientImpl) SetHelperValue(ctx context.Context, entityID string, valu
 		data = map[string]any{"entity_id": entityID, "option": value}
 	case "input_datetime":
 		service = "set_datetime"
-		data = map[string]any{"entity_id": entityID}
-		switch v := value.(type) {
-		case string:
-			data["datetime"] = v
-		case map[string]any:
-			for k, val := range v {
-				data[k] = val
-			}
-		default:
-			data["datetime"] = value
-		}
+		data = datetimeServiceData(entityID, value)
 	default:
 		return fmt.Errorf("unsupported helper platform: %s", platform)
 	}
 
 	_, err := c.CallService(ctx, platform, service, data)
 	return err
+}
+
+// targetDataKeys are the service-data keys that select the entities a call
+// acts on; a helper value must never set them.
+var targetDataKeys = map[string]bool{
+	"entity_id": true, "device_id": true, "area_id": true, "floor_id": true, "label_id": true, "target": true,
+}
+
+// datetimeServiceData builds input_datetime.set_datetime data. A map value is
+// merged without its target keys and entity_id is set last, so the value can
+// never retarget the call.
+func datetimeServiceData(entityID string, value any) map[string]any {
+	data := map[string]any{}
+	switch v := value.(type) {
+	case string:
+		data["datetime"] = v
+	case map[string]any:
+		for k, val := range v {
+			if !targetDataKeys[k] {
+				data[k] = val
+			}
+		}
+	default:
+		data["datetime"] = value
+	}
+	data["entity_id"] = entityID
+	return data
 }
 
 // =============================================================================

@@ -75,20 +75,25 @@ func TestCallService_AllCommaFloorAreaLabelExpansion(t *testing.T) {
 		{"comma string", "light", map[string]any{"entity_id": "light.kitchen, light.hall"}, ""},
 		{"comma string with read-only", "homeassistant", map[string]any{"entity_id": "light.kitchen,switch.ro"}, denialFor("switch.ro", "control")},
 		{"area", "light", map[string]any{"area_id": "hall"}, ""},
-		{"area read-only", "light", map[string]any{"area_id": "office"}, denialFor("switch.office", "control")},
+		{"area read-only", "switch", map[string]any{"area_id": "office"}, denialFor("switch.office", "control")},
+		// office holds no light: the expansion reaches entities, none of the
+		// service's domain, so the call is refused, never left to the default.
+		{"area without own-domain entities", "light", map[string]any{"area_id": "office"}, genericDenial()},
 		{"floor", "light", map[string]any{"floor_id": "ground_hall"}, ""},
-		{"floor read-only", "light", map[string]any{"floor_id": "upstairs"}, denialFor("switch.office", "control")},
+		{"floor read-only", "switch", map[string]any{"floor_id": "upstairs"}, denialFor("switch.office", "control")},
+		{"floor without own-domain entities", "light", map[string]any{"floor_id": "upstairs"}, genericDenial()},
 		{"device", "light", map[string]any{"device_id": "dev_k"}, ""},
 		{"device area inherited", "light", map[string]any{"area_id": "kitchen", "entity_id": "light.hall"}, genericDenial()},
-		{"label on entity", "light", map[string]any{"label_id": "lbl_ro"}, denialFor("switch.ro", "control")},
+		{"label on entity", "switch", map[string]any{"label_id": "lbl_ro"}, denialFor("switch.ro", "control")},
 		{"label on device", "light", map[string]any{"label_id": "lbl_dev"}, ""},
 		{"label on area", "light", map[string]any{"label_id": "lbl_area"}, ""},
-		{"label list mixed", "light", map[string]any{"label_id": []any{"lbl_dev", "lbl_ro"}}, denialFor("switch.ro", "control")},
+		{"label list, other domain filtered out", "light", map[string]any{"label_id": []any{"lbl_dev", "lbl_ro"}}, ""},
+		{"homeassistant domain is not filtered", "homeassistant", map[string]any{"label_id": []any{"lbl_dev", "lbl_ro"}}, denialFor("switch.ro", "control")},
 		{"all of a domain incl. states-only", "input_boolean", map[string]any{"entity_id": "all"}, ""},
 		{"all reaches states-only read-only", "cover", map[string]any{"entity_id": "all"}, denialFor("cover.yaml_ro", "control")},
 		{"all with a hidden member", "media_player", map[string]any{"entity_id": "all"}, genericDenial()},
 		{"nested target", "light", map[string]any{"entity_id": "light.kitchen", "target": map[string]any{"entity_id": "switch.ro"}}, denialFor("switch.ro", "control")},
-		{"nested target area", "light", map[string]any{"target": map[string]any{"area_id": "office"}}, denialFor("switch.office", "control")},
+		{"nested target area", "switch", map[string]any{"target": map[string]any{"area_id": "office"}}, denialFor("switch.office", "control")},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -364,6 +369,7 @@ func TestCallService_ObjectFromData(t *testing.T) {
 		{"hidden object", "scene", "create", map[string]any{"scene_id": "secret_x"}, false},
 		{"group remove", "group", "remove", map[string]any{"object_id": "existing"}, true},
 		{"group remove without delete", "group", "remove", map[string]any{"object_id": "keep_me"}, false},
+		{"device_tracker.see needs configure", "device_tracker", "see", map[string]any{"dev_id": "phone", "location_name": "home"}, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -778,6 +784,119 @@ func TestResponseServices_AreReads(t *testing.T) {
 	_, err := c.CallServiceWithResponse(ctx, "todo", "add_item", map[string]any{"entity_id": "todo.list", "item": "x"})
 	errText(t, err, denialFor("todo.list", "control"))
 	noInnerWrite(t, f)
+}
+
+func TestCallService_ExpansionFilteredByServiceDomain(t *testing.T) {
+	p := mustCompile(t, config.AccessConfig{
+		Default: "read",
+		Rules: []config.AccessRule{
+			{Match: config.AccessMatch{Entities: []string{"light.*", "media_player.*"}}, Allow: config.CapList{"control"}},
+			{Match: config.AccessMatch{Entities: []string{"light.ro_*", "media_player.sonos_ro"}}, Deny: config.CapList{"control"}},
+		},
+	})
+	home := func() *readFake {
+		f := buildWriteFake(true)
+		reg := func(id, platform, areaID string) {
+			f.states = append(f.states, homeassistant.Entity{EntityID: id})
+			f.registry = append(f.registry, homeassistant.EntityRegistryEntry{EntityID: id, Platform: platform, AreaID: areaID})
+		}
+		reg("sensor.hall_temp", "demo", "hall")      // read-only, other domain
+		reg("light.ro_den", "demo", "den")           // read-only light
+		reg("media_player.sonos_ro", "sonos", "den") // read-only, platform sonos
+		f.areas = append(f.areas, homeassistant.AreaRegistryEntry{AreaID: "den"})
+		return f
+	}
+	tests := []struct {
+		name            string
+		domain, service string
+		data            map[string]any
+		wantErr         string
+	}{
+		{"read-only sensor does not block a light call", "light", "turn_on", map[string]any{"area_id": "hall"}, ""},
+		{"read-only light blocks", "light", "turn_on", map[string]any{"area_id": "den"}, denialFor("light.ro_den", "control")},
+		{"platform service reaches its platform's entities", "sonos", "snapshot", map[string]any{"area_id": "den"}, denialFor("media_player.sonos_ro", "control")},
+		{"expansion reaches only other domains", "sonos", "snapshot", map[string]any{"area_id": "hall"}, genericDenial()},
+		{"homeassistant is not filtered", "homeassistant", "turn_on", map[string]any{"area_id": "hall"}, denialFor("sensor.hall_temp", "control")},
+		{"explicit ids are never filtered", "light", "turn_on", map[string]any{"entity_id": "sensor.hall_temp"}, denialFor("sensor.hall_temp", "control")},
+		{"filtered-out expansion beside an explicit id", "light", "turn_on", map[string]any{"entity_id": "light.hall", "area_id": "office"}, genericDenial()},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := home()
+			c, _, ctx := wrapFake(t, p, f)
+			_, err := c.CallService(ctx, tc.domain, tc.service, tc.data)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				callOnce(t, f, "CallService", tc.domain, tc.service, tc.data)
+				return
+			}
+			errText(t, err, tc.wantErr)
+			noInnerWrite(t, f)
+		})
+	}
+}
+
+func TestCallService_UnresolvedAllIsRefused(t *testing.T) {
+	p := mustCompile(t, config.AccessConfig{
+		Default: "write",
+		Rules:   []config.AccessRule{{Match: config.AccessMatch{Entities: []string{"lock.*"}}, Deny: config.CapList{"control"}}},
+	})
+	f := buildWriteFake(true)
+	f.states = append(f.states, homeassistant.Entity{EntityID: "lock.front"})
+	f.registry = append(f.registry, homeassistant.EntityRegistryEntry{EntityID: "lock.front", Platform: "demo"})
+	c, tr, ctx := wrapFake(t, p, f)
+	// media_extractor owns no entities; "all" must not fall to the default.
+	for _, data := range []map[string]any{
+		{"entity_id": "all", "media_content_id": "x"},
+		{"target": map[string]any{"area_id": "all"}},
+	} {
+		_, err := c.CallService(ctx, "media_extractor", "play_media", data)
+		errText(t, err, genericDenial())
+	}
+	noInnerWrite(t, f)
+	if d := tr.First(); d == nil || d.Object != "media_extractor.play_media" {
+		t.Errorf("denial = %+v", d)
+	}
+	// An "all" that reaches controllable entities still passes.
+	if _, err := c.CallService(ctx, "light", "turn_on", map[string]any{"entity_id": "all"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSetHelperValue_MapKeysCannotRetarget(t *testing.T) {
+	for _, value := range []map[string]any{
+		{"datetime": "2024-01-01 08:00:00", "entity_id": "lock.front"},
+		{"time": "08:00", "area_id": "kitchen"},
+		{"target": map[string]any{"entity_id": "lock.front"}},
+		{"Date": "2024-01-01"},
+	} {
+		f := buildWriteFake(true)
+		c, tr, ctx := wrapFake(t, writePolicy(t), f)
+		errText(t, c.SetHelperValue(ctx, "input_datetime.ok", value), denialFor("input_datetime.ok", "control"))
+		noInnerWrite(t, f)
+		if d := tr.First(); d == nil || d.Object != "input_datetime.ok" {
+			t.Errorf("denial = %+v", d)
+		}
+		// A hidden helper still looks missing, whatever the value.
+		errText(t, c.SetHelperValue(ctx, "input_datetime.secret_dt", value),
+			homeassistant.NewEntityNotFoundError("input_datetime.secret_dt").Error())
+	}
+
+	for _, value := range []any{
+		map[string]any{"datetime": "2024-01-01 08:00:00"},
+		map[string]any{"date": "2024-01-01", "time": "08:00"},
+		map[string]any{"timestamp": 1700000000},
+		"2024-01-01 08:00:00",
+	} {
+		f := buildWriteFake(true)
+		c, _, ctx := wrapFake(t, writePolicy(t), f)
+		if err := c.SetHelperValue(ctx, "input_datetime.ok", value); err != nil {
+			t.Fatalf("value %v refused: %v", value, err)
+		}
+		callOnce(t, f, "SetHelperValue", "", "", map[string]any{"entity_id": "input_datetime.ok", "value": value})
+	}
 }
 
 func TestMethodClass_WritesAreClassified(t *testing.T) {
