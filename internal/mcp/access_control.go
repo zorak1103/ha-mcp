@@ -73,6 +73,20 @@ func buildPureTools() map[string]ToolClassification {
 		"get_skill": {
 			PureCategory: CategoryRead,
 		},
+		"get_system_info": {
+			PureCategory: CategoryRead,
+		},
+		"list_services": {
+			PureCategory: CategoryRead,
+		},
+		"browse_media": {
+			PureCategory: CategoryRead,
+		},
+		// sign_media_path mutates no HA state (it returns a short-lived, GET-only signed URL),
+		// consistent with manage_camera stream; filter it by name to deny URL minting.
+		"sign_media_path": {
+			PureCategory: CategoryRead,
+		},
 
 		// Pure write tools
 		"call_service": {
@@ -108,7 +122,7 @@ func addCoreManagementTools(result map[string]ToolClassification) {
 	result["manage_automation"] = ToolClassification{
 		ParamName: "action",
 		Actions: map[string]ActionCategory{
-			"list": CategoryRead, "get": CategoryRead, "coverage": CategoryRead,
+			"list": CategoryRead, "get": CategoryRead, "coverage": CategoryRead, "schema": CategoryRead,
 			"create": CategoryWrite, "update": CategoryWrite, "delete": CategoryWrite, "toggle": CategoryWrite, "patch": CategoryWrite,
 		},
 	}
