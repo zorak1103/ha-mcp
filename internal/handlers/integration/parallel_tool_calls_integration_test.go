@@ -17,6 +17,10 @@ import (
 const (
 	parallelCallCount   = 24
 	parallelCallTimeout = 60 * time.Second
+
+	// helperTemplateBurstIndex is the one burst slot that scans helper_template
+	// (see helperTemplateCall). It must be an index of a find_references call.
+	helperTemplateBurstIndex = 2
 )
 
 // ParallelToolCallsIntegrationTestSuite is a regression guard for #294: a burst
@@ -61,10 +65,36 @@ func readOnlyCalls() []parallelCall {
 		{tool: "find_references", args: map[string]any{
 			"search": "sun.sun",
 			"format": "json",
-			"types":  []any{"scene", "dashboard", "helper_template"},
+			"types":  []any{"scene", "dashboard"},
 		}},
 		{tool: "manage_automation", args: map[string]any{"action": "list"}},
 	}
+}
+
+// helperTemplateCall is the find_references call that scans helper_template. It
+// reads each template helper through its own options flow, about two REST
+// requests per helper, and all REST requests share one rate limiter (10 req/s by
+// default). On the integration instance one such call takes seconds and several
+// at once take proportionally longer: six of them need more than find_references'
+// own 25 s scan deadline and correctly report helper_template as a failed
+// source. The burst therefore makes this call exactly once (at
+// helperTemplateBurstIndex) so the source stays covered under load without
+// depending on the rate limiter's throughput.
+func helperTemplateCall() parallelCall {
+	return parallelCall{tool: "find_references", args: map[string]any{
+		"search": "sun.sun",
+		"format": "json",
+		"types":  []any{"helper_template"},
+	}}
+}
+
+// burstCall returns the call goroutine i of the burst makes: the four read-only
+// calls in rotation, with one find_references slot swapped for helperTemplateCall.
+func burstCall(calls []parallelCall, i int) parallelCall {
+	if i == helperTemplateBurstIndex {
+		return helperTemplateCall()
+	}
+	return calls[i%len(calls)]
 }
 
 // runParallelCall executes a call the way the server would: reject undeclared
@@ -106,7 +136,7 @@ func (s *ParallelToolCallsIntegrationTestSuite) TestBurstOfReadOnlyCalls() {
 		go func(i int) {
 			defer wg.Done()
 			<-start // release all goroutines together to maximize overlap
-			outcomes[i] = s.runParallelCall(calls[i%len(calls)])
+			outcomes[i] = s.runParallelCall(burstCall(calls, i))
 		}(i)
 	}
 	close(start)
