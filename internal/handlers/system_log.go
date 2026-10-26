@@ -45,9 +45,9 @@ func (h *SystemLogHandlers) manageSystemLogTool() mcp.Tool {
 					Description: "Action to perform: 'list' to retrieve log entries, 'clear' to empty the ring buffer",
 				},
 				"level": {
+					// No Enum: the handler matches case-insensitively, which an enum cannot express.
 					Type:        "string",
-					Enum:        []string{"warning", "error", "critical"},
-					Description: "Filter by severity level (case-insensitive). Default: all levels",
+					Description: "Filter by severity level: warning, error or critical (case-insensitive). Default: all levels",
 				},
 				"limit": {
 					Type:        "integer",

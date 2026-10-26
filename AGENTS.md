@@ -101,7 +101,7 @@ AI Client (Claude, Cline)
 
 **Core infrastructure:**
 - `cmd/ha-mcp/main.go` - Entry point; `internal/handlers/register.go` - central tool registration
-- `internal/mcp/access_control.go` - read/write classification; `internal/mcp/tool_filter.go` - ToolFilterEngine; `internal/mcp/registry.go` - tool registry; `internal/mcp/arg_validation.go` - `UnknownArguments` (server-side rejection of undeclared argument names)
+- `internal/mcp/access_control.go` - read/write classification; `internal/mcp/tool_filter.go` - ToolFilterEngine; `internal/mcp/registry.go` - tool registry; `internal/mcp/arg_validation.go` - `UnknownArguments` (server-side rejection of undeclared argument names); `internal/mcp/arg_type_validation.go` - `InvalidArguments` (server-side rejection of values whose JSON type or enum the schema rules out; coercible values pass)
 - `internal/homeassistant/client.go` - Client interface; `hybrid_client.go` - primary implementation; `cached_client.go` - caching wrapper
 
 **Domain handlers** follow naming `handlers/{domain}.go` → `manage_{domain}` tool. Exceptions:
@@ -239,7 +239,7 @@ set -a && source .env.integration && set +a && go test -tags=integration -v ./in
 
 **4-pattern for registry CRUD**: Each registry type (labels, floors, tags, areas) needs 4 tests (lifecycle, all fields, partial update, multiple items), 3 cleanup functions (cleanupTestX, deleteXWithRetry, CountTestX), FindXByID suite helper, and TearDownSuite verification block
 
-**Integration test scope**: Integration tests call client methods directly, bypassing handler logic. Handler-level features (config merging for partial updates, ID normalization) are tested via unit tests. `s.CallTool` dispatches through the real registry + handler and also fails the test on an argument name the tool schema does not declare (mirroring the server's rejection).
+**Integration test scope**: Integration tests call client methods directly, bypassing handler logic. Handler-level features (config merging for partial updates, ID normalization) are tested via unit tests. `s.CallTool` dispatches through the real registry + handler and also fails the test on an argument name the tool schema does not declare (mirroring the server's rejection); a wrongly typed or out-of-enum value instead returns the server's `invalid argument(s)` error result without calling the handler, so a negative test asserts on that message.
 
 **Tool coverage requirement**: Every MCP tool must have integration test coverage. For tools with write operations (CRUD), tests must verify full lifecycle. Tests may skip gracefully when:
 - Required entities don't exist (e.g., no cameras for camera tests)

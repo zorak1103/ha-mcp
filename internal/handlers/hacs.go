@@ -76,7 +76,7 @@ func buildHACSSchema() *mcp.Tool {
 				"category": {
 					Type:        "string",
 					Description: "Repository category (required for add_repository, client-side filter for list)",
-					Enum:        []string{"integration", "plugin", "theme", "python_script", "appdaemon", "netdaemon"},
+					Enum:        []string{"integration", "plugin", "theme", "python_script", "appdaemon", "netdaemon", "template"},
 				},
 				"search": {
 					Type:        "string",

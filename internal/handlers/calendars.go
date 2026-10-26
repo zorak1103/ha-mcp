@@ -69,7 +69,7 @@ func buildCalendarSchemaProperties() map[string]mcp.JSONSchema {
 		"location":         {Type: "string", Description: "Event location (for 'create_event')."},
 		"uid":              {Type: "string", Description: "Event unique ID (required for 'delete_event')."},
 		"recurrence_id":    {Type: "string", Description: "Recurrence ID for deleting specific occurrence (for 'delete_event')."},
-		"recurrence_range": {Type: "string", Description: "Recurrence deletion range: 'THIS_AND_FUTURE' (for 'delete_event').", Enum: []string{"THIS_AND_FUTURE"}},
+		"recurrence_range": {Type: "string", Description: "Recurrence deletion range: 'THISANDFUTURE' (the RFC 5545 value Home Assistant expects; 'THIS_AND_FUTURE' is also accepted) (for 'delete_event').", Enum: []string{"THISANDFUTURE", "THIS_AND_FUTURE"}},
 		"format":           {Type: "string", Description: "Output format: 'natural' (default, human-readable) or 'json' (structured JSON).", Enum: []string{formatNatural, formatJSON}, Default: formatNatural},
 	}
 }

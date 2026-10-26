@@ -560,6 +560,8 @@ func (h *ConsolidatedHelperHandlers) manageHelperTool() mcp.Tool {
 	for name := range helperTypes {
 		typeNames = append(typeNames, name)
 	}
+	// Map order is random; the enum is echoed in argument validation errors.
+	slices.Sort(typeNames)
 
 	// Build base properties
 	props := map[string]mcp.JSONSchema{
@@ -705,8 +707,13 @@ func (h *ConsolidatedHelperHandlers) manageHelperTool() mcp.Tool {
 		},
 		"group_type": {
 			Type:        "string",
-			Description: "Explicit group type override (group, optional): sensor, binary_sensor, light, cover, switch, fan, lock. If not provided, automatically inferred from member entity domains.",
-			Enum:        []string{"sensor", "binary_sensor", "light", "cover", "switch", "fan", "lock"},
+			Description: "Explicit group type override (group, optional): sensor, binary_sensor, light, cover, switch, fan, lock, or another group type Home Assistant offers (button, calendar, event, media_player, notify, valve). If not provided, automatically inferred from member entity domains.",
+			// HA's group config flow menu (GROUP_TYPES in group/config_flow.py);
+			// the handler forwards the value as the flow step.
+			Enum: []string{
+				"sensor", "binary_sensor", "light", "cover", "switch", "fan", "lock",
+				"button", "calendar", "event", "media_player", "notify", "valve",
+			},
 		},
 		"state": {
 			Type:        "string",

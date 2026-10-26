@@ -76,25 +76,20 @@ func getAnalyzeTargetProperties() map[string]mcp.JSONSchema {
 			Enum:        []string{"natural", "json"},
 			Description: "Output format: 'natural' for LLM-optimized human-readable output (default), 'json' for structured JSON",
 		},
+		// The four target lists below omit Type: each takes a string or an array
+		// of strings (parseTargetIDList), which mcp.JSONSchema cannot express, and
+		// a Type "array" would make the server reject the bare string.
 		attrEntityID: {
-			Type:        "array",
-			Description: "List of entity IDs (e.g., ['light.living_room', 'switch.kitchen']). A single string is accepted as a one-element list.",
-			Items:       &mcp.JSONSchema{Type: "string"},
+			Description: "Entity ID or list of entity IDs (e.g., ['light.living_room', 'switch.kitchen']). A single string is accepted as a one-element list.",
 		},
 		"device_id": {
-			Type:        "array",
-			Description: "List of device IDs. A single string is accepted as a one-element list.",
-			Items:       &mcp.JSONSchema{Type: "string"},
+			Description: "Device ID or list of device IDs. A single string is accepted as a one-element list.",
 		},
 		"area_id": {
-			Type:        "array",
-			Description: "List of area IDs. A single string is accepted as a one-element list.",
-			Items:       &mcp.JSONSchema{Type: "string"},
+			Description: "Area ID or list of area IDs. A single string is accepted as a one-element list.",
 		},
 		"label_id": {
-			Type:        "array",
-			Description: "List of label IDs. A single string is accepted as a one-element list.",
-			Items:       &mcp.JSONSchema{Type: "string"},
+			Description: "Label ID or list of label IDs. A single string is accepted as a one-element list.",
 		},
 		"expand_group": {
 			Type:        "boolean",
