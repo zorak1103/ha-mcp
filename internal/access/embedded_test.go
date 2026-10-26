@@ -537,3 +537,48 @@ func TestNewCalls_RespectsMultiplicity(t *testing.T) {
 		t.Errorf("reduced duplicates: got %d new, want 0", len(got))
 	}
 }
+
+func TestExtract_CallDataMergesDataAndDataTemplate(t *testing.T) {
+	calls := mustExtract(t, `{"actions": [
+	  {"service": "device_tracker.see", "data": {"dev_id": "phone", "gps": [1, 2]}, "data_template": {"battery": "{{ 5 }}"}},
+	  {"service": "light.turn_on", "target": {"entity_id": "light.a"}}
+	]}`)
+	want := map[string]any{"dev_id": "phone", "gps": []any{float64(1), float64(2)}, "battery": "{{ 5 }}"}
+	if !reflect.DeepEqual(calls[0].Data, want) {
+		t.Errorf("Data = %#v, want %#v", calls[0].Data, want)
+	}
+	if calls[1].Data != nil {
+		t.Errorf("a call without data must have nil Data, got %#v", calls[1].Data)
+	}
+	if !strings.Contains(calls[0].Raw, "data_template") {
+		t.Errorf("Raw must stay the node identity: %s", calls[0].Raw)
+	}
+}
+
+func TestExtract_CallDataIsACopy(t *testing.T) {
+	def := parseDef(t, `{"actions": [{"service": "notify.x", "data": {"message": "hi"}}]}`)
+	calls, err := ExtractCalls(def)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls[0].Data["message"] = "changed"
+	node := def["actions"].([]any)[0].(map[string]any)
+	if node["data"].(map[string]any)["message"] != "hi" {
+		t.Error("Call.Data must not alias the definition's data map")
+	}
+}
+
+func TestExtract_TemplatedDataKey_Undecidable(t *testing.T) {
+	defs := []string{
+		`{"actions": [{"service": "device_tracker.see", "data": {"dev_id": "phone", "{{ 'mac' }}": "aa"}}]}`,
+		`{"actions": [{"service": "light.turn_on", "data_template": {"{{ 'entity_id' }}": "lock.front"}}]}`,
+		`{"actions": [{"service": "light.turn_on", "data": {"nested": {"{% if 1 %}entity_id{% endif %}": "x"}}}]}`,
+		`{"actions": [{"service": "light.turn_on", "{{ 'entity_id' }}": "lock.front"}]}`,
+		`{"actions": [{"device_id": "dev1", "domain": "light", "type": "turn_on", "{{ 'entity_id' }}": "x"}]}`,
+	}
+	for _, src := range defs {
+		if _, err := ExtractCalls(parseDef(t, src)); err == nil {
+			t.Errorf("templated key must be undecidable: %s", src)
+		}
+	}
+}

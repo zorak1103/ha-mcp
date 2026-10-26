@@ -10,20 +10,6 @@ import (
 // client.go. Each records a denial and returns zero values until its real
 // enforcement replaces it (and the stub is deleted from this file).
 
-// Automation operations.
-
-func (c *client) CreateAutomation(context.Context, homeassistant.AutomationConfig) error {
-	return c.unclassified("CreateAutomation")
-}
-
-func (c *client) UpdateAutomation(context.Context, string, homeassistant.AutomationConfig) error {
-	return c.unclassified("UpdateAutomation")
-}
-
-func (c *client) DeleteAutomation(context.Context, string) error {
-	return c.unclassified("DeleteAutomation")
-}
-
 // Helper operations.
 
 func (c *client) CreateHelper(context.Context, homeassistant.HelperConfig) error {
@@ -40,34 +26,6 @@ func (c *client) UpdateHelper(context.Context, string, homeassistant.HelperConfi
 
 func (c *client) DeleteHelper(context.Context, string) error {
 	return c.unclassified("DeleteHelper")
-}
-
-// Script operations.
-
-func (c *client) CreateScript(context.Context, string, homeassistant.ScriptConfig) error {
-	return c.unclassified("CreateScript")
-}
-
-func (c *client) UpdateScript(context.Context, string, homeassistant.ScriptConfig) error {
-	return c.unclassified("UpdateScript")
-}
-
-func (c *client) DeleteScript(context.Context, string) error {
-	return c.unclassified("DeleteScript")
-}
-
-// Scene operations.
-
-func (c *client) CreateScene(context.Context, string, homeassistant.SceneConfig) error {
-	return c.unclassified("CreateScene")
-}
-
-func (c *client) UpdateScene(context.Context, string, homeassistant.SceneConfig) error {
-	return c.unclassified("UpdateScene")
-}
-
-func (c *client) DeleteScene(context.Context, string) error {
-	return c.unclassified("DeleteScene")
 }
 
 // Area registry modification operations.

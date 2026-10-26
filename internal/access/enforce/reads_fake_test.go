@@ -41,6 +41,7 @@ type readFake struct {
 	floors      []homeassistant.FloorRegistryEntry
 	hacsFn      func(command string, data map[string]any) (any, error)
 	writes      []writeCall // see writes_fake_test.go
+	cfg         configStore // see writes_config_test.go
 
 	mu         sync.Mutex
 	seenIDs    []string
@@ -166,7 +167,7 @@ func (f *readFake) GetAutomation(_ context.Context, id string) (*homeassistant.A
 		entityID = "automation." + id
 	}
 	if f.hasState(entityID) {
-		return &homeassistant.Automation{EntityID: entityID}, nil
+		return &homeassistant.Automation{EntityID: entityID, Config: f.cfg.automations[entityID]}, nil
 	}
 	return nil, fmt.Errorf("get automation failed: %w", errors.New("command failed: not_found - Entity not found"))
 }
@@ -178,7 +179,7 @@ func (f *readFake) GetScript(_ context.Context, id string) (*homeassistant.Scrip
 		entityID = "script." + id
 	}
 	if f.hasState(entityID) {
-		return &homeassistant.Script{EntityID: entityID}, nil
+		return &homeassistant.Script{EntityID: entityID, Config: f.cfg.scripts[strings.TrimPrefix(entityID, "script.")]}, nil
 	}
 	return nil, fmt.Errorf("get script state failed: %w", homeassistant.NewEntityNotFoundError(entityID))
 }
@@ -187,7 +188,7 @@ func (f *readFake) GetScene(_ context.Context, id string) (*homeassistant.Scene,
 	f.record("GetScene", id)
 	for _, r := range f.registry {
 		if r.Platform == "homeassistant" && r.UniqueID == id {
-			return &homeassistant.Scene{EntityID: r.EntityID}, nil
+			return &homeassistant.Scene{EntityID: r.EntityID, Config: f.cfg.scenes[id]}, nil
 		}
 	}
 	return nil, homeassistant.NewConfigNotFoundError("scene", id)
@@ -195,6 +196,9 @@ func (f *readFake) GetScene(_ context.Context, id string) (*homeassistant.Scene,
 
 func (f *readFake) ConfigFileEntryExists(_ context.Context, domain, id string) (bool, error) {
 	f.record("ConfigFileEntryExists", domain+"/"+id)
+	if f.cfg.files[domain+"/"+id] {
+		return true, nil
+	}
 	for _, r := range f.registry {
 		if r.Platform == domain || (domain == "scene" && r.Platform == "homeassistant") {
 			if r.UniqueID == id {

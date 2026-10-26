@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 )
@@ -26,6 +27,12 @@ import (
 // MUST resolve each through the entity registry to an entity id and refuse the
 // definition when one cannot be resolved.
 //
+// Data is the node's service data: a shallow copy of its "data" map with the
+// legacy "data_template" map merged over it (nil when the node has neither).
+// No key at any depth of either map, and no key of the node itself, holds a
+// template: HA renders keys too, so a templated key could become a target key
+// at run time, and ExtractCalls refuses it.
+//
 // Raw is the canonical JSON encoding of the action node (object keys sorted)
 // and is the identity NewCalls compares by. A device action is modeled as a
 // call whose Domain is the device action's domain, whose Service is
@@ -37,6 +44,7 @@ type Call struct {
 	EntityData        []string
 	EntityRegistryIDs []string
 	DataMalformed     bool
+	Data              map[string]any
 	Raw               string
 }
 
@@ -45,7 +53,7 @@ const (
 	// definition cannot exhaust the stack.
 	maxActionDepth = 32
 
-	deviceActionService = "device_action"
+	deviceActionService = DeviceActionService
 
 	keyService   = "service"
 	keyAction    = "action"
@@ -70,6 +78,9 @@ const (
 
 	sceneEntityPrefix = "scene."
 )
+
+// DeviceActionService is the Service of a Call that models a device action.
+const DeviceActionService = "device_action"
 
 // templateMarkers open a Jinja expression or statement.
 var templateMarkers = []string{"{{", "{%", "{#"}
@@ -327,6 +338,9 @@ func fillTargets(call *Call, node map[string]any) error {
 	if err := rejectTemplatedFields(node, nil); err != nil {
 		return err
 	}
+	if templatedKey(node, 0) {
+		return errors.New("a key of the action is a template")
+	}
 	mergeTargets(&call.Targets, ParseTarget(node))
 	class := ClassifyService(call.Domain, call.Service)
 	objectFound := false
@@ -338,6 +352,10 @@ func fillTargets(call *Call, node map[string]any) error {
 		if !present {
 			continue
 		}
+		if call.Data == nil {
+			call.Data = make(map[string]any, len(data))
+		}
+		maps.Copy(call.Data, data)
 		found, err := fillFromData(call, data, class)
 		if err != nil {
 			return err
@@ -443,6 +461,31 @@ func rejectTemplatedFields(m map[string]any, entityDataKeys []string) error {
 		}
 	}
 	return nil
+}
+
+// templatedKey reports whether any map key inside v (at any depth, through maps
+// and lists) holds a template marker. HA renders keys of service data too, so
+// such a key could turn into a target key at run time. Nesting deeper than
+// maxActionDepth counts as templated (fail closed).
+func templatedKey(v any, depth int) bool {
+	if depth > maxActionDepth {
+		return true
+	}
+	switch x := v.(type) {
+	case map[string]any:
+		for k, val := range x {
+			if hasTemplate(k) || templatedKey(val, depth+1) {
+				return true
+			}
+		}
+	case []any:
+		return slices.ContainsFunc(x, func(e any) bool { return templatedKey(e, depth+1) })
+	case []map[string]any:
+		return slices.ContainsFunc(x, func(e map[string]any) bool { return templatedKey(e, depth+1) })
+	case map[any]any:
+		return anyMapHasTemplate(x)
+	}
+	return false
 }
 
 // entityDataHasTemplate is containsTemplate for an entity-data value, where a
@@ -570,6 +613,9 @@ func (e *extractor) deviceNode(m map[string]any, _ int) (bool, error) {
 	}
 	if err := rejectTemplatedFields(m, nil); err != nil {
 		return true, err
+	}
+	if templatedKey(m, 0) {
+		return true, errors.New("a key of the device action is a template")
 	}
 	t := ParseTarget(map[string]any{keyDeviceID: m[keyDeviceID]})
 	if t.Malformed || (len(t.DeviceIDs) == 0 && !t.All) {

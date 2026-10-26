@@ -559,6 +559,9 @@ type Scene struct {
 
 // EntityRegistryEntry represents an entry in the Home Assistant entity registry.
 type EntityRegistryEntry struct {
+	// ID is the registry's own id of the entry (32 hex characters), which
+	// device actions use in place of an entity id.
+	ID            string   `json:"id,omitempty"`
 	EntityID      string   `json:"entity_id"`
 	Platform      string   `json:"platform"`
 	ConfigEntryID string   `json:"config_entry_id,omitempty"`
