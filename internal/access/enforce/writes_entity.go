@@ -63,6 +63,10 @@ type callRequest struct {
 	entityData      []string
 	object          string
 	mustExist       bool
+	// data is the call's service data, for the per-service data guards
+	// (dataGuardOK). A caller that has none passes nil, which fails a guard
+	// that needs a key.
+	data map[string]any
 }
 
 // name is the normalised service name ("domain.service"), or the method name
@@ -179,7 +183,7 @@ func (c *client) internalReload(domain, service string, data map[string]any) boo
 // is false when the objects cannot be decided: a malformed target or entity
 // data value, or a missing or non-slug ObjectFromData value.
 func requestFromData(domain, service string, class access.ServiceClass, data map[string]any) (callRequest, bool) {
-	req := callRequest{domain: domain, service: service, targets: access.ParseTarget(data), mustExist: true}
+	req := callRequest{domain: domain, service: service, targets: access.ParseTarget(data), mustExist: true, data: data}
 	if req.targets.Malformed {
 		return req, false
 	}
@@ -210,10 +214,25 @@ func (c *client) checkCall(ctx context.Context, req callRequest) error {
 		script := domainScript + "." + normName(req.service)
 		req.targets.EntityIDs = append([]string{script}, req.targets.EntityIDs...)
 	}
-	if req.targets.Malformed {
+	if req.targets.Malformed || !dataGuardOK(req.name(), req.data) {
 		return c.refuse(req.name())
 	}
 	return c.checkObjects(ctx, req, primaryCapability(class.Kind))
+}
+
+// dataGuardOK applies per-service rules on the call data that the classifier
+// cannot express. device_tracker.see: HA looks the tracker up by mac when one
+// is given (ignoring dev_id) and derives the id from host_name, so dev_id would
+// name the wrong object; the call is allowed only with dev_id and with neither
+// mac nor host_name present (any value, even empty or null, counts).
+func dataGuardOK(name string, data map[string]any) bool {
+	if name != "device_tracker.see" {
+		return true
+	}
+	_, hasDevID := data["dev_id"]
+	_, hasMAC := data["mac"]
+	_, hasHost := data["host_name"]
+	return hasDevID && !hasMAC && !hasHost
 }
 
 // primaryCapability is what a service kind needs on its target entities.

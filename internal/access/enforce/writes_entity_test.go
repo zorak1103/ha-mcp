@@ -899,6 +899,73 @@ func TestSetHelperValue_MapKeysCannotRetarget(t *testing.T) {
 	}
 }
 
+func TestDeviceTrackerSee_OnlyByDevID(t *testing.T) {
+	configure := mustCompile(t, config.AccessConfig{
+		Default: "read",
+		Rules: []config.AccessRule{
+			{Match: config.AccessMatch{Entities: []string{"device_tracker.*"}}, Allow: config.CapList{"configure"}},
+		},
+	})
+	tests := []struct {
+		name    string
+		policy  *access.Policy
+		data    map[string]any
+		allowed bool
+	}{
+		{"dev_id only, configure granted", configure, map[string]any{"dev_id": "phone", "location_name": "home"}, true},
+		{"dev_id and mac", configure, map[string]any{"dev_id": "phone", "mac": "AA:BB:CC:DD:EE:FF"}, false},
+		{"dev_id and host_name", configure, map[string]any{"dev_id": "phone", "host_name": "phone"}, false},
+		{"dev_id and empty mac", configure, map[string]any{"dev_id": "phone", "mac": ""}, false},
+		{"dev_id and null host_name", configure, map[string]any{"dev_id": "phone", "host_name": nil}, false},
+		{"mac only", configure, map[string]any{"mac": "AA:BB:CC:DD:EE:FF"}, false},
+		{"malformed dev_id", configure, map[string]any{"dev_id": "Bad Id"}, false},
+		{"dev_id only, configure not granted", readPolicy(t), map[string]any{"dev_id": "phone"}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := buildWriteFake(true)
+			c, tr, ctx := wrapFake(t, tc.policy, f)
+			_, err := c.CallService(ctx, "device_tracker", "see", tc.data)
+			if tc.allowed {
+				if err != nil {
+					t.Fatal(err)
+				}
+				callOnce(t, f, "CallService", "device_tracker", "see", tc.data)
+				return
+			}
+			errText(t, err, genericDenial())
+			if d := tr.First(); d == nil || d.Object != "device_tracker.see" {
+				t.Errorf("denial = %+v", d)
+			}
+			noInnerWrite(t, f)
+		})
+	}
+}
+
+func TestDeviceTrackerSee_CheckCallAppliesGuard(t *testing.T) {
+	p := mustCompile(t, config.AccessConfig{
+		Default: "read",
+		Rules: []config.AccessRule{
+			{Match: config.AccessMatch{Entities: []string{"device_tracker.*"}}, Allow: config.CapList{"configure"}},
+		},
+	})
+	embedded := func(data map[string]any) callRequest {
+		return callRequest{domain: "device_tracker", service: "see", object: "device_tracker.phone", data: data}
+	}
+	c, _, ctx := wrapFake(t, p, buildWriteFake(true))
+	if err := c.checkCall(ctx, embedded(map[string]any{"dev_id": "phone"})); err != nil {
+		t.Fatalf("dev_id only refused: %v", err)
+	}
+	for _, data := range []map[string]any{
+		{"dev_id": "phone", "mac": "AA:BB"},
+		{"dev_id": "phone", "host_name": "x"},
+		{"mac": "AA:BB"},
+		nil, // a caller that passes no data cannot show dev_id
+	} {
+		errText(t, c.checkCall(ctx, embedded(data)), genericDenial())
+	}
+}
+
 func TestMethodClass_WritesAreClassified(t *testing.T) {
 	for _, m := range []string{
 		"CallService", "CallServiceWithResponse", "SetState", "SetHelperValue", "ToggleAutomation",
