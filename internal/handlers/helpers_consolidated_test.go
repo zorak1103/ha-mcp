@@ -1450,14 +1450,81 @@ func TestManageHelper_UpdateDelete_AllowsHelperEntityInSharedDomain(t *testing.T
 	}
 }
 
+// configEntryGroupHelperCases pairs each entity domain the config-entry "group"
+// helper can create entities in (entityDomainToGroupType in
+// internal/homeassistant/hybrid_client.go; the issue #345 domains light, cover,
+// fan and lock on top of sensor/binary_sensor) with a real integration's entity
+// in that domain that must still be rejected.
+var configEntryGroupHelperCases = []struct {
+	groupEntityID string
+	realEntityID  string
+	realPlatform  string
+}{
+	{"sensor.my_group", "sensor.hue_temperature", "hue"},
+	{"binary_sensor.my_group", "binary_sensor.hue_motion", "hue"},
+	{"light.my_group", "light.hue_office", "hue"},
+	{"cover.my_group", "cover.garage_door", "somfy"},
+	{"fan.my_group", "fan.bedroom_fan", "tuya"},
+	{"lock.my_group", "lock.front_door", "nuki"},
+}
+
+// TestManageHelper_UpdateDelete_RejectsNonHelperEntityInConfigEntryGroupDomain
+// is the negative complement: allowing the config-entry group platform in
+// light/cover/fan/lock must not let a real integration's entity in the same
+// domain through, and no write call may be issued for it.
+func TestManageHelper_UpdateDelete_RejectsNonHelperEntityInConfigEntryGroupDomain(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range configEntryGroupHelperCases {
+		for _, action := range []string{"update", "delete"} {
+			t.Run(tc.realEntityID+"/"+action, func(t *testing.T) {
+				t.Parallel()
+
+				client := &UniversalMockClient{
+					GetEntityRegistryFn: func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+						return []homeassistant.EntityRegistryEntry{
+							{EntityID: tc.realEntityID, Platform: tc.realPlatform, ConfigEntryID: "real_config_entry"},
+						}, nil
+					},
+					UpdateHelperFn: func(context.Context, string, homeassistant.HelperConfig) error {
+						t.Fatal("UpdateHelper must not be called for an entity that isn't a helper")
+						return nil
+					},
+					DeleteHelperFn: func(context.Context, string) error {
+						t.Fatal("DeleteHelper must not be called for an entity that isn't a helper")
+						return nil
+					},
+				}
+
+				result, err := NewConsolidatedHelperHandlers().handleManageHelper(context.Background(), client, map[string]any{
+					"action":    action,
+					"entity_id": tc.realEntityID,
+					"name":      "renamed",
+				})
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if !result.IsError {
+					t.Fatalf("expected %s on %s (platform %q) to be rejected", action, tc.realEntityID, tc.realPlatform)
+				}
+				if !strings.Contains(result.Content[0].Text, tc.realPlatform) {
+					t.Errorf("error message = %q, want it to name the owning platform %q", result.Content[0].Text, tc.realPlatform)
+				}
+			})
+		}
+	}
+}
+
 // TestManageHelper_UpdateDelete_AllowsConfigEntryGroupHelper pins that the
-// config-entry "group" helper (sensor/binary_sensor groups) stays manageable:
-// helperTypes["group"] only declares the "group" entity domain, so the
-// platform has to be allowed for these two domains explicitly.
+// config-entry "group" helper (sensor, binary_sensor, light, cover, fan and
+// lock groups) stays manageable: helperTypes["group"] only declares the "group"
+// entity domain, so the platform has to be allowed for these domains
+// explicitly (issue #345 for light/cover/fan/lock).
 func TestManageHelper_UpdateDelete_AllowsConfigEntryGroupHelper(t *testing.T) {
 	t.Parallel()
 
-	for _, entityID := range []string{"sensor.my_group", "binary_sensor.my_group"} {
+	for _, tc := range configEntryGroupHelperCases {
+		entityID := tc.groupEntityID
 		for _, action := range []string{"update", "delete"} {
 			t.Run(entityID+"/"+action, func(t *testing.T) {
 				t.Parallel()
