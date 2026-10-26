@@ -1,6 +1,7 @@
 package access
 
 import (
+	"maps"
 	"slices"
 	"strings"
 )
@@ -104,6 +105,45 @@ func idsFromAnyList(list []any) ([]string, bool) {
 		out = append(out, splitIDs(s)...)
 	}
 	return out, ok
+}
+
+// EntityIDsFromData extracts the entity ids a call names under the given
+// call-data keys (see ServiceClass.EntityDataKeys). A value may be a string,
+// comma string, list of strings, or a map whose keys are the entity ids (the
+// values are ignored). Ids are trimmed, lower-cased and de-duplicated, in key
+// order (ids from a map sorted). malformed is true when a present key holds an
+// unsupported type or element (including null); ids found elsewhere are still
+// returned and the caller must refuse the call.
+func EntityIDsFromData(data map[string]any, keys []string) (ids []string, malformed bool) {
+	for _, key := range keys {
+		raw, present := data[key]
+		if !present {
+			continue
+		}
+		found, ok := entityDataIDs(raw)
+		if !ok {
+			malformed = true
+		}
+		for _, id := range found {
+			if !slices.Contains(ids, id) {
+				ids = append(ids, id)
+			}
+		}
+	}
+	return ids, malformed
+}
+
+func entityDataIDs(v any) ([]string, bool) {
+	m, isMap := v.(map[string]any)
+	if !isMap {
+		return idList(v)
+	}
+	var out []string
+	for k := range maps.Keys(m) {
+		out = append(out, splitIDs(k)...)
+	}
+	slices.Sort(out) // map order is random; sort the normalised ids for determinism
+	return out, true
 }
 
 // splitIDs splits a comma-separated string into trimmed, lower-cased, non-empty ids.

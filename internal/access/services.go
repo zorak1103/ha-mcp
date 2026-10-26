@@ -1,6 +1,9 @@
 package access
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // ServiceKind is the kind of access a call needs.
 type ServiceKind int
@@ -20,11 +23,21 @@ const (
 // for ServiceSystem. ObjectFromData, for ServiceConfigure, names the call-data
 // key that carries the bare object id within the service domain (for example
 // scene.create takes scene_id, so the object is scene.<scene_id>); empty means
-// the objects come from the call target.
+// the objects come from the call target. EntityDataKeys lists call-data keys
+// whose values name further entities the call acts on (a string, comma string,
+// list, or a map whose keys are the entity ids; see EntityIDsFromData).
+//
+// Contract for the caller: the objects of a call are the union of ParseTarget's
+// result, the ids from EntityDataKeys and the ObjectFromData object. A caller
+// MUST refuse (or evaluate against the policy default) a Control or Configure
+// call whose resolved set is empty and not All, because a check over zero
+// objects would pass vacuously; a Malformed target or malformed entity data
+// MUST be refused.
 type ServiceClass struct {
 	Kind           ServiceKind
 	System         SystemValue
 	ObjectFromData string
+	EntityDataKeys []string
 }
 
 const (
@@ -44,14 +57,23 @@ var systemDomains = map[string]SystemValue{
 	"python_script": SystemHomeAssistant,
 	"pyscript":      SystemHomeAssistant,
 	"rest_command":  SystemHomeAssistant,
+	// These reach arbitrary entities or hardware without a matchable object.
+	"conversation": SystemHomeAssistant,
+	"mqtt":         SystemHomeAssistant,
+	"zha":          SystemHomeAssistant,
+	"zwave_js":     SystemHomeAssistant,
 }
 
-// configureServices maps "domain.service" to the call-data key naming the object.
-var configureServices = map[string]string{
-	"scene.create":             "scene_id",
-	"group.set":                "object_id",
-	"group.remove":             "object_id",
-	"input_select.set_options": "",
+// indirectServices maps "domain.service" to the classes of services that are
+// configure, or control with objects named in the call data. The table values
+// are templates; ClassifyService returns a copy.
+var indirectServices = map[string]ServiceClass{
+	"scene.create":             {Kind: ServiceConfigure, ObjectFromData: "scene_id", EntityDataKeys: []string{"entities", "snapshot_entities"}},
+	"group.set":                {Kind: ServiceConfigure, ObjectFromData: "object_id", EntityDataKeys: []string{"entities", "add_entities"}},
+	"group.remove":             {Kind: ServiceConfigure, ObjectFromData: "object_id"},
+	"input_select.set_options": {Kind: ServiceConfigure},
+	"scene.apply":              {Kind: ServiceControl, EntityDataKeys: []string{"entities"}},
+	"media_player.join":        {Kind: ServiceControl, EntityDataKeys: []string{"group_members"}},
 }
 
 // readServices are the services that only read.
@@ -68,6 +90,8 @@ var readServices = map[string]bool{
 // hassio.* specifics, any reload service); then configure; then read; then
 // script calls; everything else is control. Because system is checked first, a
 // service that is both system and configure/read is always the more privileged.
+// See ServiceClass for what the caller must do with the result; in particular a
+// default-control call is only as strong as the objects the caller can resolve.
 func ClassifyService(domain, service string) ServiceClass {
 	d := strings.ToLower(strings.TrimSpace(domain))
 	s := strings.ToLower(strings.TrimSpace(service))
@@ -78,8 +102,9 @@ func ClassifyService(domain, service string) ServiceClass {
 		return ServiceClass{Kind: ServiceSystem, System: v}
 	}
 	key := d + "." + s
-	if from, ok := configureServices[key]; ok {
-		return ServiceClass{Kind: ServiceConfigure, ObjectFromData: from}
+	if c, ok := indirectServices[key]; ok {
+		c.EntityDataKeys = slices.Clone(c.EntityDataKeys)
+		return c
 	}
 	if readServices[key] {
 		return ServiceClass{Kind: ServiceRead}

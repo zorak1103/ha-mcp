@@ -1,14 +1,25 @@
 package access
 
 // CommandClass is the classification of a WebSocket command sent through the
-// client's command passthrough. EntityArg names the command-data argument that
-// identifies the object a read refers to (empty when the command is not tied to
-// one object). Note that trace/list and trace/get carry the bare automation or
-// script config id in item_id (together with domain), not a full entity id.
+// client's command passthrough.
+//
+// EntityArg names the command-data argument holding a full entity id the read
+// refers to (update/release_notes); empty otherwise.
+//
+// DomainArg and ConfigIDArg (trace/list and trace/get only, empty for every
+// other command) name the arguments holding the object's domain and its config
+// id. The config id is NOT an entity id: for automations the entity id is a slug
+// of the alias, so the wrapper must resolve (DomainArg value, ConfigIDArg value)
+// to an entity through the registry and never build "domain.configid". It must
+// refuse when the DomainArg value is absent or not automation or script, and
+// when the ConfigIDArg value is absent (a domain-wide listing) it must require
+// read on every entity of that domain or filter the result accordingly.
 type CommandClass struct {
-	Kind      ServiceKind
-	System    SystemValue
-	EntityArg string
+	Kind        ServiceKind
+	System      SystemValue
+	EntityArg   string
+	DomainArg   string
+	ConfigIDArg string
 }
 
 // wsCommands lists every command handlers send through the passthrough. Only
@@ -28,8 +39,8 @@ var wsCommands = map[string]CommandClass{
 	"hacs/repositories/remove":      {Kind: ServiceSystem, System: SystemHACS},
 	"hacs/repository/refresh":       {Kind: ServiceSystem, System: SystemHACS},
 	"hacs/repository/beta":          {Kind: ServiceSystem, System: SystemHACS},
-	"trace/list":                    {Kind: ServiceRead, EntityArg: "item_id"},
-	"trace/get":                     {Kind: ServiceRead, EntityArg: "item_id"},
+	"trace/list":                    {Kind: ServiceRead, DomainArg: "domain", ConfigIDArg: "item_id"},
+	"trace/get":                     {Kind: ServiceRead, DomainArg: "domain", ConfigIDArg: "item_id"},
 	"update/release_notes":          {Kind: ServiceRead, EntityArg: "entity_id"},
 }
 
