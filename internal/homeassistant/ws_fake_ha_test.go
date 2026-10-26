@@ -82,6 +82,8 @@ func withDropAfterAuthOnConn(n int32) fakeHAOption {
 // counted in authAttempts: connections that reached the "auth" message) with
 // HA's auth_invalid and closes it. A rejected attempt is not counted in
 // conns, which keeps meaning "authenticated connections".
+//
+//nolint:unparam // n picks the attempt; every current test rejects the first reconnect (attempt 2).
 func withAuthInvalidOnAttempt(n int32) fakeHAOption {
 	return func(f *fakeHA) { f.authInvalidOn = n }
 }
