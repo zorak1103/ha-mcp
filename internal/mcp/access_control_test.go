@@ -21,8 +21,10 @@ func TestAccessControlMapCompleteness(t *testing.T) {
 		"get_registry",
 		"get_logbook",
 		"get_datetime",
+		"get_system_info",
 
 		// Service operations
+		"list_services",
 		"call_service",
 
 		// Manageable objects
@@ -52,6 +54,8 @@ func TestAccessControlMapCompleteness(t *testing.T) {
 		"manage_statistics",
 
 		// Media and rendering
+		"browse_media",
+		"sign_media_path",
 		"render_template",
 		"validate_config",
 
@@ -84,6 +88,10 @@ func TestPureReadTools(t *testing.T) {
 		"analyze_entity",
 		"find_references",
 		"get_datetime",
+		"get_system_info",
+		"list_services",
+		"browse_media",
+		"sign_media_path",
 		"validate_config",
 		"render_template",
 		"get_skill",
@@ -177,8 +185,8 @@ func TestManagedToolsActions(t *testing.T) {
 		{
 			tool:         "manage_automation",
 			paramName:    "action",
-			readActions:  []string{"list", "get", "coverage"},
-			writeActions: []string{"create", "update", "delete", "toggle"},
+			readActions:  []string{"list", "get", "coverage", "schema"},
+			writeActions: []string{"create", "update", "delete", "toggle", "patch"},
 		},
 		{
 			tool:         "manage_script",

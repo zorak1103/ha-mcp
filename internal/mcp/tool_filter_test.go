@@ -135,6 +135,38 @@ func TestToolFilterEngine_ReadOnly(t *testing.T) {
 	}
 }
 
+// TestToolFilterEngine_ReadOnly_AllowsPreviouslyUnclassifiedReads pins the five read calls that
+// used to be denied under any filter because they were missing from the access map.
+func TestToolFilterEngine_ReadOnly_AllowsPreviouslyUnclassifiedReads(t *testing.T) {
+	t.Parallel()
+
+	calls := []struct {
+		tool string
+		args map[string]any
+	}{
+		{"get_system_info", nil},
+		{"list_services", nil},
+		{"browse_media", nil},
+		{"sign_media_path", map[string]any{"path": "/api/camera_proxy/camera.front_door"}},
+		{"manage_automation", map[string]any{"action": "schema"}},
+	}
+
+	engines := map[string]*ToolFilterEngine{
+		"read-only":           NewToolFilterEngine(ToolFilterConfig{}, true),
+		"blacklist *:write":   NewToolFilterEngine(ToolFilterConfig{Blacklist: []string{"*:write"}}, false),
+		"whitelist *:read":    NewToolFilterEngine(ToolFilterConfig{Whitelist: []string{"*:read"}}, false),
+		"unrelated blacklist": NewToolFilterEngine(ToolFilterConfig{Blacklist: []string{"call_service"}}, false),
+	}
+
+	for name, engine := range engines {
+		for _, call := range calls {
+			if !engine.IsActionAllowed(call.tool, call.args) {
+				t.Errorf("%s: %s %v should be allowed", name, call.tool, call.args)
+			}
+		}
+	}
+}
+
 // TestToolFilterEngine_Blacklist_Tool verifies blacklisting entire tools.
 func TestToolFilterEngine_Blacklist_Tool(t *testing.T) {
 	t.Parallel()
@@ -387,14 +419,14 @@ func TestToolFilterEngine_ApplyToRegistry_ModifySchema(t *testing.T) {
 	registry := NewRegistry()
 	originalTool := Tool{
 		Name:        "manage_automation",
-		Description: "Manage Home Assistant automations - list, get, create, update, delete, toggle, coverage, or patch.\n\nActions:\n- list: List all automations\n- get: Get automation details\n- create: Create new automation\n- update: Update automation\n- delete: Delete automation\n- toggle: Enable/disable automation\n- coverage: Analyze automation coverage\n- patch: Apply JSON Patch operations",
+		Description: "Manage Home Assistant automations - list, get, create, update, delete, toggle, coverage, patch, or schema.\n\nActions:\n- list: List all automations\n- get: Get automation details\n- create: Create new automation\n- update: Update automation\n- delete: Delete automation\n- toggle: Enable/disable automation\n- coverage: Analyze automation coverage\n- patch: Apply JSON Patch operations\n- schema: Show the automation config schema",
 		InputSchema: JSONSchema{
 			Type: "object",
 			Properties: map[string]JSONSchema{
 				"action": {
 					Type:        "string",
-					Enum:        []string{"list", "get", "create", "update", "delete", "toggle", "coverage", "patch"},
-					Description: "Operation to perform: list, get, create, update, delete, toggle, coverage, patch",
+					Enum:        []string{"list", "get", "create", "update", "delete", "toggle", "coverage", "patch", "schema"},
+					Description: "Operation to perform: list, get, create, update, delete, toggle, coverage, patch, schema",
 				},
 			},
 		},
@@ -418,9 +450,9 @@ func TestToolFilterEngine_ApplyToRegistry_ModifySchema(t *testing.T) {
 		t.Fatal("manage_automation should still exist in registry")
 	}
 
-	// Check enum is filtered (create, update, delete removed; patch kept as it's not blacklisted)
+	// Check enum is filtered (create, update, delete removed; patch and schema kept as they're not blacklisted)
 	actionEnum := modifiedTool.InputSchema.Properties["action"].Enum
-	expectedEnum := []string{"list", "get", "toggle", "coverage", "patch"}
+	expectedEnum := []string{"list", "get", "toggle", "coverage", "patch", "schema"}
 
 	if len(actionEnum) != len(expectedEnum) {
 		t.Errorf("Action enum length = %d, want %d", len(actionEnum), len(expectedEnum))
