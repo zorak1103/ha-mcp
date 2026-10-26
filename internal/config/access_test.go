@@ -309,3 +309,37 @@ func TestLoad_InvalidAccessFailsLoad(t *testing.T) {
 		}
 	})
 }
+
+func TestAccess_SystemNullIsPresentAndEmpty(t *testing.T) {
+	tests := map[string]string{
+		"bare key":              "access:\n  default: write\n  system:\n",
+		"explicit null":         "access:\n  default: write\n  system: null\n",
+		"tilde":                 "access:\n  default: write\n  system: ~\n",
+		"all items commented":   "access:\n  default: write\n  system:\n    # - reload\n    # - backup\n",
+		"bare key before rules": "access:\n  system:\n  default: write\n",
+	}
+	for name, content := range tests {
+		t.Run(name, func(t *testing.T) {
+			got, err := loadAccess(writeAccessFile(t, content))
+			if err != nil {
+				t.Fatalf("loadAccess() error = %v", err)
+			}
+			if got.System == nil {
+				t.Fatal("System = nil (absent), want present and empty: a null system section must not follow default")
+			}
+			if len(*got.System) != 0 {
+				t.Errorf("System = %v, want empty", *got.System)
+			}
+		})
+	}
+}
+
+func TestAccess_SystemAbsentStaysNil(t *testing.T) {
+	got, err := loadAccess(writeAccessFile(t, "access:\n  default: write\n"))
+	if err != nil {
+		t.Fatalf("loadAccess() error = %v", err)
+	}
+	if got.System != nil {
+		t.Errorf("System = %v, want nil when the key is absent", got.System)
+	}
+}

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -106,17 +107,16 @@ func loadAccess(configFile string) (AccessConfig, error) {
 		return def, nil
 	}
 
-	f, err := os.Open(configFile) //nolint:gosec // path is the operator-supplied --config file
+	data, err := os.ReadFile(configFile) //nolint:gosec // path is the operator-supplied --config file
 	if err != nil {
 		return AccessConfig{}, fmt.Errorf("reading access config: %w", err)
 	}
-	defer func() { _ = f.Close() }()
 
 	var doc struct {
 		Access *AccessConfig  `yaml:"access"`
 		Rest   map[string]any `yaml:",inline"`
 	}
-	dec := yaml.NewDecoder(f)
+	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 	if err := dec.Decode(&doc); err != nil {
 		if errors.Is(err, io.EOF) {
@@ -130,7 +130,32 @@ func loadAccess(configFile string) (AccessConfig, error) {
 	if doc.Access.Default == "" {
 		doc.Access.Default = accessDefaultRead
 	}
+	if doc.Access.System == nil && systemKeyIsNull(data) {
+		empty := CapList{}
+		doc.Access.System = &empty
+	}
 	return *doc.Access, nil
+}
+
+// systemKeyIsNull reports whether access.system is present with a null value
+// (`system:` with nothing under it, `system: ~`, or all items commented out).
+// yaml.v3 skips unmarshalers and leaves a pointer nil for null, which would be
+// indistinguishable from an absent key; absent follows access.default, so a
+// null section must be treated as present and empty (no system operation
+// allowed) instead, or it would fail open under `default: write`. A yaml.Node
+// field receives the raw node, null included, and stays zero when the key is
+// absent. The data already decoded cleanly in the strict pass.
+func systemKeyIsNull(data []byte) bool {
+	var raw struct {
+		Access *struct {
+			System yaml.Node `yaml:"system"`
+		} `yaml:"access"`
+		Rest map[string]any `yaml:",inline"`
+	}
+	if err := yaml.Unmarshal(data, &raw); err != nil || raw.Access == nil {
+		return false
+	}
+	return raw.Access.System.Kind == yaml.ScalarNode && raw.Access.System.ShortTag() == "!!null"
 }
 
 // Validate checks the access section. Invalid rules fail startup; they are
