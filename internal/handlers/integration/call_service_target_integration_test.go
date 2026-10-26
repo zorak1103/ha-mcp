@@ -13,8 +13,9 @@ import (
 )
 
 // CallServiceTargetTestSuite verifies that call_service accepts the HA-standard
-// target argument and that a service which leaves its target's state alone
-// (automation.trigger) does not run into the Smart Wait timeout warning.
+// target argument and that services which leave their target's state alone
+// (automation.trigger, running a script) do not run into the Smart Wait timeout
+// warning.
 type CallServiceTargetTestSuite struct {
 	AutomationTestSuite
 }
@@ -88,6 +89,52 @@ func (s *CallServiceTargetTestSuite) TestTriggerWithTargetHasNoWarning() {
 			s.Require().False(result.IsError, "automation.trigger via %s should succeed: %s", tc.name, text)
 			s.Contains(text, entityID, "the result should name the triggered entity")
 			s.NotContains(text, stateNotConfirmed, "automation.trigger leaves the state alone, so no warning is expected")
+		})
+	}
+}
+
+// TestScriptRunHasNoWarning runs a short storage script through script.toggle and
+// by its object id. A script run goes off, on, off, so the post-call state equals
+// the snapshot and a poll could only time out into a false warning.
+func (s *CallServiceTargetTestSuite) TestScriptRunHasNoWarning() {
+	scriptID := GenerateTestID("target_script")
+	scriptEntityID := BuildEntityID("script", scriptID)
+	s.RegisterCleanup(func() {
+		// Reload first: a DELETE landing inside HA's own async reload orphans the entity (#305).
+		_, _ = s.Client().CallService(s.Context(), "script", "reload", nil)
+		_ = s.Client().DeleteScript(s.Context(), scriptID)
+	})
+
+	err := s.Client().CreateScript(s.Context(), scriptID, homeassistant.ScriptConfig{
+		Alias: "call_service script fixture",
+		Mode:  "single",
+		Sequence: []any{
+			map[string]any{"delay": map[string]any{"seconds": 1}},
+		},
+	})
+	s.Require().NoError(err, "failed to create script")
+	_, err = s.WaitForEntity(scriptEntityID, 10*time.Second)
+	s.Require().NoError(err, "script did not appear after create")
+
+	cases := []struct {
+		name    string
+		service string
+	}{
+		{name: "toggle", service: "toggle"},
+		{name: "by object id", service: scriptID},
+	}
+
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			result := s.CallTool("call_service", map[string]any{
+				"domain":  "script",
+				"service": tc.service,
+				"target":  map[string]any{"entity_id": scriptEntityID},
+			})
+			text := resultText(result)
+			s.Require().False(result.IsError, "script.%s should succeed: %s", tc.service, text)
+			s.Contains(text, scriptEntityID, "the result should name the script")
+			s.NotContains(text, stateNotConfirmed, "a script run leaves the state unchanged, so no warning is expected")
 		})
 	}
 }
