@@ -209,69 +209,107 @@ func collectExtraKeys(raw map[string]json.RawMessage, known map[string]struct{})
 	return extra
 }
 
-// unmarshalDualKeySlice tries the plural key first, then the singular key, and
-// unmarshals the found value into dest. Errors are silently ignored to allow
-// graceful degradation when an individual array contains unexpected element types.
-func unmarshalDualKeySlice(raw map[string]json.RawMessage, plural, singular string, dest *[]any) {
-	if v, ok := raw[plural]; ok {
-		_ = json.Unmarshal(v, dest)
-	} else if v, ok := raw[singular]; ok {
-		_ = json.Unmarshal(v, dest)
+// decodeConfigList decodes the value of a trigger/condition/action key. HA
+// validates these with ensure_list, so besides a list the key may hold a single
+// mapping (or a template string) that stands for a one-element list; wrapped
+// reports that case. null decodes to no items.
+func decodeConfigList(raw json.RawMessage) (items []any, wrapped bool, err error) {
+	switch raw[0] {
+	case '[':
+		err = json.Unmarshal(raw, &items)
+		return items, false, err
+	case 'n':
+		return nil, false, nil
 	}
+	var item any
+	if err := json.Unmarshal(raw, &item); err != nil {
+		return nil, false, err
+	}
+	return []any{item}, true, nil
+}
+
+// pickDualKey returns the plural key's value when present, else the singular
+// key's (nil when neither is).
+func pickDualKey(plural, singular json.RawMessage) json.RawMessage {
+	if plural != nil {
+		return plural
+	}
+	return singular
+}
+
+// automationConfigWire decodes an automation config in one pass. The embedded
+// alias supplies every modeled field through its json tag, so a new field needs
+// no decode code. The shallower list fields below shadow the alias's by name,
+// arriving undecoded for decodeConfigList, and add the singular spellings.
+type automationConfigWire struct {
+	*automationConfigAlias
+	Triggers   json.RawMessage `json:"triggers"`
+	Conditions json.RawMessage `json:"conditions"`
+	Actions    json.RawMessage `json:"actions"`
+	Trigger    json.RawMessage `json:"trigger"`
+	Condition  json.RawMessage `json:"condition"`
+	Action     json.RawMessage `json:"action"`
+}
+
+// decodeLists fills the trigger/condition/action fields from wire and returns
+// the plural names of the lists that were wrapped from a single value.
+func (w *automationConfigWire) decodeLists() (wrapped []string, err error) {
+	for _, l := range []struct {
+		name             string
+		plural, singular json.RawMessage
+		dest             *[]any
+	}{
+		{"triggers", w.Triggers, w.Trigger, &w.automationConfigAlias.Triggers},
+		{"conditions", w.Conditions, w.Condition, &w.automationConfigAlias.Conditions},
+		{"actions", w.Actions, w.Action, &w.automationConfigAlias.Actions},
+	} {
+		raw := pickDualKey(l.plural, l.singular)
+		if raw == nil {
+			continue
+		}
+		items, wasWrapped, decErr := decodeConfigList(raw)
+		if decErr != nil {
+			return nil, fmt.Errorf("decoding %s: %w", l.name, decErr)
+		}
+		*l.dest = items
+		if wasWrapped {
+			wrapped = append(wrapped, l.name)
+		}
+	}
+	return wrapped, nil
 }
 
 // UnmarshalJSON implements json.Unmarshaler for AutomationConfig.
 // The HA WebSocket API (automation/config command) returns singular keys:
 // "trigger", "condition", "action" — while the REST API and struct tags use
-// plural forms: "triggers", "conditions", "actions". This method accepts both.
+// plural forms: "triggers", "conditions", "actions". This method accepts both,
+// and a single mapping or string in place of a list (HA's ensure_list), which
+// it keeps as a one-element list. Every other modeled field is decoded by its
+// json tag, so a new field needs no change here.
 func (c *AutomationConfig) UnmarshalJSON(data []byte) error {
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
+	wire := automationConfigWire{automationConfigAlias: (*automationConfigAlias)(c)}
+	if err := json.Unmarshal(data, &wire); err != nil {
 		return err
 	}
-
-	if v, ok := raw["id"]; ok {
-		if err := json.Unmarshal(v, &c.ID); err != nil {
-			return err
-		}
-	}
-	if v, ok := raw["alias"]; ok {
-		if err := json.Unmarshal(v, &c.Alias); err != nil {
-			return err
-		}
-	}
-	if v, ok := raw["description"]; ok {
-		if err := json.Unmarshal(v, &c.Description); err != nil {
-			return err
-		}
-	}
-	if v, ok := raw["mode"]; ok {
-		if err := json.Unmarshal(v, &c.Mode); err != nil {
-			return err
-		}
-	}
-	if v, ok := raw["max"]; ok {
-		if err := json.Unmarshal(v, &c.Max); err != nil {
-			return err
-		}
-	}
-	if v, ok := raw["variables"]; ok {
-		if err := json.Unmarshal(v, &c.Variables); err != nil {
-			return err
-		}
-	}
-
 	// Accept both plural (REST/newer HA) and singular (WebSocket/older HA).
-	unmarshalDualKeySlice(raw, "triggers", "trigger", &c.Triggers)
-	unmarshalDualKeySlice(raw, "conditions", "condition", &c.Conditions)
-	unmarshalDualKeySlice(raw, "actions", "action", &c.Actions)
+	wrapped, err := wire.decodeLists()
+	if err != nil {
+		return err
+	}
 
 	// A capture failure leaves KeyOrder nil (sorted-key output) and never
 	// fails the decode: the order is a best-effort addition.
 	c.KeyOrder, _ = jsonorder.Capture(data)
 	normalizeDualKeyOrder(c.KeyOrder)
-	c.extra = collectExtraKeys(raw, automationKnownKeys)
+	for _, name := range wrapped {
+		wrapListOrder(c.KeyOrder, name)
+	}
 
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	c.extra = collectExtraKeys(raw, automationKnownKeys)
 	return nil
 }
 
@@ -330,9 +368,21 @@ func decodeNumbers[T any](data []byte) (T, error) {
 	return out, err
 }
 
+// wrapListOrder turns the order of the object that was wrapped into the
+// one-element list name into the order of that list, so the object's key order
+// still applies to the element. o is modified in place.
+func wrapListOrder(o *jsonorder.Order, name string) {
+	if o == nil {
+		return
+	}
+	if sub, ok := o.Fields[name]; ok { // a scalar value has no sub-order
+		o.Fields[name] = &jsonorder.Order{Items: []*jsonorder.Order{sub}}
+	}
+}
+
 // normalizeDualKeyOrder rewrites the singular trigger/condition/action entries
 // of a freshly captured order to their plural names, mirroring
-// unmarshalDualKeySlice: the plural key wins and the singular one is dropped
+// pickDualKey: the plural key wins and the singular one is dropped
 // when both are present. o is modified in place.
 func normalizeDualKeyOrder(o *jsonorder.Order) {
 	if o == nil {
