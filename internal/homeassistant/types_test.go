@@ -2182,6 +2182,158 @@ func TestAutomationConfig_Max_MarshalJSON(t *testing.T) {
 	})
 }
 
+// sampleJSONValue returns a JSON literal that decodes into a non-zero value of
+// field's type, for the reflect-based field coverage test below.
+func sampleJSONValue(t *testing.T, field reflect.StructField) string {
+	t.Helper()
+
+	switch field.Type.Kind() {
+	case reflect.String:
+		return `"sample"`
+	case reflect.Int:
+		return `7`
+	case reflect.Bool:
+		return `true`
+	case reflect.Slice:
+		return `[{"k":"v"}]`
+	case reflect.Map:
+		return `{"k":"v"}`
+	default:
+		t.Fatalf("field %s has kind %s: extend sampleJSONValue", field.Name, field.Type.Kind())
+		return ""
+	}
+}
+
+// TestAutomationConfigDecode_PopulatesEveryTaggedField pins the property that a
+// new json-tagged AutomationConfig field needs no UnmarshalJSON change.
+func TestAutomationConfigDecode_PopulatesEveryTaggedField(t *testing.T) {
+	t.Parallel()
+
+	typ := reflect.TypeFor[AutomationConfig]()
+	for i := range typ.NumField() {
+		field := typ.Field(i)
+		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+		if !field.IsExported() || name == "" || name == "-" {
+			continue
+		}
+
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			input := `{"` + name + `":` + sampleJSONValue(t, field) + `}`
+			var cfg AutomationConfig
+			if err := json.Unmarshal([]byte(input), &cfg); err != nil {
+				t.Fatalf("Unmarshal(%s) error = %v", input, err)
+			}
+			if reflect.ValueOf(cfg).Field(i).IsZero() {
+				t.Errorf("field %s is zero after decoding %s: it was dropped", field.Name, input)
+			}
+			if len(cfg.extra) != 0 {
+				t.Errorf("extra = %v, want empty: %q is modeled", cfg.extra, name)
+			}
+		})
+	}
+}
+
+// TestAutomationConfigDecode_SingleItemListsSurviveRoundTrip covers HA's
+// ensure_list handling: trigger/condition/action may be one mapping (or a
+// template string) instead of a list, and decoding must not lose it.
+func TestAutomationConfigDecode_SingleItemListsSurviveRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "single mapping action, singular key",
+			input: `{"alias":"x","action":{"service":"a.b","data":{"z":1,"a":2}}}`,
+			want:  `{"alias":"x","actions":[{"service":"a.b","data":{"z":1,"a":2}}]}`,
+		},
+		{
+			name:  "single mapping trigger, plural key",
+			input: `{"triggers":{"trigger":"state","entity_id":"a.b"}}`,
+			want:  `{"triggers":[{"trigger":"state","entity_id":"a.b"}]}`,
+		},
+		{
+			name:  "single mapping condition, singular key",
+			input: `{"condition":{"condition":"state","state":"on","entity_id":"a.b"}}`,
+			want:  `{"conditions":[{"condition":"state","state":"on","entity_id":"a.b"}]}`,
+		},
+		{
+			name:  "single template string condition",
+			input: `{"condition":"{{ true }}"}`,
+			want:  `{"conditions":["{{ true }}"]}`,
+		},
+		{
+			name:  "all three as single mappings",
+			input: `{"trigger":{"platform":"time"},"condition":{"condition":"sun"},"action":{"service":"a.b"}}`,
+			want:  `{"triggers":[{"platform":"time"}],"conditions":[{"condition":"sun"}],"actions":[{"service":"a.b"}]}`,
+		},
+		{
+			name:  "plural mapping wins over singular list",
+			input: `{"actions":{"service":"p.q"},"action":[{"service":"a.b"}]}`,
+			want:  `{"actions":[{"service":"p.q"}]}`,
+		},
+		{
+			name:  "lists are untouched",
+			input: `{"action":[{"service":"a.b"},{"service":"c.d"}]}`,
+			want:  `{"actions":[{"service":"a.b"},{"service":"c.d"}]}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := mustUnmarshalAutomationConfig(t, tt.input)
+			got, err := json.Marshal(cfg)
+			if err != nil {
+				t.Fatalf("Marshal() error = %v", err)
+			}
+			if string(got) != tt.want {
+				t.Errorf("Marshal() = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAutomationConfigDecode_SingleMappingPopulatesField(t *testing.T) {
+	t.Parallel()
+
+	cfg := mustUnmarshalAutomationConfig(t,
+		`{"trigger":{"platform":"time"},"condition":{"condition":"sun"},"action":{"service":"a.b"}}`)
+
+	if len(cfg.Triggers) != 1 || len(cfg.Conditions) != 1 || len(cfg.Actions) != 1 {
+		t.Errorf("lens = %d/%d/%d, want 1/1/1", len(cfg.Triggers), len(cfg.Conditions), len(cfg.Actions))
+	}
+	if cfg.extra != nil {
+		t.Errorf("extra = %v, want nil", cfg.extra)
+	}
+}
+
+func TestAutomationConfigDecode_NullListIsEmpty(t *testing.T) {
+	t.Parallel()
+
+	cfg := mustUnmarshalAutomationConfig(t, `{"alias":"x","action":null,"triggers":null}`)
+
+	if cfg.Actions != nil || cfg.Triggers != nil {
+		t.Errorf("Actions/Triggers = %v/%v, want nil", cfg.Actions, cfg.Triggers)
+	}
+}
+
+func TestAutomationConfigDecode_WrongFieldTypeIsError(t *testing.T) {
+	t.Parallel()
+
+	for _, input := range []string{`{"alias":5}`, `{"max":"many"}`, `{"variables":[1]}`, `[1]`} {
+		var cfg AutomationConfig
+		if err := json.Unmarshal([]byte(input), &cfg); err == nil {
+			t.Errorf("Unmarshal(%s) error = nil, want error", input)
+		}
+	}
+}
+
 func TestScriptConfig_Max_RoundTrip(t *testing.T) {
 	t.Parallel()
 
