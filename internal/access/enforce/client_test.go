@@ -293,8 +293,8 @@ func TestSnapshot_ObjectFor(t *testing.T) {
 		areas, labels, devs   []string
 		wantAreas, wantLabels bool
 	}{
-		{"light.own_area", []string{"kitchen_id", "kitchen"}, []string{"lbl_a", "alpha", "lbl_dev", "devlabel"}, []string{"dev1", "my lamp"}, true, true},
-		{"light.inherits", []string{"living_id", "living room"}, []string{"lbl_dev", "devlabel"}, []string{"dev1", "my lamp"}, true, true},
+		{"light.own_area", []string{"kitchen_id", "kitchen"}, []string{"lbl_a", "alpha", "lbl_dev", "devlabel"}, []string{"dev1", "my lamp", "orig"}, true, true},
+		{"light.inherits", []string{"living_id", "living room"}, []string{"lbl_dev", "devlabel"}, []string{"dev1", "my lamp", "orig"}, true, true},
 		{"switch.other", []string{"garage_id", "garage"}, nil, nil, true, false},
 		{"sensor.devless", nil, []string{"lbl_b", "beta"}, nil, false, true},
 		{"sensor.unknown", nil, nil, nil, false, false},
@@ -495,5 +495,91 @@ func TestDecideDashboard(t *testing.T) {
 	}
 	if g := c.decideDashboard("other"); g.Configure || g.Hidden() {
 		t.Errorf("default read expected: %+v", g)
+	}
+}
+
+func TestObjectFor_DevicesMatchByIDAndBothNames(t *testing.T) {
+	inner := &regInner{
+		entities: []homeassistant.EntityRegistryEntry{
+			{EntityID: "light.only_name", DeviceID: "d_name"},
+			{EntityID: "light.both", DeviceID: "d_both"},
+		},
+		devices: []homeassistant.DeviceRegistryEntry{
+			{ID: "d_name", Name: "Living Room Lamp"},
+			{ID: "d_both", Name: "Orig Name", NameByUser: "Reading Lamp"},
+		},
+	}
+	s := &snapshot{inner: inner}
+	d, err := s.get(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := d.objectFor("light.only_name").Devices; !sameSet(got, []string{"d_name", "living room lamp"}) {
+		t.Errorf("devices = %v", got)
+	}
+	if got := d.objectFor("light.both").Devices; !sameSet(got, []string{"d_both", "orig name", "reading lamp"}) {
+		t.Errorf("devices = %v", got)
+	}
+
+	for _, matcher := range []string{"Living Room Lamp", "LIVING ROOM LAMP", "d_name"} {
+		p := mustCompile(t, config.AccessConfig{
+			Default: "write",
+			Rules: []config.AccessRule{
+				{Match: config.AccessMatch{Devices: []string{matcher}}, Deny: config.CapList{"control"}},
+			},
+		})
+		c := &client{p: p, inner: inner, snap: &snapshot{inner: inner}}
+		g, err := c.decideEntity(context.Background(), "light.only_name")
+		if err != nil || g.Control {
+			t.Errorf("deny on device %q not applied through the device registry name: %+v %v", matcher, g, err)
+		}
+	}
+	for _, matcher := range []string{"Orig Name", "reading lamp", "d_both"} {
+		p := mustCompile(t, config.AccessConfig{
+			Default: "write",
+			Rules: []config.AccessRule{
+				{Match: config.AccessMatch{Devices: []string{matcher}}, Deny: config.CapList{"control"}},
+			},
+		})
+		c := &client{p: p, inner: inner, snap: &snapshot{inner: inner}}
+		g, err := c.decideEntity(context.Background(), "light.both")
+		if err != nil || g.Control {
+			t.Errorf("deny on device %q not applied: %+v %v", matcher, g, err)
+		}
+	}
+}
+
+func TestObjectFor_DanglingReferencesAreNotResolvedByName(t *testing.T) {
+	inner := &regInner{
+		entities: []homeassistant.EntityRegistryEntry{
+			// area_id and label id dangle but equal another object's name.
+			{EntityID: "light.dangling", AreaID: "Kitchen", Labels: []string{"Alpha"}},
+		},
+		areas:  []homeassistant.AreaRegistryEntry{{AreaID: "kitchen_id", Name: "Kitchen"}},
+		labels: []homeassistant.LabelRegistryEntry{{LabelID: "lbl_a", Name: "Alpha"}},
+	}
+	s := &snapshot{inner: inner}
+	d, err := s.get(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := d.objectFor("light.dangling")
+	if !sameSet(o.Areas, []string{"kitchen"}) {
+		t.Errorf("areas = %v, want only the dangling id itself", o.Areas)
+	}
+	if !sameSet(o.Labels, []string{"alpha"}) {
+		t.Errorf("labels = %v, want only the dangling id itself", o.Labels)
+	}
+	if a, ok := d.areaByID("kitchen_id"); !ok || a.Name != "Kitchen" {
+		t.Errorf("areaByID = %+v %v", a, ok)
+	}
+	if _, ok := d.areaByID("Kitchen"); ok {
+		t.Error("areaByID must not match by name")
+	}
+	if l, ok := d.labelByID("lbl_a"); !ok || l.Name != "Alpha" {
+		t.Errorf("labelByID = %+v %v", l, ok)
+	}
+	if _, ok := d.labelByID("Alpha"); ok {
+		t.Error("labelByID must not match by name")
 	}
 }

@@ -109,7 +109,30 @@ func (d *snapData) device(deviceID string) (homeassistant.DeviceRegistryEntry, b
 	return dev, ok
 }
 
-// area finds an area by area_id or, case-insensitively, by name.
+// areaByID finds an area by area_id only. Registry references (an entity's
+// area_id) resolve through here so a dangling reference cannot pull in another
+// area's name.
+func (d *snapData) areaByID(areaID string) (homeassistant.AreaRegistryEntry, bool) {
+	for _, a := range d.areas {
+		if a.AreaID == areaID {
+			return a, true
+		}
+	}
+	return homeassistant.AreaRegistryEntry{}, false
+}
+
+// labelByID finds a label by label_id only; see areaByID.
+func (d *snapData) labelByID(labelID string) (homeassistant.LabelRegistryEntry, bool) {
+	for _, l := range d.labels {
+		if l.LabelID == labelID {
+			return l, true
+		}
+	}
+	return homeassistant.LabelRegistryEntry{}, false
+}
+
+// area finds an area by area_id or, case-insensitively, by name. For user
+// input; registry references use areaByID.
 func (d *snapData) area(ref string) (homeassistant.AreaRegistryEntry, bool) {
 	for _, a := range d.areas {
 		if a.AreaID == ref {
@@ -204,7 +227,9 @@ func (d *snapData) selectEntities(match func(homeassistant.EntityRegistryEntry) 
 
 // objectFor builds the access.Object for entityID. Areas hold the entity's
 // area (else its device's) by id and name; Labels hold the union of entity and
-// device labels by id and name; Devices hold the device id and name_by_user.
+// device labels by id and name; Devices hold the device id, name_by_user and the registry name, so a
+// devices matcher selects by id or either name (a deny must always apply).
+// Area and label references resolve by id only.
 // All values are lower-cased. An entity without a registry entry has no
 // attributes.
 func (d *snapData) objectFor(entityID string) access.Object {
@@ -216,18 +241,18 @@ func (d *snapData) objectFor(entityID string) access.Object {
 	}
 	if areaID := d.effectiveArea(e); areaID != "" {
 		obj.Areas = addFold(obj.Areas, areaID)
-		if a, found := d.area(areaID); found {
+		if a, found := d.areaByID(areaID); found {
 			obj.Areas = addFold(obj.Areas, a.Name)
 		}
 	}
 	for _, labelID := range d.effectiveLabels(e) {
 		obj.Labels = addFold(obj.Labels, labelID)
-		if l, found := d.label(labelID); found {
+		if l, found := d.labelByID(labelID); found {
 			obj.Labels = addFold(obj.Labels, l.Name)
 		}
 	}
 	if dev, found := d.device(e.DeviceID); found {
-		obj.Devices = addFold(addFold(obj.Devices, dev.ID), dev.NameByUser)
+		obj.Devices = addFold(addFold(addFold(obj.Devices, dev.ID), dev.NameByUser), dev.Name)
 	}
 	return obj
 }
