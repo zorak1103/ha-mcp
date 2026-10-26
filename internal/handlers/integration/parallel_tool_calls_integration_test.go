@@ -121,9 +121,9 @@ func (s *ParallelToolCallsIntegrationTestSuite) TestBurstOfReadOnlyCalls() {
 
 		text := resultText(out.result)
 		s.T().Logf("call %d: %s took %s", i, label, out.elapsed.Round(time.Millisecond))
-		// Some handlers answer an expired context with a partial, non-error result
-		// (find_references silently drops configs it did not get to), so a call
-		// that ran into its deadline cannot be trusted even if it looks fine.
+		// A call that ran into its deadline may carry a partial result (find_references
+		// lists the unfinished sources in failed_sources, other handlers may not), so
+		// it cannot be trusted even if it looks fine.
 		s.Lessf(out.elapsed, parallelCallTimeout, "call %d: %q ran into its %s deadline; its result may be partial", i, label, parallelCallTimeout)
 		s.Falsef(out.result.IsError, "call %d: %q reported an error: %s", i, label, text)
 		s.NotContainsf(text, "id_reuse", "call %d: %q hit HA's websocket id_reuse rejection", i, label)

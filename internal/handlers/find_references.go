@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/zorak1103/ha-mcp/internal/handlers/formatter"
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
@@ -26,11 +27,21 @@ const schemaTypeObject = "object"
 // cross-config search across automations, scripts, scenes, dashboards, and
 // template-helper templates, replacing manual per-object listing and
 // client-side scanning with a single search.
-type FindReferencesHandlers struct{}
+type FindReferencesHandlers struct {
+	// scanTimeout bounds one find_references call's scan. See defaultFindReferencesScanTimeout.
+	scanTimeout time.Duration
+}
+
+// defaultFindReferencesScanTimeout is how long one find_references call may scan
+// before unfinished sources are reported in failed_sources. It must stay below the
+// HTTP server's write timeout (httpWriteTimeout in internal/mcp/server.go, 30 s):
+// a scan that outlasts it makes the server close the connection with an empty
+// reply instead of an explicit result, and leaves no time to render the response.
+const defaultFindReferencesScanTimeout = 25 * time.Second
 
 // NewFindReferencesHandlers creates a new FindReferencesHandlers instance.
 func NewFindReferencesHandlers() *FindReferencesHandlers {
-	return &FindReferencesHandlers{}
+	return &FindReferencesHandlers{scanTimeout: defaultFindReferencesScanTimeout}
 }
 
 // RegisterTools registers the find_references tool with the registry.
@@ -47,7 +58,8 @@ func (h *FindReferencesHandlers) findReferencesTool() mcp.Tool {
 
 Returns matches grouped by type with the object id, JSON path (where applicable), context, and a snippet. ` +
 			`The response includes scanned_sources (which types were successfully searched) and failed_sources ` +
-			`(which could not be fetched), so a "no references found" result can be trusted only when failed_sources is empty.
+			`(which could not be fetched or did not finish within the scan time limit, with the hits found so far still returned), ` +
+			`so a "no references found" result can be trusted only when failed_sources is empty.
 
 Pass the entity_id or any text to look for as the required argument search, e.g. {"search": "climate.living_room"}.
 
@@ -110,7 +122,9 @@ func (h *FindReferencesHandlers) handleFindReferences(ctx context.Context, clien
 	}
 
 	types := findReferencesRequestedTypes(args)
-	hits, scanned, failed := runRequestedScanners(ctx, client, types, match)
+	scanCtx, cancel := context.WithTimeout(ctx, h.scanTimeout)
+	defer cancel()
+	hits, scanned, failed := runRequestedScanners(scanCtx, client, types, match)
 
 	format := formatter.ParseFormat(getStringArg(args, "format"))
 	if format == formatter.FormatNatural {
@@ -251,7 +265,19 @@ func findReferencesRequestedTypes(args map[string]any) map[string]bool {
 	return result
 }
 
+// errScanInterrupted returns a non-nil error when ctx has ended, so a scanner that
+// walks configs one by one stops and reports its source as failed. Per-config
+// fetch errors are otherwise skipped, and a fetch that failed only because ctx
+// ended would silently drop that config and look like a complete scan.
+func errScanInterrupted(ctx context.Context, source string) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("%s scan interrupted before all configs were read: %w", source, err)
+	}
+	return nil
+}
+
 // scanAutomationsForReferences scans every automation's triggers/conditions/actions.
+// If ctx ends mid-scan it returns the hits found so far together with an error.
 func scanAutomationsForReferences(ctx context.Context, client homeassistant.Client, match func(string) bool) ([]ConfigHit, error) {
 	automations, err := client.ListAutomations(ctx)
 	if err != nil {
@@ -262,7 +288,13 @@ func scanAutomationsForReferences(ctx context.Context, client homeassistant.Clie
 	for _, auto := range automations {
 		autoID := strings.TrimPrefix(auto.EntityID, "automation.")
 		full, err := client.GetAutomation(ctx, autoID)
-		if err != nil || full.Config == nil {
+		if err != nil {
+			if interrupted := errScanInterrupted(ctx, "automation"); interrupted != nil {
+				return hits, interrupted
+			}
+			continue
+		}
+		if full.Config == nil {
 			continue
 		}
 		hits = append(hits, configSectionHits("automation", auto.EntityID, match,
@@ -275,6 +307,7 @@ func scanAutomationsForReferences(ctx context.Context, client homeassistant.Clie
 }
 
 // scanScriptsForReferences scans every script's sequence.
+// If ctx ends mid-scan it returns the hits found so far together with an error.
 func scanScriptsForReferences(ctx context.Context, client homeassistant.Client, match func(string) bool) ([]ConfigHit, error) {
 	scripts, err := client.ListScripts(ctx)
 	if err != nil {
@@ -287,7 +320,13 @@ func scanScriptsForReferences(ctx context.Context, client homeassistant.Client, 
 		// expose "sequence" as a state attribute, so the full config must be
 		// fetched via GetScript (mirrors scanAutomationsForReferences/GetAutomation).
 		full, err := client.GetScript(ctx, script.EntityID)
-		if err != nil || full.Config == nil {
+		if err != nil {
+			if interrupted := errScanInterrupted(ctx, "script"); interrupted != nil {
+				return hits, interrupted
+			}
+			continue
+		}
+		if full.Config == nil {
 			continue
 		}
 		hits = append(hits, configSectionHits("script", script.EntityID, match,
@@ -318,6 +357,7 @@ func scanScenesForReferences(ctx context.Context, client homeassistant.Client, m
 }
 
 // scanAllDashboardsForReferences scans every dashboard, including the default one.
+// If ctx ends mid-scan it returns the hits found so far together with an error.
 func scanAllDashboardsForReferences(ctx context.Context, client homeassistant.Client, match func(string) bool) ([]ConfigHit, error) {
 	urlPaths, err := allDashboardURLPaths(ctx, client)
 	if err != nil {
@@ -328,6 +368,9 @@ func scanAllDashboardsForReferences(ctx context.Context, client homeassistant.Cl
 	for _, urlPath := range urlPaths {
 		config, err := client.GetLovelaceConfig(ctx, urlPath)
 		if err != nil {
+			if interrupted := errScanInterrupted(ctx, "dashboard"); interrupted != nil {
+				return hits, interrupted
+			}
 			continue
 		}
 		hits = append(hits, scanDashboardConfig(urlPath, config, match)...)
