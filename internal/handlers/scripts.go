@@ -838,9 +838,16 @@ func callServiceReturningResponse(ctx context.Context, client homeassistant.Clie
 // buildServiceData merges args["data"] with the HA-standard args["target"] into a fresh map
 // (the caller's maps are never modified). On a key clash target wins, matching HA core's
 // service_data.update(target). It returns nil when neither is supplied, and an error when
-// target is present but not an object.
+// data or target is present but not an object. A null data counts as absent (clients often
+// send null for an unset optional argument); a null target is still an error.
 func buildServiceData(args map[string]any) (map[string]any, error) {
-	data, _ := args["data"].(map[string]any)
+	var data map[string]any
+	if rawData := args["data"]; rawData != nil {
+		var ok bool
+		if data, ok = rawData.(map[string]any); !ok {
+			return nil, errors.New(`data must be an object (e.g. {"entity_id": "light.kitchen", "brightness": 255})`)
+		}
+	}
 
 	rawTarget, hasTarget := args["target"]
 	if !hasTarget {

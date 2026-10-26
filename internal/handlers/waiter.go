@@ -31,19 +31,28 @@ type stateDiff struct {
 //   - automation.trigger runs the automation's actions; the automation entity stays "on" (its
 //     last_triggered attribute moves, its state does not).
 //   - homeassistant.update_entity only refreshes the entity's data from its source.
-//   - script.turn_on starts the script; the script entity goes off -> on -> off, so a fast script
-//     finishes between polls and the poll only times out (verified live against HA).
+//
+// The script domain is not listed here but handled by a rule in serviceChangesTargetState: a
+// script run (script.turn_on, script.toggle, or script.<object_id> called by name) goes off ->
+// on -> off, so a fast script finishes between polls and the poll only times out (verified live
+// against HA), and a static table cannot list script object ids. Only script.turn_off flips a
+// running script's state, so it keeps the wait.
 //
 // automation.turn_on/turn_off/toggle are deliberately absent: they do flip the target's state.
 var servicesWithoutTargetStateChange = map[string]struct{}{
 	"automation.trigger":          {},
 	"homeassistant.update_entity": {},
-	"script.turn_on":              {},
 }
+
+// serviceDomainScript is the script service domain, exempt from the Smart Wait except turn_off.
+const serviceDomainScript = "script"
 
 // serviceChangesTargetState reports whether calling domain.service is expected to change the
 // state of its target entities, i.e. whether snapshotting and polling them is meaningful.
 func serviceChangesTargetState(domain, service string) bool {
+	if domain == serviceDomainScript {
+		return service == "turn_off"
+	}
 	_, exempt := servicesWithoutTargetStateChange[domain+"."+service]
 	return !exempt
 }

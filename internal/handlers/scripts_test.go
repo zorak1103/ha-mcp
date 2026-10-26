@@ -1779,6 +1779,26 @@ func TestBuildServiceData(t *testing.T) {
 		{name: "target string", args: map[string]any{"target": "light.x"}, wantErr: "target must be an object"},
 		{name: "target array", args: map[string]any{"target": []any{}}, wantErr: "target must be an object"},
 		{name: "target nil", args: map[string]any{"target": nil}, wantErr: "target must be an object"},
+		{name: "data string", args: map[string]any{"data": "light.x"}, wantErr: "data must be an object"},
+		{name: "data array", args: map[string]any{"data": []any{}}, wantErr: "data must be an object"},
+		{name: "data number", args: map[string]any{"data": 5.0}, wantErr: "data must be an object"},
+		{name: "data nil is absent", args: map[string]any{"data": nil}, want: nil},
+		{
+			name: "data nil with target",
+			args: map[string]any{"data": nil, "target": map[string]any{"entity_id": "light.kitchen"}},
+			want: map[string]any{"entity_id": "light.kitchen"},
+		},
+		{name: "data empty object", args: map[string]any{"data": map[string]any{}}, want: map[string]any{}},
+		{
+			name:    "bad data with valid target",
+			args:    map[string]any{"data": "x", "target": map[string]any{"entity_id": "light.kitchen"}},
+			wantErr: "data must be an object",
+		},
+		{
+			name:    "bad data and bad target reports data",
+			args:    map[string]any{"data": "x", "target": "y"},
+			wantErr: "data must be an object",
+		},
 	}
 
 	for _, tt := range tests {
@@ -1914,6 +1934,98 @@ func TestScriptHandlers_CallService_Target(t *testing.T) {
 	})
 }
 
+func TestScriptHandlers_CallService_DataType(t *testing.T) {
+	t.Parallel()
+
+	newClient := func(captured *map[string]any, calls, responseCalls *int) *mockScriptClient {
+		return &mockScriptClient{
+			callServiceFn: func(_ context.Context, _, _ string, data map[string]any) ([]homeassistant.Entity, error) {
+				*calls++
+				*captured = data
+				return nil, nil
+			},
+			callServiceWithResponseFn: func(context.Context, string, string, map[string]any) (map[string]any, error) {
+				*responseCalls++
+				return nil, nil
+			},
+			getStateFn: func(context.Context, string) (*homeassistant.Entity, error) {
+				return nil, errors.New("entity not found")
+			},
+		}
+	}
+
+	refused := []struct {
+		name string
+		args map[string]any
+	}{
+		{
+			name: "string data is refused before the call",
+			args: map[string]any{"domain": "light", "service": "turn_on", "data": "light.kitchen"},
+		},
+		{
+			name: "string data with a valid target is refused before the call",
+			args: map[string]any{
+				"domain": "light", "service": "turn_on",
+				"data":   "light.kitchen",
+				"target": map[string]any{"entity_id": "light.kitchen"},
+			},
+		},
+		{
+			name: "array data with return_response is refused before the call",
+			args: map[string]any{"domain": "weather", "service": "get_forecasts", "data": []any{}, "return_response": true},
+		},
+	}
+	for _, tt := range refused {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var captured map[string]any
+			var calls, responseCalls int
+			client := newClient(&captured, &calls, &responseCalls)
+
+			result, err := NewScriptHandlers().handleCallService(context.Background(), client, tt.args)
+			if err != nil {
+				t.Fatalf("handleCallService() returned error: %v", err)
+			}
+			if !result.IsError {
+				t.Error("IsError = false, want true")
+			}
+			if !strings.Contains(result.Content[0].Text, "data must be an object") {
+				t.Errorf("result %q does not contain %q", result.Content[0].Text, "data must be an object")
+			}
+			if calls != 0 || responseCalls != 0 {
+				t.Errorf("service invoked (CallService %d, CallServiceWithResponse %d), want 0 and 0", calls, responseCalls)
+			}
+		})
+	}
+
+	t.Run("data null calls the service with no data", func(t *testing.T) {
+		t.Parallel()
+
+		var captured map[string]any
+		var calls, responseCalls int
+		client := newClient(&captured, &calls, &responseCalls)
+
+		result, err := NewScriptHandlers().handleCallService(context.Background(), client, map[string]any{
+			"domain":  "light",
+			"service": "turn_on",
+			"data":    nil,
+		})
+		if err != nil {
+			t.Fatalf("handleCallService() returned error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+		}
+		if calls != 1 {
+			t.Errorf("CallService invoked %d times, want 1", calls)
+		}
+		if captured != nil {
+			t.Errorf("service data = %v, want nil", captured)
+		}
+	})
+}
+
 func TestScriptHandlers_CallService_NoWaitForTrigger(t *testing.T) {
 	t.Parallel()
 
@@ -1978,6 +2090,74 @@ func TestScriptHandlers_CallService_NoWaitForTrigger(t *testing.T) {
 		text := assertQuiet(t, result, &calls)
 		if !strings.Contains(text, "automation.x") {
 			t.Errorf("result %q does not mention automation.x", text)
+		}
+	})
+
+	t.Run("script.toggle with target does not poll and still names the entity", func(t *testing.T) {
+		t.Parallel()
+
+		var calls atomic.Int32
+		result, err := NewScriptHandlers().handleCallService(ctx, alwaysOn(&calls), map[string]any{
+			"domain":  "script",
+			"service": "toggle",
+			"target":  map[string]any{"entity_id": "script.morning_routine"},
+		})
+		if err != nil {
+			t.Fatalf("handleCallService() returned error: %v", err)
+		}
+		text := assertQuiet(t, result, &calls)
+		if !strings.Contains(text, "script.morning_routine") {
+			t.Errorf("result %q does not mention script.morning_routine", text)
+		}
+	})
+
+	t.Run("script called by object id does not poll", func(t *testing.T) {
+		t.Parallel()
+
+		var calls atomic.Int32
+		result, err := NewScriptHandlers().handleCallService(ctx, alwaysOn(&calls), map[string]any{
+			"domain":  "script",
+			"service": "morning_routine",
+			"data":    map[string]any{"entity_id": "script.morning_routine"},
+		})
+		if err != nil {
+			t.Fatalf("handleCallService() returned error: %v", err)
+		}
+		assertQuiet(t, result, &calls)
+	})
+
+	t.Run("script.turn_on still does not poll", func(t *testing.T) {
+		t.Parallel()
+
+		var calls atomic.Int32
+		result, err := NewScriptHandlers().handleCallService(ctx, alwaysOn(&calls), map[string]any{
+			"domain":  "script",
+			"service": "turn_on",
+			"target":  map[string]any{"entity_id": "script.morning_routine"},
+		})
+		if err != nil {
+			t.Fatalf("handleCallService() returned error: %v", err)
+		}
+		assertQuiet(t, result, &calls)
+	})
+
+	t.Run("script.turn_off still waits and reports an unconfirmed change", func(t *testing.T) {
+		t.Parallel()
+
+		var calls atomic.Int32
+		result, err := NewScriptHandlers().handleCallService(ctx, alwaysOn(&calls), map[string]any{
+			"domain":  "script",
+			"service": "turn_off",
+			"target":  map[string]any{"entity_id": "script.morning_routine"},
+		})
+		if err != nil {
+			t.Fatalf("handleCallService() returned error: %v", err)
+		}
+		if result.IsError {
+			t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+		}
+		if !strings.Contains(result.Content[0].Text, "state change not confirmed") {
+			t.Errorf("result %q does not contain %q", result.Content[0].Text, "state change not confirmed")
 		}
 	})
 
