@@ -237,6 +237,18 @@ func (s *IntegrationTestSuite) dispatchTool(ctx context.Context, name string, ar
 	tool, _ := s.registry.GetTool(name)
 	s.Require().Empty(mcp.UnknownArguments(tool.InputSchema, args), "CallTool %q: undeclared arguments (the server would reject them)", name)
 
+	// It likewise answers wrongly typed or out-of-enum values with an error
+	// result before the handler runs; return that same result, so a negative
+	// test sees what a client sees. Validate what the server would receive:
+	// args after a JSON round trip ([]string becomes []any).
+	wire, err := json.Marshal(args)
+	s.Require().NoError(err, "CallTool %q: arguments are not JSON-encodable", name)
+	var decoded map[string]any
+	s.Require().NoError(json.Unmarshal(wire, &decoded), "CallTool %q: arguments do not decode as a JSON object", name)
+	if rejected := mcp.InvalidArgumentsResult(name, tool.InputSchema, decoded); rejected != nil {
+		return rejected
+	}
+
 	result, err := handler(ctx, s.client, args)
 	s.Require().NoError(err, "handler for %q returned a Go error - handlers must report domain errors via IsError, not a Go error", name)
 

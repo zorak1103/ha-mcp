@@ -115,16 +115,21 @@ var (
 	auditRegistry     *mcp.Registry
 )
 
-// auditToolProperties returns tool name -> declared schema property names for
-// every registered tool.
-func auditToolProperties(t *testing.T) map[string]map[string]bool {
-	t.Helper()
+// auditRegisteredTools returns every tool RegisterAllTools registers.
+func auditRegisteredTools() []mcp.Tool {
 	auditRegistryOnce.Do(func() {
 		auditRegistry = mcp.NewRegistry()
 		RegisterAllTools(auditRegistry)
 	})
+	return auditRegistry.ListTools()
+}
+
+// auditToolProperties returns tool name -> declared schema property names for
+// every registered tool.
+func auditToolProperties(t *testing.T) map[string]map[string]bool {
+	t.Helper()
 	props := make(map[string]map[string]bool)
-	for _, tool := range auditRegistry.ListTools() {
+	for _, tool := range auditRegisteredTools() {
 		set := make(map[string]bool, len(tool.InputSchema.Properties))
 		for k := range tool.InputSchema.Properties {
 			set[k] = true

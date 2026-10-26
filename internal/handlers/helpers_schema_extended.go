@@ -20,9 +20,9 @@ func buildExtendedHelperProperties() map[string]mcp.JSONSchema {
 		},
 		"cycle": {
 			Type:        "string",
-			Description: "Reset cycle for utility_meter: quarter-hourly, hourly, daily, weekly, monthly, bimonthly, quarterly, yearly",
+			Description: "Reset cycle for utility_meter: none (never reset), quarter-hourly, hourly, daily, weekly, monthly, bimonthly, quarterly, yearly",
 			Enum: []string{
-				"quarter-hourly", "hourly", "daily", "weekly", "monthly",
+				"none", "quarter-hourly", "hourly", "daily", "weekly", "monthly",
 				"bimonthly", "quarterly", "yearly",
 			},
 		},
@@ -67,13 +67,18 @@ func buildExtendedHelperProperties() map[string]mcp.JSONSchema {
 		// statistics specific fields
 		"state_characteristic": {
 			Type:        "string",
-			Description: "Statistic to calculate (statistics, required): count, mean, median, stdev, variance, total, min, max, value_min, value_max, datetime_newest, datetime_oldest, datetime_value_max, datetime_value_min, change, change_sample, change_second, average_linear, average_step, average_timeless",
+			Description: "Statistic to calculate (statistics, required): count, count_on and count_off (binary_sensor sources only), mean, mean_circular, median, stdev, standard_deviation, variance, total, sum, sum_differences, sum_differences_nonnegative, min, max, value_min, value_max, percentile (set `percentile`), noisiness, datetime_newest, datetime_oldest, datetime_value_max, datetime_value_min, change, change_sample, change_second, average_linear, average_step, average_timeless, distance_95_percent_of_values, distance_99_percent_of_values, distance_absolute",
+			// Home Assistant's STAT_* characteristics (statistics/sensor.py) plus
+			// the stdev/min/max spellings this tool has always listed.
 			Enum: []string{
-				"count", "mean", "median", "stdev", "variance", "total",
-				"min", "max", "value_min", "value_max",
+				"count", "count_on", "count_off", "mean", "mean_circular", "median",
+				"stdev", "standard_deviation", "variance", "total",
+				"sum", "sum_differences", "sum_differences_nonnegative",
+				"min", "max", "value_min", "value_max", "percentile", "noisiness",
 				"datetime_newest", "datetime_oldest", "datetime_value_max", "datetime_value_min",
 				"change", "change_sample", "change_second",
 				"average_linear", "average_step", "average_timeless",
+				"distance_95_percent_of_values", "distance_99_percent_of_values", "distance_absolute",
 			},
 		},
 		"sampling_size": {

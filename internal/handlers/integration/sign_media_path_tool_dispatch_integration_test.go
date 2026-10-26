@@ -123,7 +123,7 @@ func (s *SignMediaPathToolDispatchTestSuite) TestRejectsInvalidInput() {
 		{"negative expires", map[string]any{"path": "/media/local/a.mp3", "expires": float64(-30)}, "between 1 and 300"},
 		{"expires above cap", map[string]any{"path": "/media/local/a.mp3", "expires": float64(301)}, "between 1 and 300"},
 		{"day-long expires", map[string]any{"path": "/media/local/a.mp3", "expires": float64(86400)}, "between 1 and 300"},
-		{"fractional expires", map[string]any{"path": "/media/local/a.mp3", "expires": 1.5}, "whole number"},
+		{"fractional expires", map[string]any{"path": "/media/local/a.mp3", "expires": 1.5}, "must be an integer"},
 		{"arbitrary api path", map[string]any{"path": "/api/states"}, "not allowed"},
 		{"api config path", map[string]any{"path": "/api/config"}, "not allowed"},
 		{"absolute url", map[string]any{"path": "http://evil.example/media/local/a.mp3"}, "not allowed"},

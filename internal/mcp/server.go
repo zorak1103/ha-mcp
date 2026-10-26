@@ -474,6 +474,9 @@ func (s *Server) handleToolsCall(ctx context.Context, req *Request, r *http.Requ
 	if rejected := s.rejectUnknownArguments(params.Name, params.Arguments); rejected != nil {
 		return NewSuccessResponse(req.ID, rejected)
 	}
+	if rejected := s.rejectInvalidArguments(params.Name, params.Arguments); rejected != nil {
+		return NewSuccessResponse(req.ID, rejected)
+	}
 
 	ctx = context.WithValue(ctx, waitContextKey{}, s.waitConfig)
 	ctx = WithArgumentOrder(ctx, s.captureArgumentOrder(req.Params))
