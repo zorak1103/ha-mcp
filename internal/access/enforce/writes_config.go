@@ -20,9 +20,10 @@ import (
 //   - It exists and its entity is visible: the write needs configure on that
 //     entity, whatever the method (a create is an update then).
 //   - It exists but its entity is hidden: an update or delete answers as for
-//     a missing config (NewConfigNotFoundError, never a denial); a create
-//     answers errUnavailable (create.go), the answer for any taken id, so it
-//     can never overwrite a config the caller cannot see.
+//     a missing config (NewConfigNotFoundError, never a denial); a create is
+//     first decided like a create of a free id (checkCreateGrant) and only a
+//     caller with those rights gets errUnavailable (create.go), the answer for
+//     any taken id, so it can never overwrite a config the caller cannot see.
 //   - It does not exist: an update or delete answers as for a missing config;
 //     a create needs configure and create on the entity id HA will derive
 //     (create.go).
@@ -32,7 +33,8 @@ import (
 // checked (checkEmbedded) unless the policy is unrestricted. Only then is the
 // configured domain marked on the tracker, so the handler's follow-up
 // <domain>.reload passes, and inner is called exactly once with the original
-// config. A successful write drops the registry snapshot.
+// config. Every write that reached inner drops the registry snapshot, failed
+// or not.
 
 // configWrite is one create or update of a stored config.
 type configWrite struct {
@@ -104,8 +106,7 @@ func (c *client) DeleteScene(ctx context.Context, sceneID string) error {
 	})
 }
 
-// runConfigWrite decides w, then calls inner once and drops the snapshot
-// after a successful write.
+// runConfigWrite decides w, then calls inner once and drops the snapshot.
 func (c *client) runConfigWrite(ctx context.Context, w configWrite, call func() error) error {
 	if err := c.writeConfig(ctx, w); err != nil {
 		return err
@@ -120,12 +121,12 @@ func (c *client) runConfigDelete(ctx context.Context, method, domain, id string,
 	return c.callAndInvalidate(call)
 }
 
+// callAndInvalidate calls inner and drops the snapshot whatever the outcome: a
+// failed write (a timeout, say) may still have been applied.
 func (c *client) callAndInvalidate(call func() error) error {
-	if err := call(); err != nil {
-		return err
-	}
+	err := call()
 	c.snap.invalidate()
-	return nil
+	return err
 }
 
 // writeConfig decides a create or update and, when it is allowed, marks the
@@ -168,6 +169,12 @@ func (c *client) checkExisting(ctx context.Context, w configWrite, entityID stri
 	g := grant(entityID)
 	switch {
 	case g.Hidden() && w.create:
+		// Answer like a create of a free id until the caller is proven to
+		// have the rights such a create needs; only then is the id reported
+		// as taken.
+		if _, err := c.checkCreateGrant(w); err != nil {
+			return err
+		}
 		return errUnavailable(w.id)
 	case g.Hidden():
 		return homeassistant.NewConfigNotFoundError(w.domain, w.id)

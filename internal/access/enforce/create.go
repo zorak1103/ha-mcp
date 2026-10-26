@@ -34,17 +34,21 @@ func errUnavailable(id string) error {
 // but not yet loaded, or not loadable) cannot be mapped to its entity: it is
 // answered with errUnavailable, as a hidden config id is, so an upsert can
 // never overwrite a config the policy has not decided on.
+//
+// The grant is decided first (checkCreateGrant): collisions are looked at only
+// for a caller that may create the predicted id, so a caller without that
+// right gets the same denial whether a name is taken or free.
 func (c *client) checkNew(ctx context.Context, w configWrite) (string, error) {
+	predicted, err := c.checkCreateGrant(w)
+	if err != nil {
+		return "", err
+	}
 	inFile, err := c.inner.ConfigFileEntryExists(ctx, w.domain, w.id)
 	if err != nil {
 		return "", c.undecidable(w.method, err)
 	}
 	if inFile {
 		return "", errUnavailable(w.id)
-	}
-	predicted := c.predictEntityID(w.domain, w.name)
-	if predicted == "" {
-		return "", c.refuse(w.method)
 	}
 	taken, err := c.entityTaken(ctx, predicted)
 	if err != nil {
@@ -53,12 +57,25 @@ func (c *client) checkNew(ctx context.Context, w configWrite) (string, error) {
 	if taken {
 		return "", errUnavailable(predicted)
 	}
-	grant, err := c.grantFunc(ctx)
-	if err != nil {
-		return "", c.undecidable(w.method, err)
+	return predicted, nil
+}
+
+// checkCreateGrant decides whether the caller may create the entity id HA
+// would derive for w, before anything about existing objects is consulted. It
+// is decided on the bare id, without registry attributes: a new entity has no
+// area, label or device yet, and the result must not depend on whether an
+// entity of that id exists. An unmappable name refuses generically, a
+// predicted id hidden by the policy refuses generically too (it must not be
+// named), a visible one without rights gets the ordinary denial.
+func (c *client) checkCreateGrant(w configWrite) (string, error) {
+	predicted := c.predictEntityID(w.domain, w.name)
+	if predicted == "" {
+		return "", c.refuse(w.method)
 	}
-	g := grant(predicted)
+	g := c.p.Decide(access.Object{Kind: access.KindEntity, ID: predicted})
 	switch {
+	case g.Hidden():
+		return "", c.refuse(w.method)
 	case !g.Configure:
 		return "", c.denyObject(predicted, access.CapConfigure)
 	case !g.Create:

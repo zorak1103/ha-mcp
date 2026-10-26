@@ -21,51 +21,52 @@ type configStore struct {
 	scripts     map[string]*homeassistant.ScriptConfig
 	scenes      map[string]*homeassistant.SceneConfig
 	files       map[string]bool
+	writeErr    error // returned by every config write
 }
 
 func (f *readFake) CreateAutomation(_ context.Context, cfg homeassistant.AutomationConfig) error {
 	f.recordWrite("CreateAutomation", domainAutomation, cfg.ID, map[string]any{"config": cfg})
-	return nil
+	return f.cfg.writeErr
 }
 
 func (f *readFake) UpdateAutomation(_ context.Context, id string, cfg homeassistant.AutomationConfig) error {
 	f.recordWrite("UpdateAutomation", domainAutomation, id, map[string]any{"config": cfg})
-	return nil
+	return f.cfg.writeErr
 }
 
 func (f *readFake) DeleteAutomation(_ context.Context, id string) error {
 	f.recordWrite("DeleteAutomation", domainAutomation, id, nil)
-	return nil
+	return f.cfg.writeErr
 }
 
 func (f *readFake) CreateScript(_ context.Context, id string, cfg homeassistant.ScriptConfig) error {
 	f.recordWrite("CreateScript", domainScript, id, map[string]any{"config": cfg})
-	return nil
+	return f.cfg.writeErr
 }
 
 func (f *readFake) UpdateScript(_ context.Context, id string, cfg homeassistant.ScriptConfig) error {
 	f.recordWrite("UpdateScript", domainScript, id, map[string]any{"config": cfg})
-	return nil
+	return f.cfg.writeErr
 }
 
 func (f *readFake) DeleteScript(_ context.Context, id string) error {
 	f.recordWrite("DeleteScript", domainScript, id, nil)
-	return nil
+	return f.cfg.writeErr
 }
 
 func (f *readFake) CreateScene(_ context.Context, id string, cfg homeassistant.SceneConfig) error {
 	f.recordWrite("CreateScene", domainScene, id, map[string]any{"config": cfg})
-	return nil
+	return f.cfg.writeErr
 }
 
 func (f *readFake) UpdateScene(_ context.Context, id string, cfg homeassistant.SceneConfig) error {
 	f.recordWrite("UpdateScene", domainScene, id, map[string]any{"config": cfg})
-	return nil
+	return f.cfg.writeErr
 }
 
 func (f *readFake) DeleteScene(_ context.Context, id string) error {
 	f.recordWrite("DeleteScene", domainScene, id, nil)
-	return nil
+	return f.cfg.writeErr
 }
 
 const (
@@ -87,6 +88,9 @@ func buildConfigFake() *readFake {
 	add("switch.devro", "demo", "dm2", "dev_m")
 	add("automation.nodel", "automation", "cfg_nodel", "")
 	add("scene.secret_scene", "homeassistant", "scene_secret_cfg", "")
+	add("automation.labeled", "automation", "cfg_labeled", "")
+	f.registry[len(f.registry)-1].Labels = []string{"lbl_hide"}
+	f.labels = append(f.labels, homeassistant.LabelRegistryEntry{LabelID: "lbl_hide"})
 	f.devices = append(f.devices,
 		homeassistant.DeviceRegistryEntry{ID: "dev_m"},
 		homeassistant.DeviceRegistryEntry{ID: "dev_empty"},
@@ -158,10 +162,17 @@ func TestCreateAutomation_ExistingIDTreatedAsUpdate(t *testing.T) {
 	})
 }
 
+// TestCreate_CollisionNeutralForHiddenAndVisible: a caller that may create the
+// predicted id gets the same neutral answer whatever the id collides with.
+// automation.labeled is hidden by its label only: a new entity has no label,
+// so the caller may create that id and the collision answer is the neutral one.
 func TestCreate_CollisionNeutralForHiddenAndVisible(t *testing.T) {
 	f := buildConfigFake()
 	f.cfg.files = map[string]bool{"automation/justmade": true}
-	p := cfgPolicy(t, config.AccessRule{Match: ents("automation.*"), Allow: caps("write")})
+	p := cfgPolicy(t,
+		config.AccessRule{Match: ents("automation.*"), Allow: caps("write")},
+		config.AccessRule{Match: config.AccessMatch{Labels: []string{"lbl_hide"}}, Allow: caps("none")},
+	)
 	c, tr, ctx := wrapFake(t, p, f)
 	auto := func(id, alias string) error {
 		return c.CreateAutomation(ctx, homeassistant.AutomationConfig{ID: id, Alias: alias, Actions: []any{}})
@@ -171,25 +182,117 @@ func TestCreate_CollisionNeutralForHiddenAndVisible(t *testing.T) {
 		err  error
 		x    string
 	}{
-		{"predicted id of a hidden entity", auto("new1", "Secret Auto"), "automation.secret_auto"},
+		{"predicted id of a hidden entity", auto("new1", "Labeled"), "automation.labeled"},
 		{"predicted id of a visible entity", auto("new2", "Heating"), "automation.heating"},
 		{"existing hidden config id", auto("cfg_secret", "Whatever"), "cfg_secret"},
+		{"existing label-hidden config id", auto("cfg_labeled", "Whatever"), "cfg_labeled"},
 		{"config file entry without registry entry", auto("justmade", "Fresh Thing"), "justmade"},
-		{"existing hidden script key", c.CreateScript(ctx, "secret_script", script()), "secret_script"},
-		{"free script key (positive control)", c.CreateScript(ctx, "new_x", script()), ""},
 	}
-	for _, tt := range tests[:5] {
+	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			errText(t, tt.err, fmt.Sprintf("id %q is not available", tt.x))
 		})
 	}
-	if err := tests[5].err; err != nil {
+	if err := c.CreateScript(ctx, "new_x", script()); err != nil {
 		t.Errorf("free script key must be creatable: %v", err)
 	}
 	if got := f.writeCalls(); len(got) != 1 || got[0].method != "CreateScript" {
 		t.Errorf("only the free create may reach inner: %+v", got)
 	}
 	noDenial(t, tr)
+}
+
+// TestCreate_NoRightsCannotProbeNames: a caller without create rights on the
+// predicted id gets the same denial whether the id (or a hidden config id) is
+// taken or free; collisions are only looked at once the grant is sufficient.
+func TestCreate_NoRightsCannotProbeNames(t *testing.T) {
+	probe := func(t *testing.T, write func(c *client, ctx context.Context) error) (string, *access.Denial, *readFake) {
+		t.Helper()
+		f := buildConfigFake()
+		c, tr, ctx := wrapFake(t, cfgPolicy(t), f)
+		err := write(c, ctx)
+		if err == nil {
+			t.Fatal("expected a refusal")
+		}
+		return err.Error(), tr.First(), f
+	}
+	autoAlias := func(id, alias string) func(*client, context.Context) error {
+		return func(c *client, ctx context.Context) error {
+			return c.CreateAutomation(ctx, homeassistant.AutomationConfig{ID: id, Alias: alias})
+		}
+	}
+	scriptKey := func(key string) func(*client, context.Context) error {
+		return func(c *client, ctx context.Context) error { return c.CreateScript(ctx, key, script()) }
+	}
+	pairs := []struct {
+		name          string
+		taken, free   func(*client, context.Context) error
+		want          string
+		sameDenialObj bool
+	}{
+		{"hidden script key vs free hidden-pattern key", scriptKey("secret_script"), scriptKey("secretx"), genericDenial(), true},
+		{"hidden predicted automation vs free hidden-pattern alias", autoAlias("n1", "Secret Auto"), autoAlias("n1", "Secret Other"), genericDenial(), true},
+		{"hidden config id vs free id, same alias", autoAlias("cfg_secret", "Whatever"), autoAlias("cfg_free", "Whatever"), denialFor("automation.whatever", "configure"), true},
+		{"visible predicted automation vs free alias", autoAlias("n1", "Heating"), autoAlias("n1", "Heatingx"), "", false},
+	}
+	for _, tt := range pairs {
+		t.Run(tt.name, func(t *testing.T) {
+			takenErr, takenDenial, f1 := probe(t, tt.taken)
+			freeErr, freeDenial, f2 := probe(t, tt.free)
+			for _, e := range []string{takenErr, freeErr} {
+				if strings.Contains(e, "not available") || strings.Contains(e, "not found") {
+					t.Errorf("refusal reveals the collision: %q", e)
+				}
+			}
+			if tt.want != "" && (takenErr != tt.want || freeErr != tt.want) {
+				t.Errorf("errors %q / %q, want both %q", takenErr, freeErr, tt.want)
+			}
+			if tt.sameDenialObj && (takenDenial == nil || freeDenial == nil || *takenDenial != *freeDenial) {
+				t.Errorf("recorded denials differ: %+v vs %+v", takenDenial, freeDenial)
+			}
+			noInnerWrite(t, f1)
+			noInnerWrite(t, f2)
+			for _, f := range []*readFake{f1, f2} {
+				if f.called("ConfigFileEntryExists") {
+					t.Error("the config file must not be probed before the grant is sufficient")
+				}
+			}
+		})
+	}
+}
+
+func TestPredictEntityID_RefusesUnmappableNames(t *testing.T) {
+	c := &client{}
+	tests := []struct {
+		kind, name, want string
+	}{
+		{domainAutomation, "AI Test", "automation.ai_test"},
+		{domainAutomation, "ai-test_1", "automation.ai_test_1"},
+		{domainAutomation, "  Spaced  Out ", "automation.spaced_out"},
+		{domainScene, "Movie Night 2", "scene.movie_night_2"},
+		{domainScript, "my_key", "script.my_key"},
+		{domainAutomation, "A.I", ""},
+		{domainAutomation, "AI 日本", ""},
+		{domainAutomation, "Straße", ""},
+		{domainAutomation, "Café", ""},
+		{domainScene, "Party 🎉", ""},
+		{domainAutomation, "tab\tname", ""},
+		{domainAutomation, "", ""},
+		{domainAutomation, "---", ""},
+	}
+	for _, tt := range tests {
+		if got := c.predictEntityID(tt.kind, tt.name); got != tt.want {
+			t.Errorf("predictEntityID(%s, %q) = %q, want %q", tt.kind, tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestCreate_UnmappableNameRefusedGenerically(t *testing.T) {
+	f := buildConfigFake()
+	c, _, ctx := wrapFake(t, cfgPolicy(t, config.AccessRule{Match: ents("automation.ai*"), Allow: caps("write")}), f)
+	errText(t, c.CreateAutomation(ctx, homeassistant.AutomationConfig{ID: "n1", Alias: "A.I"}), genericDenial())
+	errText(t, c.CreateScene(ctx, "1700000001", homeassistant.SceneConfig{Name: "Straße"}), genericDenial())
+	noInnerWrite(t, f)
 }
 
 func TestCreate_PredictedIDDecidesRule(t *testing.T) {
@@ -500,6 +603,51 @@ func TestConfigWrite_SnapshotInvalidatedAfterSuccess(t *testing.T) {
 	}
 	if snapCached() {
 		t.Fatal("a successful write must drop the snapshot")
+	}
+}
+
+// A failed write (a timeout, say) may still have been applied by HA, so the
+// snapshot is dropped whatever inner returns.
+func TestConfigWrite_SnapshotInvalidatedAfterInnerError(t *testing.T) {
+	writes := map[string]func(*client, context.Context) error{
+		"CreateAutomation": func(c *client, ctx context.Context) error {
+			return c.CreateAutomation(ctx, homeassistant.AutomationConfig{ID: "n1", Alias: "AI Test"})
+		},
+		"UpdateAutomation": func(c *client, ctx context.Context) error {
+			return c.UpdateAutomation(ctx, "cfg_heating", homeassistant.AutomationConfig{})
+		},
+		"DeleteAutomation": func(c *client, ctx context.Context) error { return c.DeleteAutomation(ctx, "cfg_heating") },
+		"CreateScript":     func(c *client, ctx context.Context) error { return c.CreateScript(ctx, "new_x", script()) },
+		"UpdateScript":     func(c *client, ctx context.Context) error { return c.UpdateScript(ctx, "ok", script()) },
+		"DeleteScript":     func(c *client, ctx context.Context) error { return c.DeleteScript(ctx, "ok") },
+		"CreateScene": func(c *client, ctx context.Context) error {
+			return c.CreateScene(ctx, "1700000002", homeassistant.SceneConfig{Name: "Fresh"})
+		},
+		"UpdateScene": func(c *client, ctx context.Context) error {
+			return c.UpdateScene(ctx, "scene_ok_cfg", homeassistant.SceneConfig{Name: "OK"})
+		},
+		"DeleteScene": func(c *client, ctx context.Context) error { return c.DeleteScene(ctx, "scene_ok_cfg") },
+	}
+	p := func(t *testing.T) *access.Policy {
+		t.Helper()
+		return cfgPolicy(t, config.AccessRule{Match: ents("automation.ai_*", "automation.heating"), Allow: caps("write")})
+	}
+	for name, write := range writes {
+		t.Run(name, func(t *testing.T) {
+			f := buildConfigFake()
+			boom := errors.New("timeout")
+			f.cfg.writeErr = boom
+			c, _, ctx := wrapFake(t, p(t), f)
+			if err := write(c, ctx); !errors.Is(err, boom) {
+				t.Fatalf("inner error must be returned, got %v", err)
+			}
+			c.snap.mu.Lock()
+			cached := c.snap.data != nil
+			c.snap.mu.Unlock()
+			if cached {
+				t.Fatal("snapshot must be dropped after a failed write")
+			}
+		})
 	}
 }
 

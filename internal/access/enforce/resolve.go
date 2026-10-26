@@ -45,14 +45,24 @@ func (c *client) entityForConfigID(ctx context.Context, kind, id string) (entity
 
 // predictEntityID is the entity id Home Assistant derives for a new config:
 // automation.<slug(alias)>, script.<key>, scene.<slug(name)>. It returns ""
-// when no plain valid entity id can be derived (empty or unsluggable name);
-// the caller refuses then.
+// when no plain valid entity id can be derived; the caller refuses then.
+//
+// HA slugifies with python-slugify (unidecode transliteration, punctuation
+// turned into separators), which Slugify does not replicate: "A.I" becomes
+// a_i in HA but ai here, "Straße" strasse but strae. A name outside the
+// ASCII-safe set (letters, digits, space, '-', '_'), on which both agree,
+// cannot be mapped to the id HA will assign, so it is refused under an active
+// policy (an unrestricted policy never reaches the wrapper). A script key is
+// already validated as a slug.
 func (c *client) predictEntityID(kind, name string) string {
 	var object string
 	switch kind {
 	case domainScript:
 		object = name
 	case domainAutomation, domainScene:
+		if !asciiSafeName(name) {
+			return ""
+		}
 		object = homeassistant.Slugify(name)
 	default:
 		return ""
@@ -62,6 +72,14 @@ func (c *client) predictEntityID(kind, name string) string {
 		return ""
 	}
 	return id
+}
+
+// asciiSafeName reports whether name consists of ASCII letters, digits,
+// spaces, '-' and '_' only.
+func asciiSafeName(name string) bool {
+	return !strings.ContainsFunc(name, func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != ' ' && r != '-' && r != '_'
+	})
 }
 
 // entityTaken reports whether entityID already names an entity, in the
