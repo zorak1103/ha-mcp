@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 	"sync"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Denial describes a refused write: either an object lacking a capability or,
@@ -18,21 +21,47 @@ type Denial struct {
 	System     SystemValue
 }
 
+// maxFieldRunes caps every untrusted value placed in a message or log record.
+const maxFieldRunes = 128
+
+// notFoundRE matches the phrase handlers key off to detect hidden objects; a
+// denial must never carry it.
+var notFoundRE = regexp.MustCompile(`(?i)not found`)
+
+// sanitizeField makes an untrusted value safe for a denial message or a log
+// record: control, non-printable and backtick runes become "?", the phrase
+// "not found" becomes "unavailable", and the result is capped at
+// maxFieldRunes runes.
+func sanitizeField(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if r == '`' || !unicode.IsPrint(r) {
+			return '?'
+		}
+		return r
+	}, s)
+	s = notFoundRE.ReplaceAllString(s, "unavailable")
+	if utf8.RuneCountInString(s) > maxFieldRunes {
+		s = string([]rune(s)[:maxFieldRunes]) + "..."
+	}
+	return s
+}
+
 // Message is the text returned to the MCP client. It deliberately says nothing
-// about how the policy is configured.
+// about how the policy is configured. All fields are sanitized: they may stem
+// from AI-supplied arguments.
 func (d Denial) Message() string {
 	var b strings.Builder
 	b.WriteString("denied by access policy: ")
 	switch {
-	case d.Object != "":
-		fmt.Fprintf(&b, "`%s` is read-only, `%s` not granted", d.Object, d.Capability)
-	case d.System != "":
-		fmt.Fprintf(&b, "system operation `%s` is not granted", d.System)
+	case d.Object != "" && d.Capability != "":
+		fmt.Fprintf(&b, "`%s` is read-only, `%s` not granted", sanitizeField(d.Object), sanitizeField(d.Capability))
+	case d.Object == "" && d.System != "":
+		fmt.Fprintf(&b, "system operation `%s` is not granted", sanitizeField(string(d.System)))
 	default:
 		b.WriteString("operation not permitted")
 	}
 	if d.Tool != "" {
-		fmt.Fprintf(&b, " (tool: %s)", d.Tool)
+		fmt.Fprintf(&b, " (tool: %s)", sanitizeField(d.Tool))
 	}
 	return b.String()
 }
@@ -63,7 +92,9 @@ func TrackerFrom(ctx context.Context) *Tracker {
 }
 
 // Deny logs d at WARN and keeps it if it is the first denial. A missing d.Tool
-// defaults to the tracker's tool.
+// defaults to the tracker's tool. Object, Tool and Capability are treated as
+// untrusted: the log record carries sanitized values, First returns d as
+// recorded, and Message sanitizes on output.
 func (t *Tracker) Deny(d Denial) {
 	if t == nil {
 		return
@@ -75,7 +106,10 @@ func (t *Tracker) Deny(d Denial) {
 	if object == "" {
 		object = string(d.System)
 	}
-	slog.Warn("access denied", "tool", d.Tool, "object", object, "capability", d.Capability)
+	slog.Warn("access denied",
+		"tool", sanitizeField(d.Tool),
+		"object", sanitizeField(object),
+		"capability", sanitizeField(d.Capability))
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -106,6 +140,9 @@ func (t *Tracker) MarkConfigured(domain string) {
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.configured == nil {
+		t.configured = map[string]bool{}
+	}
 	t.configured[strings.ToLower(domain)] = true
 }
 
