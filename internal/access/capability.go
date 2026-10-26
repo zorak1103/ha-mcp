@@ -1,7 +1,8 @@
 // Package access is the object-level access policy engine. It compiles the
 // validated access section of the config file into an immutable Policy and
-// answers which capabilities a Home Assistant object is granted. The package is
-// pure: no I/O, no logging. A Policy is safe for concurrent use.
+// answers which capabilities a Home Assistant object is granted. The package
+// does no I/O; its only side effect is the WARN log of a recorded denial. A
+// Policy is safe for concurrent use.
 package access
 
 // Capability is one permission an object can be granted.
