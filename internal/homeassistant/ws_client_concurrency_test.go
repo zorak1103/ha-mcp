@@ -375,6 +375,153 @@ func TestWSClient_AuthInvalidOnReconnect_GivesUp(t *testing.T) {
 	}
 }
 
+// newSlowReconnectConfig returns the concurrency test config with a fixed
+// reconnect backoff of delay, leaving a window in which a caller can start
+// waiting before the reconnect attempt is made.
+func newSlowReconnectConfig(delay time.Duration) WSClientConfig {
+	cfg := newConcurrencyTestConfig()
+	cfg.ReconnectConfig.InitialDelay = delay
+	cfg.ReconnectConfig.MaxDelay = delay
+	return cfg
+}
+
+// waitForConnectionAsync runs WaitForConnection with a ctx far below its own
+// 10s limit, so a regression fails fast with a context error instead of
+// stalling the suite.
+func waitForConnectionAsync(client *WSClient) <-chan error {
+	res := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		res <- client.WaitForConnection(ctx)
+	}()
+	return res
+}
+
+// TestWSClient_WaitForConnection_ReleasedByAuthInvalid pins that a caller
+// already inside WaitForConnection when the reconnect loop stops on
+// auth_invalid gets the auth error right away, not ErrMaxReconnectAttempts
+// after the full 10s limit.
+func TestWSClient_WaitForConnection_ReleasedByAuthInvalid(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeHA(t, withAuthInvalidOnAttempt(2))
+	client := connectFakeClient(t, fake, newSlowReconnectConfig(300*time.Millisecond))
+
+	fake.dropAll()
+	if !waitFor(2*time.Second, func() bool { return client.reconnecting.Load() }) {
+		t.Fatal("client did not start reconnecting within 2s")
+	}
+
+	start := time.Now()
+	err := <-waitForConnectionAsync(client)
+
+	if !errors.Is(err, errAuthFailed) {
+		t.Fatalf("WaitForConnection() = %v, want an error wrapping errAuthFailed", err)
+	}
+	if errors.Is(err, ErrMaxReconnectAttempts) {
+		t.Errorf("WaitForConnection() = %v, must not report exhausted reconnect attempts", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("WaitForConnection() took %v, want well under its 10s limit", elapsed)
+	}
+}
+
+// TestWSClient_WaitForConnection_AfterAuthInvalid pins that a caller arriving
+// after the reconnect loop stopped on auth_invalid gets the auth error
+// immediately instead of polling toward the 10s limit.
+func TestWSClient_WaitForConnection_AfterAuthInvalid(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeHA(t, withAuthInvalidOnAttempt(2))
+	client := connectFakeClient(t, fake, newConcurrencyTestConfig())
+
+	fake.dropAll()
+	if !waitFor(2*time.Second, func() bool { return fake.authAttempts.Load() >= 2 && !client.IsUsable() }) {
+		t.Fatalf("client still usable after auth_invalid (authAttempts=%d)", fake.authAttempts.Load())
+	}
+
+	start := time.Now()
+	err := <-waitForConnectionAsync(client)
+
+	if !errors.Is(err, errAuthFailed) {
+		t.Fatalf("WaitForConnection() = %v, want an error wrapping errAuthFailed", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("WaitForConnection() took %v, want an immediate return", elapsed)
+	}
+}
+
+// TestWSClient_WaitForConnection_ClosedAfterAuthInvalid pins that Close wins
+// over a recorded auth failure: WaitForConnection documents errClientClosed
+// after Close, and the stored auth error must not mask it.
+func TestWSClient_WaitForConnection_ClosedAfterAuthInvalid(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeHA(t, withAuthInvalidOnAttempt(2))
+	client := connectFakeClient(t, fake, newConcurrencyTestConfig())
+
+	fake.dropAll()
+	if !waitFor(2*time.Second, func() bool { return fake.authAttempts.Load() >= 2 && !client.IsUsable() }) {
+		t.Fatalf("client still usable after auth_invalid (authAttempts=%d)", fake.authAttempts.Load())
+	}
+	if err := client.Close(); err != nil {
+		t.Fatalf("Close() = %v", err)
+	}
+
+	if err := <-waitForConnectionAsync(client); !errors.Is(err, errClientClosed) {
+		t.Fatalf("WaitForConnection() after Close = %v, want errClientClosed", err)
+	}
+}
+
+// TestWSClient_WaitForConnection_TransientReconnectStillWaits pins that a
+// caller waiting out an ordinary reconnect is unaffected by the auth_invalid
+// release and returns nil once the new session is up.
+func TestWSClient_WaitForConnection_TransientReconnectStillWaits(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeHA(t)
+	client := connectFakeClient(t, fake, newSlowReconnectConfig(150*time.Millisecond))
+
+	fake.dropAll()
+	if !waitFor(2*time.Second, func() bool { return client.reconnecting.Load() }) {
+		t.Fatal("client did not start reconnecting within 2s")
+	}
+
+	if err := <-waitForConnectionAsync(client); err != nil {
+		t.Fatalf("WaitForConnection() = %v, want nil after a transient reconnect", err)
+	}
+	if !client.IsConnected() {
+		t.Error("IsConnected() = false after WaitForConnection returned nil")
+	}
+}
+
+// TestWSClient_WaitForConnection_AuthFailureClearedByConnect pins that the
+// recorded auth failure is dropped once a later Connect succeeds, so a drop of
+// that new session waits for its reconnect instead of returning the old error.
+func TestWSClient_WaitForConnection_AuthFailureClearedByConnect(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeHA(t, withAuthInvalidOnAttempt(2))
+	client := connectFakeClient(t, fake, newSlowReconnectConfig(150*time.Millisecond))
+
+	fake.dropAll()
+	if !waitFor(2*time.Second, func() bool { return fake.authAttempts.Load() >= 2 && !client.IsUsable() }) {
+		t.Fatalf("client still usable after auth_invalid (authAttempts=%d)", fake.authAttempts.Load())
+	}
+	if err := client.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect() after auth_invalid failed: %v", err)
+	}
+
+	fake.dropAll()
+	if !waitFor(2*time.Second, func() bool { return client.reconnecting.Load() }) {
+		t.Fatal("client did not start reconnecting after the second drop")
+	}
+	if err := <-waitForConnectionAsync(client); err != nil {
+		t.Fatalf("WaitForConnection() = %v, want nil (stale auth failure must be cleared)", err)
+	}
+}
+
 // TestWSClient_StaleHealthCheck_DoesNotTouchNewSession pins that a health
 // check for an ended session acts on that session only: it must neither ping
 // the new connection with the old session's canceled ctx (coder/websocket

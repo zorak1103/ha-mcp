@@ -112,6 +112,11 @@ type WSClient struct {
 	connected    atomic.Bool
 	reconnecting atomic.Bool
 
+	// authErr is the auth_invalid error that stopped the reconnect loop. It is
+	// set under mu before reconnecting goes false and cleared when a session is
+	// installed, so a waiter that sees the client unusable also sees the cause.
+	authErr error
+
 	config       WSClientConfig
 	reconnectMgr *ReconnectManager
 
@@ -217,6 +222,7 @@ func (c *WSClient) installSession(conn *websocket.Conn) error {
 	}
 	s := newWSSession(c.lifeCtx, conn)
 	c.session.Store(s)
+	c.authErr = nil
 	c.connected.Store(true)
 	c.wg.Add(1)
 	go c.readLoop(s)
@@ -462,8 +468,7 @@ func (c *WSClient) reconnectLoop() {
 
 	c.logger.Warn("Connection lost, initiating reconnection")
 	for {
-		dialed := c.reconnectUntilDialed() == nil
-		if c.finishReconnect(dialed) {
+		if c.finishReconnect(c.reconnectUntilDialed()) {
 			return
 		}
 		c.logger.Warn("Reconnected session dropped immediately, reconnecting again")
@@ -510,15 +515,21 @@ func (c *WSClient) reconnectUntilDialed() error {
 	}
 }
 
-// finishReconnect makes the reconnect loop's exit decision under mu. It
-// returns false when the loop must go on: the dial succeeded but that session
-// already died, and its endSession saw reconnecting=true and so started no
-// loop of its own.
-func (c *WSClient) finishReconnect(dialed bool) bool {
+// finishReconnect makes the reconnect loop's exit decision under mu, given the
+// outcome of reconnectUntilDialed (nil = a dial succeeded). It returns false
+// when the loop must go on: the dial succeeded but that session already died,
+// and its endSession saw reconnecting=true and so started no loop of its own.
+// An auth_invalid outcome is recorded for WaitForConnection before
+// reconnecting goes false.
+func (c *WSClient) finishReconnect(dialErr error) bool {
+	dialed := dialErr == nil
 	c.mu.Lock()
 	if dialed && !c.closed && c.session.Load() == nil {
 		c.mu.Unlock()
 		return false
+	}
+	if errors.Is(dialErr, errAuthFailed) {
+		c.authErr = dialErr
 	}
 	success := dialed && !c.closed
 	attempts := 0
@@ -547,11 +558,11 @@ var ErrRequestTimeout = errors.New("request timeout: no response received")
 //
 // Failures before the command was written that are marked notSentError (e.g.
 // not connected) are retried for every command; a reconnect wait that ends in
-// ErrMaxReconnectAttempts, a context error or errClientClosed is not. Once the
-// command was written, only replay-safe (read-only) commands are re-sent after
-// a transient failure; a state-changing command whose connection drops returns
-// an error wrapping errOutcomeUnknown, since Home Assistant may already have
-// applied it.
+// ErrMaxReconnectAttempts, errAuthFailed, a context error or errClientClosed is
+// not. Once the command was written, only replay-safe (read-only) commands are
+// re-sent after a transient failure; a state-changing command whose connection
+// drops returns an error wrapping errOutcomeUnknown, since Home Assistant may
+// already have applied it.
 func (c *WSClient) SendCommand(ctx context.Context, msgType string, payload map[string]any) (*WSResultMessage, error) {
 	var result *WSResultMessage
 
@@ -757,11 +768,12 @@ func (c *WSClient) IsUsable() bool {
 // WaitForConnection waits until the client is connected or the context is canceled.
 // This is useful when a reconnection is in progress and the caller wants to wait for it.
 // Returns nil if connected, context error if canceled, errClientClosed after Close,
+// an error wrapping errAuthFailed as soon as the reconnect loop has stopped on
+// auth_invalid (whether the caller was already waiting or arrives afterwards),
 // or ErrMaxReconnectAttempts if reconnection failed.
 func (c *WSClient) WaitForConnection(ctx context.Context) error {
-	// Already connected, return immediately
-	if c.connected.Load() {
-		return nil
+	if done, err := c.connectionOutcome(); done {
+		return err
 	}
 
 	// Poll for connection with exponential backoff
@@ -778,8 +790,8 @@ func (c *WSClient) WaitForConnection(ctx context.Context) error {
 		case <-c.lifeCtx.Done():
 			return errClientClosed
 		case <-ticker.C:
-			if c.connected.Load() {
-				return nil
+			if done, err := c.connectionOutcome(); done {
+				return err
 			}
 			// If not reconnecting and not connected, reconnection has failed
 			if !c.reconnecting.Load() && !c.connected.Load() {
@@ -790,6 +802,23 @@ func (c *WSClient) WaitForConnection(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+// connectionOutcome reports whether WaitForConnection can stop polling: nil
+// once connected, or the auth_invalid error that stopped the reconnect loop.
+// Both are read under mu, the lock every writer of them holds, so a session
+// installed after an auth failure is never reported as that failure. After
+// Close the auth error is withheld so WaitForConnection reports errClientClosed.
+func (c *WSClient) connectionOutcome() (bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.connected.Load() {
+		return true, nil
+	}
+	if c.authErr != nil && !c.closed {
+		return true, c.authErr
+	}
+	return false, nil
 }
 
 // IsHealthy returns true if the connection is connected and has received
