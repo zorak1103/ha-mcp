@@ -5,6 +5,7 @@ package homeassistant
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/zorak1103/ha-mcp/internal/config"
 	"github.com/zorak1103/ha-mcp/internal/logging"
@@ -36,17 +37,53 @@ func DefaultClientOptions() ClientOptions {
 // The connection is established before returning; use CloseClient() for cleanup.
 // If CacheConfig is provided and enabled, the client will be wrapped with caching capabilities.
 func NewClientWithOptions(ctx context.Context, baseURL, token string, opts ClientOptions) (Client, error) {
-	client, err := NewConnectedClient(ctx, baseURL, token, opts.WSConfig, opts.RESTConfig)
+	cacheEnabled := opts.CacheConfig != nil && opts.CacheConfig.Enabled
+
+	// The reconnect callback must be part of the WSClientConfig before Connect:
+	// WSClient.SetOnReconnect writes unsynchronized, so it is unsafe on a live client.
+	wsConfig := opts.WSConfig
+	var cached atomic.Pointer[CachedClient]
+	if cacheEnabled {
+		wsConfig = withReconnectInvalidation(wsConfig, &cached)
+	}
+
+	client, err := NewConnectedClient(ctx, baseURL, token, wsConfig, opts.RESTConfig)
 	if err != nil {
 		return nil, err
 	}
 
 	// Wrap with caching if enabled
-	if opts.CacheConfig != nil && opts.CacheConfig.Enabled {
-		return NewCachedClient(client, *opts.CacheConfig, opts.Logger), nil
+	if cacheEnabled {
+		wrapped := NewCachedClient(client, *opts.CacheConfig, opts.Logger)
+		if cc, ok := wrapped.(*CachedClient); ok {
+			cached.Store(cc)
+		}
+		return wrapped, nil
 	}
 
 	return client, nil
+}
+
+// withReconnectInvalidation returns a copy of base (DefaultWSClientConfig when nil)
+// whose OnReconnect first runs base's callback, then clears every cache of the
+// CachedClient held in target. The copy keeps a config shared between pooled
+// clients from being mutated. A reconnect before target is set is a no-op: nothing
+// can be cached yet.
+func withReconnectInvalidation(base *WSClientConfig, target *atomic.Pointer[CachedClient]) *WSClientConfig {
+	cfg := DefaultWSClientConfig()
+	if base != nil {
+		cfg = *base
+	}
+	prev := cfg.OnReconnect
+	cfg.OnReconnect = func(attempts int) {
+		if prev != nil {
+			prev(attempts)
+		}
+		if cc := target.Load(); cc != nil {
+			cc.invalidateAllCaches()
+		}
+	}
+	return &cfg
 }
 
 // NewConnectedClient creates a new hybrid client with both WebSocket and REST capabilities.

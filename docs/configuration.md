@@ -196,6 +196,24 @@ export HA_MCP_TOOL_FILTER_BLACKLIST=""     # Comma-separated blacklist (default:
 
 See `configs/.env.example` for the full environment file template.
 
+### Cache behavior
+
+With `HA_CACHE_ENABLED=true`, the services, config and registry reads are cached for their TTL. The cache is cleared early in these cases:
+
+| Event                                                                  | Registry caches (entity, device, area, label, floor) | Services and config caches |
+| ---------------------------------------------------------------------- | ---------------------------------------------------- | -------------------------- |
+| Automation, script or scene create/update/delete                       | cleared                                              | kept                       |
+| Helper create/update/delete, config entry delete                       | cleared                                              | kept                       |
+| Any service call (including `*.reload`), successful or not             | cleared                                              | kept                       |
+| Entity/device registry update, area/label/floor create/update/delete   | the matching registry cache is cleared               | kept                       |
+| WebSocket reconnect (for example after a Home Assistant restart)       | cleared                                              | cleared                    |
+
+Known limits:
+
+- The services and config caches are otherwise refreshed only by TTL (`HA_CACHE_SERVICES_TTL_MIN`, `HA_CACHE_CONFIG_TTL_MIN`). A new integration or service added without a reconnect can stay hidden for up to that TTL.
+- Each client instance has its own cache. A request that carries a bearer token is served by a pooled client with a cache separate from the default `HA_TOKEN` client (even when the token equals `HA_TOKEN`), and a write through one instance does not clear the other's cache. Stale registry data then lasts at most the registry TTL.
+- Changes made outside ha-mcp (the Home Assistant UI, YAML edits) are not detected; they appear after the TTL expires.
+
 ### Retry behavior
 
 The `HA_REST_*` and `HA_WS_*` retry settings are applied to the clients at startup:
