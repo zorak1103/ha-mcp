@@ -112,6 +112,162 @@ func TestLogbookCorrelation_FetchFailures(t *testing.T) {
 	})
 }
 
+// TestHandleCorrelation_SingleEntityEmpty pins the single-entity correlation result: the
+// entries are counted, but a group needs at least 2 distinct entities, so correlations stay
+// empty even though all three events fall inside the default 60s window. Both formats carry
+// a hint that points to mode=entries.
+func TestHandleCorrelation_SingleEntityEmpty(t *testing.T) {
+	t.Parallel()
+
+	base := time.Now().Add(-30 * time.Minute)
+	client := &UniversalMockClient{
+		GetLogbookFn: func(_ context.Context, _, _ string, entityIDs []string) ([]homeassistant.LogbookEntry, error) {
+			if len(entityIDs) != 1 || entityIDs[0] != "climate.living_room" {
+				return nil, fmt.Errorf("unexpected entity_ids %v", entityIDs)
+			}
+			entries := make([]homeassistant.LogbookEntry, 0, 3)
+			for i, state := range []string{"heat", "off", "heat"} {
+				entries = append(entries, homeassistant.LogbookEntry{
+					When:     base.Add(time.Duration(i*10) * time.Second).Format(time.RFC3339),
+					Name:     "Living Room",
+					State:    state,
+					EntityID: "climate.living_room",
+				})
+			}
+			return entries, nil
+		},
+	}
+	args := func(format string) map[string]any {
+		return map[string]any{
+			"mode":       "correlation",
+			"entity_ids": []any{"climate.living_room"},
+			"hours":      float64(1),
+			"format":     format,
+		}
+	}
+
+	t.Run("json", func(t *testing.T) {
+		t.Parallel()
+		res, err := NewLogbookHandlers().handleGetLogbook(context.Background(), client, args("json"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if res.IsError || len(res.Content) != 1 {
+			t.Fatalf("IsError=%v len(Content)=%d, want success with 1 block", res.IsError, len(res.Content))
+		}
+		text := res.Content[0].Text
+		var report CorrelationReport
+		if err := json.Unmarshal([]byte(text), &report); err != nil {
+			t.Fatalf("decoding report: %v", err)
+		}
+		if report.TotalEvents != 3 {
+			t.Errorf("total_events = %d, want 3", report.TotalEvents)
+		}
+		if !strings.Contains(text, `"correlations": []`) {
+			t.Errorf("want an empty correlations array (not null), got: %s", text)
+		}
+		if !slices.Equal(report.EntityIDs, []string{"climate.living_room"}) {
+			t.Errorf("entity_ids = %v, want [climate.living_room]", report.EntityIDs)
+		}
+		if report.Hint != correlationSingleEntityHint {
+			t.Errorf("hint = %q, want %q", report.Hint, correlationSingleEntityHint)
+		}
+	})
+
+	t.Run("natural", func(t *testing.T) {
+		t.Parallel()
+		res, err := NewLogbookHandlers().handleGetLogbook(context.Background(), client, args("natural"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if res.IsError || len(res.Content) != 1 {
+			t.Fatalf("IsError=%v len(Content)=%d, want success with 1 block", res.IsError, len(res.Content))
+		}
+		text := res.Content[0].Text
+		for _, want := range []string{
+			"Entities: climate.living_room\n",
+			"Total Events: 3\n",
+			"Correlated Groups: 0\n",
+			correlationSingleEntityHint,
+		} {
+			if !strings.Contains(text, want) {
+				t.Errorf("output does not contain %q:\n%s", want, text)
+			}
+		}
+		// The hint replaces the generic sentence, which would wrongly blame the time window.
+		if strings.Contains(text, "No correlated events found.") {
+			t.Errorf("single-entity output still has the generic no-correlation sentence:\n%s", text)
+		}
+	})
+}
+
+// TestHandleCorrelation_TwoEntitiesNoGroupsHasNoHint pins that the single-entity hint is not
+// shown when 2 entities are given but their events fall outside the window: there the
+// generic "No correlated events found" sentence is the true explanation.
+func TestHandleCorrelation_TwoEntitiesNoGroupsHasNoHint(t *testing.T) {
+	t.Parallel()
+
+	base := time.Now().Add(-50 * time.Minute)
+	client := &UniversalMockClient{
+		GetLogbookFn: func(_ context.Context, _, _ string, entityIDs []string) ([]homeassistant.LogbookEntry, error) {
+			if len(entityIDs) != 1 {
+				return nil, fmt.Errorf("expected one entity per fetch, got %v", entityIDs)
+			}
+			var offset time.Duration
+			if entityIDs[0] == "switch.b" {
+				offset = 10 * time.Minute // well outside the default 60s window
+			}
+			return []homeassistant.LogbookEntry{{
+				When:     base.Add(offset).Format(time.RFC3339),
+				Name:     entityIDs[0],
+				State:    "on",
+				EntityID: entityIDs[0],
+			}}, nil
+		},
+	}
+	args := func(format string) map[string]any {
+		return map[string]any{
+			"mode":       "correlation",
+			"entity_ids": []any{"light.a", "switch.b"},
+			"hours":      float64(1),
+			"format":     format,
+		}
+	}
+
+	t.Run("json", func(t *testing.T) {
+		t.Parallel()
+		res, err := NewLogbookHandlers().handleGetLogbook(context.Background(), client, args("json"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if res.IsError || len(res.Content) != 1 {
+			t.Fatalf("IsError=%v len(Content)=%d, want success with 1 block", res.IsError, len(res.Content))
+		}
+		text := res.Content[0].Text
+		if strings.Contains(text, `"hint"`) {
+			t.Errorf("want no hint key with 2 entities, got: %s", text)
+		}
+		if !strings.Contains(text, `"correlations": []`) {
+			t.Errorf("want an empty correlations array, got: %s", text)
+		}
+	})
+
+	t.Run("natural", func(t *testing.T) {
+		t.Parallel()
+		res, err := NewLogbookHandlers().handleGetLogbook(context.Background(), client, args("natural"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		text := res.Content[0].Text
+		if !strings.Contains(text, "No correlated events found.") {
+			t.Errorf("want the generic no-correlation sentence, got:\n%s", text)
+		}
+		if strings.Contains(text, correlationSingleEntityHint) {
+			t.Errorf("want no single-entity hint with 2 entities, got:\n%s", text)
+		}
+	})
+}
+
 func TestLogbook_Correlation(t *testing.T) {
 	t.Parallel()
 

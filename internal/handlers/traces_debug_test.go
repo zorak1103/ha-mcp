@@ -743,9 +743,6 @@ func TestFetchLatestTrace_PicksNewestByStartTimestamp(t *testing.T) {
 	}
 }
 
-// TestFetchLatestTrace_LegacyStringTimestamp verifies backward compatibility with a flat
-// ISO-string timestamp (as opposed to HA's real {"start":..,"finish":..} shape), which older
-// test fixtures and any future HA response shape drift might still produce.
 // TestFetchLatestTrace_MissingTimestamp verifies that a trace with no (or malformed) timestamp
 // field degrades to an empty Timestamp and zero Duration rather than panicking - Home Assistant's
 // trace short dict always includes {"start":..,"finish":..}, but nothing here should crash if a

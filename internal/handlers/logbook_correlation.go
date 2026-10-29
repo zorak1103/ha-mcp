@@ -13,12 +13,18 @@ import (
 	"github.com/zorak1103/ha-mcp/internal/mcp"
 )
 
+// correlationSingleEntityHint explains why a correlation call with fewer than 2 entities can
+// never produce a group (shouldIncludeGroup needs 2 distinct entities).
+const correlationSingleEntityHint = "correlation mode compares events across entities and needs at least 2 entity_ids; " +
+	"use mode=entries to list one entity's events"
+
 // CorrelationReport represents logbook event correlations.
 type CorrelationReport struct {
 	EntityIDs    []string           `json:"entity_ids"`
 	TimeRange    string             `json:"time_range"`
 	TotalEvents  int                `json:"total_events"`
 	Correlations []CorrelationGroup `json:"correlations"`
+	Hint         string             `json:"hint,omitempty"`
 }
 
 // CorrelationGroup represents events that occurred within the time window.
@@ -127,12 +133,16 @@ func buildCorrelationReport(
 		startTime.Format("2006-01-02 15:04"),
 		endTime.Format("2006-01-02 15:04"))
 
-	return CorrelationReport{
+	report := CorrelationReport{
 		EntityIDs:    entityIDs,
 		TimeRange:    timeRangeStr,
 		TotalEvents:  len(allEntries),
 		Correlations: correlations,
 	}
+	if len(entityIDs) < 2 {
+		report.Hint = correlationSingleEntityHint
+	}
+	return report
 }
 
 // formatCorrelationOutput formats the correlation report based on format parameter.
@@ -259,6 +269,10 @@ func formatCorrelationNatural(report CorrelationReport) string {
 	fmt.Fprintf(&result, "Total Events: %d\n", report.TotalEvents)
 	fmt.Fprintf(&result, "Correlated Groups: %d\n\n", len(report.Correlations))
 
+	if report.Hint != "" {
+		fmt.Fprintf(&result, "%s.", report.Hint)
+		return result.String()
+	}
 	if len(report.Correlations) == 0 {
 		result.WriteString("No correlated events found. Events from different entities did not occur within the time window.")
 		return result.String()

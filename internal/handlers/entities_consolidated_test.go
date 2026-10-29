@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"testing"
 	"time"
@@ -643,6 +644,108 @@ func TestQueryEntities_History_FormatNatural(t *testing.T) {
 
 	h := NewConsolidatedEntityQueryHandlers()
 	runHandlerTestCases(t, tests, h.handleQueryEntities)
+}
+
+// TestHandleHistory_SingleEntityOutputPinned pins the exact single-entity history output in
+// natural, compact json and verbose json. Multi-entity history must keep these byte-identical.
+// Timestamps are rendered in the local zone (time.Unix), so the expected strings derive them the
+// same way instead of hard-coding a zone.
+func TestHandleHistory_SingleEntityOutputPinned(t *testing.T) {
+	t.Parallel()
+
+	const lc1, lc2 = 1700000000, 1700003600
+	history := [][]homeassistant.HistoryEntry{{
+		{EntityID: "sensor.temp", State: "20.5", LastChanged: lc1, Attributes: map[string]any{
+			"friendly_name": "Living Room Temp", "unit_of_measurement": "°C",
+		}},
+		{EntityID: "sensor.temp", State: "21.0", LastChanged: lc2, LastUpdated: lc2},
+	}}
+	minute := func(ts int64) string { return time.Unix(ts, 0).Format("2006-01-02 15:04") }
+	rfc := func(ts int64) string { return time.Unix(ts, 0).Format(time.RFC3339) }
+
+	tests := []struct {
+		name string
+		args map[string]any
+		want string
+	}{
+		{
+			name: "natural",
+			args: map[string]any{"format": "natural"},
+			want: "History for Living Room Temp: 2 state changes.\n" +
+				minute(lc1) + " → 20.5\n" +
+				minute(lc2) + " → 21.0",
+		},
+		{
+			name: "natural verbose",
+			args: map[string]any{"format": "natural", "verbose": true},
+			want: "History for Living Room Temp: 2 state changes.\n" +
+				minute(lc1) + " → 20.5 (unit_of_measurement=°C)\n" +
+				minute(lc2) + " → 21.0",
+		},
+		{
+			name: "json compact",
+			args: map[string]any{"format": "json"},
+			want: "Found 2 history entries for sensor.temp (use verbose=true for full details)\n\n" +
+				"[\n" +
+				"  {\n    \"state\": \"20.5\",\n    \"last_changed\": \"" + rfc(lc1) + "\"\n  },\n" +
+				"  {\n    \"state\": \"21.0\",\n    \"last_changed\": \"" + rfc(lc2) + "\"\n  }\n" +
+				"]",
+		},
+		{
+			name: "json verbose",
+			args: map[string]any{"format": "json", "verbose": true},
+			want: `Found 2 history entries for sensor.temp
+
+[
+  {
+    "entity_id": "sensor.temp",
+    "s": "20.5",
+    "a": {
+      "friendly_name": "Living Room Temp",
+      "unit_of_measurement": "°C"
+    },
+    "lc": 1700000000
+  },
+  {
+    "entity_id": "sensor.temp",
+    "s": "21.0",
+    "lc": 1700003600,
+    "lu": 1700003600
+  }
+]`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			client := &UniversalMockClient{
+				GetHistoryFn: func(_ context.Context, entityID string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
+					if entityID != "sensor.temp" {
+						t.Errorf("GetHistory entityID = %q, want %q", entityID, "sensor.temp")
+					}
+					return history, nil
+				},
+			}
+			args := map[string]any{"mode": modeHistory, "entity_id": "sensor.temp"}
+			maps.Copy(args, tt.args)
+
+			result, err := NewConsolidatedEntityQueryHandlers().handleQueryEntities(context.Background(), client, args)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result.IsError {
+				t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+			}
+			if len(result.Content) != 1 {
+				t.Fatalf("len(Content) = %d, want 1", len(result.Content))
+			}
+			if got := result.Content[0].Text; got != tt.want {
+				t.Errorf("output mismatch\ngot:\n%s\nwant:\n%s", got, tt.want)
+			}
+		})
+	}
 }
 
 func TestQueryEntities_History_EmptyHistory_EntityExists(t *testing.T) {
