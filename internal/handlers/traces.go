@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"strings"
 	"time"
 
@@ -39,7 +40,7 @@ func RegisterTraceTools(registry *mcp.Registry) {
 
 	registry.RegisterTool(mcp.Tool{
 		Name:        "manage_trace",
-		Description: "View automation and script execution traces. Supports list (view all traces), get (view specific trace details), and debug (consolidated automation debug report: config, latest trace, trigger entity states, and logbook).",
+		Description: "View automation and script execution traces. Supports list (view all traces), get (view one trace's details: pass automation_id or entity_id; run_id defaults to the newest run), and debug (consolidated automation debug report: config, latest trace, trigger entity states, and logbook).",
 		InputSchema: mcp.JSONSchema{
 			Type: "object",
 			Properties: map[string]mcp.JSONSchema{
@@ -50,20 +51,20 @@ func RegisterTraceTools(registry *mcp.Registry) {
 				},
 				"domain": {
 					Type:        "string",
-					Description: "Domain to query traces for: 'automation' or 'script'. Required for the 'list' action unless entity_id is provided (which auto-derives it).",
+					Description: "Domain to query traces for: 'automation' or 'script'. Required for the 'list' action unless entity_id is provided (which auto-derives it). Optional for 'get' (derived from entity_id/automation_id; must agree when given).",
 					Enum:        []string{traceDomainAutomation, traceDomainScript},
 				},
 				attrEntityID: {
 					Type:        "string",
-					Description: "Entity ID for 'get' action (required) or 'list' action (optional, auto-derives domain and filters traces by item, e.g., 'automation.morning_routine').",
+					Description: "Entity ID, e.g. 'automation.morning_routine' or 'script.wake_up'. For 'get': required unless automation_id is given (auto-derives domain). For 'list': optional, auto-derives domain and filters traces by item.",
 				},
 				"automation_id": {
 					Type:        "string",
-					Description: "Automation entity ID or bare ID (required for 'debug' action, e.g., 'automation.morning_routine' or 'morning_routine').",
+					Description: "Automation entity ID or bare ID, e.g. 'automation.morning_routine' or 'morning_routine'. Required for 'debug'; for 'get' an alternative to entity_id (both must name the same automation if both are given).",
 				},
 				"run_id": {
 					Type:        "string",
-					Description: "Trace run ID (required for 'get' action).",
+					Description: "Trace run ID for 'get'. Optional: when omitted, the newest run is fetched and reported as the selected run.",
 				},
 				"hours": {
 					Type:        "number",
@@ -295,31 +296,77 @@ func parseTraceListResponse(response any) []any {
 	return nil
 }
 
-// handleGetTrace retrieves a specific trace by entity_id and run_id.
-func (h *TraceHandlers) handleGetTrace(ctx context.Context, client homeassistant.Client, args map[string]any, format string) (*mcp.ToolsCallResult, error) {
-	// Validate required parameters
-	domain, _ := args["domain"].(string)
-	if domain == "" {
-		return errorResult("domain is required for get action"), nil
+// latestTraceEntry returns the trace with the most recent start timestamp, or nil when the list
+// holds no trace maps. ISO timestamps sort lexicographically. HA's trace/list returns traces in
+// insertion order (oldest first), so the first element is NOT the latest - it must be resolved by
+// comparing timestamps.
+func latestTraceEntry(traces []any) map[string]any {
+	var latest map[string]any
+	var latestStart string
+	for _, t := range traces {
+		traceMap, ok := t.(map[string]any)
+		if !ok {
+			continue
+		}
+		start, _ := traceTimestamps(traceMap)
+		if latest == nil || start > latestStart {
+			latest = traceMap
+			latestStart = start
+		}
+	}
+	return latest
+}
+
+// resolveTraceGetTarget turns the get action's automation_id / entity_id / domain arguments into
+// one trace target. automation_id (bare or "automation."-prefixed) is an alternative spelling of
+// an automation entity_id; when both are given they must name the same entity. The domain is
+// derived from the entity_id prefix, and an explicit domain must agree with it - a mismatch would
+// otherwise resolve item_id against the wrong domain and return an unrelated entity's traces.
+func resolveTraceGetTarget(args map[string]any) (domain, entityID, errMsg string) {
+	explicitDomain, _ := args["domain"].(string)
+	entityID, _ = args[attrEntityID].(string)
+
+	if automationID, _ := args["automation_id"].(string); automationID != "" {
+		if strings.Contains(automationID, ".") && !strings.HasPrefix(automationID, "automation.") {
+			return "", "", fmt.Sprintf("automation_id %q is invalid: must be 'automation.<id>' or a bare automation id", automationID)
+		}
+		autoEntityID, _ := normalizeAutomationID(automationID)
+		if entityID != "" && entityID != autoEntityID {
+			return "", "", fmt.Sprintf("automation_id %q conflicts with entity_id %q", automationID, entityID)
+		}
+		entityID = autoEntityID
 	}
 
-	entityID, _ := args[attrEntityID].(string)
 	if entityID == "" {
-		return errorResult("entity_id is required for get action"), nil
+		return "", "", "entity_id or automation_id is required for get action"
 	}
 
-	runID, _ := args["run_id"].(string)
-	if runID == "" {
-		return errorResult("run_id is required for get action"), nil
+	derived, errMsg := validateTraceEntityID(entityID, explicitDomain)
+	if errMsg != "" {
+		return "", "", errMsg
 	}
+	return derived, entityID, ""
+}
 
-	// Reject a malformed entity_id or a domain/entity_id prefix mismatch rather than silently
-	// resolving item_id against the wrong domain, which would return an unrelated entity's traces.
-	if _, errMsg := validateTraceEntityID(entityID, domain); errMsg != "" {
+// handleGetTrace retrieves one trace by automation_id or entity_id. Without run_id it lists the
+// traces under the same item_id and fetches the newest one.
+func (h *TraceHandlers) handleGetTrace(ctx context.Context, client homeassistant.Client, args map[string]any, format string) (*mcp.ToolsCallResult, error) {
+	domain, entityID, errMsg := resolveTraceGetTarget(args)
+	if errMsg != "" {
 		return errorResult(errMsg), nil
 	}
 
 	itemID, resolved := resolveTraceItemID(ctx, client, domain, entityID)
+
+	runID, _ := args["run_id"].(string)
+	selectedRunID := ""
+	if runID == "" {
+		latest, result := latestTraceRunID(ctx, client, domain, itemID, entityID, resolved, format)
+		if result != nil {
+			return result, nil
+		}
+		runID, selectedRunID = latest, latest
+	}
 
 	// Build command data
 	data := map[string]any{
@@ -341,28 +388,83 @@ func (h *TraceHandlers) handleGetTrace(ctx context.Context, client homeassistant
 		warning = unresolvedItemIDWarning(entityID)
 	}
 
-	// Format output
 	if format == formatJSON {
-		if warning != "" {
-			jsonData, marshalErr := json.MarshalIndent(map[string]any{"trace": response, "warning": warning}, "", "  ")
-			if marshalErr != nil {
-				return errorResult(fmt.Sprintf("failed to marshal trace: %v", marshalErr)), nil
-			}
-			return successResult(string(jsonData)), nil
-		}
-		jsonData, err := json.MarshalIndent(response, "", "  ")
-		if err != nil {
-			return errorResult(fmt.Sprintf("failed to marshal trace: %v", err)), nil
-		}
-		return successResult(string(jsonData)), nil
+		return formatTraceGetJSON(response, selectedRunID, warning)
 	}
 
 	// Natural format
 	natural := h.formatTraceNatural(response)
+	if selectedRunID != "" {
+		natural = fmt.Sprintf("Run ID: %s (latest)\n\n%s", selectedRunID, natural)
+	}
 	if warning != "" {
 		natural += "\n\n" + warning
 	}
 	return successResult(natural), nil
+}
+
+// latestTraceRunID lists the traces under itemID and returns the newest run_id. When there is
+// none (or trace/list fails) it returns the finished tool result instead: an error for a failed
+// call, otherwise a non-error "no traces" message - the unresolved-item_id warning when the
+// lookup key itself is suspect, so the caller doesn't retry something that can never succeed.
+func latestTraceRunID(ctx context.Context, client homeassistant.Client, domain, itemID, entityID string, resolved bool, format string) (string, *mcp.ToolsCallResult) {
+	response, err := client.SendHACSCommand(ctx, "trace/list", map[string]any{
+		"domain":  domain,
+		"item_id": itemID,
+	})
+	if err != nil {
+		return "", errorResult(fmt.Sprintf("failed to list traces: %v", err))
+	}
+
+	if latest := latestTraceEntry(parseTraceListResponse(response)); latest != nil {
+		if runID := getMapString(latest, "run_id", ""); runID != "" {
+			return runID, nil
+		}
+	}
+
+	warning := unresolvedItemIDWarning(entityID)
+	if resolved {
+		warning = fmt.Sprintf("No traces found for %s. Home Assistant records traces asynchronously - if you just "+
+			"triggered it, the trace may not be available yet. Retry in a moment, or poll with "+
+			"manage_trace action=list wait=true.", entityID)
+	}
+	if format != formatJSON {
+		return "", successResult(warning)
+	}
+	jsonData, err := json.MarshalIndent(map[string]any{"trace": nil, "warning": warning}, "", "  ")
+	if err != nil {
+		return "", errorResult(fmt.Sprintf("failed to marshal trace: %v", err))
+	}
+	return "", successResult(string(jsonData))
+}
+
+// formatTraceGetJSON renders the get action's JSON output. A warning wraps the response as
+// {"trace", "warning"}. A defaulted run adds "selected_run_id" next to the trace's own keys, so the
+// shape stays the same as an explicit-run_id call; an explicit call is marshaled unchanged.
+func formatTraceGetJSON(response any, selectedRunID, warning string) (*mcp.ToolsCallResult, error) {
+	toMarshal := response
+	switch {
+	case warning != "":
+		wrapped := map[string]any{"trace": response, "warning": warning}
+		if selectedRunID != "" {
+			wrapped["selected_run_id"] = selectedRunID
+		}
+		toMarshal = wrapped
+	case selectedRunID != "":
+		if traceMap, ok := response.(map[string]any); ok {
+			withRun := make(map[string]any, len(traceMap)+1)
+			maps.Copy(withRun, traceMap)
+			withRun["selected_run_id"] = selectedRunID
+			toMarshal = withRun
+		} else {
+			toMarshal = map[string]any{"trace": response, "selected_run_id": selectedRunID}
+		}
+	}
+	jsonData, err := json.MarshalIndent(toMarshal, "", "  ")
+	if err != nil {
+		return errorResult(fmt.Sprintf("failed to marshal trace: %v", err)), nil
+	}
+	return successResult(string(jsonData)), nil
 }
 
 // formatTracesNatural formats a list of traces in natural language.

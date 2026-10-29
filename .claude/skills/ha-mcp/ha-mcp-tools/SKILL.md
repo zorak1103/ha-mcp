@@ -44,6 +44,7 @@ description: "Use when choosing which ha-mcp tool or action to call. Examples: \
 | Locate content in a large dashboard (avoid size-limit errors) | `manage_dashboard` action=find search=&lt;string/entity_id&gt;   |
 | Install / uninstall a HACS add-on                    | `manage_hacs` action=download/uninstall                                |
 | View automation / script execution trace             | `manage_trace` action=list/get                                         |
+| Read an automation's newest trace in one call        | `manage_trace` action=get automation_id=&lt;id&gt; (run_id optional)   |
 | Import a blueprint                                   | `manage_blueprint` action=import                                       |
 | Check for HA / add-on updates                        | `manage_update` action=list (pending_only=true)                        |
 | Manage todo list items                               | `manage_todo`                                                          |

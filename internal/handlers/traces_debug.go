@@ -181,27 +181,7 @@ func (h *TraceHandlers) fetchLatestTrace(ctx context.Context, client homeassista
 		return nil, resolved
 	}
 
-	traces := parseTraceListResponse(response)
-	if len(traces) == 0 {
-		return nil, resolved
-	}
-
-	// Find the trace with the most recent start timestamp (ISO timestamps sort lexicographically).
-	// HA's trace/list returns traces in insertion order (oldest first), so the first element is
-	// NOT the latest - it must be resolved by comparing timestamps.
-	var latest map[string]any
-	var latestStart string
-	for _, t := range traces {
-		traceMap, ok := t.(map[string]any)
-		if !ok {
-			continue
-		}
-		start, _ := traceTimestamps(traceMap)
-		if latest == nil || start > latestStart {
-			latest = traceMap
-			latestStart = start
-		}
-	}
+	latest := latestTraceEntry(parseTraceListResponse(response))
 	if latest == nil {
 		return nil, resolved
 	}
