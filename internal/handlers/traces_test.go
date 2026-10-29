@@ -272,6 +272,104 @@ func TestManageTrace_Get(t *testing.T) {
 	}
 }
 
+// TestHandleGetTrace_ExplicitParamsBackwardCompat pins the get action's explicit
+// domain+entity_id+run_id call: the exact trace/get payload and the exact natural and json
+// output. Adding automation_id and a latest-run default to get must keep this path unchanged.
+func TestHandleGetTrace_ExplicitParamsBackwardCompat(t *testing.T) {
+	t.Parallel()
+
+	response := map[string]any{
+		"run_id":           "abc123",
+		"state":            "stopped",
+		"trigger":          "state of input_button.press",
+		"script_execution": "finished",
+		"trace": map[string]any{
+			"condition/0": []any{},
+			"action/0":    []any{},
+			"action/1":    []any{},
+		},
+	}
+
+	tests := []struct {
+		name   string
+		format string
+		want   string
+	}{
+		{
+			name:   "natural",
+			format: "",
+			want: "Trace Execution Path:\n\nState: stopped\n\nTrigger: state of input_button.press" +
+				"\n\nResult: finished\n\nConditions: 1 evaluated\n\nActions: 2 executed",
+		},
+		{
+			name:   "json",
+			format: "json",
+			want: `{
+  "run_id": "abc123",
+  "script_execution": "finished",
+  "state": "stopped",
+  "trace": {
+    "action/0": [],
+    "action/1": [],
+    "condition/0": []
+  },
+  "trigger": "state of input_button.press"
+}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var calls int
+			client := &UniversalMockClient{
+				GetEntityRegistryEntryFn: func(_ context.Context, entityID string) (*homeassistant.EntityRegistryEntry, error) {
+					return &homeassistant.EntityRegistryEntry{EntityID: entityID, UniqueID: "1700000000001"}, nil
+				},
+				SendHACSCommandFn: func(_ context.Context, cmd string, data map[string]any) (any, error) {
+					calls++
+					if cmd != "trace/get" {
+						t.Errorf("cmd = %q, want %q", cmd, "trace/get")
+					}
+					wantData := map[string]any{"domain": "automation", "item_id": "1700000000001", "run_id": "abc123"}
+					if fmt.Sprint(data) != fmt.Sprint(wantData) {
+						t.Errorf("data = %v, want %v", data, wantData)
+					}
+					return response, nil
+				},
+			}
+
+			args := map[string]any{
+				"action":    "get",
+				"domain":    "automation",
+				"entity_id": "automation.test",
+				"run_id":    "abc123",
+			}
+			if tt.format != "" {
+				args["format"] = tt.format
+			}
+
+			result, err := NewTraceHandlers().HandleManageTrace(context.Background(), client, args)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if calls != 1 {
+				t.Errorf("SendHACSCommand calls = %d, want 1 (no extra trace/list lookup)", calls)
+			}
+			if result.IsError {
+				t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+			}
+			if len(result.Content) != 1 {
+				t.Fatalf("len(Content) = %d, want 1", len(result.Content))
+			}
+			if got := result.Content[0].Text; got != tt.want {
+				t.Errorf("output mismatch\ngot:\n%s\nwant:\n%s", got, tt.want)
+			}
+		})
+	}
+}
+
 // TestManageTrace_Get_DomainEntityIDMismatch verifies that a domain/entity_id prefix conflict
 // is rejected rather than silently resolving against the wrong domain (which could return
 // another entity's traces - see resolveTraceListParams's identical check for the list action).
