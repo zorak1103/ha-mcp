@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"testing"
 	"time"
@@ -676,6 +677,9 @@ func TestManageTrace_List_MissingDomainAndEntityID(t *testing.T) {
 }
 
 // TestManageTrace_GetMissingParams verifies validation for get action.
+// A missing domain (derived from the entity_id prefix) and a missing run_id (defaults to the
+// latest run) are no longer errors - see TestResolveTraceGetTarget and
+// TestManageTrace_Get_LatestRun. Only a missing target remains one.
 func TestManageTrace_GetMissingParams(t *testing.T) {
 	t.Parallel()
 
@@ -684,15 +688,7 @@ func TestManageTrace_GetMissingParams(t *testing.T) {
 		args map[string]any
 	}{
 		{
-			name: "missing domain",
-			args: map[string]any{
-				"action":    "get",
-				"entity_id": "automation.test",
-				"run_id":    "abc123",
-			},
-		},
-		{
-			name: "missing entity_id",
+			name: "missing entity_id and automation_id",
 			args: map[string]any{
 				"action": "get",
 				"domain": "automation",
@@ -700,11 +696,9 @@ func TestManageTrace_GetMissingParams(t *testing.T) {
 			},
 		},
 		{
-			name: "missing run_id",
+			name: "missing entity_id, automation_id and run_id",
 			args: map[string]any{
-				"action":    "get",
-				"domain":    "automation",
-				"entity_id": "automation.test",
+				"action": "get",
 			},
 		},
 	}
@@ -726,6 +720,9 @@ func TestManageTrace_GetMissingParams(t *testing.T) {
 			}
 			if !result.IsError {
 				t.Error("expected IsError to be true")
+			}
+			if !strings.Contains(result.Content[0].Text, "automation_id") {
+				t.Errorf("error text should name automation_id as an alternative: %s", result.Content[0].Text)
 			}
 		})
 	}
@@ -1004,5 +1001,322 @@ func TestFormatTracesNatural_DictTimestamp(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("output missing %q\nfull output:\n%s", want, got)
 		}
+	}
+}
+
+// TestResolveTraceGetTarget covers how the get action turns automation_id / entity_id / domain
+// into one trace target: automation_id is an alternative spelling of an automation entity_id,
+// the domain is derived from the prefix, and any disagreement between the three is an error
+// rather than a silent pick.
+func TestResolveTraceGetTarget(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		args         map[string]any
+		wantDomain   string
+		wantEntityID string
+		wantErr      string // substring; "" means success
+	}{
+		{
+			name:         "bare automation_id",
+			args:         map[string]any{"automation_id": "morning_routine"},
+			wantDomain:   "automation",
+			wantEntityID: "automation.morning_routine",
+		},
+		{
+			name:         "prefixed automation_id",
+			args:         map[string]any{"automation_id": "automation.morning_routine"},
+			wantDomain:   "automation",
+			wantEntityID: "automation.morning_routine",
+		},
+		{
+			name:         "entity_id without domain derives it",
+			args:         map[string]any{"entity_id": "script.wake_up"},
+			wantDomain:   "script",
+			wantEntityID: "script.wake_up",
+		},
+		{
+			name:         "explicit matching domain and entity_id",
+			args:         map[string]any{"domain": "automation", "entity_id": "automation.test"},
+			wantDomain:   "automation",
+			wantEntityID: "automation.test",
+		},
+		{
+			name:         "automation_id agreeing with entity_id",
+			args:         map[string]any{"automation_id": "test", "entity_id": "automation.test"},
+			wantDomain:   "automation",
+			wantEntityID: "automation.test",
+		},
+		{
+			name:    "automation_id conflicting with entity_id",
+			args:    map[string]any{"automation_id": "test", "entity_id": "automation.other"},
+			wantErr: "conflicts with entity_id",
+		},
+		{
+			name:    "automation_id with domain script",
+			args:    map[string]any{"automation_id": "test", "domain": "script"},
+			wantErr: "conflicts with explicit domain",
+		},
+		{
+			name:    "automation_id with a non-automation prefix",
+			args:    map[string]any{"automation_id": "light.kitchen"},
+			wantErr: "automation_id",
+		},
+		{
+			name:    "no target at all",
+			args:    map[string]any{"domain": "automation"},
+			wantErr: "entity_id or automation_id is required",
+		},
+		{
+			name:    "entity_id conflicting with domain",
+			args:    map[string]any{"domain": "automation", "entity_id": "script.foo"},
+			wantErr: "conflicts with explicit domain",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			domain, entityID, errMsg := resolveTraceGetTarget(tt.args)
+			if tt.wantErr != "" {
+				if !strings.Contains(errMsg, tt.wantErr) {
+					t.Errorf("errMsg = %q, want it to contain %q", errMsg, tt.wantErr)
+				}
+				return
+			}
+			if errMsg != "" {
+				t.Fatalf("unexpected errMsg: %s", errMsg)
+			}
+			if domain != tt.wantDomain || entityID != tt.wantEntityID {
+				t.Errorf("got (%q, %q), want (%q, %q)", domain, entityID, tt.wantDomain, tt.wantEntityID)
+			}
+		})
+	}
+}
+
+// TestLatestTraceEntry verifies the newest-by-start selection independent of list order
+// (HA returns traces oldest first, but the selection must not rely on that either way).
+func TestLatestTraceEntry(t *testing.T) {
+	t.Parallel()
+
+	trace := func(runID, start string) map[string]any {
+		return map[string]any{"run_id": runID, "timestamp": map[string]any{"start": start}}
+	}
+
+	tests := []struct {
+		name      string
+		traces    []any
+		wantRunID string // "" means nil result
+	}{
+		{name: "nil list", traces: nil},
+		{name: "only non-map entries", traces: []any{"junk", 42}},
+		{
+			name: "newest in the middle",
+			traces: []any{
+				trace("r1", "2026-10-29T08:00:00Z"),
+				trace("r3", "2026-10-29T10:00:00Z"),
+				trace("r2", "2026-10-29T09:00:00Z"),
+			},
+			wantRunID: "r3",
+		},
+		{
+			name:      "non-map entries are skipped",
+			traces:    []any{"junk", trace("r1", "2026-10-29T08:00:00Z")},
+			wantRunID: "r1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := latestTraceEntry(tt.traces)
+			if tt.wantRunID == "" {
+				if got != nil {
+					t.Errorf("latestTraceEntry = %v, want nil", got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatalf("latestTraceEntry = nil, want run_id %q", tt.wantRunID)
+			}
+			if runID := getMapString(got, "run_id", ""); runID != tt.wantRunID {
+				t.Errorf("run_id = %q, want %q", runID, tt.wantRunID)
+			}
+		})
+	}
+}
+
+// TestManageTrace_Get_LatestRun verifies that get without run_id lists the traces under the same
+// resolved item_id, fetches the newest one, and says which run it picked.
+func TestManageTrace_Get_LatestRun(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		args    map[string]any
+		wantOut []string
+	}{
+		{
+			name:    "bare automation_id, natural",
+			args:    map[string]any{"automation_id": "morning_routine"},
+			wantOut: []string{"Run ID: r3 (latest)\n\nTrace Execution Path:", "State: stopped"},
+		},
+		{
+			name:    "prefixed automation_id, json",
+			args:    map[string]any{"automation_id": "automation.morning_routine", "format": "json"},
+			wantOut: []string{`"selected_run_id": "r3"`, `"run_id": "r3"`, `"state": "stopped"`},
+		},
+		{
+			name:    "entity_id without domain or run_id",
+			args:    map[string]any{"entity_id": "automation.morning_routine"},
+			wantOut: []string{"Run ID: r3 (latest)"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var cmds []string
+			client := &UniversalMockClient{
+				GetEntityRegistryEntryFn: func(_ context.Context, entityID string) (*homeassistant.EntityRegistryEntry, error) {
+					if entityID != "automation.morning_routine" {
+						t.Errorf("registry lookup for %q, want automation.morning_routine", entityID)
+					}
+					return &homeassistant.EntityRegistryEntry{EntityID: entityID, UniqueID: "1700000000001"}, nil
+				},
+				SendHACSCommandFn: func(_ context.Context, cmd string, data map[string]any) (any, error) {
+					cmds = append(cmds, cmd)
+					switch cmd {
+					case "trace/list":
+						wantData := map[string]any{"domain": "automation", "item_id": "1700000000001"}
+						if fmt.Sprint(data) != fmt.Sprint(wantData) {
+							t.Errorf("trace/list data = %v, want %v", data, wantData)
+						}
+						return []any{
+							map[string]any{"run_id": "r1", "timestamp": map[string]any{"start": "2026-10-29T08:00:00Z"}},
+							map[string]any{"run_id": "r3", "timestamp": map[string]any{"start": "2026-10-29T10:00:00Z"}},
+							map[string]any{"run_id": "r2", "timestamp": map[string]any{"start": "2026-10-29T09:00:00Z"}},
+						}, nil
+					case "trace/get":
+						wantData := map[string]any{"domain": "automation", "item_id": "1700000000001", "run_id": "r3"}
+						if fmt.Sprint(data) != fmt.Sprint(wantData) {
+							t.Errorf("trace/get data = %v, want %v", data, wantData)
+						}
+						return map[string]any{"run_id": "r3", "state": "stopped"}, nil
+					}
+					return nil, fmt.Errorf("wrong command: %s", cmd)
+				},
+			}
+
+			args := map[string]any{"action": "get"}
+			maps.Copy(args, tt.args)
+			result, err := NewTraceHandlers().HandleManageTrace(context.Background(), client, args)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result.IsError {
+				t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+			}
+			if fmt.Sprint(cmds) != "[trace/list trace/get]" {
+				t.Errorf("commands = %v, want [trace/list trace/get]", cmds)
+			}
+			text := result.Content[0].Text
+			for _, want := range tt.wantOut {
+				if !strings.Contains(text, want) {
+					t.Errorf("output missing %q\nfull output:\n%s", want, text)
+				}
+			}
+		})
+	}
+}
+
+// TestManageTrace_Get_LatestRunNoTraces verifies that get without run_id and an empty trace list
+// returns an explanatory (non-error) message without calling trace/get, and that a failed item_id
+// resolution gets the unresolved-item_id warning instead of the generic "not recorded yet" text.
+func TestManageTrace_Get_LatestRunNoTraces(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		resolved bool
+		format   string
+		want     string
+		dontWant string
+	}{
+		{name: "resolved, natural", resolved: true, want: "No traces found for automation.ev_charging", dontWant: "could not be resolved"},
+		{name: "resolved, json", resolved: true, format: "json", want: `"warning": "No traces found for automation.ev_charging`, dontWant: "could not be resolved"},
+		{name: "unresolved, natural", want: "could not be resolved"},
+		{name: "unresolved, json", format: "json", want: "could not be resolved"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			client := &UniversalMockClient{
+				SendHACSCommandFn: func(_ context.Context, cmd string, _ map[string]any) (any, error) {
+					if cmd != "trace/list" {
+						t.Errorf("unexpected command %q: trace/get must not run without a trace", cmd)
+					}
+					return []any{}, nil
+				},
+			}
+			if tt.resolved {
+				client.GetEntityRegistryEntryFn = func(_ context.Context, entityID string) (*homeassistant.EntityRegistryEntry, error) {
+					return &homeassistant.EntityRegistryEntry{EntityID: entityID, UniqueID: "ev_charging"}, nil
+				}
+			}
+
+			args := map[string]any{"action": "get", "automation_id": "ev_charging"}
+			if tt.format != "" {
+				args["format"] = tt.format
+			}
+			result, err := NewTraceHandlers().HandleManageTrace(context.Background(), client, args)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result.IsError {
+				t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+			}
+			text := result.Content[0].Text
+			if !strings.Contains(text, tt.want) {
+				t.Errorf("output missing %q\nfull output:\n%s", tt.want, text)
+			}
+			if tt.dontWant != "" && strings.Contains(text, tt.dontWant) {
+				t.Errorf("output must not contain %q\nfull output:\n%s", tt.dontWant, text)
+			}
+		})
+	}
+}
+
+// TestManageTrace_Get_LatestRunListError verifies a failing trace/list surfaces as an error result.
+func TestManageTrace_Get_LatestRunListError(t *testing.T) {
+	t.Parallel()
+
+	client := &UniversalMockClient{
+		SendHACSCommandFn: func(_ context.Context, cmd string, _ map[string]any) (any, error) {
+			if cmd != "trace/list" {
+				t.Errorf("unexpected command %q", cmd)
+			}
+			return nil, errors.New("connection lost")
+		},
+	}
+
+	result, err := NewTraceHandlers().HandleManageTrace(context.Background(), client, map[string]any{
+		"action":        "get",
+		"automation_id": "ev_charging",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected error result, got: %s", result.Content[0].Text)
+	}
+	if !strings.Contains(result.Content[0].Text, "failed to list traces") {
+		t.Errorf("error text = %q, want it to mention the trace/list failure", result.Content[0].Text)
 	}
 }

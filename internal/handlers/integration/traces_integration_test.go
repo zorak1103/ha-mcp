@@ -120,12 +120,59 @@ func (s *TraceIntegrationTestSuite) TestGetTrace() {
 // list from HA's trace API, not an error, which is why the pre-fix version of this suite (a
 // raw trace/list call with item_id=entity_id, asserting only NoError/NotNil) never caught it.
 func (s *TraceIntegrationTestSuite) TestManageTraceList_FiltersByEntityAfterTrigger() {
+	_, automationEntityID, traces := s.createTriggeredAutomationWithTrace()
+
+	s.T().Logf("Found %d trace(s) for %s", len(traces), automationEntityID)
+}
+
+// TestGetTrace_LatestByAutomationID verifies manage_trace get with only a bare automation_id (no
+// domain, entity_id or run_id) resolves the automation, picks its newest run and returns it.
+func (s *TraceIntegrationTestSuite) TestGetTrace_LatestByAutomationID() {
+	automationID, _, traces := s.createTriggeredAutomationWithTrace()
+
+	result := s.CallTool("manage_trace", map[string]any{
+		"action":        "get",
+		"automation_id": automationID,
+		"format":        "json",
+	})
+	s.Require().False(result.IsError, "manage_trace get should succeed: %s", resultText(result))
+
+	var trace map[string]any
+	err := json.Unmarshal([]byte(resultText(result)), &trace)
+	s.Require().NoError(err, "manage_trace get JSON should parse as an object")
+	s.Require().NotContains(trace, "warning", "no warning expected for a resolved automation with a trace")
+
+	selected, _ := trace["selected_run_id"].(string)
+	s.Require().NotEmpty(selected, "selected_run_id must be reported when run_id is defaulted")
+	s.Equal(selected, trace["run_id"], "the returned trace must be the selected run")
+
+	runIDs := make([]any, 0, len(traces))
+	for _, t := range traces {
+		if m, ok := t.(map[string]any); ok {
+			runIDs = append(runIDs, m["run_id"])
+		}
+	}
+	s.Contains(runIDs, selected, "selected run must be one of the listed traces")
+
+	// Natural format names the defaulted run on the first line.
+	natural := s.CallTool("manage_trace", map[string]any{
+		"action":        "get",
+		"automation_id": automationID,
+	})
+	s.Require().False(natural.IsError, "manage_trace get (natural) should succeed: %s", resultText(natural))
+	s.Contains(resultText(natural), "(latest)")
+}
+
+// createTriggeredAutomationWithTrace creates a state-triggered mcptest_ automation, fires it via an
+// input_button press and waits (manage_trace list wait=true) until it has at least one trace.
+// Returns the bare automation id, its entity_id, and the trace list.
+func (s *TraceIntegrationTestSuite) createTriggeredAutomationWithTrace() (automationID, automationEntityID string, traces []any) {
 	targetName := GenerateTestID("trace_target")
 	targetEntityID := BuildEntityID("input_boolean", targetName)
 	triggerName := GenerateTestID("trace_trigger")
 	triggerEntityID := BuildEntityID("input_button", triggerName)
-	automationID := GenerateTestID("trace_automation")
-	automationEntityID := BuildEntityID("automation", automationID)
+	automationID = GenerateTestID("trace_automation")
+	automationEntityID = BuildEntityID("automation", automationID)
 
 	s.RegisterCleanup(func() {
 		_ = s.Client().DeleteAutomation(s.Context(), automationID)
@@ -182,13 +229,12 @@ func (s *TraceIntegrationTestSuite) TestManageTraceList_FiltersByEntityAfterTrig
 	})
 	s.Require().False(result.IsError, "manage_trace list should succeed: %s", resultText(result))
 
-	var traces []any
 	err = json.Unmarshal([]byte(resultText(result)), &traces)
 	s.Require().NoError(err, "manage_trace list JSON should parse as an array")
 	s.Require().NotEmpty(traces, "expected at least one trace for %s after triggering it - an empty "+
 		"result here means entity_id was not correctly resolved to HA's trace item_id", automationEntityID)
 
-	s.T().Logf("Found %d trace(s) for %s", len(traces), automationEntityID)
+	return automationID, automationEntityID, traces
 }
 
 // TestDebugAutomation verifies that all 4 API calls used by the debug action work against real HA.
