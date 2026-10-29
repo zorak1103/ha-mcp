@@ -218,6 +218,8 @@ Universal tool for runtime helper operations:
 
 In correlation mode a failed logbook fetch for one entity is reported in a trailing `WARNING` block while the other entities are still analyzed; if every fetch fails the call is an error.
 
+Correlation groups need events from at least 2 distinct entities, so correlation mode needs at least 2 `entity_ids`. With only one (after deduplication), the report has no groups and carries a hint pointing to `mode=entries`: a `hint` field in `json`, and a closing hint sentence in place of the "No correlated events found" text in `natural`.
+
 ### Configuration Tools
 
 | Tool              | Description                                                  |
