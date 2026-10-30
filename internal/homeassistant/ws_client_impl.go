@@ -88,13 +88,17 @@ func (c *wsClientImpl) SetState(_ context.Context, _ string, _ StateUpdate) (*En
 // GetHistory retrieves historical state changes for the given entities, keyed by entity ID.
 // HA's compressed rows carry no entity_id, so the map is what keeps the identity. An
 // entity HA returns no rows for is absent from the map.
-func (c *wsClientImpl) GetHistory(ctx context.Context, entityIDs []string, start, end time.Time) (map[string][]HistoryEntry, error) {
+func (c *wsClientImpl) GetHistory(ctx context.Context, entityIDs []string, start, end time.Time, opts HistoryOptions) (map[string][]HistoryEntry, error) {
 	if len(entityIDs) == 0 {
 		return nil, fmt.Errorf("history requires at least one entity ID")
 	}
 	params := map[string]any{
 		"start_time": start.Format(time.RFC3339),
 		"entity_ids": entityIDs,
+	}
+	if opts.AllUpdates {
+		// HA's default keeps attribute-only updates only for a handful of domains.
+		params["significant_changes_only"] = false
 	}
 	if !end.IsZero() {
 		params["end_time"] = end.Format(time.RFC3339)

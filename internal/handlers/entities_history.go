@@ -38,24 +38,38 @@ func (h *ConsolidatedEntityQueryHandlers) handleHistory(
 		return errorResult(err.Error()), nil
 	}
 
-	history, err := client.GetHistory(ctx, params.entityIDs, params.startTime, params.endTime)
+	// Attribute-only updates are dropped by HA's default query outside a few domains.
+	opts := homeassistant.HistoryOptions{AllUpdates: params.attribute != ""}
+	history, err := client.GetHistory(ctx, params.entityIDs, params.startTime, params.endTime, opts)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Error getting history: %v", err)), nil
 	}
 
-	sections := buildHistorySections(ctx, client, history, params)
-
-	var text string
-	if params.format == formatter.FormatNatural {
-		text, err = formatHistorySectionsNatural(ctx, sections, params)
-	} else {
-		text, err = formatHistorySectionsJSON(sections, params)
-	}
+	text, err := renderHistory(ctx, client, history, params)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Error formatting history: %v", err)), nil
 	}
 
 	return &mcp.ToolsCallResult{Content: []mcp.ContentBlock{mcp.NewTextContent(text)}}, nil
+}
+
+// renderHistory formats the fetched rows as state sections or, with attribute set, as
+// that attribute's transitions.
+func renderHistory(
+	ctx context.Context,
+	client homeassistant.Client,
+	history map[string][]homeassistant.HistoryEntry,
+	params *historyParams,
+) (string, error) {
+	if params.attribute != "" {
+		return renderAttributeHistory(ctx, client, history, params)
+	}
+
+	sections := buildHistorySections(ctx, client, history, params)
+	if params.format == formatter.FormatNatural {
+		return formatHistorySectionsNatural(ctx, sections, params)
+	}
+	return formatHistorySectionsJSON(sections, params)
 }
 
 // buildHistorySections applies state and limit to each requested entity's rows. GetState

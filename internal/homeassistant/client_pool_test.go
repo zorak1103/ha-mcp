@@ -124,7 +124,7 @@ func (m *mockClientForPool) GetState(_ context.Context, _ string) (*Entity, erro
 func (m *mockClientForPool) SetState(_ context.Context, _ string, _ StateUpdate) (*Entity, error) {
 	return nil, nil
 }
-func (m *mockClientForPool) GetHistory(_ context.Context, _ []string, _, _ time.Time) (map[string][]HistoryEntry, error) {
+func (m *mockClientForPool) GetHistory(_ context.Context, _ []string, _, _ time.Time, _ HistoryOptions) (map[string][]HistoryEntry, error) {
 	return nil, nil
 }
 func (m *mockClientForPool) CallService(_ context.Context, _, _ string, _ map[string]any) ([]Entity, error) {

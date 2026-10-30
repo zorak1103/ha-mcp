@@ -335,7 +335,7 @@ func TestWSClientImpl_GetHistory(t *testing.T) {
 	start := time.Now().Add(-24 * time.Hour)
 	end := time.Now()
 
-	history, err := impl.GetHistory(ctx, []string{"sensor.temperature"}, start, end)
+	history, err := impl.GetHistory(ctx, []string{"sensor.temperature"}, start, end, HistoryOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -370,7 +370,7 @@ func TestWSClientImpl_GetHistory_MultipleEntities(t *testing.T) {
 	})
 
 	ids := []string{"sensor.a", "sensor.b", "sensor.gone"}
-	history, err := impl.GetHistory(context.Background(), ids, time.Now().Add(-time.Hour), time.Time{})
+	history, err := impl.GetHistory(context.Background(), ids, time.Now().Add(-time.Hour), time.Time{}, HistoryOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -387,6 +387,46 @@ func TestWSClientImpl_GetHistory_MultipleEntities(t *testing.T) {
 	}
 }
 
+// significant_changes_only is HA's default (true) and hides attribute-only updates outside a few
+// domains, so it is sent as false only when the caller asks for every update.
+func TestWSClientImpl_GetHistory_AllUpdatesOption(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		opts     HistoryOptions
+		wantSent bool
+	}{
+		{name: "default leaves the HA default alone", opts: HistoryOptions{}, wantSent: false},
+		{name: "all updates disables significant_changes_only", opts: HistoryOptions{AllUpdates: true}, wantSent: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var params map[string]any
+			impl := newWSClientImplWithSender(&mockWSClientSender{
+				sendCommandFunc: func(_ context.Context, _ string, p map[string]any) (*WSResultMessage, error) {
+					params = p
+					return makeWSResultMsg(map[string][]HistoryEntry{}), nil
+				},
+			})
+
+			if _, err := impl.GetHistory(context.Background(), []string{"sensor.a"}, time.Now().Add(-time.Hour), time.Time{}, tt.opts); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			got, present := params["significant_changes_only"]
+			if present != tt.wantSent {
+				t.Fatalf("significant_changes_only present = %v, want %v (params %v)", present, tt.wantSent, params)
+			}
+			if tt.wantSent && got != false {
+				t.Errorf("significant_changes_only = %v, want false", got)
+			}
+		})
+	}
+}
+
 func TestWSClientImpl_GetHistory_NoEntityIDs(t *testing.T) {
 	t.Parallel()
 
@@ -397,7 +437,7 @@ func TestWSClientImpl_GetHistory_NoEntityIDs(t *testing.T) {
 		},
 	})
 
-	if _, err := impl.GetHistory(context.Background(), nil, time.Now().Add(-time.Hour), time.Time{}); err == nil {
+	if _, err := impl.GetHistory(context.Background(), nil, time.Now().Add(-time.Hour), time.Time{}, HistoryOptions{}); err == nil {
 		t.Fatal("expected an error for an empty entity ID list")
 	}
 }
@@ -1504,7 +1544,7 @@ func TestWSClientImplWithSender_GetHistory(t *testing.T) {
 
 	client := newWSClientImplWithSender(mock)
 	start := time.Now().Add(-24 * time.Hour)
-	history, err := client.GetHistory(context.Background(), []string{"sensor.temp"}, start, time.Time{})
+	history, err := client.GetHistory(context.Background(), []string{"sensor.temp"}, start, time.Time{}, HistoryOptions{})
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1529,7 +1569,7 @@ func TestWSClientImplWithSender_GetHistory_WithEndTime(t *testing.T) {
 	client := newWSClientImplWithSender(mock)
 	start := time.Now().Add(-24 * time.Hour)
 	end := time.Now()
-	_, err := client.GetHistory(context.Background(), []string{"sensor.temp"}, start, end)
+	_, err := client.GetHistory(context.Background(), []string{"sensor.temp"}, start, end, HistoryOptions{})
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -2616,7 +2656,7 @@ func TestWSClientImplWithSender_GetHistory_Error(t *testing.T) {
 	}
 
 	client := newWSClientImplWithSender(mock)
-	_, err := client.GetHistory(context.Background(), []string{"sensor.temp"}, time.Now(), time.Time{})
+	_, err := client.GetHistory(context.Background(), []string{"sensor.temp"}, time.Now(), time.Time{}, HistoryOptions{})
 
 	if err == nil || !strings.Contains(err.Error(), "history command failed") {
 		t.Errorf("expected history command failed error, got: %v", err)
@@ -2633,7 +2673,7 @@ func TestWSClientImplWithSender_GetHistory_UnmarshalError(t *testing.T) {
 	}
 
 	client := newWSClientImplWithSender(mock)
-	_, err := client.GetHistory(context.Background(), []string{"sensor.temp"}, time.Now(), time.Time{})
+	_, err := client.GetHistory(context.Background(), []string{"sensor.temp"}, time.Now(), time.Time{}, HistoryOptions{})
 
 	if err == nil || !strings.Contains(err.Error(), "failed to unmarshal") {
 		t.Errorf("expected unmarshal error, got: %v", err)
@@ -3297,7 +3337,7 @@ func TestWSClientImplWithSender_GetHistory_BothStartAndEnd(t *testing.T) {
 	client := newWSClientImplWithSender(mock)
 	start := time.Now().Add(-1 * time.Hour)
 	end := time.Now()
-	history, err := client.GetHistory(context.Background(), []string{"sensor.temp"}, start, end)
+	history, err := client.GetHistory(context.Background(), []string{"sensor.temp"}, start, end, HistoryOptions{})
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

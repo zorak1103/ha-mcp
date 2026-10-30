@@ -459,7 +459,7 @@ type mockWSOperations struct {
 	getStatesFunc                 func(ctx context.Context) ([]Entity, error)
 	getStateFunc                  func(ctx context.Context, entityID string) (*Entity, error)
 	setStateFunc                  func(ctx context.Context, entityID string, state StateUpdate) (*Entity, error)
-	getHistoryFunc                func(ctx context.Context, entityIDs []string, start, end time.Time) (map[string][]HistoryEntry, error)
+	getHistoryFunc                func(ctx context.Context, entityIDs []string, start, end time.Time, opts HistoryOptions) (map[string][]HistoryEntry, error)
 	callServiceFunc               func(ctx context.Context, domain, service string, data map[string]any) ([]Entity, error)
 	callServiceWithResponseFunc   func(ctx context.Context, domain, service string, data map[string]any) (map[string]any, error)
 	listAutomationsFunc           func(ctx context.Context) ([]Automation, error)
@@ -550,9 +550,9 @@ func (m *mockWSOperations) SetState(ctx context.Context, entityID string, state 
 	return nil, nil
 }
 
-func (m *mockWSOperations) GetHistory(ctx context.Context, entityIDs []string, start, end time.Time) (map[string][]HistoryEntry, error) {
+func (m *mockWSOperations) GetHistory(ctx context.Context, entityIDs []string, start, end time.Time, opts HistoryOptions) (map[string][]HistoryEntry, error) {
 	if m.getHistoryFunc != nil {
-		return m.getHistoryFunc(ctx, entityIDs, start, end)
+		return m.getHistoryFunc(ctx, entityIDs, start, end, opts)
 	}
 	return nil, nil
 }
@@ -2682,7 +2682,7 @@ func TestHybridClient_WSOperations_GetHistory(t *testing.T) {
 	t.Parallel()
 
 	mockWS := &mockWSOperations{
-		getHistoryFunc: func(_ context.Context, _ []string, _, _ time.Time) (map[string][]HistoryEntry, error) {
+		getHistoryFunc: func(_ context.Context, _ []string, _, _ time.Time, _ HistoryOptions) (map[string][]HistoryEntry, error) {
 			return map[string][]HistoryEntry{
 				"light.test": {{State: "on"}, {State: "off"}},
 			}, nil
@@ -2690,7 +2690,7 @@ func TestHybridClient_WSOperations_GetHistory(t *testing.T) {
 	}
 
 	client := NewHybridClientWithInterfaces(mockWS, &mockRESTOperations{})
-	history, err := client.GetHistory(context.Background(), []string{"light.test"}, time.Now().Add(-24*time.Hour), time.Now())
+	history, err := client.GetHistory(context.Background(), []string{"light.test"}, time.Now().Add(-24*time.Hour), time.Now(), HistoryOptions{})
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

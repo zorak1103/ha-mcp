@@ -49,7 +49,7 @@ func (m *mockHAClient) SetState(_ context.Context, _ string, _ homeassistant.Sta
 	return nil, nil
 }
 
-func (m *mockHAClient) GetHistory(_ context.Context, _ []string, _, _ time.Time) (map[string][]homeassistant.HistoryEntry, error) {
+func (m *mockHAClient) GetHistory(_ context.Context, _ []string, _, _ time.Time, _ homeassistant.HistoryOptions) (map[string][]homeassistant.HistoryEntry, error) {
 	return nil, nil
 }
 

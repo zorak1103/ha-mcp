@@ -41,7 +41,7 @@ type historyCall struct {
 
 func (c *historyCall) client(rows map[string][]homeassistant.HistoryEntry, existing ...string) *UniversalMockClient {
 	return &UniversalMockClient{
-		GetHistoryFn: func(_ context.Context, ids []string, _, _ time.Time) (map[string][]homeassistant.HistoryEntry, error) {
+		GetHistoryFn: func(_ context.Context, ids []string, _, _ time.Time, _ homeassistant.HistoryOptions) (map[string][]homeassistant.HistoryEntry, error) {
 			c.mu.Lock()
 			defer c.mu.Unlock()
 			c.ids = slices.Clone(ids)

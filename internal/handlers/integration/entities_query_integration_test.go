@@ -142,3 +142,104 @@ func (s *EntitiesQueryTestSuite) TestQueryEntitiesHistory_UnknownEntityGetsItsOw
 	// The natural section is titled with the friendly name, which for a helper is its name.
 	s.Contains(text, strings.TrimPrefix(idA, "input_boolean."), "the known entity keeps its own section")
 }
+
+// createInputNumber creates an input_number and returns its entity ID and name.
+// input_number is not one of the domains HA's default history query keeps attribute-only
+// updates for, so it exercises the significant_changes_only=false request. Its
+// friendly_name attribute is recorded; min, max, step and mode are not (the integration
+// excludes them from the recorder), so they can never show up in history.
+func (s *EntitiesQueryTestSuite) createInputNumber(suffix string) (entityID, name string) {
+	name = GenerateTestID(suffix)
+	entityID = BuildEntityID("input_number", name)
+
+	s.RegisterCleanup(func() {
+		_ = s.Client().DeleteHelper(s.Context(), entityID)
+	})
+	s.Require().NoError(s.Client().CreateHelper(s.Context(), homeassistant.HelperConfig{
+		Platform: "input_number",
+		Config:   map[string]any{"name": name, "min": 0.0, "max": 100.0, "initial": 50.0, "step": 1.0},
+	}), "failed to create input_number %s", suffix)
+	_, err := s.WaitForEntity(entityID, 10*time.Second)
+	s.Require().NoError(err)
+	return entityID, name
+}
+
+// renameInputNumber changes the helper's name through a config update: the entity_id and the
+// state stay, only the friendly_name attribute changes.
+func (s *EntitiesQueryTestSuite) renameInputNumber(entityID, newName string) {
+	s.Require().NoError(s.Client().UpdateHelper(s.Context(), ExtractEntityID(entityID), homeassistant.HelperConfig{
+		Platform: "input_number",
+		Config:   map[string]any{"name": newName, "min": 0.0, "max": 100.0, "step": 1.0},
+	}), "failed to rename %s to %s", entityID, newName)
+}
+
+type attributeChangeRow struct {
+	At    string `json:"at"`
+	Start bool   `json:"start"`
+	Old   string `json:"old"`
+	New   string `json:"new"`
+}
+
+// TestQueryEntitiesHistory_AttributeChanges verifies that attribute=<name> reports the
+// value at the start plus every later change as old -> new, for a domain whose
+// attribute-only updates HA drops by default (input_number), in both formats. Without the
+// significant_changes_only=false request only the first row would come back.
+func (s *EntitiesQueryTestSuite) TestQueryEntitiesHistory_AttributeChanges() {
+	entityID, name := s.createInputNumber("qh_attr")
+	second, third := name+"_b", name+"_c"
+	s.renameInputNumber(entityID, second)
+	time.Sleep(time.Second)
+	s.renameInputNumber(entityID, third)
+
+	// The recorder commits asynchronously: poll until both changes are visible.
+	var rows []attributeChangeRow
+	var text string
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		result := s.CallTool("query_entities", map[string]any{
+			"mode": "history", "entity_id": entityID, "attribute": "friendly_name", "hours": 1.0, "format": "json",
+		})
+		s.Require().False(result.IsError, "query_entities should succeed, got: %s", resultText(result))
+
+		text = resultText(result)
+		_, body, ok := strings.Cut(text, "\n\n")
+		s.Require().True(ok, "expected a summary followed by a JSON body, got: %s", text)
+		rows = nil
+		s.Require().NoError(json.Unmarshal([]byte(body), &rows), "parsing attribute history: %s", body)
+		if len(rows) >= 3 {
+			break
+		}
+		if time.Now().After(deadline) {
+			s.Require().Fail("timed out waiting for the friendly_name changes", text)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	s.Require().Len(rows, 3, "start row plus two changes: %s", text)
+	s.True(rows[0].Start)
+	s.Equal(name, rows[0].New, "the first row is the value at the start")
+	s.Equal(name, rows[1].Old)
+	s.Equal(second, rows[1].New)
+	s.Equal(second, rows[2].Old)
+	s.Equal(third, rows[2].New)
+	s.Contains(text, "Found 2 changes of attribute friendly_name for "+entityID)
+
+	natural := s.CallTool("query_entities", map[string]any{
+		"mode": "history", "entity_id": entityID, "attribute": "friendly_name", "hours": 1.0,
+	})
+	s.Require().False(natural.IsError, "natural format should succeed, got: %s", resultText(natural))
+	s.Contains(resultText(natural), "(start) → "+name)
+	s.Contains(resultText(natural), name+" → "+second)
+	s.Contains(resultText(natural), second+" → "+third)
+
+	missing := s.CallTool("query_entities", map[string]any{
+		"mode": "history", "entity_id": entityID, "attribute": "no_such_attribute", "hours": 1.0,
+	})
+	s.Require().False(missing.IsError, "an absent attribute is a note, not an error: %s", resultText(missing))
+	s.Contains(resultText(missing), "is not present in any history row")
+
+	both := s.CallTool("query_entities", map[string]any{
+		"mode": "history", "entity_id": entityID, "attribute": "friendly_name", "state": "50",
+	})
+	s.True(both.IsError, "state together with attribute must be rejected")
+}

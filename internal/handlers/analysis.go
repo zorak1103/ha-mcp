@@ -691,7 +691,7 @@ func (h *AnalysisHandlers) matchAreaIDField(field any, areaID string) bool {
 func (h *AnalysisHandlers) getEntityHistory(ctx context.Context, client homeassistant.Client, entityID string) []HistoryEntry {
 	endTime := time.Now()
 	startTime := endTime.Add(-24 * time.Hour)
-	historyData, err := client.GetHistory(ctx, []string{entityID}, startTime, endTime)
+	historyData, err := client.GetHistory(ctx, []string{entityID}, startTime, endTime, homeassistant.HistoryOptions{})
 	if err != nil || len(historyData[entityID]) == 0 {
 		return nil
 	}

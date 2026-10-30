@@ -16,7 +16,7 @@ Authorization: Bearer <your-ha-access-token>
 
 | Tool                      | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `query_entities`          | Consolidated entity queries (mode: current, history, statistics, domains, presence, health; format: natural/json; group_by: domain, area_id, device_class, integration; health: multi-category filter for unavailable/unknown/disabled/orphaned/stale entities; history: `entity_id` or `entity_ids` (up to 100, one section per entity in request order, `state`/`limit` applied per entity)). Non-verbose `mode=current` renders `Name (entity_id) is state` per entity plus brief domain detail, capped at 50 per list (or per group when `group_by` is set); `verbose=true` adds a "Changed X ago" timestamp, or use pagination for more. |
+| `query_entities`          | Consolidated entity queries (mode: current, history, statistics, domains, presence, health; format: natural/json; group_by: domain, area_id, device_class, integration; health: multi-category filter for unavailable/unknown/disabled/orphaned/stale entities; history: `entity_id` or `entity_ids` (up to 100, one section per entity in request order, `state`/`limit` applied per entity; `attribute` reports one attribute's changes instead of state rows)). Non-verbose `mode=current` renders `Name (entity_id) is state` per entity plus brief domain detail, capped at 50 per list (or per group when `group_by` is set); `verbose=true` adds a "Changed X ago" timestamp, or use pagination for more. |
 | `query_devices`           | Device health check (mode: health; format: natural/json; categories: disabled, orphaned_config_entry, config_entry_error, no_entities, no_config_entries; manufacturer filter)                                                                                                                                                                                                                                                                                                                                 |
 | `get_state`               | Get state of a specific entity (format: natural/json)                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `analyze_entity`          | Analyze entity usage in automations, scripts, scenes, dashboards, and template-helper templates; includes registry metadata (platform, area, device, labels, aliases), RFC 6901 JSON Pointer paths to each reference location (e.g. `/sequence/0/target/entity_id  (action: automation.turn_off)`), and a `scanned_sources` list so a "no references" result can be trusted (format: natural/json)                                                                                                             |
@@ -469,6 +469,33 @@ Pagination: `query_entities` (modes `current`, `statistics`), `get_registry` (ty
       "mode": "history",
       "entity_ids": ["climate.bedroom", "sensor.bedroom_temperature"],
       "hours": 6
+    }
+  }
+}
+```
+
+### Get Attribute Changes
+
+The state column never shows an attribute-only change (a thermostat's `preset_mode` flipping while the state stays `heat`). `attribute=<name>` reports that attribute's changes instead of state rows: the value at the start of the range, then one `old → new` row per change, stamped with the time the change was written (not the last state change).
+
+- It asks HA for every state update, so it works for any domain. Without it HA keeps attribute-only updates only for `climate`, `device_tracker`, `humidifier`, `thermostat` and `water_heater`.
+- `limit` counts changes (default 50, newest kept, with a "Showing N of M" notice). A truncated list drops the start row; its first change carries the value before it as `old`.
+- `format=json` returns `{"at", "start", "old", "new"}` objects (a bare array for one entity, `{"entity_id", "changes"}` objects for several); `old`/`new` are omitted when the attribute was absent, maps and lists are rendered as compact JSON cut to 80 characters.
+- An attribute that never appears in the range is reported as a note, not an error. It may not exist on the entity, or HA's recorder may not store it: integrations exclude some attributes from history (an `input_number`'s `min`/`max`/`step`/`mode`, a climate's `preset_modes`/`hvac_modes`), and those can never be reported. `attribute` cannot be combined with `state`.
+- The logbook cannot answer this: HA's logbook only records changes of the state value, so `get_logbook` never lists attribute-only changes.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 7,
+  "method": "tools/call",
+  "params": {
+    "name": "query_entities",
+    "arguments": {
+      "mode": "history",
+      "entity_id": "climate.bedroom",
+      "attribute": "preset_mode",
+      "hours": 24
     }
   }
 }
