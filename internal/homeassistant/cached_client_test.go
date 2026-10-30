@@ -221,7 +221,7 @@ func (m *mockClient) GetState(ctx context.Context, entityID string) (*Entity, er
 func (m *mockClient) SetState(ctx context.Context, entityID string, state StateUpdate) (*Entity, error) {
 	return nil, nil
 }
-func (m *mockClient) GetHistory(ctx context.Context, entityID string, start, end time.Time) ([][]HistoryEntry, error) {
+func (m *mockClient) GetHistory(ctx context.Context, entityIDs []string, start, end time.Time) (map[string][]HistoryEntry, error) {
 	return nil, nil
 }
 func (m *mockClient) ListAutomations(ctx context.Context) ([]Automation, error) { return nil, nil }

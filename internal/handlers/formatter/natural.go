@@ -105,7 +105,7 @@ func (f *NaturalFormatter) FormatEntities(_ context.Context, entities []homeassi
 }
 
 // FormatHistory formats history entries in natural language.
-// entries is a flat list of HistoryEntry (already processed from [][]HistoryEntry).
+// entries is one entity's HistoryEntry rows (already filtered and limited by the handler).
 // Always shows entries with absolute timestamps; verbose adds attribute details.
 func (f *NaturalFormatter) FormatHistory(_ context.Context, entityID string, entries []homeassistant.HistoryEntry, opts HistoryOptions) (string, error) {
 	if len(entries) == 0 {

@@ -15,7 +15,7 @@ description: "Use when choosing which ha-mcp tool or action to call. Examples: \
 | List entities in an area / by domain / by state      | `query_entities` mode=current                                          |
 | Find unavailable / stale / disabled entities         | `query_entities` mode=health                                           |
 | Person / device tracker presence (home/away)         | `query_entities` mode=presence                                         |
-| Historical state for a sensor over time              | `query_entities` mode=history                                          |
+| Historical state for one or several entities         | `query_entities` mode=history (`entity_id` or `entity_ids`)            |
 | Aggregated stats (min/max/mean) for a sensor         | `query_entities` mode=statistics                                       |
 | Which entity domains exist in this HA instance?      | `query_entities` mode=domains                                          |
 | Device health (orphaned / config errors)             | `query_devices` mode=health                                            |
@@ -129,7 +129,7 @@ Access control filter syntax (for `HA_MCP_TOOL_FILTER_WHITELIST` / `_BLACKLIST`)
 | Mode         | Use when                                                         |
 | ------------ | ---------------------------------------------------------------- |
 | `current`    | Browse entities by domain/area/state — general listing           |
-| `history`    | Sensor/entity state over time (requires time range)              |
+| `history`    | Sensor/entity state over time; `entity_ids` for several at once  |
 | `statistics` | Aggregated stats (min/max/mean) for sensor entities              |
 | `domains`    | Discover which entity domains exist in this HA instance          |
 | `presence`   | Person/device tracker home/away status                           |

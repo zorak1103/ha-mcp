@@ -56,7 +56,7 @@ type UniversalMockClient struct {
 	SetStateFn  func(ctx context.Context, entityID string, state homeassistant.StateUpdate) (*homeassistant.Entity, error)
 
 	// History operations
-	GetHistoryFn func(ctx context.Context, entityID string, start, end time.Time) ([][]homeassistant.HistoryEntry, error)
+	GetHistoryFn func(ctx context.Context, entityIDs []string, start, end time.Time) (map[string][]homeassistant.HistoryEntry, error)
 
 	// Automation operations
 	ListAutomationsFn  func(ctx context.Context) ([]homeassistant.Automation, error)
@@ -219,11 +219,11 @@ func (m *UniversalMockClient) SetState(ctx context.Context, entityID string, sta
 
 // History operations implementation
 
-func (m *UniversalMockClient) GetHistory(ctx context.Context, entityID string, start, end time.Time) ([][]homeassistant.HistoryEntry, error) {
+func (m *UniversalMockClient) GetHistory(ctx context.Context, entityIDs []string, start, end time.Time) (map[string][]homeassistant.HistoryEntry, error) {
 	if m.GetHistoryFn != nil {
-		return m.GetHistoryFn(ctx, entityID, start, end)
+		return m.GetHistoryFn(ctx, entityIDs, start, end)
 	}
-	return [][]homeassistant.HistoryEntry{}, nil
+	return map[string][]homeassistant.HistoryEntry{}, nil
 }
 
 // Automation operations implementation

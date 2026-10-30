@@ -335,17 +335,70 @@ func TestWSClientImpl_GetHistory(t *testing.T) {
 	start := time.Now().Add(-24 * time.Hour)
 	end := time.Now()
 
-	history, err := impl.GetHistory(ctx, "sensor.temperature", start, end)
+	history, err := impl.GetHistory(ctx, []string{"sensor.temperature"}, start, end)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	if len(history) != 1 {
-		t.Errorf("got %d history arrays, want 1", len(history))
+		t.Errorf("got %d history entities, want 1", len(history))
 	}
 
-	if len(history[0]) != 2 {
-		t.Errorf("got %d history entries, want 2", len(history[0]))
+	if len(history["sensor.temperature"]) != 2 {
+		t.Errorf("got %d history entries, want 2", len(history["sensor.temperature"]))
+	}
+}
+
+func TestWSClientImpl_GetHistory_MultipleEntities(t *testing.T) {
+	t.Parallel()
+
+	// HA omits an entity it has no rows for, so sensor.gone is absent from the response.
+	historyData := map[string][]HistoryEntry{
+		"sensor.a": {{State: "1", LastChanged: 1704110400.0}},
+		"sensor.b": {{State: "2", LastChanged: 1704110400.0}, {State: "3", LastChanged: 1704114000.0}},
+	}
+
+	var gotIDs any
+	impl := newWSClientImplWithSender(&mockWSClientSender{
+		sendCommandFunc: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
+			if cmdType != "history/history_during_period" {
+				t.Errorf("unexpected command: %s", cmdType)
+			}
+			gotIDs = params["entity_ids"]
+			return makeWSResultMsg(historyData), nil
+		},
+	})
+
+	ids := []string{"sensor.a", "sensor.b", "sensor.gone"}
+	history, err := impl.GetHistory(context.Background(), ids, time.Now().Add(-time.Hour), time.Time{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	sent, ok := gotIDs.([]string)
+	if !ok || len(sent) != 3 || sent[0] != "sensor.a" || sent[1] != "sensor.b" || sent[2] != "sensor.gone" {
+		t.Errorf("entity_ids sent = %#v, want %v in request order", gotIDs, ids)
+	}
+	if len(history["sensor.a"]) != 1 || len(history["sensor.b"]) != 2 {
+		t.Errorf("history = %v, want 1 entry for sensor.a and 2 for sensor.b", history)
+	}
+	if _, present := history["sensor.gone"]; present {
+		t.Error("sensor.gone must be absent from the map when HA returns no rows for it")
+	}
+}
+
+func TestWSClientImpl_GetHistory_NoEntityIDs(t *testing.T) {
+	t.Parallel()
+
+	impl := newWSClientImplWithSender(&mockWSClientSender{
+		sendCommandFunc: func(context.Context, string, map[string]any) (*WSResultMessage, error) {
+			t.Error("no command must be sent without entity IDs")
+			return makeWSResultMsg(map[string][]HistoryEntry{}), nil
+		},
+	})
+
+	if _, err := impl.GetHistory(context.Background(), nil, time.Now().Add(-time.Hour), time.Time{}); err == nil {
+		t.Fatal("expected an error for an empty entity ID list")
 	}
 }
 
@@ -1451,12 +1504,12 @@ func TestWSClientImplWithSender_GetHistory(t *testing.T) {
 
 	client := newWSClientImplWithSender(mock)
 	start := time.Now().Add(-24 * time.Hour)
-	history, err := client.GetHistory(context.Background(), "sensor.temp", start, time.Time{})
+	history, err := client.GetHistory(context.Background(), []string{"sensor.temp"}, start, time.Time{})
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(history) != 1 || len(history[0]) != 2 {
+	if len(history) != 1 || len(history["sensor.temp"]) != 2 {
 		t.Errorf("unexpected history length")
 	}
 }
@@ -1476,7 +1529,7 @@ func TestWSClientImplWithSender_GetHistory_WithEndTime(t *testing.T) {
 	client := newWSClientImplWithSender(mock)
 	start := time.Now().Add(-24 * time.Hour)
 	end := time.Now()
-	_, err := client.GetHistory(context.Background(), "sensor.temp", start, end)
+	_, err := client.GetHistory(context.Background(), []string{"sensor.temp"}, start, end)
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -2563,7 +2616,7 @@ func TestWSClientImplWithSender_GetHistory_Error(t *testing.T) {
 	}
 
 	client := newWSClientImplWithSender(mock)
-	_, err := client.GetHistory(context.Background(), "sensor.temp", time.Now(), time.Time{})
+	_, err := client.GetHistory(context.Background(), []string{"sensor.temp"}, time.Now(), time.Time{})
 
 	if err == nil || !strings.Contains(err.Error(), "history command failed") {
 		t.Errorf("expected history command failed error, got: %v", err)
@@ -2580,7 +2633,7 @@ func TestWSClientImplWithSender_GetHistory_UnmarshalError(t *testing.T) {
 	}
 
 	client := newWSClientImplWithSender(mock)
-	_, err := client.GetHistory(context.Background(), "sensor.temp", time.Now(), time.Time{})
+	_, err := client.GetHistory(context.Background(), []string{"sensor.temp"}, time.Now(), time.Time{})
 
 	if err == nil || !strings.Contains(err.Error(), "failed to unmarshal") {
 		t.Errorf("expected unmarshal error, got: %v", err)
@@ -3244,12 +3297,12 @@ func TestWSClientImplWithSender_GetHistory_BothStartAndEnd(t *testing.T) {
 	client := newWSClientImplWithSender(mock)
 	start := time.Now().Add(-1 * time.Hour)
 	end := time.Now()
-	history, err := client.GetHistory(context.Background(), "sensor.temp", start, end)
+	history, err := client.GetHistory(context.Background(), []string{"sensor.temp"}, start, end)
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(history) != 1 || len(history[0]) != 2 {
+	if len(history) != 1 || len(history["sensor.temp"]) != 2 {
 		t.Errorf("expected 1 entity with 2 entries, got %d entities", len(history))
 	}
 }

@@ -16,7 +16,7 @@ Authorization: Bearer <your-ha-access-token>
 
 | Tool                      | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `query_entities`          | Consolidated entity queries (mode: current, history, statistics, domains, presence, health; format: natural/json; group_by: domain, area_id, device_class, integration; health: multi-category filter for unavailable/unknown/disabled/orphaned/stale entities). Non-verbose `mode=current` renders `Name (entity_id) is state` per entity plus brief domain detail, capped at 50 per list (or per group when `group_by` is set); `verbose=true` adds a "Changed X ago" timestamp, or use pagination for more. |
+| `query_entities`          | Consolidated entity queries (mode: current, history, statistics, domains, presence, health; format: natural/json; group_by: domain, area_id, device_class, integration; health: multi-category filter for unavailable/unknown/disabled/orphaned/stale entities; history: `entity_id` or `entity_ids` (up to 100, one section per entity in request order, `state`/`limit` applied per entity)). Non-verbose `mode=current` renders `Name (entity_id) is state` per entity plus brief domain detail, capped at 50 per list (or per group when `group_by` is set); `verbose=true` adds a "Changed X ago" timestamp, or use pagination for more. |
 | `query_devices`           | Device health check (mode: health; format: natural/json; categories: disabled, orphaned_config_entry, config_entry_error, no_entities, no_config_entries; manufacturer filter)                                                                                                                                                                                                                                                                                                                                 |
 | `get_state`               | Get state of a specific entity (format: natural/json)                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `analyze_entity`          | Analyze entity usage in automations, scripts, scenes, dashboards, and template-helper templates; includes registry metadata (platform, area, device, labels, aliases), RFC 6901 JSON Pointer paths to each reference location (e.g. `/sequence/0/target/entity_id  (action: automation.turn_off)`), and a `scanned_sources` list so a "no references" result can be trusted (format: natural/json)                                                                                                             |
@@ -449,6 +449,26 @@ Pagination: `query_entities` (modes `current`, `statistics`), `get_registry` (ty
       "mode": "statistics",
       "statistic_ids": ["sensor.temperature", "sensor.humidity"],
       "period": "hour"
+    }
+  }
+}
+```
+
+### Get History for Several Entities
+
+`entity_ids` is the multi-entity alternative to `entity_id` (supplying both is an error). The output has one section per entity in request order; `state` and `limit` apply to each entity separately. With `format=json` a single entity keeps the bare array, several entities return an array of `{"entity_id", "entries"}` objects.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 6,
+  "method": "tools/call",
+  "params": {
+    "name": "query_entities",
+    "arguments": {
+      "mode": "history",
+      "entity_ids": ["climate.bedroom", "sensor.bedroom_temperature"],
+      "hours": 6
     }
   }
 }
