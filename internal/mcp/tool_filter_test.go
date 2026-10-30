@@ -452,7 +452,7 @@ func TestToolFilterEngine_ApplyToRegistry_ModifySchema(t *testing.T) {
 
 	// Check enum is filtered (create, update, delete removed; patch and schema kept as they're not blacklisted)
 	actionEnum := modifiedTool.InputSchema.Properties["action"].Enum
-	expectedEnum := []string{"list", "get", "toggle", "coverage", "patch", "schema"}
+	expectedEnum := []string{"list", "get", "toggle", "trigger", "coverage", "patch", "schema"}
 
 	if len(actionEnum) != len(expectedEnum) {
 		t.Errorf("Action enum length = %d, want %d", len(actionEnum), len(expectedEnum))

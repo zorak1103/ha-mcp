@@ -32,6 +32,7 @@ var auditFileOwners = map[string][]string{
 	"areas.go":                            {"manage_area"},
 	"automations.go":                      {"manage_automation"},
 	"automations_coverage.go":             {"manage_automation"},
+	"automations_trigger.go":              {"manage_automation"},
 	"blueprints.go":                       {"manage_blueprint"},
 	"calendars.go":                        {"manage_calendar"},
 	"cameras.go":                          {"manage_camera"},

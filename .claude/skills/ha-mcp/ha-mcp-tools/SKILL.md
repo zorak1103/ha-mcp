@@ -24,6 +24,7 @@ description: "Use when choosing which ha-mcp tool or action to call. Examples: \
 | Find a string/entity_id across ALL config types in one call | `find_references` — automations/scripts/scenes/dashboards/helper templates, match_mode substring/exact (argument: `search`) |
 | Create / edit / delete an automation                 | `manage_automation` action=create/update/delete                        |
 | Toggle / enable / disable an automation              | `manage_automation` action=toggle                                       |
+| Run an automation now, get that run's `run_id`       | `manage_automation` action=trigger                                     |
 | See automation trigger/condition/service coverage    | `manage_automation` action=coverage                                    |
 | Add/remove a trigger or condition (surgical edit)    | `manage_automation` action=patch (semantic op)                         |
 | Run a script                                         | `manage_script` action=execute                                         |
@@ -58,7 +59,7 @@ description: "Use when choosing which ha-mcp tool or action to call. Examples: \
 
 | Tool                  | Read Actions                                     | Write Actions                                   |
 | --------------------- | ------------------------------------------------ | ----------------------------------------------- |
-| `manage_automation`   | list, get, coverage                              | create, update, delete, toggle, patch           |
+| `manage_automation`   | list, get, coverage                              | create, update, delete, toggle, trigger, patch  |
 | `manage_script`       | list, get                                        | create, update, delete, execute, patch          |
 | `manage_scene`        | list, get                                        | create, update, delete, activate, patch         |
 | `manage_helper`       | list, get_details                                | create, update, delete                          |

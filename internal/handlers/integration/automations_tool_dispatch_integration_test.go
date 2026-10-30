@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -238,4 +239,110 @@ func (s *AutomationToolDispatchTestSuite) TestAutomationUpdate_ConfigFileEntryEx
 		"description":   "updated via config-file-guard probe test",
 	})
 	s.Require().False(updateResult.IsError, "update on a storage-managed automation must succeed, got: %s", resultText(updateResult))
+}
+
+// TestManageAutomationTrigger drives manage_automation action=trigger end to end: the new run is
+// reported by run_id, skip_condition is honored in both directions (HA defaults it to true), the
+// run's trace is readable by that run_id, and an unknown automation is an error (HA itself would
+// silently accept the unknown entity_id).
+func (s *AutomationToolDispatchTestSuite) TestManageAutomationTrigger() {
+	targetName := GenerateTestID("auto_trig_target")
+	targetEntityID := BuildEntityID("input_boolean", targetName)
+	buttonName := GenerateTestID("auto_trig_button")
+	buttonEntityID := BuildEntityID("input_button", buttonName)
+	automationID := GenerateTestID("auto_trig")
+	automationEntityID := BuildEntityID("automation", automationID)
+
+	s.RegisterCleanup(func() {
+		_ = s.Client().DeleteAutomation(s.Context(), automationID)
+		_ = s.Client().DeleteHelper(s.Context(), targetEntityID)
+		_ = s.Client().DeleteHelper(s.Context(), buttonEntityID)
+	})
+
+	err := s.Client().CreateHelper(s.Context(), homeassistant.HelperConfig{
+		Platform: "input_boolean",
+		Config:   map[string]any{"name": targetName, "initial": false},
+	})
+	s.Require().NoError(err, "Failed to create target input_boolean")
+	err = s.Client().CreateHelper(s.Context(), homeassistant.HelperConfig{
+		Platform: "input_button",
+		Config:   map[string]any{"name": buttonName},
+	})
+	s.Require().NoError(err, "Failed to create trigger input_button")
+	_, err = s.WaitForEntity(targetEntityID, 30*time.Second)
+	s.Require().NoError(err)
+	_, err = s.WaitForEntity(buttonEntityID, 30*time.Second)
+	s.Require().NoError(err)
+
+	// The button is never pressed, so every run in this test comes from the trigger action. The
+	// condition is false while the target is off, which makes skip_condition observable.
+	err = s.Client().CreateAutomation(s.Context(), homeassistant.AutomationConfig{
+		ID:    automationID,
+		Alias: automationID,
+		Mode:  "single",
+		Triggers: []any{
+			map[string]any{"platform": "state", "entity_id": buttonEntityID},
+		},
+		Conditions: []any{
+			map[string]any{"condition": "state", "entity_id": targetEntityID, "state": "on"},
+		},
+		Actions: []any{
+			map[string]any{"service": "input_boolean.turn_on", "target": map[string]any{"entity_id": targetEntityID}},
+		},
+	})
+	s.Require().NoError(err, "Failed to create automation")
+	_, err = s.WaitForAutomation(automationID, 30*time.Second)
+	s.Require().NoError(err, "Automation did not appear")
+	_, err = s.WaitForEntity(automationEntityID, 30*time.Second)
+	s.Require().NoError(err, "Automation entity did not appear")
+
+	trigger := func(args map[string]any) map[string]any {
+		args["action"] = "trigger"
+		args["automation_id"] = automationID
+		args["format"] = "json"
+		result := s.CallTool("manage_automation", args)
+		s.Require().False(result.IsError, "trigger should succeed: %s", resultText(result))
+		var out map[string]any
+		s.Require().NoError(json.Unmarshal([]byte(resultText(result)), &out), "trigger JSON should parse")
+		s.Require().NotContains(out, "warning", "the new run should have been followed")
+		return out
+	}
+
+	// 1. skip_condition=false evaluates the false condition: a rejected run with its own run_id.
+	rejected := trigger(map[string]any{"skip_condition": false})
+	s.Equal(automationEntityID, rejected["entity_id"])
+	s.Equal("failed_conditions", rejected["script_execution"])
+	s.NotEmpty(rejected["run_id"])
+	state, err := s.Client().GetState(s.Context(), targetEntityID)
+	s.Require().NoError(err)
+	s.Equal("off", state.State, "a run stopped at its conditions must not execute the actions")
+
+	// 2. Default skips the conditions, so the actions run and the target turns on.
+	ran := trigger(map[string]any{})
+	runID, _ := ran["run_id"].(string)
+	s.Require().NotEmpty(runID)
+	s.NotEqual(rejected["run_id"], runID, "each trigger is a new run")
+	s.Eventually(func() bool {
+		st, getErr := s.Client().GetState(s.Context(), targetEntityID)
+		return getErr == nil && st.State == "on"
+	}, 15*time.Second, 250*time.Millisecond, "the triggered run should have turned the target on")
+
+	// 3. The reported run_id addresses exactly that run's trace.
+	traceResult := s.CallTool("manage_trace", map[string]any{
+		"action":        "get",
+		"automation_id": automationID,
+		"run_id":        runID,
+		"format":        "json",
+	})
+	s.Require().False(traceResult.IsError, "manage_trace get should succeed: %s", resultText(traceResult))
+	var trace map[string]any
+	s.Require().NoError(json.Unmarshal([]byte(resultText(traceResult)), &trace))
+	s.Equal(runID, trace["run_id"])
+
+	// 4. HA accepts an unknown entity_id silently; the tool must not.
+	unknown := s.CallTool("manage_automation", map[string]any{
+		"action":        "trigger",
+		"automation_id": GenerateTestID("auto_trig_missing"),
+	})
+	s.True(unknown.IsError, "triggering a nonexistent automation must be an error")
 }

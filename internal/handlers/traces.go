@@ -299,13 +299,17 @@ func parseTraceListResponse(response any) []any {
 // latestTraceEntry returns the trace with the most recent start timestamp, or nil when the list
 // holds no trace maps. ISO timestamps sort lexicographically. HA's trace/list returns traces in
 // insertion order (oldest first), so the first element is NOT the latest - it must be resolved by
-// comparing timestamps.
+// comparing timestamps. Entries flagged not_triggered (a trigger fired but its conditions stopped
+// the run before it started) are skipped: they are not runs and carry no run to inspect.
 func latestTraceEntry(traces []any) map[string]any {
 	var latest map[string]any
 	var latestStart string
 	for _, t := range traces {
 		traceMap, ok := t.(map[string]any)
 		if !ok {
+			continue
+		}
+		if notTriggered, _ := traceMap["not_triggered"].(bool); notTriggered {
 			continue
 		}
 		start, _ := traceTimestamps(traceMap)
@@ -424,8 +428,8 @@ func latestTraceRunID(ctx context.Context, client homeassistant.Client, domain, 
 
 	warning := unresolvedItemIDWarning(entityID)
 	if resolved {
-		warning = fmt.Sprintf("No traces found for %s. Home Assistant records traces asynchronously - if you just "+
-			"triggered it, the trace may not be available yet. Retry in a moment, or poll with "+
+		warning = fmt.Sprintf("No traces found for %s. Home Assistant stores a run's trace the moment the run "+
+			"starts, so no run is recorded for it. To wait for an upcoming run, poll with "+
 			"manage_trace action=list wait=true.", entityID)
 	}
 	if format != formatJSON {
@@ -473,7 +477,7 @@ func (h *TraceHandlers) formatTracesNatural(traces []any, warning string) string
 		if warning != "" {
 			return warning
 		}
-		return "No traces found. Home Assistant records traces asynchronously — if you just triggered an automation, traces may not be available yet. Try again in a moment, or pass wait=true to poll automatically."
+		return "No traces found. Home Assistant stores a run's trace the moment the run starts, so no run is recorded for this selection. To wait for an upcoming run, pass wait=true to poll automatically."
 	}
 
 	var parts []string
