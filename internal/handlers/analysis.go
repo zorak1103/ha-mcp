@@ -691,13 +691,13 @@ func (h *AnalysisHandlers) matchAreaIDField(field any, areaID string) bool {
 func (h *AnalysisHandlers) getEntityHistory(ctx context.Context, client homeassistant.Client, entityID string) []HistoryEntry {
 	endTime := time.Now()
 	startTime := endTime.Add(-24 * time.Hour)
-	historyData, err := client.GetHistory(ctx, entityID, startTime, endTime)
-	if err != nil || len(historyData) == 0 || len(historyData[0]) == 0 {
+	historyData, err := client.GetHistory(ctx, []string{entityID}, startTime, endTime)
+	if err != nil || len(historyData[entityID]) == 0 {
 		return nil
 	}
 
 	var history []HistoryEntry
-	for _, entry := range historyData[0] {
+	for _, entry := range historyData[entityID] {
 		if len(history) >= 20 {
 			break
 		}

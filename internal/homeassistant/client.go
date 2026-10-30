@@ -25,7 +25,7 @@ type Client interface {
 	SetState(ctx context.Context, entityID string, state StateUpdate) (*Entity, error)
 
 	// History operations
-	GetHistory(ctx context.Context, entityID string, start, end time.Time) ([][]HistoryEntry, error)
+	GetHistory(ctx context.Context, entityIDs []string, start, end time.Time) (map[string][]HistoryEntry, error)
 
 	// Automation operations
 	ListAutomations(ctx context.Context) ([]Automation, error)

@@ -165,8 +165,8 @@ func (m *mockNonCloserClient) GetState(_ context.Context, _ string) (*Entity, er
 func (m *mockNonCloserClient) SetState(_ context.Context, _ string, _ StateUpdate) (*Entity, error) {
 	return &Entity{}, nil
 }
-func (m *mockNonCloserClient) GetHistory(_ context.Context, _ string, _, _ time.Time) ([][]HistoryEntry, error) {
-	return [][]HistoryEntry{}, nil
+func (m *mockNonCloserClient) GetHistory(_ context.Context, _ []string, _, _ time.Time) (map[string][]HistoryEntry, error) {
+	return map[string][]HistoryEntry{}, nil
 }
 func (m *mockNonCloserClient) ListAutomations(_ context.Context) ([]Automation, error) {
 	return []Automation{}, nil

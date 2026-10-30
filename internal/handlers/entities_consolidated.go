@@ -55,6 +55,7 @@ var queryEntitiesArgModes = map[string][]string{
 	"sort_by":       {queryModeCurrent},
 	"group_by":      {queryModeCurrent},
 	attrEntityID:    {queryModeHistory},
+	attrEntityIDs:   {queryModeHistory},
 	"start_time":    {queryModeHistory},
 	"end_time":      {queryModeHistory},
 	"hours":         {queryModeHistory},
@@ -104,14 +105,13 @@ type compactHistoryEntry struct {
 
 // historyParams encapsulates all parsed parameters for history queries.
 type historyParams struct {
-	entityID     string
-	startTime    time.Time
-	endTime      time.Time
-	stateFilter  string
-	limit        int
-	format       formatter.Format
-	verbose      bool
-	entityExists bool // Set after GetState check when history is empty
+	entityIDs   []string // request order, duplicates dropped
+	startTime   time.Time
+	endTime     time.Time
+	stateFilter string
+	limit       int
+	format      formatter.Format
+	verbose     bool
 }
 
 // historyResult encapsulates processed history data.
@@ -414,9 +414,12 @@ func buildPaginatedStatesResponse(paginated PaginatedResponse[homeassistant.Enti
 
 // parseHistoryParams extracts and validates all parameters from args.
 func parseHistoryParams(args map[string]any) (*historyParams, error) {
-	entityID, ok := args[attrEntityID].(string)
-	if !ok || entityID == "" {
-		return nil, fmt.Errorf("entity_id is required")
+	entityIDs, err := parseEntityIDOrIDs(args)
+	if err != nil {
+		return nil, err
+	}
+	if len(entityIDs) == 0 {
+		return nil, fmt.Errorf("entity_id is required (or entity_ids for several entities)")
 	}
 
 	startTime, endTime, err := parseTimeRange(args)
@@ -435,7 +438,7 @@ func parseHistoryParams(args map[string]any) (*historyParams, error) {
 	verbose, _ := args["verbose"].(bool)
 
 	return &historyParams{
-		entityID:    entityID,
+		entityIDs:   entityIDs,
 		startTime:   startTime,
 		endTime:     endTime,
 		stateFilter: stateFilter,
@@ -470,18 +473,12 @@ func parseTimeRange(args map[string]any) (start, end time.Time, err error) {
 	return start, end, nil
 }
 
-// processHistoryEntries flattens, filters, and limits history entries.
+// processHistoryEntries filters and limits one entity's history entries.
 func processHistoryEntries(
-	history [][]homeassistant.HistoryEntry,
+	entries []homeassistant.HistoryEntry,
 	stateFilter string,
 	limit int,
 ) historyResult {
-	// Flatten history (it's [][]HistoryEntry, typically with one inner array per entity)
-	var entries []homeassistant.HistoryEntry
-	for _, entityHistory := range history {
-		entries = append(entries, entityHistory...)
-	}
-
 	// Apply state filter
 	if stateFilter != "" {
 		filtered := make([]homeassistant.HistoryEntry, 0, len(entries))
@@ -506,10 +503,11 @@ func processHistoryEntries(
 	}
 }
 
-// formatHistoryOutput formats entries based on verbose flag.
-func formatHistoryOutput(entries []homeassistant.HistoryEntry, verbose bool) ([]byte, error) {
+// historyEntriesView returns the entries as marshaled in json output: verbose keeps the
+// raw rows, otherwise each row is reduced to state and last_changed.
+func historyEntriesView(entries []homeassistant.HistoryEntry, verbose bool) any {
 	if verbose {
-		return json.MarshalIndent(entries, "", "  ")
+		return entries
 	}
 
 	compact := make([]compactHistoryEntry, 0, len(entries))
@@ -519,12 +517,16 @@ func formatHistoryOutput(entries []homeassistant.HistoryEntry, verbose bool) ([]
 			LastChanged: entry.LastChangedTime().Format(time.RFC3339),
 		})
 	}
-
-	return json.MarshalIndent(compact, "", "  ")
+	return compact
 }
 
-// buildHistorySummary creates the summary message for history results.
-func buildHistorySummary(entityID string, result historyResult, stateFilter string, verbose bool) string {
+// formatHistoryOutput formats entries based on verbose flag.
+func formatHistoryOutput(entries []homeassistant.HistoryEntry, verbose bool) ([]byte, error) {
+	return json.MarshalIndent(historyEntriesView(entries, verbose), "", "  ")
+}
+
+// historySummaryLine describes one entity's result without the verbose hint.
+func historySummaryLine(entityID string, result historyResult, stateFilter string) string {
 	var summary string
 
 	if result.totalCount > len(result.entries) {
@@ -538,10 +540,15 @@ func buildHistorySummary(entityID string, result historyResult, stateFilter stri
 		summary += fmt.Sprintf(" (filtered by state='%s')", stateFilter)
 	}
 
+	return summary
+}
+
+// buildHistorySummary creates the summary message for history results.
+func buildHistorySummary(entityID string, result historyResult, stateFilter string, verbose bool) string {
+	summary := historySummaryLine(entityID, result, stateFilter)
 	if !verbose {
 		summary += VerboseHint
 	}
-
 	return summary
 }
 
@@ -568,7 +575,7 @@ func queryEntitiesDescription() string {
 
 Modes:
 - current: Get current entity states with optional filters (domain, state, name_contains, pagination)
-- history: Get historical state changes for an entity (requires entity_id)
+- history: Get historical state changes for one entity (entity_id) or several (entity_ids)
 - statistics: Get long-term statistics for entities (requires statistic_ids array)
 - domains: List all available entity domains with counts
 - presence: Analyze person entities and device tracker correlation
@@ -577,6 +584,7 @@ Modes:
 Examples:
 - Get all lights: {"mode": "current", "domain": "light"}
 - Get history: {"mode": "history", "entity_id": "sensor.temperature", "hours": 6}
+- Get history of several entities: {"mode": "history", "entity_ids": ["climate.bedroom", "sensor.temperature"], "hours": 6}
 - Get statistics: {"mode": "statistics", "statistic_ids": ["sensor.energy"]}
 - List domains: {"mode": "domains"}
 - Health check: {"mode": "health"}
@@ -634,7 +642,12 @@ func queryEntitiesProperties() map[string]mcp.JSONSchema {
 		// History mode parameters
 		attrEntityID: {
 			Type:        "string",
-			Description: "Entity ID to query. Required for mode=history",
+			Description: "Entity ID to query. Required for mode=history unless entity_ids is given",
+		},
+		attrEntityIDs: {
+			Type:        "array",
+			Description: "Entity IDs to query, one history section per entity in request order (max 100, duplicates dropped). Alternative to entity_id; supplying both is an error. state and limit apply to each entity separately. Only for mode=history",
+			Items:       &mcp.JSONSchema{Type: "string"},
 		},
 		"start_time": {
 			Type:        "string",
@@ -666,7 +679,7 @@ func queryEntitiesProperties() map[string]mcp.JSONSchema {
 		},
 		"limit": {
 			Type:        "integer",
-			Description: "Maximum number of results to return. Use with 'cursor' for pagination. Only for mode=current/history/statistics",
+			Description: "Maximum number of results to return (per entity for mode=history with entity_ids). Use with 'cursor' for pagination. Only for mode=current/history/statistics",
 		},
 		"offset": paginationOffsetSchema(),
 		"cursor": {
@@ -1084,89 +1097,6 @@ func (h *ConsolidatedEntityQueryHandlers) formatStatesNaturalByIntegration(
 
 	return &mcp.ToolsCallResult{
 		Content: []mcp.ContentBlock{mcp.NewTextContent(strings.TrimPrefix(output.String(), "\n"))},
-	}, nil
-}
-
-// handleHistory handles mode=history requests (adapted from handleGetHistory).
-func (h *ConsolidatedEntityQueryHandlers) handleHistory(
-	ctx context.Context,
-	client homeassistant.Client,
-	args map[string]any,
-) (*mcp.ToolsCallResult, error) {
-	params, err := parseHistoryParams(args)
-	if err != nil {
-		return errorResult(err.Error()), nil
-	}
-
-	history, err := client.GetHistory(ctx, params.entityID, params.startTime, params.endTime)
-	if err != nil {
-		return errorResult(fmt.Sprintf("Error getting history: %v", err)), nil
-	}
-
-	result := processHistoryEntries(history, params.stateFilter, params.limit)
-
-	// Check entity existence when no history found
-	entityExists := true
-	if len(result.entries) == 0 {
-		_, stateErr := client.GetState(ctx, params.entityID)
-		entityExists = stateErr == nil
-	}
-	params.entityExists = entityExists
-
-	// Use formatter based on format parameter
-	if params.format == formatter.FormatNatural {
-		return h.formatHistoryNatural(ctx, params.entityID, result, params)
-	}
-
-	// JSON format (backward compatible)
-	output, err := formatHistoryOutput(result.entries, params.verbose)
-	if err != nil {
-		return errorResult(fmt.Sprintf("Error formatting history: %v", err)), nil
-	}
-
-	summary := buildHistorySummary(params.entityID, result, params.stateFilter, params.verbose)
-
-	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{mcp.NewTextContent(summary + "\n\n" + string(output))},
-	}, nil
-}
-
-// formatHistoryNatural formats history using natural language formatter.
-func (h *ConsolidatedEntityQueryHandlers) formatHistoryNatural(
-	ctx context.Context,
-	entityID string,
-	result historyResult,
-	params *historyParams,
-) (*mcp.ToolsCallResult, error) {
-	f := formatter.NewNaturalFormatter()
-
-	opts := formatter.HistoryOptions{
-		Verbose:      params.verbose,
-		Limit:        params.limit,
-		EntityExists: params.entityExists,
-	}
-	if opts.Limit == 0 {
-		opts.Limit = 20 // Default limit for natural language history output
-	}
-
-	output, err := f.FormatHistory(ctx, entityID, result.entries, opts)
-	if err != nil {
-		return errorResult(fmt.Sprintf("Error formatting history: %v", err)), nil
-	}
-
-	// Add filter info if filtered
-	if params.stateFilter != "" {
-		output += fmt.Sprintf(" (filtered by state='%s')", params.stateFilter)
-	}
-
-	// Add truncation notice if applicable
-	if result.totalCount > len(result.entries) {
-		output += fmt.Sprintf("\n\n[Showing %d of %d entries. Use limit parameter for more.]",
-			len(result.entries), result.totalCount)
-	}
-
-	return &mcp.ToolsCallResult{
-		Content: []mcp.ContentBlock{mcp.NewTextContent(output)},
 	}, nil
 }
 

@@ -501,8 +501,8 @@ func TestQueryEntities_History(t *testing.T) {
 	t.Parallel()
 
 	now := time.Now()
-	testHistory := [][]homeassistant.HistoryEntry{
-		{
+	testHistory := map[string][]homeassistant.HistoryEntry{
+		"sensor.temp": {
 			{EntityID: "sensor.temp", State: "20.0", LastChanged: float64(now.Add(-2 * time.Hour).Unix())},
 			{EntityID: "sensor.temp", State: "21.0", LastChanged: float64(now.Add(-1 * time.Hour).Unix())},
 			{EntityID: "sensor.temp", State: "22.0", LastChanged: float64(now.Unix())},
@@ -514,7 +514,7 @@ func TestQueryEntities_History(t *testing.T) {
 			name: "basic history",
 			args: map[string]any{"mode": modeHistory, "entity_id": "sensor.temp", "format": "json"},
 			setupMock: func(m *UniversalMockClient) {
-				m.GetHistoryFn = func(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
+				m.GetHistoryFn = func(_ context.Context, _ []string, _, _ time.Time) (map[string][]homeassistant.HistoryEntry, error) {
 					return testHistory, nil
 				}
 			},
@@ -525,7 +525,7 @@ func TestQueryEntities_History(t *testing.T) {
 			name: "history with hours",
 			args: map[string]any{"mode": modeHistory, "entity_id": "sensor.temp", "hours": float64(6), "format": "json"},
 			setupMock: func(m *UniversalMockClient) {
-				m.GetHistoryFn = func(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
+				m.GetHistoryFn = func(_ context.Context, _ []string, _, _ time.Time) (map[string][]homeassistant.HistoryEntry, error) {
 					return testHistory, nil
 				}
 			},
@@ -536,7 +536,7 @@ func TestQueryEntities_History(t *testing.T) {
 			name: "history with state filter",
 			args: map[string]any{"mode": modeHistory, "entity_id": "sensor.temp", "state": "21.0", "format": "json"},
 			setupMock: func(m *UniversalMockClient) {
-				m.GetHistoryFn = func(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
+				m.GetHistoryFn = func(_ context.Context, _ []string, _, _ time.Time) (map[string][]homeassistant.HistoryEntry, error) {
 					return testHistory, nil
 				}
 			},
@@ -548,7 +548,7 @@ func TestQueryEntities_History(t *testing.T) {
 			name: "history with limit",
 			args: map[string]any{"mode": modeHistory, "entity_id": "sensor.temp", "limit": float64(2), "format": "json"},
 			setupMock: func(m *UniversalMockClient) {
-				m.GetHistoryFn = func(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
+				m.GetHistoryFn = func(_ context.Context, _ []string, _, _ time.Time) (map[string][]homeassistant.HistoryEntry, error) {
 					return testHistory, nil
 				}
 			},
@@ -566,7 +566,7 @@ func TestQueryEntities_History(t *testing.T) {
 			name: "client error",
 			args: map[string]any{"mode": modeHistory, "entity_id": "sensor.temp"},
 			setupMock: func(m *UniversalMockClient) {
-				m.GetHistoryFn = func(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
+				m.GetHistoryFn = func(_ context.Context, _ []string, _, _ time.Time) (map[string][]homeassistant.HistoryEntry, error) {
 					return nil, errors.New("database unavailable")
 				}
 			},
@@ -583,8 +583,8 @@ func TestQueryEntities_History_FormatJSON(t *testing.T) {
 	t.Parallel()
 
 	now := time.Now()
-	testHistory := [][]homeassistant.HistoryEntry{
-		{{EntityID: "sensor.test", State: "on", LastChanged: float64(now.Unix()), Attributes: map[string]any{"brightness": 255}}},
+	testHistory := map[string][]homeassistant.HistoryEntry{
+		"sensor.test": {{EntityID: "sensor.test", State: "on", LastChanged: float64(now.Unix()), Attributes: map[string]any{"brightness": 255}}},
 	}
 
 	tests := []handlerTestCase{
@@ -592,7 +592,7 @@ func TestQueryEntities_History_FormatJSON(t *testing.T) {
 			name: "compact JSON",
 			args: map[string]any{"mode": modeHistory, "entity_id": "sensor.test", "format": "json"},
 			setupMock: func(m *UniversalMockClient) {
-				m.GetHistoryFn = func(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
+				m.GetHistoryFn = func(_ context.Context, _ []string, _, _ time.Time) (map[string][]homeassistant.HistoryEntry, error) {
 					return testHistory, nil
 				}
 			},
@@ -604,7 +604,7 @@ func TestQueryEntities_History_FormatJSON(t *testing.T) {
 			name: "verbose JSON",
 			args: map[string]any{"mode": modeHistory, "entity_id": "sensor.test", "format": "json", "verbose": true},
 			setupMock: func(m *UniversalMockClient) {
-				m.GetHistoryFn = func(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
+				m.GetHistoryFn = func(_ context.Context, _ []string, _, _ time.Time) (map[string][]homeassistant.HistoryEntry, error) {
 					return testHistory, nil
 				}
 			},
@@ -621,8 +621,8 @@ func TestQueryEntities_History_FormatNatural(t *testing.T) {
 	t.Parallel()
 
 	now := time.Now()
-	testHistory := [][]homeassistant.HistoryEntry{
-		{
+	testHistory := map[string][]homeassistant.HistoryEntry{
+		"sensor.test": {
 			{EntityID: "sensor.test", State: "on", LastChanged: float64(now.Unix())},
 			{EntityID: "sensor.test", State: "off", LastChanged: float64(now.Add(-1 * time.Hour).Unix())},
 		},
@@ -633,7 +633,7 @@ func TestQueryEntities_History_FormatNatural(t *testing.T) {
 			name: "natural language history",
 			args: map[string]any{"mode": modeHistory, "entity_id": "sensor.test", "format": "natural"},
 			setupMock: func(m *UniversalMockClient) {
-				m.GetHistoryFn = func(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
+				m.GetHistoryFn = func(_ context.Context, _ []string, _, _ time.Time) (map[string][]homeassistant.HistoryEntry, error) {
 					return testHistory, nil
 				}
 			},
@@ -654,12 +654,14 @@ func TestHandleHistory_SingleEntityOutputPinned(t *testing.T) {
 	t.Parallel()
 
 	const lc1, lc2 = 1700000000, 1700003600
-	history := [][]homeassistant.HistoryEntry{{
-		{EntityID: "sensor.temp", State: "20.5", LastChanged: lc1, Attributes: map[string]any{
-			"friendly_name": "Living Room Temp", "unit_of_measurement": "°C",
-		}},
-		{EntityID: "sensor.temp", State: "21.0", LastChanged: lc2, LastUpdated: lc2},
-	}}
+	history := map[string][]homeassistant.HistoryEntry{
+		"sensor.temp": {
+			{EntityID: "sensor.temp", State: "20.5", LastChanged: lc1, Attributes: map[string]any{
+				"friendly_name": "Living Room Temp", "unit_of_measurement": "°C",
+			}},
+			{EntityID: "sensor.temp", State: "21.0", LastChanged: lc2, LastUpdated: lc2},
+		},
+	}
 	minute := func(ts int64) string { return time.Unix(ts, 0).Format("2006-01-02 15:04") }
 	rfc := func(ts int64) string { return time.Unix(ts, 0).Format(time.RFC3339) }
 
@@ -721,9 +723,9 @@ func TestHandleHistory_SingleEntityOutputPinned(t *testing.T) {
 			t.Parallel()
 
 			client := &UniversalMockClient{
-				GetHistoryFn: func(_ context.Context, entityID string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
-					if entityID != "sensor.temp" {
-						t.Errorf("GetHistory entityID = %q, want %q", entityID, "sensor.temp")
+				GetHistoryFn: func(_ context.Context, ids []string, _, _ time.Time) (map[string][]homeassistant.HistoryEntry, error) {
+					if len(ids) != 1 || ids[0] != "sensor.temp" {
+						t.Errorf("GetHistory entityIDs = %v, want %q", ids, "sensor.temp")
 					}
 					return history, nil
 				},
@@ -757,8 +759,8 @@ func TestQueryEntities_History_EmptyHistory_EntityExists(t *testing.T) {
 			args: map[string]any{"mode": modeHistory, "entity_id": "sensor.new_sensor"},
 			setupMock: func(m *UniversalMockClient) {
 				// Empty history
-				m.GetHistoryFn = func(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
-					return [][]homeassistant.HistoryEntry{}, nil
+				m.GetHistoryFn = func(_ context.Context, _ []string, _, _ time.Time) (map[string][]homeassistant.HistoryEntry, error) {
+					return map[string][]homeassistant.HistoryEntry{}, nil
 				}
 				// Entity exists (GetState succeeds)
 				m.GetStateFn = func(_ context.Context, entityID string) (*homeassistant.Entity, error) {
@@ -789,8 +791,8 @@ func TestQueryEntities_History_EntityNotFound(t *testing.T) {
 			args: map[string]any{"mode": modeHistory, "entity_id": "sensor.nonexistent"},
 			setupMock: func(m *UniversalMockClient) {
 				// Empty history
-				m.GetHistoryFn = func(_ context.Context, _ string, _, _ time.Time) ([][]homeassistant.HistoryEntry, error) {
-					return [][]homeassistant.HistoryEntry{}, nil
+				m.GetHistoryFn = func(_ context.Context, _ []string, _, _ time.Time) (map[string][]homeassistant.HistoryEntry, error) {
+					return map[string][]homeassistant.HistoryEntry{}, nil
 				}
 				// Entity doesn't exist (GetState fails)
 				m.GetStateFn = func(_ context.Context, _ string) (*homeassistant.Entity, error) {
@@ -1595,7 +1597,7 @@ func TestQueryEntities_RejectsArgsOfOtherModes(t *testing.T) {
 					t.Error("GetStates must not be called when an argument is rejected")
 					return nil, nil
 				},
-				GetHistoryFn: func(context.Context, string, time.Time, time.Time) ([][]homeassistant.HistoryEntry, error) {
+				GetHistoryFn: func(context.Context, []string, time.Time, time.Time) (map[string][]homeassistant.HistoryEntry, error) {
 					t.Error("GetHistory must not be called when an argument is rejected")
 					return nil, nil
 				},

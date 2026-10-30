@@ -85,11 +85,16 @@ func (c *wsClientImpl) SetState(_ context.Context, _ string, _ StateUpdate) (*En
 	return nil, fmt.Errorf("setState not supported via WebSocket API, use CallService instead")
 }
 
-// GetHistory retrieves historical state changes for an entity.
-func (c *wsClientImpl) GetHistory(ctx context.Context, entityID string, start, end time.Time) ([][]HistoryEntry, error) {
+// GetHistory retrieves historical state changes for the given entities, keyed by entity ID.
+// HA's compressed rows carry no entity_id, so the map is what keeps the identity. An
+// entity HA returns no rows for is absent from the map.
+func (c *wsClientImpl) GetHistory(ctx context.Context, entityIDs []string, start, end time.Time) (map[string][]HistoryEntry, error) {
+	if len(entityIDs) == 0 {
+		return nil, fmt.Errorf("history requires at least one entity ID")
+	}
 	params := map[string]any{
 		"start_time": start.Format(time.RFC3339),
-		"entity_ids": []string{entityID},
+		"entity_ids": entityIDs,
 	}
 	if !end.IsZero() {
 		params["end_time"] = end.Format(time.RFC3339)
@@ -105,14 +110,11 @@ func (c *wsClientImpl) GetHistory(ctx context.Context, entityID string, start, e
 	if err := json.Unmarshal(result.Result, &historyMap); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal history: %w", err)
 	}
-
-	// Convert to [][]HistoryEntry format (one array per entity)
-	var history [][]HistoryEntry
-	if entries, ok := historyMap[entityID]; ok {
-		history = append(history, entries)
+	if historyMap == nil {
+		historyMap = map[string][]HistoryEntry{}
 	}
 
-	return history, nil
+	return historyMap, nil
 }
 
 // CallService calls a Home Assistant service and returns affected entities.
