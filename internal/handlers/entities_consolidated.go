@@ -59,6 +59,7 @@ var queryEntitiesArgModes = map[string][]string{
 	"start_time":    {queryModeHistory},
 	"end_time":      {queryModeHistory},
 	"hours":         {queryModeHistory},
+	"attribute":     {queryModeHistory},
 	"statistic_ids": {queryModeStatistics},
 	"period":        {queryModeStatistics},
 	"limit":         {queryModeCurrent, queryModeHistory, queryModeStatistics},
@@ -109,6 +110,7 @@ type historyParams struct {
 	startTime   time.Time
 	endTime     time.Time
 	stateFilter string
+	attribute   string // when set, report this attribute's changes instead of state rows
 	limit       int
 	format      formatter.Format
 	verbose     bool
@@ -429,6 +431,11 @@ func parseHistoryParams(args map[string]any) (*historyParams, error) {
 
 	stateFilter, _ := args["state"].(string)
 
+	attribute, err := parseHistoryAttribute(args, stateFilter)
+	if err != nil {
+		return nil, err
+	}
+
 	limit := 0
 	if limitVal, ok := args["limit"].(float64); ok && limitVal > 0 {
 		limit = int(limitVal)
@@ -442,10 +449,29 @@ func parseHistoryParams(args map[string]any) (*historyParams, error) {
 		startTime:   startTime,
 		endTime:     endTime,
 		stateFilter: stateFilter,
+		attribute:   attribute,
 		limit:       limit,
 		format:      formatter.ParseFormat(formatStr),
 		verbose:     verbose,
 	}, nil
+}
+
+// parseHistoryAttribute validates the attribute argument of mode=history. An absent or empty
+// value means the normal state view. A state filter cannot be combined with it: applied before
+// the diff it would hide the transitions, and it has nothing to match afterwards.
+func parseHistoryAttribute(args map[string]any, stateFilter string) (string, error) {
+	raw := args["attribute"]
+	if isAbsentArg(raw) {
+		return "", nil
+	}
+	attribute, ok := raw.(string)
+	if !ok || strings.TrimSpace(attribute) == "" {
+		return "", fmt.Errorf("attribute must be a non-empty string (an attribute name such as preset_mode)")
+	}
+	if stateFilter != "" {
+		return "", fmt.Errorf("state cannot be combined with attribute: the state filter would hide the attribute's transitions; use one or the other")
+	}
+	return strings.TrimSpace(attribute), nil
 }
 
 // parseTimeRange parses start_time, end_time, and hours parameters.
@@ -585,6 +611,7 @@ Examples:
 - Get all lights: {"mode": "current", "domain": "light"}
 - Get history: {"mode": "history", "entity_id": "sensor.temperature", "hours": 6}
 - Get history of several entities: {"mode": "history", "entity_ids": ["climate.bedroom", "sensor.temperature"], "hours": 6}
+- When did an attribute change: {"mode": "history", "entity_id": "climate.bedroom", "attribute": "preset_mode", "hours": 24}
 - Get statistics: {"mode": "statistics", "statistic_ids": ["sensor.energy"]}
 - List domains: {"mode": "domains"}
 - Health check: {"mode": "health"}
@@ -661,6 +688,10 @@ func queryEntitiesProperties() map[string]mcp.JSONSchema {
 			Type:        "number",
 			Description: "Number of hours to look back. Only for mode=history",
 		},
+		"attribute": {
+			Type:        "string",
+			Description: "Attribute name (e.g., 'preset_mode'). Reports that attribute's changes instead of state rows: the value at the start, then one 'old → new' row per change with the time it was written; the state column cannot show these. Asks HA for every state update, so it works for any domain. limit then counts changes (default 50, newest kept). Cannot be combined with state. Only for mode=history",
+		},
 		// Statistics mode parameters
 		"statistic_ids": {
 			Type:        "array",
@@ -679,7 +710,7 @@ func queryEntitiesProperties() map[string]mcp.JSONSchema {
 		},
 		"limit": {
 			Type:        "integer",
-			Description: "Maximum number of results to return (per entity for mode=history with entity_ids). Use with 'cursor' for pagination. Only for mode=current/history/statistics",
+			Description: "Maximum number of results to return (per entity for mode=history with entity_ids; with attribute it counts changes). Use with 'cursor' for pagination. Only for mode=current/history/statistics",
 		},
 		"offset": paginationOffsetSchema(),
 		"cursor": {

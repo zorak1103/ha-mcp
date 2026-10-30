@@ -766,8 +766,8 @@ func (c *CachedClient) SetState(ctx context.Context, entityID string, state Stat
 }
 
 //nolint:revive // Delegated method
-func (c *CachedClient) GetHistory(ctx context.Context, entityIDs []string, start, end time.Time) (map[string][]HistoryEntry, error) {
-	return c.client.GetHistory(ctx, entityIDs, start, end)
+func (c *CachedClient) GetHistory(ctx context.Context, entityIDs []string, start, end time.Time, opts HistoryOptions) (map[string][]HistoryEntry, error) {
+	return c.client.GetHistory(ctx, entityIDs, start, end, opts)
 }
 
 //nolint:revive // Delegated method

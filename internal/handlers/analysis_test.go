@@ -27,7 +27,7 @@ type mockAnalysisClient struct {
 	GetEntityRegistryFn     func(ctx context.Context) ([]homeassistant.EntityRegistryEntry, error)
 	GetDeviceRegistryFn     func(ctx context.Context) ([]homeassistant.DeviceRegistryEntry, error)
 	GetAreaRegistryFn       func(ctx context.Context) ([]homeassistant.AreaRegistryEntry, error)
-	GetHistoryFn            func(ctx context.Context, entityIDs []string, start, end time.Time) (map[string][]homeassistant.HistoryEntry, error)
+	GetHistoryFn            func(ctx context.Context, entityIDs []string, start, end time.Time, opts homeassistant.HistoryOptions) (map[string][]homeassistant.HistoryEntry, error)
 	ListDashboardsFn        func(ctx context.Context) ([]homeassistant.DashboardEntry, error)
 	GetLovelaceConfigFn     func(ctx context.Context, urlPath string) (map[string]any, error)
 	GetConfigEntryOptionsFn func(ctx context.Context, entryID string) (map[string]any, error)
@@ -103,9 +103,9 @@ func (m *mockAnalysisClient) GetAreaRegistry(ctx context.Context) ([]homeassista
 	return []homeassistant.AreaRegistryEntry{}, nil
 }
 
-func (m *mockAnalysisClient) GetHistory(ctx context.Context, entityIDs []string, start, end time.Time) (map[string][]homeassistant.HistoryEntry, error) {
+func (m *mockAnalysisClient) GetHistory(ctx context.Context, entityIDs []string, start, end time.Time, opts homeassistant.HistoryOptions) (map[string][]homeassistant.HistoryEntry, error) {
 	if m.GetHistoryFn != nil {
-		return m.GetHistoryFn(ctx, entityIDs, start, end)
+		return m.GetHistoryFn(ctx, entityIDs, start, end, opts)
 	}
 	return map[string][]homeassistant.HistoryEntry{}, nil
 }
@@ -341,7 +341,7 @@ func TestAnalysisHandlers_handleAnalyzeEntity(t *testing.T) {
 						Attributes: map[string]any{"friendly_name": "Living Room Light"},
 					}, nil
 				},
-				GetHistoryFn: func(_ context.Context, _ []string, _, _ time.Time) (map[string][]homeassistant.HistoryEntry, error) {
+				GetHistoryFn: func(_ context.Context, _ []string, _, _ time.Time, _ homeassistant.HistoryOptions) (map[string][]homeassistant.HistoryEntry, error) {
 					return map[string][]homeassistant.HistoryEntry{
 						"light.living_room": {
 							{State: "on", LastChanged: 1704067200},

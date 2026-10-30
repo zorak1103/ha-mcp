@@ -106,6 +106,14 @@ type StateUpdate struct {
 	Attributes map[string]any `json:"attributes,omitempty"`
 }
 
+// HistoryOptions tunes a GetHistory request. The zero value is HA's default query.
+type HistoryOptions struct {
+	// AllUpdates asks HA for every recorded state update (significant_changes_only=false).
+	// By default HA keeps an attribute-only change only for climate, device_tracker,
+	// humidifier, thermostat and water_heater and drops it for every other domain.
+	AllUpdates bool
+}
+
 // HistoryEntry represents a single history entry for an entity.
 // The WebSocket API returns a compact format with short field names.
 type HistoryEntry struct {

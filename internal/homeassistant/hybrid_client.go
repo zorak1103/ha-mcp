@@ -96,7 +96,7 @@ type WSOperations interface {
 	GetStates(ctx context.Context) ([]Entity, error)
 	GetState(ctx context.Context, entityID string) (*Entity, error)
 	SetState(ctx context.Context, entityID string, state StateUpdate) (*Entity, error)
-	GetHistory(ctx context.Context, entityIDs []string, start, end time.Time) (map[string][]HistoryEntry, error)
+	GetHistory(ctx context.Context, entityIDs []string, start, end time.Time, opts HistoryOptions) (map[string][]HistoryEntry, error)
 	CallService(ctx context.Context, domain, service string, data map[string]any) ([]Entity, error)
 	CallServiceWithResponse(ctx context.Context, domain, service string, data map[string]any) (map[string]any, error)
 	ListAutomations(ctx context.Context) ([]Automation, error)
@@ -278,8 +278,8 @@ func (c *HybridClient) SetState(ctx context.Context, entityID string, state Stat
 }
 
 // GetHistory retrieves historical state changes for the given entities, keyed by entity ID.
-func (c *HybridClient) GetHistory(ctx context.Context, entityIDs []string, start, end time.Time) (map[string][]HistoryEntry, error) {
-	return c.ws.GetHistory(ctx, entityIDs, start, end)
+func (c *HybridClient) GetHistory(ctx context.Context, entityIDs []string, start, end time.Time, opts HistoryOptions) (map[string][]HistoryEntry, error) {
+	return c.ws.GetHistory(ctx, entityIDs, start, end, opts)
 }
 
 // CallService calls a Home Assistant service.
