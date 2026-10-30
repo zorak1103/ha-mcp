@@ -299,3 +299,108 @@ func TestServiceChangesTargetState(t *testing.T) {
 		})
 	}
 }
+
+// newTraceListEntry builds a minimal trace/list entry for waitForNewTrace tests.
+func newTraceListEntry(runID, start string) map[string]any {
+	return map[string]any{"run_id": runID, "timestamp": map[string]any{"start": start}}
+}
+
+func TestWaitForNewTrace(t *testing.T) {
+	data := map[string]any{"domain": "automation", "item_id": "cfg"}
+	oldRun := newTraceListEntry("r1", "2026-10-30T08:00:00Z")
+	newRun := newTraceListEntry("r2", "2026-10-30T09:00:00Z")
+
+	t.Run("finds a run that appears after a few polls", func(t *testing.T) {
+		var calls atomic.Int32
+		client := &UniversalMockClient{
+			SendHACSCommandFn: func(context.Context, string, map[string]any) (any, error) {
+				if calls.Add(1) < 3 {
+					return []any{oldRun}, nil
+				}
+				return []any{oldRun, newRun}, nil
+			},
+		}
+
+		got, found := waitForNewTrace(injectFastWait(time.Second), client, data, "r1")
+		if !found {
+			t.Fatal("expected the new run to be found")
+		}
+		if runID := getMapString(got, "run_id", ""); runID != "r2" {
+			t.Errorf("run_id = %q, want r2", runID)
+		}
+	})
+
+	t.Run("empty baseline accepts any trace", func(t *testing.T) {
+		client := &UniversalMockClient{
+			SendHACSCommandFn: func(context.Context, string, map[string]any) (any, error) {
+				return []any{oldRun}, nil
+			},
+		}
+
+		got, found := waitForNewTrace(injectFastWait(time.Second), client, data, "")
+		if !found || getMapString(got, "run_id", "") != "r1" {
+			t.Errorf("got (%v, %v), want run r1 found", got, found)
+		}
+	})
+
+	t.Run("times out when the newest run is still the baseline", func(t *testing.T) {
+		client := &UniversalMockClient{
+			SendHACSCommandFn: func(context.Context, string, map[string]any) (any, error) {
+				return []any{oldRun}, nil
+			},
+		}
+
+		got, found := waitForNewTrace(injectFastWait(60*time.Millisecond), client, data, "r1")
+		if found || got != nil {
+			t.Errorf("got (%v, %v), want (nil, false)", got, found)
+		}
+	})
+
+	t.Run("poll errors are retried", func(t *testing.T) {
+		var calls atomic.Int32
+		client := &UniversalMockClient{
+			SendHACSCommandFn: func(context.Context, string, map[string]any) (any, error) {
+				if calls.Add(1) == 1 {
+					return nil, errors.New("transient")
+				}
+				return []any{newRun}, nil
+			},
+		}
+
+		if _, found := waitForNewTrace(injectFastWait(time.Second), client, data, "r1"); !found {
+			t.Error("expected the run to be found after a failed poll")
+		}
+	})
+
+	t.Run("not_triggered entries never count as a run", func(t *testing.T) {
+		skipped := newTraceListEntry("r9", "2026-10-30T10:00:00Z")
+		skipped["not_triggered"] = true
+		client := &UniversalMockClient{
+			SendHACSCommandFn: func(context.Context, string, map[string]any) (any, error) {
+				return []any{oldRun, skipped}, nil
+			},
+		}
+
+		if _, found := waitForNewTrace(injectFastWait(60*time.Millisecond), client, data, "r1"); found {
+			t.Error("a not_triggered entry must not satisfy the wait")
+		}
+	})
+
+	t.Run("canceled context returns promptly", func(t *testing.T) {
+		client := &UniversalMockClient{
+			SendHACSCommandFn: func(context.Context, string, map[string]any) (any, error) {
+				return []any{oldRun}, nil
+			},
+		}
+		ctx, cancel := context.WithCancel(injectFastWait(10 * time.Second))
+		cancel()
+
+		start := time.Now()
+		if _, found := waitForNewTrace(ctx, client, data, "r1"); found {
+			t.Error("did not expect a run")
+		}
+		if elapsed := time.Since(start); elapsed > time.Second {
+			t.Errorf("took %v after cancel", elapsed)
+		}
+	})
+}

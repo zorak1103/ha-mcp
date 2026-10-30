@@ -1126,6 +1126,26 @@ func TestLatestTraceEntry(t *testing.T) {
 			traces:    []any{"junk", trace("r1", "2026-10-29T08:00:00Z")},
 			wantRunID: "r1",
 		},
+		{
+			// HA's dev branch lists not_triggered entries after the runs; they are condition
+			// evaluations that never started a run, so they must not shadow a real run.
+			name: "not_triggered entries are skipped",
+			traces: []any{
+				trace("r1", "2026-10-29T08:00:00Z"),
+				map[string]any{
+					"run_id": "r2", "not_triggered": true,
+					"timestamp": map[string]any{"start": "2026-10-29T09:00:00Z"},
+				},
+			},
+			wantRunID: "r1",
+		},
+		{
+			name: "only not_triggered entries",
+			traces: []any{map[string]any{
+				"run_id": "r2", "not_triggered": true,
+				"timestamp": map[string]any{"start": "2026-10-29T09:00:00Z"},
+			}},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1288,6 +1308,57 @@ func TestManageTrace_Get_LatestRunNoTraces(t *testing.T) {
 			}
 			if tt.dontWant != "" && strings.Contains(text, tt.dontWant) {
 				t.Errorf("output must not contain %q\nfull output:\n%s", tt.dontWant, text)
+			}
+		})
+	}
+}
+
+// TestManageTrace_EmptyTextDoesNotClaimAsyncRecording pins the wording of the "no traces" messages
+// of list and get. Home Assistant stores a run's trace when the run starts (verified live, #97), so
+// telling the caller that traces are "recorded asynchronously" or "may not be available yet" sends
+// them chasing a delay that does not exist.
+func TestManageTrace_EmptyTextDoesNotClaimAsyncRecording(t *testing.T) {
+	t.Parallel()
+
+	newClient := func() *UniversalMockClient {
+		return &UniversalMockClient{
+			GetEntityRegistryEntryFn: func(_ context.Context, entityID string) (*homeassistant.EntityRegistryEntry, error) {
+				return &homeassistant.EntityRegistryEntry{EntityID: entityID, UniqueID: "ev_charging"}, nil
+			},
+			SendHACSCommandFn: func(context.Context, string, map[string]any) (any, error) {
+				return []any{}, nil
+			},
+		}
+	}
+
+	tests := []struct {
+		name string
+		args map[string]any
+	}{
+		{name: "list, domain only", args: map[string]any{"action": "list", "domain": "automation"}},
+		{name: "list, entity", args: map[string]any{"action": "list", "entity_id": "automation.ev_charging"}},
+		{name: "get latest", args: map[string]any{"action": "get", "automation_id": "ev_charging"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			result, err := NewTraceHandlers().HandleManageTrace(context.Background(), newClient(), tt.args)
+			if err != nil || result.IsError {
+				t.Fatalf("unexpected failure: %v / %v", err, result)
+			}
+			text := result.Content[0].Text
+			if !strings.Contains(text, "No traces found") {
+				t.Errorf("output should say no traces were found: %q", text)
+			}
+			for _, banned := range []string{"asynchronously", "may not be available yet"} {
+				if strings.Contains(text, banned) {
+					t.Errorf("output must not contain %q: %q", banned, text)
+				}
+			}
+			if !strings.Contains(text, "wait=true") {
+				t.Errorf("output should still point to wait=true for an upcoming run: %q", text)
 			}
 		})
 	}

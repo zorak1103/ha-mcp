@@ -28,6 +28,7 @@ const (
 	automationActionUpdate   = "update"
 	automationActionDelete   = "delete"
 	automationActionToggle   = "toggle"
+	automationActionTrigger  = "trigger"
 	automationActionCoverage = "coverage"
 	automationActionPatch    = "patch"
 	automationActionSchema   = "schema"
@@ -120,7 +121,7 @@ func (h *AutomationHandlers) RegisterTools(registry *mcp.Registry) {
 func (h *AutomationHandlers) manageAutomationTool() mcp.Tool {
 	return mcp.Tool{
 		Name: "manage_automation",
-		Description: `Manage Home Assistant automations - list, get, create, update, delete, toggle, or analyze coverage.
+		Description: `Manage Home Assistant automations - list, get, create, update, delete, toggle, trigger, or analyze coverage.
 
 Actions:
 - list: List automations (optional filters: state, alias, entity_id; supports verbose, limit, cursor)
@@ -129,6 +130,7 @@ Actions:
 - update: Update an existing automation (requires automation_id); fields not passed are kept. variables replaces the whole block ({} or null removes it)
 - delete: Delete an automation (requires automation_id)
 - toggle: Enable or disable an automation (requires automation_id, enabled)
+- trigger: Run an automation now and return the new run's run_id, state and outcome (requires automation_id; optional skip_condition, default true = conditions skipped). Use manage_trace action=get automation_id=<id> run_id=<run_id> for the full trace
 - coverage: Analyze which areas/entities lack automation coverage
 - patch: Apply RFC 6902 JSON Patch operations (requires automation_id, operations)
 - schema: Return reference for all valid trigger, condition, and action types with required/optional fields
@@ -140,12 +142,12 @@ Trigger shape: legacy types (state, numeric_state, ...) use flat keys (entity_id
 			Properties: map[string]mcp.JSONSchema{
 				"action": {
 					Type:        "string",
-					Description: "Operation to perform: list, get, create, update, delete, toggle, coverage, patch, schema",
-					Enum:        []string{"list", "get", "create", "update", "delete", "toggle", automationActionCoverage, "patch", "schema"},
+					Description: "Operation to perform: list, get, create, update, delete, toggle, trigger, coverage, patch, schema",
+					Enum:        []string{"list", "get", "create", "update", "delete", "toggle", automationActionTrigger, automationActionCoverage, "patch", "schema"},
 				},
 				"automation_id": {
 					Type:        "string",
-					Description: "Automation identifier. For create: optional config/storage ID (e.g. 'my_automation') — controls the REST API key, not the entity_id (HA always derives entity_id from the slugified alias). Useful when you need a stable config ID independent of the display name. For other actions: accepts entity_id (automation.xyz), config.id (UUID), or alias/friendly_name (case-insensitive partial match). Required for get/update/delete/toggle.",
+					Description: "Automation identifier. For create: optional config/storage ID (e.g. 'my_automation') — controls the REST API key, not the entity_id (HA always derives entity_id from the slugified alias). Useful when you need a stable config ID independent of the display name. For other actions: accepts entity_id (automation.xyz), config.id (UUID), or alias/friendly_name (case-insensitive partial match). Required for get/update/delete/toggle/trigger.",
 				},
 				"alias": {
 					Type:        "string",
@@ -186,6 +188,10 @@ Trigger shape: legacy types (state, numeric_state, ...) use flat keys (entity_id
 				"enabled": {
 					Type:        "boolean",
 					Description: "Whether the automation should be enabled (for toggle action)",
+				},
+				"skip_condition": {
+					Type:        "boolean",
+					Description: "For trigger action only: whether Home Assistant skips the automation's conditions. Defaults to true (HA's own default) and is only sent when supplied; pass false to evaluate the conditions.",
 				},
 				"state": {
 					Type:        "string",
@@ -248,6 +254,8 @@ func (h *AutomationHandlers) handleManageAutomation(
 		return h.handleDelete(ctx, client, args)
 	case automationActionToggle:
 		return h.handleToggle(ctx, client, args)
+	case automationActionTrigger:
+		return h.handleTrigger(ctx, client, args)
 	case automationActionCoverage:
 		return h.handleCoverage(ctx, client, args)
 	case automationActionPatch:
@@ -255,7 +263,7 @@ func (h *AutomationHandlers) handleManageAutomation(
 	case automationActionSchema:
 		return h.handleSchema()
 	default:
-		return errorResult(fmt.Sprintf("invalid action: %s (must be list, get, create, update, delete, toggle, coverage, patch, or schema)", action)), nil
+		return errorResult(fmt.Sprintf("invalid action: %s (must be list, get, create, update, delete, toggle, trigger, coverage, patch, or schema)", action)), nil
 	}
 }
 

@@ -254,6 +254,38 @@ func waitForTraces(ctx context.Context, client homeassistant.Client, data map[st
 	}
 }
 
+// waitForNewTrace polls trace/list until the newest run differs from baselineRunID (empty when the
+// automation had no run yet, so any run counts) or the timeout expires. Unlike waitForTraces it
+// compares against a baseline, so an older run in a non-empty list cannot satisfy it. The first
+// poll happens immediately: HA stores a run's trace when the run starts, so it is usually there
+// within milliseconds. Returns the new trace and whether it was found; canceling ctx ends the
+// wait early.
+func waitForNewTrace(ctx context.Context, client homeassistant.Client, data map[string]any, baselineRunID string) (map[string]any, bool) {
+	cfg := pollerConfigFromContext(ctx)
+	pollCtx, cancel := context.WithTimeout(ctx, cfg.Timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(cfg.PollInterval)
+	defer ticker.Stop()
+
+	for {
+		if pollCtx.Err() != nil {
+			return nil, false
+		}
+		if response, err := client.SendHACSCommand(pollCtx, "trace/list", data); err == nil {
+			latest := latestTraceEntry(parseTraceListResponse(response))
+			if latest != nil && getMapString(latest, "run_id", "") != baselineRunID {
+				return latest, true
+			}
+		}
+		select {
+		case <-pollCtx.Done():
+			return nil, false
+		case <-ticker.C:
+		}
+	}
+}
+
 // pollerConfigFromContext converts the MCP WaitConfig from the context into an EntityPollerConfig.
 func pollerConfigFromContext(ctx context.Context) homeassistant.EntityPollerConfig {
 	wc := mcp.WaitConfigFromContext(ctx)
