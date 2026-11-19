@@ -992,45 +992,45 @@ func (h *AnalysisHandlers) extractDependenciesFromMap(m map[string]any, seen map
 	h.recurseIntoNestedStructures(m, seen)
 }
 
-// extractDirectEntityDependency extracts entity_id directly from a map.
+// extractDirectEntityDependency adds every entity of the map's (string or list)
+// entity_id as a dependency; an entity already in seen keeps its first entry.
 func (h *AnalysisHandlers) extractDirectEntityDependency(m map[string]any, seen map[string]DependencyEntry) {
-	entityID := h.extractEntityID(m)
-	if entityID == "" {
-		return
-	}
-
-	if _, exists := seen[entityID]; exists {
+	entityIDs := h.extractEntityIDs(m)
+	if len(entityIDs) == 0 {
 		return
 	}
 
 	triggerType := h.extractTriggerType(m)
-	seen[entityID] = DependencyEntry{
-		EntityID:    entityID,
-		Type:        triggerType,
-		Description: h.generateTriggerDescription(m, triggerType),
+	description := h.generateTriggerDescription(m, triggerType)
+	for _, entityID := range entityIDs {
+		if _, exists := seen[entityID]; exists {
+			continue
+		}
+		seen[entityID] = DependencyEntry{
+			EntityID:    entityID,
+			Type:        triggerType,
+			Description: description,
+		}
 	}
 }
 
-// extractTargetEntityDependency extracts entity_id from the target field.
+// extractTargetEntityDependency adds every entity of the target field's (string or
+// list) entity_id as a dependency; an entity already in seen keeps its first entry.
 func (h *AnalysisHandlers) extractTargetEntityDependency(m map[string]any, seen map[string]DependencyEntry) {
 	target, ok := m["target"].(map[string]any)
 	if !ok {
 		return
 	}
 
-	entityID := h.extractEntityID(target)
-	if entityID == "" {
-		return
-	}
-
-	if _, exists := seen[entityID]; exists {
-		return
-	}
-
-	seen[entityID] = DependencyEntry{
-		EntityID:    entityID,
-		Type:        "target",
-		Description: "Action target",
+	for _, entityID := range h.extractEntityIDs(target) {
+		if _, exists := seen[entityID]; exists {
+			continue
+		}
+		seen[entityID] = DependencyEntry{
+			EntityID:    entityID,
+			Type:        "target",
+			Description: "Action target",
+		}
 	}
 }
 
@@ -1057,16 +1057,22 @@ func (h *AnalysisHandlers) shouldRecurseIntoKey(key string) bool {
 	return recursiveKeys[key]
 }
 
-func (h *AnalysisHandlers) extractEntityID(m map[string]any) string {
-	if entityID, ok := m[attrEntityID].(string); ok {
-		return entityID
-	}
-	if entityIDs, ok := m[attrEntityID].([]any); ok && len(entityIDs) > 0 {
-		if first, ok := entityIDs[0].(string); ok {
-			return first
+// extractEntityIDs returns the entity IDs of the map's entity_id, which HA accepts
+// as a string or a list (see formatter.StringList). HA's cv.comp_entity_ids also accepts a
+// comma-separated string ("light.a, light.b"), so every item is split on ",", each part
+// trimmed of spaces and empty parts dropped, keeping the order. HA splits only a bare
+// string (a list item with a comma fails its validation); splitting list items as well is
+// harmless leniency for configs HA would reject anyway.
+func (h *AnalysisHandlers) extractEntityIDs(m map[string]any) []string {
+	var ids []string
+	for _, item := range formatter.StringList(m[attrEntityID]) {
+		for part := range strings.SplitSeq(item, ",") {
+			if id := strings.TrimSpace(part); id != "" {
+				ids = append(ids, id)
+			}
 		}
 	}
-	return ""
+	return ids
 }
 
 func (h *AnalysisHandlers) extractTriggerType(m map[string]any) string {
@@ -1088,21 +1094,28 @@ func (h *AnalysisHandlers) extractTriggerType(m map[string]any) string {
 	return ""
 }
 
+// quotedAlternatives renders a string-or-list state field (see formatter.StringList)
+// with each item formatted by format (e.g. "'%s'" or "%q") and the items joined by
+// formatter.StateListSep (HA matches any one of them); a field without usable items
+// renders as "".
+func quotedAlternatives(v any, format string) string {
+	items := formatter.StringList(v)
+	quoted := make([]string, len(items))
+	for i, item := range items {
+		quoted[i] = fmt.Sprintf(format, item)
+	}
+	return strings.Join(quoted, formatter.StateListSep)
+}
+
 func (h *AnalysisHandlers) generateTriggerDescription(m map[string]any, triggerType string) string {
 	switch triggerType {
 	case excerptTriggerState:
-		to := ""
-		from := ""
-		if t, ok := m["to"].(string); ok {
-			to = t
-		}
-		if f, ok := m["from"].(string); ok {
-			from = f
-		}
+		to := quotedAlternatives(m["to"], "'%s'")
+		from := quotedAlternatives(m["from"], "'%s'")
 		if from != "" && to != "" {
-			return fmt.Sprintf("State change from '%s' to '%s'", from, to)
+			return fmt.Sprintf("State change from %s to %s", from, to)
 		} else if to != "" {
-			return fmt.Sprintf("State changes to '%s'", to)
+			return fmt.Sprintf("State changes to %s", to)
 		}
 		return "State trigger"
 	case excerptTriggerNumericState:

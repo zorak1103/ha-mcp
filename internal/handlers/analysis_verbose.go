@@ -94,11 +94,11 @@ func summarizeTriggerNode(node map[string]any, entityID string) string {
 	switch platform {
 	case excerptTriggerState:
 		var parts []string
-		if from, ok := node["from"].(string); ok {
-			parts = append(parts, fmt.Sprintf("from %q", from))
+		if from := quotedAlternatives(node["from"], "%q"); from != "" {
+			parts = append(parts, "from "+from)
 		}
-		if to, ok := node["to"].(string); ok {
-			parts = append(parts, fmt.Sprintf("→ %q", to))
+		if to := quotedAlternatives(node["to"], "%q"); to != "" {
+			parts = append(parts, "→ "+to)
 		}
 		if id, ok := node["id"].(string); ok {
 			parts = append(parts, fmt.Sprintf("(id: %q)", id))
@@ -134,8 +134,8 @@ func summarizeConditionNode(node map[string]any, entityID string) string {
 
 	switch condType {
 	case excerptTriggerState:
-		if state, ok := node[excerptTriggerState].(string); ok {
-			return fmt.Sprintf("state %s = %q", eid, state)
+		if state := quotedAlternatives(node[excerptTriggerState], "%q"); state != "" {
+			return fmt.Sprintf("state %s = %s", eid, state)
 		}
 		return fmt.Sprintf("state %s", eid)
 	case excerptTriggerNumericState:
@@ -179,6 +179,9 @@ func summarizeActionNode(node map[string]any, entityID string) string {
 }
 
 // getNodeEntityID returns the entity_id from a config node, falling back to the searched entityID.
+// A list-valued entity_id deliberately falls back to the analyzed entity: the excerpt is
+// about that entity, not about every entity the node names. A comma-separated string is a
+// string and is shown as written.
 func getNodeEntityID(node map[string]any, fallback string) string {
 	if eid, ok := node[configKeyEntityID].(string); ok {
 		return eid

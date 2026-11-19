@@ -3,6 +3,7 @@ package formatter
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -986,4 +987,39 @@ func TestNaturalAutomationFormatter_ListEntityID(t *testing.T) {
 			t.Errorf("expected list entity_id in trigger line, got:\n%s", result)
 		}
 	})
+}
+
+func TestStringList(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   any
+		want []string
+	}{
+		{name: "string", in: "on", want: []string{"on"}},
+		{name: "empty string", in: "", want: nil},
+		{name: "nil", in: nil, want: nil},
+		{name: "list", in: []any{"on", "unavailable"}, want: []string{"on", "unavailable"}},
+		{name: "list skips non-string and empty items", in: []any{"on", 5, "", "off"}, want: []string{"on", "off"}},
+		{name: "all non-string list", in: []any{1, 2}, want: nil},
+		{name: "empty list", in: []any{}, want: nil},
+		{name: "map", in: map[string]any{"a": "b"}, want: nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := StringList(tt.in)
+			if tt.want == nil {
+				if got != nil {
+					t.Errorf("StringList(%#v) = %#v, want nil", tt.in, got)
+				}
+				return
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("StringList(%#v) = %#v, want %#v", tt.in, got, tt.want)
+			}
+		})
+	}
 }

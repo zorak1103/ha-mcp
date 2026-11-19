@@ -388,8 +388,8 @@ func (f *NaturalAutomationFormatter) formatKnownTrigger(platform, entityID strin
 }
 
 func (f *NaturalAutomationFormatter) formatStateTrigger(entityID string, triggerMap map[string]any) string {
-	from := stringOrList(triggerMap["from"], stateListSep)
-	to := stringOrList(triggerMap["to"], stateListSep)
+	from := stringOrList(triggerMap["from"], StateListSep)
+	to := stringOrList(triggerMap["to"], StateListSep)
 
 	var parts []string
 	parts = append(parts, entityID)
@@ -421,33 +421,44 @@ func (f *NaturalAutomationFormatter) formatNumericStateTrigger(entityID string, 
 	return "numeric_state: " + strings.Join(parts, " ")
 }
 
-// List separators for stringOrList. A list of state values (trigger to/from, condition
+// List separators for stringOrList (StateListSep is also used by the handlers'
+// analysis output). A list of state values (trigger to/from, condition
 // state) matches any one of them, so it reads as "on or off"; an entity list is neutral
 // because a condition requires all entities to match while a trigger fires on any.
 const (
 	entityListSep = ", "
-	stateListSep  = " or "
+	StateListSep  = " or "
 )
 
-// stringOrList renders a trigger/condition field that HA accepts either as a single
+// StringList reads a trigger/condition field that HA accepts either as a single
 // string or as a list (the form the UI editor writes for entity_id, to, from, state).
-// List entries are joined with sep; non-string and empty entries are skipped, and any
-// other value (including null) renders as "".
-func stringOrList(v any, sep string) string {
+// It returns the non-empty string items in order: a string yields itself, a list its
+// string entries (non-string and empty entries are skipped). An empty string, an empty
+// or all-non-string list, null and any other value yield nil.
+func StringList(v any) []string {
 	switch val := v.(type) {
 	case string:
-		return val
+		if val == "" {
+			return nil
+		}
+		return []string{val}
 	case []any:
-		parts := make([]string, 0, len(val))
+		var items []string
 		for _, item := range val {
 			if s, ok := item.(string); ok && s != "" {
-				parts = append(parts, s)
+				items = append(items, s)
 			}
 		}
-		return strings.Join(parts, sep)
+		return items
 	default:
-		return ""
+		return nil
 	}
+}
+
+// stringOrList renders a string-or-list field (see StringList) with list entries
+// joined by sep; a field without usable items renders as "".
+func stringOrList(v any, sep string) string {
+	return strings.Join(StringList(v), sep)
 }
 
 // formatForDuration extracts a "for" duration from a trigger/condition map.
@@ -532,7 +543,7 @@ func (f *NaturalAutomationFormatter) formatCondition(condition any) string {
 
 	switch condType {
 	case "state":
-		state := stringOrList(condMap["state"], stateListSep)
+		state := stringOrList(condMap["state"], StateListSep)
 		return fmt.Sprintf("state: %s = %s", entityID, state)
 	case "time":
 		after, _ := condMap["after"].(string)
