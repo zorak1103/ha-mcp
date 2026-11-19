@@ -249,6 +249,9 @@ func (m *mockClient) ListScripts(ctx context.Context) ([]Entity, error) { return
 func (m *mockClient) GetScript(ctx context.Context, scriptID string) (*Script, error) {
 	return nil, nil
 }
+func (m *mockClient) GetScriptConfig(ctx context.Context, entityID string) (*ScriptConfig, error) {
+	return nil, nil
+}
 func (m *mockClient) CreateScript(ctx context.Context, scriptID string, script ScriptConfig) error {
 	return nil
 }

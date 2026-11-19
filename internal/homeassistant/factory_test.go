@@ -210,6 +210,9 @@ func (m *mockNonCloserClient) ListScripts(_ context.Context) ([]Entity, error) {
 func (m *mockNonCloserClient) GetScript(_ context.Context, _ string) (*Script, error) {
 	return &Script{}, nil
 }
+func (m *mockNonCloserClient) GetScriptConfig(_ context.Context, _ string) (*ScriptConfig, error) {
+	return nil, nil
+}
 func (m *mockNonCloserClient) CreateScript(_ context.Context, _ string, _ ScriptConfig) error {
 	return nil
 }

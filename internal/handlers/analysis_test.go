@@ -22,6 +22,7 @@ type mockAnalysisClient struct {
 	GetAutomationFn         func(ctx context.Context, automationID string) (*homeassistant.Automation, error)
 	ListScriptsFn           func(ctx context.Context) ([]homeassistant.Entity, error)
 	GetScriptFn             func(ctx context.Context, scriptID string) (*homeassistant.Script, error)
+	GetScriptConfigFn       func(ctx context.Context, entityID string) (*homeassistant.ScriptConfig, error)
 	ListScenesFn            func(ctx context.Context) ([]homeassistant.Entity, error)
 	GetStatesFn             func(ctx context.Context) ([]homeassistant.Entity, error)
 	GetEntityRegistryFn     func(ctx context.Context) ([]homeassistant.EntityRegistryEntry, error)
@@ -64,6 +65,13 @@ func (m *mockAnalysisClient) ListScripts(ctx context.Context) ([]homeassistant.E
 func (m *mockAnalysisClient) GetScript(ctx context.Context, scriptID string) (*homeassistant.Script, error) {
 	if m.GetScriptFn != nil {
 		return m.GetScriptFn(ctx, scriptID)
+	}
+	return nil, errors.New("not found")
+}
+
+func (m *mockAnalysisClient) GetScriptConfig(ctx context.Context, entityID string) (*homeassistant.ScriptConfig, error) {
+	if m.GetScriptConfigFn != nil {
+		return m.GetScriptConfigFn(ctx, entityID)
 	}
 	return nil, errors.New("not found")
 }
@@ -680,7 +688,7 @@ func TestRegisterAnalysisTools(t *testing.T) {
 	t.Parallel()
 
 	registry := mcp.NewRegistry()
-	RegisterAnalysisTools(registry)
+	RegisterAnalysisTools(registry, NewConfigLoader())
 
 	tools := registry.ListTools()
 	if len(tools) != 2 {
@@ -1864,17 +1872,13 @@ func TestAnalysisHandlers_ScriptSceneGroupReferences(t *testing.T) {
 		client := &mockAnalysisClient{
 			ListScriptsFn: func(_ context.Context) ([]homeassistant.Entity, error) {
 				return []homeassistant.Entity{
-					{EntityID: "script.kitchen_scene"},
+					{EntityID: "script.kitchen_scene", Attributes: map[string]any{"friendly_name": "Kitchen Scene"}},
 				}, nil
 			},
-			GetScriptFn: func(_ context.Context, _ string) (*homeassistant.Script, error) {
-				return &homeassistant.Script{
-					EntityID:     "script.kitchen_scene",
-					FriendlyName: "Kitchen Scene",
-					Config: &homeassistant.ScriptConfig{
-						Sequence: []any{
-							map[string]any{"entity_id": entityID, "action": "light.turn_on"},
-						},
+			GetScriptConfigFn: func(context.Context, string) (*homeassistant.ScriptConfig, error) {
+				return &homeassistant.ScriptConfig{
+					Sequence: []any{
+						map[string]any{"entity_id": entityID, "action": "light.turn_on"},
 					},
 				}, nil
 			},
@@ -1893,10 +1897,10 @@ func TestAnalysisHandlers_ScriptSceneGroupReferences(t *testing.T) {
 		if result.IsError {
 			t.Fatalf("unexpected error result: %v", result.Content)
 		}
-		// The analysis should find the script reference - fetched via GetScript
-		// (real Home Assistant does not expose "sequence" as a state attribute,
-		// so ListScripts' Attributes cannot be used here; see analysis.go's
-		// findScriptReferences).
+		// The analysis should find the script reference - its config is read via
+		// GetScriptConfig (real Home Assistant does not expose "sequence" as a
+		// state attribute, so ListScripts' Attributes cannot be used here), the
+		// friendly name comes from the listed script's state attributes.
 		content := result.Content[0].Text
 		if !strings.Contains(content, "Kitchen Scene") {
 			t.Errorf("expected script reference to be found, got: %s", content[:min(500, len(content))])
@@ -2515,15 +2519,11 @@ func TestHandleAnalyzeEntity_ScriptPathsInOutput(t *testing.T) {
 		},
 		ListScriptsFn: func(context.Context) ([]homeassistant.Entity, error) {
 			return []homeassistant.Entity{
-				{EntityID: "script.example_script", State: "off"},
+				{EntityID: "script.example_script", State: "off", Attributes: map[string]any{"friendly_name": "Example Script"}},
 			}, nil
 		},
-		GetScriptFn: func(_ context.Context, _ string) (*homeassistant.Script, error) {
-			return &homeassistant.Script{
-				EntityID:     "script.example_script",
-				FriendlyName: "Example Script",
-				Config:       &homeassistant.ScriptConfig{Sequence: sequence},
-			}, nil
+		GetScriptConfigFn: func(context.Context, string) (*homeassistant.ScriptConfig, error) {
+			return &homeassistant.ScriptConfig{Sequence: sequence}, nil
 		},
 	}
 
@@ -2857,9 +2857,17 @@ func TestFindAreaScriptReferences_SkipsScriptsWithoutAreaMatch(t *testing.T) {
 	client := &mockAnalysisClient{
 		ListScriptsFn: func(context.Context) ([]homeassistant.Entity, error) {
 			return []homeassistant.Entity{
-				{EntityID: "script.other", Attributes: map[string]any{"sequence": []any{"kitchen"}}},
-				{EntityID: "script.no_sequence", Attributes: map[string]any{}},
+				{EntityID: "script.other"},
+				{EntityID: "script.no_sequence"},
 			}, nil
+		},
+		GetScriptConfigFn: func(_ context.Context, entityID string) (*homeassistant.ScriptConfig, error) {
+			if entityID == "script.other" {
+				return &homeassistant.ScriptConfig{Sequence: []any{
+					map[string]any{"action": "light.turn_off", "target": map[string]any{"area_id": "kitchen"}},
+				}}, nil
+			}
+			return &homeassistant.ScriptConfig{}, nil
 		},
 	}
 

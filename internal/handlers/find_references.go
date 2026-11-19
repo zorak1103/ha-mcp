@@ -28,20 +28,21 @@ const schemaTypeObject = "object"
 // template-helper templates, replacing manual per-object listing and
 // client-side scanning with a single search.
 type FindReferencesHandlers struct {
-	// scanTimeout bounds one find_references call's scan. See defaultFindReferencesScanTimeout.
+	// scanTimeout bounds one find_references call's scan. See defaultConfigScanTimeout.
 	scanTimeout time.Duration
+	// loader reads the configs; concurrent calls on the same client share its loads.
+	loader *ConfigLoader
 }
 
-// defaultFindReferencesScanTimeout is how long one find_references call may scan
-// before unfinished sources are reported in failed_sources. It must stay below the
-// HTTP server's write timeout (httpWriteTimeout in internal/mcp/server.go, 30 s):
-// a scan that outlasts it makes the server close the connection with an empty
-// reply instead of an explicit result, and leaves no time to render the response.
-const defaultFindReferencesScanTimeout = 25 * time.Second
-
-// NewFindReferencesHandlers creates a new FindReferencesHandlers instance.
+// NewFindReferencesHandlers creates a new FindReferencesHandlers instance with its own ConfigLoader.
 func NewFindReferencesHandlers() *FindReferencesHandlers {
-	return &FindReferencesHandlers{scanTimeout: defaultFindReferencesScanTimeout}
+	return NewFindReferencesHandlersWithLoader(NewConfigLoader())
+}
+
+// NewFindReferencesHandlersWithLoader creates a FindReferencesHandlers that reads
+// configs through loader, so tools given the same loader share in-flight loads.
+func NewFindReferencesHandlersWithLoader(loader *ConfigLoader) *FindReferencesHandlers {
+	return &FindReferencesHandlers{scanTimeout: defaultConfigScanTimeout, loader: loader}
 }
 
 // RegisterTools registers the find_references tool with the registry.
@@ -124,7 +125,7 @@ func (h *FindReferencesHandlers) handleFindReferences(ctx context.Context, clien
 	types := findReferencesRequestedTypes(args)
 	scanCtx, cancel := context.WithTimeout(ctx, h.scanTimeout)
 	defer cancel()
-	hits, scanned, failed := runRequestedScanners(scanCtx, client, types, match)
+	hits, scanned, failed := runRequestedScanners(scanCtx, h.loader, client, types, match)
 
 	format := formatter.ParseFormat(getStringArg(args, "format"))
 	if format == formatter.FormatNatural {
@@ -154,22 +155,22 @@ type scannerCall struct {
 // findReferencesTypes order (automation, script, scene, dashboard,
 // helper_template) - this fixed order is what keeps runRequestedScanners'
 // output deterministic regardless of which goroutine finishes first.
-func buildScannerCalls(ctx context.Context, client homeassistant.Client, types map[string]bool, match func(string) bool) []scannerCall {
+func buildScannerCalls(ctx context.Context, loader *ConfigLoader, client homeassistant.Client, types map[string]bool, match func(string) bool) []scannerCall {
 	var calls []scannerCall
 	if types["automation"] {
-		calls = append(calls, scannerCall{"automation", func() ([]ConfigHit, error) { return scanAutomationsForReferences(ctx, client, match) }})
+		calls = append(calls, scannerCall{"automation", func() ([]ConfigHit, error) { return scanAutomationsForReferences(ctx, loader, client, match) }})
 	}
 	if types["script"] {
-		calls = append(calls, scannerCall{"script", func() ([]ConfigHit, error) { return scanScriptsForReferences(ctx, client, match) }})
+		calls = append(calls, scannerCall{"script", func() ([]ConfigHit, error) { return scanScriptsForReferences(ctx, loader, client, match) }})
 	}
 	if types["scene"] {
 		calls = append(calls, scannerCall{"scene", func() ([]ConfigHit, error) { return scanScenesForReferences(ctx, client, match) }})
 	}
 	if types["dashboard"] {
-		calls = append(calls, scannerCall{"dashboard", func() ([]ConfigHit, error) { return scanAllDashboardsForReferences(ctx, client, match) }})
+		calls = append(calls, scannerCall{"dashboard", func() ([]ConfigHit, error) { return scanAllDashboardsForReferences(ctx, loader, client, match) }})
 	}
 	if types["helper_template"] {
-		calls = append(calls, scannerCall{"helper_template", func() ([]ConfigHit, error) { return scanHelperTemplates(ctx, client, match) }})
+		calls = append(calls, scannerCall{"helper_template", func() ([]ConfigHit, error) { return scanHelperTemplates(ctx, loader, client, match) }})
 	}
 	return calls
 }
@@ -179,8 +180,8 @@ func buildScannerCalls(ctx context.Context, client homeassistant.Client, types m
 // writes only to its own index in results, so no locking is needed; hits are
 // concatenated in calls order (not completion order) afterward, keeping
 // output deterministic regardless of which scan finishes first.
-func runRequestedScanners(ctx context.Context, client homeassistant.Client, types map[string]bool, match func(string) bool) (hits []ConfigHit, scanned []string, failed []ScanOutcome) {
-	calls := buildScannerCalls(ctx, client, types, match)
+func runRequestedScanners(ctx context.Context, loader *ConfigLoader, client homeassistant.Client, types map[string]bool, match func(string) bool) (hits []ConfigHit, scanned []string, failed []ScanOutcome) {
+	calls := buildScannerCalls(ctx, loader, client, types, match)
 
 	results := make([]struct {
 		hits []ConfigHit
@@ -265,75 +266,42 @@ func findReferencesRequestedTypes(args map[string]any) map[string]bool {
 	return result
 }
 
-// errScanInterrupted returns a non-nil error when ctx has ended, so a scanner that
-// walks configs one by one stops and reports its source as failed. Per-config
-// fetch errors are otherwise skipped, and a fetch that failed only because ctx
-// ended would silently drop that config and look like a complete scan.
-func errScanInterrupted(ctx context.Context, source string) error {
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("%s scan interrupted before all configs were read: %w", source, err)
-	}
-	return nil
-}
-
 // scanAutomationsForReferences scans every automation's triggers/conditions/actions.
-// If ctx ends mid-scan it returns the hits found so far together with an error.
-func scanAutomationsForReferences(ctx context.Context, client homeassistant.Client, match func(string) bool) ([]ConfigHit, error) {
-	automations, err := client.ListAutomations(ctx)
-	if err != nil {
-		return nil, err
-	}
+// If the load is interrupted it returns the hits of the configs read so far together with an error.
+func scanAutomationsForReferences(ctx context.Context, loader *ConfigLoader, client homeassistant.Client, match func(string) bool) ([]ConfigHit, error) {
+	automations, loadErr := loader.Automations(ctx, client)
 
 	var hits []ConfigHit
 	for _, auto := range automations {
-		autoID := strings.TrimPrefix(auto.EntityID, "automation.")
-		full, err := client.GetAutomation(ctx, autoID)
-		if err != nil {
-			if interrupted := errScanInterrupted(ctx, "automation"); interrupted != nil {
-				return hits, interrupted
-			}
+		if auto.Err != nil || auto.Config == nil {
 			continue
 		}
-		if full.Config == nil {
-			continue
-		}
-		hits = append(hits, configSectionHits("automation", auto.EntityID, match,
-			namedSection{"triggers", full.Config.Triggers},
-			namedSection{"conditions", full.Config.Conditions},
-			namedSection{"actions", full.Config.Actions},
+		hits = append(hits, configSectionHits("automation", auto.Entity.EntityID, match,
+			namedSection{"triggers", auto.Config.Triggers},
+			namedSection{"conditions", auto.Config.Conditions},
+			namedSection{"actions", auto.Config.Actions},
 		)...)
 	}
-	return hits, nil
+	return hits, loadErr
 }
 
-// scanScriptsForReferences scans every script's sequence.
-// If ctx ends mid-scan it returns the hits found so far together with an error.
-func scanScriptsForReferences(ctx context.Context, client homeassistant.Client, match func(string) bool) ([]ConfigHit, error) {
-	scripts, err := client.ListScripts(ctx)
-	if err != nil {
-		return nil, err
-	}
+// scanScriptsForReferences scans every script's sequence. The loader reads each
+// config via GetScriptConfig: ListScripts returns live entity state only (no
+// "sequence" attribute), and GetScript would cost a full get_states per script.
+// If the load is interrupted it returns the hits of the configs read so far together with an error.
+func scanScriptsForReferences(ctx context.Context, loader *ConfigLoader, client homeassistant.Client, match func(string) bool) ([]ConfigHit, error) {
+	scripts, loadErr := loader.Scripts(ctx, client)
 
 	var hits []ConfigHit
 	for _, script := range scripts {
-		// ListScripts returns live entity state only - real Home Assistant does not
-		// expose "sequence" as a state attribute, so the full config must be
-		// fetched via GetScript (mirrors scanAutomationsForReferences/GetAutomation).
-		full, err := client.GetScript(ctx, script.EntityID)
-		if err != nil {
-			if interrupted := errScanInterrupted(ctx, "script"); interrupted != nil {
-				return hits, interrupted
-			}
+		if script.Err != nil || script.Config == nil {
 			continue
 		}
-		if full.Config == nil {
-			continue
-		}
-		hits = append(hits, configSectionHits("script", script.EntityID, match,
-			namedSection{"sequence", full.Config.Sequence},
+		hits = append(hits, configSectionHits("script", script.Entity.EntityID, match,
+			namedSection{"sequence", script.Config.Sequence},
 		)...)
 	}
-	return hits, nil
+	return hits, loadErr
 }
 
 // scanScenesForReferences scans every scene's flat entity_id list.
@@ -357,25 +325,18 @@ func scanScenesForReferences(ctx context.Context, client homeassistant.Client, m
 }
 
 // scanAllDashboardsForReferences scans every dashboard, including the default one.
-// If ctx ends mid-scan it returns the hits found so far together with an error.
-func scanAllDashboardsForReferences(ctx context.Context, client homeassistant.Client, match func(string) bool) ([]ConfigHit, error) {
-	urlPaths, err := allDashboardURLPaths(ctx, client)
-	if err != nil {
-		return nil, err
-	}
+// If the load is interrupted it returns the hits of the configs read so far together with an error.
+func scanAllDashboardsForReferences(ctx context.Context, loader *ConfigLoader, client homeassistant.Client, match func(string) bool) ([]ConfigHit, error) {
+	dashboards, loadErr := loader.Dashboards(ctx, client)
 
 	var hits []ConfigHit
-	for _, urlPath := range urlPaths {
-		config, err := client.GetLovelaceConfig(ctx, urlPath)
-		if err != nil {
-			if interrupted := errScanInterrupted(ctx, "dashboard"); interrupted != nil {
-				return hits, interrupted
-			}
+	for _, dash := range dashboards {
+		if dash.Err != nil {
 			continue
 		}
-		hits = append(hits, scanDashboardConfig(urlPath, config, match)...)
+		hits = append(hits, scanDashboardConfig(dash.URLPath, dash.Config, match)...)
 	}
-	return hits, nil
+	return hits, loadErr
 }
 
 // namedSection pairs a top-level config array with the pointer-path segment name it lives under.

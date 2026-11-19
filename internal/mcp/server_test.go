@@ -109,6 +109,10 @@ func (m *mockHAClient) GetScript(_ context.Context, _ string) (*homeassistant.Sc
 	return nil, nil
 }
 
+func (m *mockHAClient) GetScriptConfig(_ context.Context, _ string) (*homeassistant.ScriptConfig, error) {
+	return nil, nil
+}
+
 func (m *mockHAClient) CreateScript(_ context.Context, _ string, _ homeassistant.ScriptConfig) error {
 	return nil
 }

@@ -2155,6 +2155,104 @@ func TestWSClientImplWithSender_GetScript(t *testing.T) {
 	}
 }
 
+func TestWSClientImplWithSender_GetScriptConfig(t *testing.T) {
+	t.Parallel()
+
+	t.Run("sends only script/config and returns unwrapped config", func(t *testing.T) {
+		t.Parallel()
+
+		mock := &mockWSClientSender{
+			sendCommandFunc: func(_ context.Context, cmdType string, params map[string]any) (*WSResultMessage, error) {
+				if cmdType != "script/config" {
+					t.Errorf("unexpected command %q, want only script/config", cmdType)
+					return nil, errors.New("unexpected command")
+				}
+				if params["entity_id"] != "script.test" {
+					t.Errorf("entity_id mismatch: %v", params["entity_id"])
+				}
+				return makeWSResultMsg(map[string]any{
+					"config": map[string]any{
+						"alias": "Test Script",
+						"mode":  "single",
+					},
+				}), nil
+			},
+		}
+
+		client := newWSClientImplWithSender(mock)
+		cfg, err := client.GetScriptConfig(context.Background(), "test")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg == nil {
+			t.Fatal("expected config, got nil")
+		}
+		if cfg.Alias != "Test Script" {
+			t.Errorf("Alias mismatch: %q", cfg.Alias)
+		}
+		if cfg.Mode != "single" {
+			t.Errorf("Mode mismatch: %q", cfg.Mode)
+		}
+	})
+
+	t.Run("prefixed entity id is not double-prefixed", func(t *testing.T) {
+		t.Parallel()
+
+		mock := &mockWSClientSender{
+			sendCommandFunc: func(_ context.Context, _ string, params map[string]any) (*WSResultMessage, error) {
+				if params["entity_id"] != "script.test" {
+					t.Errorf("entity_id mismatch: %v", params["entity_id"])
+				}
+				return makeWSResultMsg(map[string]any{"config": map[string]any{"alias": "x"}}), nil
+			},
+		}
+
+		client := newWSClientImplWithSender(mock)
+		if _, err := client.GetScriptConfig(context.Background(), "script.test"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("sender error is wrapped", func(t *testing.T) {
+		t.Parallel()
+
+		sendErr := errors.New("boom")
+		mock := &mockWSClientSender{
+			sendCommandFunc: func(context.Context, string, map[string]any) (*WSResultMessage, error) {
+				return nil, sendErr
+			},
+		}
+
+		client := newWSClientImplWithSender(mock)
+		_, err := client.GetScriptConfig(context.Background(), "test")
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !errors.Is(err, sendErr) {
+			t.Errorf("error does not wrap sender error: %v", err)
+		}
+		if !strings.Contains(err.Error(), "get script config failed") {
+			t.Errorf("error missing prefix: %v", err)
+		}
+	})
+
+	t.Run("invalid response is an unmarshal error", func(t *testing.T) {
+		t.Parallel()
+
+		mock := &mockWSClientSender{
+			sendCommandFunc: func(context.Context, string, map[string]any) (*WSResultMessage, error) {
+				return makeWSResultMsg("not an object"), nil
+			},
+		}
+
+		client := newWSClientImplWithSender(mock)
+		_, err := client.GetScriptConfig(context.Background(), "test")
+		if err == nil || !strings.Contains(err.Error(), "failed to unmarshal script config") {
+			t.Errorf("expected unmarshal error, got %v", err)
+		}
+	})
+}
+
 func TestWSClientImplWithSender_ListScenes(t *testing.T) {
 	t.Parallel()
 

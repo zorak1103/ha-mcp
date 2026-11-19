@@ -830,6 +830,11 @@ func (c *CachedClient) GetScript(ctx context.Context, scriptID string) (*Script,
 	return c.client.GetScript(ctx, scriptID)
 }
 
+//nolint:revive // Delegated method
+func (c *CachedClient) GetScriptConfig(ctx context.Context, entityID string) (*ScriptConfig, error) {
+	return c.client.GetScriptConfig(ctx, entityID)
+}
+
 // CreateScript delegates to the underlying client and invalidates the registry caches, since the write adds, removes or changes the entity registry entries of the config.
 func (c *CachedClient) CreateScript(ctx context.Context, scriptID string, script ScriptConfig) error {
 	defer c.InvalidateRegistryCaches()

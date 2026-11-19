@@ -51,6 +51,9 @@ type Client interface {
 	// Script operations
 	ListScripts(ctx context.Context) ([]Entity, error)
 	GetScript(ctx context.Context, scriptID string) (*Script, error)
+	// GetScriptConfig returns only the stored script configuration (one WS command, no
+	// state dump). Accepts "script.x" or bare "x". Prefer it over GetScript in loops.
+	GetScriptConfig(ctx context.Context, entityID string) (*ScriptConfig, error)
 	CreateScript(ctx context.Context, scriptID string, script ScriptConfig) error
 	UpdateScript(ctx context.Context, scriptID string, script ScriptConfig) error
 	DeleteScript(ctx context.Context, scriptID string) error

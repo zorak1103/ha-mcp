@@ -37,8 +37,8 @@ func RegisterLovelaceTools(registry *mcp.Registry) {
 // RegisterAnalysisTools is defined in analysis.go
 
 // RegisterFindReferencesTools registers the find_references cross-config search tool.
-func RegisterFindReferencesTools(registry *mcp.Registry) {
-	h := NewFindReferencesHandlers()
+func RegisterFindReferencesTools(registry *mcp.Registry, loader *ConfigLoader) {
+	h := NewFindReferencesHandlersWithLoader(loader)
 	h.RegisterTools(registry)
 }
 
@@ -214,10 +214,12 @@ func RegisterAllTools(registry *mcp.Registry) {
 	RegisterConsolidatedTargetTools(registry)
 
 	// Analysis tools for entity dependency tracking
-	RegisterAnalysisTools(registry)
+	// analyze_entity and find_references share one loader, so parallel calls on the same client share config loads
+	configLoader := NewConfigLoader()
+	RegisterAnalysisTools(registry, configLoader)
 
 	// Cross-config reference search
-	RegisterFindReferencesTools(registry)
+	RegisterFindReferencesTools(registry, configLoader)
 
 	registerRemainingTools(registry)
 }

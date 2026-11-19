@@ -172,7 +172,7 @@ func TestScanHelperTemplates_MatchesStateTemplate(t *testing.T) {
 		},
 	}
 
-	hits, err := scanHelperTemplates(context.Background(), mock, func(s string) bool {
+	hits, err := scanHelperTemplates(context.Background(), NewConfigLoader(), mock, func(s string) bool {
 		return strings.Contains(s, "device_tracker.example_phone")
 	})
 	if err != nil {
@@ -201,7 +201,7 @@ func TestScanHelperTemplates_SkipsNonTemplateEntities(t *testing.T) {
 		},
 	}
 
-	hits, err := scanHelperTemplates(context.Background(), mock, func(string) bool { return true })
+	hits, err := scanHelperTemplates(context.Background(), NewConfigLoader(), mock, func(string) bool { return true })
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -219,7 +219,7 @@ func TestScanHelperTemplates_RegistryErrorReturnsError(t *testing.T) {
 		},
 	}
 
-	hits, err := scanHelperTemplates(context.Background(), mock, func(string) bool { return true })
+	hits, err := scanHelperTemplates(context.Background(), NewConfigLoader(), mock, func(string) bool { return true })
 	if err == nil {
 		t.Fatal("expected an error, got nil")
 	}
@@ -272,7 +272,7 @@ func TestScanHelperTemplates_MatchesSubtypeTemplateField(t *testing.T) {
 		},
 	}
 
-	hits, err := scanHelperTemplates(context.Background(), mock, func(s string) bool {
+	hits, err := scanHelperTemplates(context.Background(), NewConfigLoader(), mock, func(s string) bool {
 		return strings.Contains(s, "input_boolean.src")
 	})
 	if err != nil {
@@ -304,7 +304,7 @@ func TestScanHelperTemplates_OptionsErrorReportedWithPartialHits(t *testing.T) {
 		},
 	}
 
-	hits, err := scanHelperTemplates(context.Background(), mock, func(s string) bool {
+	hits, err := scanHelperTemplates(context.Background(), NewConfigLoader(), mock, func(s string) bool {
 		return strings.Contains(s, "sensor.src")
 	})
 	if err == nil {

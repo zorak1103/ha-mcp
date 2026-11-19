@@ -118,6 +118,7 @@ ha-mcp/
 │   │   ├── array_mode.go        # Label and alias array mode (add/remove/replace)
 │   │   ├── entity_id_args.go    # Strict entity ID list parsing (entity_id/entity_ids, 100-id cap)
 │   │   ├── config_search.go     # Shared reference-search scanners (dashboards, template helpers)
+│   │   ├── config_loader.go     # Shared per-client, in-flight-only config loads (automations/scripts/dashboards/template-helper options) for analyze_entity and find_references
 │   │   ├── find_references.go   # Cross-config find_references tool (automations/scripts/scenes/dashboards/helpers)
 │   │   ├── entities_consolidated.go # Consolidated query_entities tool (current/history/statistics/domains/presence/health)
 │   │   ├── entities_presence.go # Presence analysis for query_entities (mode=presence)

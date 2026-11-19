@@ -474,6 +474,7 @@ type mockWSOperations struct {
 	setHelperValueFunc            func(ctx context.Context, entityID string, value any) error
 	listScriptsFunc               func(ctx context.Context) ([]Entity, error)
 	getScriptFunc                 func(ctx context.Context, scriptID string) (*Script, error)
+	getScriptConfigFunc           func(ctx context.Context, entityID string) (*ScriptConfig, error)
 	createScriptFunc              func(ctx context.Context, scriptID string, config ScriptConfig) error
 	updateScriptFunc              func(ctx context.Context, scriptID string, config ScriptConfig) error
 	listScenesFunc                func(ctx context.Context) ([]Entity, error)
@@ -663,6 +664,13 @@ func (m *mockWSOperations) ListScripts(ctx context.Context) ([]Entity, error) {
 func (m *mockWSOperations) GetScript(ctx context.Context, scriptID string) (*Script, error) {
 	if m.getScriptFunc != nil {
 		return m.getScriptFunc(ctx, scriptID)
+	}
+	return nil, nil
+}
+
+func (m *mockWSOperations) GetScriptConfig(ctx context.Context, entityID string) (*ScriptConfig, error) {
+	if m.getScriptConfigFunc != nil {
+		return m.getScriptConfigFunc(ctx, entityID)
 	}
 	return nil, nil
 }
@@ -2252,6 +2260,31 @@ func TestHybridClient_WSOperations_GetScript(t *testing.T) {
 	}
 	if script.EntityID != "test_script" {
 		t.Errorf("got script EntityID %q, want test_script", script.EntityID)
+	}
+}
+
+func TestHybridClient_WSOperations_GetScriptConfig(t *testing.T) {
+	t.Parallel()
+
+	var gotID string
+	mockWS := &mockWSOperations{
+		getScriptConfigFunc: func(_ context.Context, entityID string) (*ScriptConfig, error) {
+			gotID = entityID
+			return &ScriptConfig{Alias: "Delegated"}, nil
+		},
+	}
+
+	client := NewHybridClientWithInterfaces(mockWS, &mockRESTOperations{})
+	cfg, err := client.GetScriptConfig(context.Background(), "script.test_script")
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotID != "script.test_script" {
+		t.Errorf("delegated ID %q, want script.test_script", gotID)
+	}
+	if cfg == nil || cfg.Alias != "Delegated" {
+		t.Errorf("unexpected config: %+v", cfg)
 	}
 }
 
