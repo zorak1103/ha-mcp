@@ -438,3 +438,38 @@ func TestLogbookHandlers_TimeFormats(t *testing.T) {
 		})
 	}
 }
+
+func TestGetLogbook_RejectsNonStringTimeBounds(t *testing.T) {
+	t.Parallel()
+
+	runFilterTypeCases(t, NewLogbookHandlers().handleGetLogbook, []filterTypeCase{
+		{
+			name: "numeric start_time",
+			args: map[string]any{"start_time": float64(1731000000)},
+			want: "start_time must be a string, got float64",
+			setupMock: func(t *testing.T, c *UniversalMockClient) {
+				t.Helper()
+				c.GetLogbookFn = func(context.Context, string, string, []string) ([]homeassistant.LogbookEntry, error) {
+					t.Errorf("HA must not be called for an invalid time bound")
+					return nil, nil
+				}
+			},
+		},
+		{
+			name: "numeric end_time",
+			args: map[string]any{"end_time": float64(1731000000)},
+			want: "end_time must be a string, got float64",
+			setupMock: func(t *testing.T, c *UniversalMockClient) {
+				t.Helper()
+				c.GetLogbookFn = func(context.Context, string, string, []string) ([]homeassistant.LogbookEntry, error) {
+					t.Errorf("HA must not be called for an invalid time bound")
+					return nil, nil
+				}
+			},
+		},
+		{
+			name: "empty start_time means default window",
+			args: map[string]any{"start_time": ""},
+		},
+	})
+}

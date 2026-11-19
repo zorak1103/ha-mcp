@@ -47,6 +47,11 @@ func (h *DeviceQueryHandlers) handleDeviceHealthAnalyze(
 	client homeassistant.Client,
 	args map[string]any,
 ) (*mcp.ToolsCallResult, error) {
+	manufacturerFilter, errMsg := stringArgValue("manufacturer", args["manufacturer"])
+	if errMsg != "" {
+		return errorResult(errMsg), nil
+	}
+
 	// Create snapshot for parallel fetching
 	snapshot := CreateAnalysisSnapshot(ctx, client)
 
@@ -59,7 +64,6 @@ func (h *DeviceQueryHandlers) handleDeviceHealthAnalyze(
 
 	// Parse filters
 	categoryFilter := parseDeviceCategoriesFilter(args)
-	manufacturerFilter, _ := args["manufacturer"].(string)
 
 	// Detect issues
 	var allIssues []DeviceHealthIssue

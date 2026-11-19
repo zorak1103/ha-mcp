@@ -330,16 +330,16 @@ func latestTraceEntry(traces []any) map[string]any {
 // decides whether that is an error (get) or a domain-wide list.
 //
 // It deliberately does not use resolveAutomationTarget: trace lookups also accept script.*
-// entity IDs. A non-string ID is rejected (stringIDValue) because the server's type check lets a
+// entity IDs. A non-string ID is rejected (stringArgValue) because the server's type check lets a
 // JSON number through, which would otherwise read as absent and turn a filtered list into an
 // unfiltered one. The entityID must still be mapped to HA's item_id via resolveTraceItemID.
 func resolveTraceTarget(args map[string]any) (domain, entityID, errMsg string) {
 	explicitDomain, _ := args["domain"].(string)
-	automationID, errMsg := stringIDValue("automation_id", args["automation_id"])
+	automationID, errMsg := stringArgValue("automation_id", args["automation_id"])
 	if errMsg != "" {
 		return "", "", errMsg
 	}
-	entityID, errMsg = stringIDValue(attrEntityID, args[attrEntityID])
+	entityID, errMsg = stringArgValue(attrEntityID, args[attrEntityID])
 	if errMsg != "" {
 		return "", "", errMsg
 	}

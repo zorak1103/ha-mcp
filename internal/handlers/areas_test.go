@@ -1113,3 +1113,28 @@ func TestHandleManageArea_LabelWarningPropagation(t *testing.T) {
 		}
 	})
 }
+
+func TestAreaList_RejectsNonStringFilters(t *testing.T) {
+	t.Parallel()
+
+	mustNotList := func(t *testing.T, c *UniversalMockClient) {
+		t.Helper()
+		c.GetAreaRegistryFn = func(context.Context) ([]homeassistant.AreaRegistryEntry, error) {
+			t.Errorf("HA must not be called for an invalid filter")
+			return nil, nil
+		}
+	}
+
+	runFilterTypeCases(t, NewAreaHandlers().handleManageArea, []filterTypeCase{
+		{
+			name:      "numeric name_contains",
+			args:      map[string]any{"action": "list", "name_contains": float64(7)},
+			want:      "name_contains must be a string, got float64",
+			setupMock: mustNotList,
+		},
+		{
+			name: "empty array name_contains means no filter",
+			args: map[string]any{"action": "list", "name_contains": []any{}},
+		},
+	})
+}

@@ -20,22 +20,24 @@ type entityRegistryFilter struct {
 	deviceIDsInArea map[string]bool
 }
 
-// newEntityRegistryFilterFromArgs creates a filter from tool arguments.
-func newEntityRegistryFilterFromArgs(args map[string]any) *entityRegistryFilter {
-	domain, _ := args["domain"].(string)
-	platform, _ := args["platform"].(string)
-	deviceID, _ := args["device_id"].(string)
-	areaID, _ := args["area_id"].(string)
+// newEntityRegistryFilterFromArgs creates a filter from tool arguments. A
+// present non-string filter is an error (reported for the first one in read
+// order), never "no filter".
+func newEntityRegistryFilterFromArgs(args map[string]any) (*entityRegistryFilter, error) {
 	includeDisabled, _ := args["include_disabled"].(bool)
-
-	return &entityRegistryFilter{
-		domain:          domain,
-		platform:        platform,
-		deviceID:        deviceID,
-		areaID:          areaID,
+	filter := &entityRegistryFilter{
 		includeDisabled: includeDisabled,
 		deviceIDsInArea: make(map[string]bool),
 	}
+	if err := readStringFilters(args, []stringFilterField{
+		{"domain", &filter.domain},
+		{"platform", &filter.platform},
+		{"device_id", &filter.deviceID},
+		{"area_id", &filter.areaID},
+	}); err != nil {
+		return nil, err
+	}
+	return filter, nil
 }
 
 // matches returns true if the entry passes all filter criteria.
@@ -158,18 +160,19 @@ type deviceRegistryFilter struct {
 	includeDisabled bool
 }
 
-// parseDeviceRegistryFilter creates a filter from tool arguments.
-func parseDeviceRegistryFilter(args map[string]any) deviceRegistryFilter {
-	areaID, _ := args["area_id"].(string)
-	manufacturer, _ := args["manufacturer"].(string)
-	model, _ := args["model"].(string)
+// parseDeviceRegistryFilter creates a filter from tool arguments. A present
+// non-string filter is an error (reported for the first one in read order).
+func parseDeviceRegistryFilter(args map[string]any) (deviceRegistryFilter, error) {
 	includeDisabled, _ := args["include_disabled"].(bool)
-	return deviceRegistryFilter{
-		areaID:          areaID,
-		manufacturer:    manufacturer,
-		model:           model,
-		includeDisabled: includeDisabled,
+	filter := deviceRegistryFilter{includeDisabled: includeDisabled}
+	if err := readStringFilters(args, []stringFilterField{
+		{"area_id", &filter.areaID},
+		{"manufacturer", &filter.manufacturer},
+		{"model", &filter.model},
+	}); err != nil {
+		return deviceRegistryFilter{}, err
 	}
+	return filter, nil
 }
 
 // matches returns true if the entry passes all filter criteria.

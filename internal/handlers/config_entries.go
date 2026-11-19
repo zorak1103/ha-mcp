@@ -96,7 +96,10 @@ func (h *ConfigEntryHandlers) handleListConfigEntries(
 	client homeassistant.Client,
 	args map[string]any,
 ) (*mcp.ToolsCallResult, error) {
-	domain := getString(args, "domain")
+	domain, errMsg := stringArgValue("domain", args["domain"])
+	if errMsg != "" {
+		return errorResult(errMsg), nil
+	}
 
 	entries, err := client.GetConfigEntries(ctx, domain)
 	if err != nil {

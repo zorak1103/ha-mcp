@@ -1339,7 +1339,11 @@ func TestParseAutomationFilters(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := parseAutomationFilters(tt.args); got != tt.expected {
+			got, err := parseAutomationFilters(tt.args)
+			if err != nil {
+				t.Fatalf("parseAutomationFilters() error = %v", err)
+			}
+			if got != tt.expected {
 				t.Errorf("parseAutomationFilters() = %+v, want %+v", got, tt.expected)
 			}
 		})
@@ -3862,4 +3866,56 @@ func TestAutomationPatch_DryRunOutputUnchangedByOrder(t *testing.T) {
 			t.Errorf("withOrder=%v: dry-run output changed\n got: %q\nwant: %q", withOrder, got, want)
 		}
 	}
+}
+
+func TestAutomationList_RejectsNonStringFilters(t *testing.T) {
+	t.Parallel()
+
+	mustNotList := func(t *testing.T, c *UniversalMockClient) {
+		t.Helper()
+		c.ListAutomationsFn = func(context.Context) ([]homeassistant.Automation, error) {
+			t.Errorf("HA must not be called for an invalid filter")
+			return nil, nil
+		}
+	}
+
+	runFilterTypeCases(t, NewAutomationHandlers().handleManageAutomation, []filterTypeCase{
+		{
+			name:      "numeric entity_id",
+			args:      map[string]any{"action": "list", "entity_id": float64(1700000000001)},
+			want:      "entity_id must be a string, got float64",
+			setupMock: mustNotList,
+		},
+		{
+			name:      "numeric alias",
+			args:      map[string]any{"action": "list", "alias": float64(2024)},
+			want:      "alias must be a string, got float64",
+			setupMock: mustNotList,
+		},
+		{
+			name:      "bool state",
+			args:      map[string]any{"action": "list", "state": true},
+			want:      "state must be a string, got bool",
+			setupMock: mustNotList,
+		},
+		{
+			name: "first wrong filter in read order wins",
+			args: map[string]any{"action": "list", "alias": float64(1), "entity_id": float64(2)},
+			want: "alias must be a string",
+		},
+		{
+			name: "empty array entity_id means no filter",
+			args: map[string]any{"action": "list", "entity_id": []any{}},
+		},
+		{
+			name: "empty alias means no filter",
+			args: map[string]any{"action": "list", "alias": ""},
+		},
+		{
+			// alias is also the create payload's name; only the list path changes.
+			name: "numeric alias on create keeps its required error",
+			args: map[string]any{"action": "create", "alias": float64(2024)},
+			want: "alias is required for create action",
+		},
+	})
 }

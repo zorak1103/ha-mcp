@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -22,6 +23,42 @@ func isAbsentArg(v any) bool {
 	default:
 		return false
 	}
+}
+
+// stringArgValue is the strict reader for an optional string argument, such as
+// a list/query/find filter or an ID. An absent value (see isAbsentArg) yields
+// ("", ""); anything that is not a string yields an error message naming the
+// argument and the offending type. Read filters with it, not getString or a
+// bare .(string): the server's type check lets a JSON number through for a
+// string property, and a loose read turns it into "no filter".
+func stringArgValue(name string, v any) (value, errMsg string) {
+	if isAbsentArg(v) {
+		return "", ""
+	}
+	s, ok := v.(string)
+	if !ok {
+		return "", fmt.Sprintf("%s must be a string, got %T", name, v)
+	}
+	return s, ""
+}
+
+// stringFilterField names one string filter argument and where its value goes.
+type stringFilterField struct {
+	name string
+	dst  *string
+}
+
+// readStringFilters reads each field with stringArgValue, in order, and stops at
+// the first present non-string value with an error naming it.
+func readStringFilters(args map[string]any, fields []stringFilterField) error {
+	for _, f := range fields {
+		value, errMsg := stringArgValue(f.name, args[f.name])
+		if errMsg != "" {
+			return errors.New(errMsg)
+		}
+		*f.dst = value
+	}
+	return nil
 }
 
 // parseModeArg reads the selector argument key (e.g. "mode") from args and

@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -135,20 +136,27 @@ func NewConsolidatedEntityQueryHandlers() *ConsolidatedEntityQueryHandlers {
 
 // Helper functions for entity state filtering
 
-// parseStateFilterParams extracts filter parameters from args.
-func parseStateFilterParams(args map[string]any) stateFilterParams {
-	return stateFilterParams{
-		domain:         getStringArg(args, "domain"),
-		areaID:         getStringArg(args, "area_id"),
-		stateFilter:    getStringArg(args, "state"),
-		stateNotFilter: getStringArg(args, "state_not"),
-		nameContains:   getStringArg(args, "name_contains"),
-		deviceClass:    getStringArg(args, "device_class"),
-		sortBy:         getStringArg(args, "sort_by"),
-		groupBy:        getStringArg(args, "group_by"),
-		format:         formatter.ParseFormat(getStringArg(args, "format")),
-		verbose:        getBoolArg(args, "verbose"),
+// parseStateFilterParams extracts filter parameters from args. A present
+// non-string filter is an error (reported for the first one in read order),
+// never "no filter".
+func parseStateFilterParams(args map[string]any) (stateFilterParams, error) {
+	params := stateFilterParams{
+		sortBy:  getStringArg(args, "sort_by"),
+		groupBy: getStringArg(args, "group_by"),
+		format:  formatter.ParseFormat(getStringArg(args, "format")),
+		verbose: getBoolArg(args, "verbose"),
 	}
+	if err := readStringFilters(args, []stringFilterField{
+		{"domain", &params.domain},
+		{"area_id", &params.areaID},
+		{"state", &params.stateFilter},
+		{"state_not", &params.stateNotFilter},
+		{"name_contains", &params.nameContains},
+		{"device_class", &params.deviceClass},
+	}); err != nil {
+		return stateFilterParams{}, err
+	}
+	return params, nil
 }
 
 // applyFiltersAndSort applies filters and sorting to states.
@@ -429,7 +437,10 @@ func parseHistoryParams(args map[string]any) (*historyParams, error) {
 		return nil, err
 	}
 
-	stateFilter, _ := args["state"].(string)
+	stateFilter, errMsg := stringArgValue("state", args["state"])
+	if errMsg != "" {
+		return nil, errors.New(errMsg)
+	}
 
 	attribute, err := parseHistoryAttribute(args, stateFilter)
 	if err != nil {
@@ -476,20 +487,29 @@ func parseHistoryAttribute(args map[string]any, stateFilter string) (string, err
 
 // parseTimeRange parses start_time, end_time, and hours parameters.
 func parseTimeRange(args map[string]any) (start, end time.Time, err error) {
+	// A non-string bound is an error, never the default window.
+	var startStr, endStr string
+	if boundsErr := readStringFilters(args, []stringFilterField{
+		{"start_time", &startStr},
+		{"end_time", &endStr},
+	}); boundsErr != nil {
+		return time.Time{}, time.Time{}, boundsErr
+	}
+
 	end = time.Now()
 	start = end.Add(-24 * time.Hour)
 
 	// 'hours' parameter takes precedence over 'start_time'
 	if hours, ok := args["hours"].(float64); ok && hours > 0 {
 		start = end.Add(-time.Duration(hours) * time.Hour)
-	} else if startStr, ok := args["start_time"].(string); ok && startStr != "" {
+	} else if startStr != "" {
 		start, err = time.Parse(time.RFC3339, startStr)
 		if err != nil {
 			return time.Time{}, time.Time{}, fmt.Errorf("invalid start_time format: %w", err)
 		}
 	}
 
-	if endStr, ok := args["end_time"].(string); ok && endStr != "" {
+	if endStr != "" {
 		end, err = time.Parse(time.RFC3339, endStr)
 		if err != nil {
 			return time.Time{}, time.Time{}, fmt.Errorf("invalid end_time format: %w", err)
@@ -777,12 +797,15 @@ func (h *ConsolidatedEntityQueryHandlers) handleCurrent(
 	client homeassistant.Client,
 	args map[string]any,
 ) (*mcp.ToolsCallResult, error) {
+	filterParams, err := parseStateFilterParams(args)
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
+
 	states, err := client.GetStates(ctx)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Error getting states: %v", err)), nil
 	}
-
-	filterParams := parseStateFilterParams(args)
 
 	// Apply filtering and sorting
 	states, err = h.applyFiltersAndSort(ctx, client, states, filterParams)

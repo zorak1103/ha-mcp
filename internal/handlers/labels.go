@@ -126,13 +126,17 @@ func (h *LabelHandlers) handleManageLabel(ctx context.Context, client homeassist
 }
 
 func (h *LabelHandlers) handleList(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+	nameContains, errMsg := stringArgValue("name_contains", args["name_contains"])
+	if errMsg != "" {
+		return errorResult(errMsg), nil
+	}
+
 	labels, err := client.GetLabelRegistry(ctx)
 	if err != nil {
 		return errorResult(fmt.Sprintf("error listing labels: %v", err)), nil
 	}
 
 	// Apply name filter if provided
-	nameContains, _ := args["name_contains"].(string)
 	if nameContains != "" {
 		labels = h.filterLabelsByName(labels, nameContains)
 	}

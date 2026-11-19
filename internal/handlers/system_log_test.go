@@ -253,3 +253,21 @@ func TestSystemLogHandlers_JSONFormatStripsException(t *testing.T) {
 		t.Errorf("exception not stripped; got %q", parsed[0].Exception)
 	}
 }
+
+func TestSystemLogList_RejectsNonStringFilters(t *testing.T) {
+	t.Parallel()
+
+	runFilterTypeCases(t, NewSystemLogHandlers().handleManageSystemLog, []filterTypeCase{
+		{
+			name: "numeric level",
+			args: map[string]any{"action": "list", "level": float64(1)},
+			want: "level must be a string, got float64",
+		},
+		{
+			name: "numeric integration",
+			args: map[string]any{"action": "list", "integration": float64(1)},
+			want: "integration must be a string, got float64",
+		},
+		{name: "empty level means no filter", args: map[string]any{"action": "list", "level": ""}},
+	})
+}

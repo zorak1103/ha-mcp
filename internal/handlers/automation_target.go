@@ -25,11 +25,11 @@ const automationEntityPrefix = "automation."
 //
 // The returned error result is non-nil exactly when target is empty.
 func resolveAutomationTarget(action, missingHint string, args map[string]any) (target string, errResult *mcp.ToolsCallResult) {
-	automationID, errMsg := stringIDValue("automation_id", args["automation_id"])
+	automationID, errMsg := stringArgValue("automation_id", args["automation_id"])
 	if errMsg != "" {
 		return "", errorResult(errMsg)
 	}
-	entityID, errMsg := stringIDValue(attrEntityID, args[attrEntityID])
+	entityID, errMsg := stringArgValue(attrEntityID, args[attrEntityID])
 	if errMsg != "" {
 		return "", errorResult(errMsg)
 	}
@@ -58,18 +58,4 @@ func resolveAutomationTarget(action, missingHint string, args map[string]any) (t
 		msg += ". " + missingHint
 	}
 	return "", errorResult(msg)
-}
-
-// stringIDValue turns a raw argument value into a string. An absent value (see
-// isAbsentArg) yields ("", ""); anything that is not a string yields an error
-// message naming the argument and the offending type.
-func stringIDValue(name string, v any) (value, errMsg string) {
-	if isAbsentArg(v) {
-		return "", ""
-	}
-	s, ok := v.(string)
-	if !ok {
-		return "", fmt.Sprintf("%s must be a string, got %T", name, v)
-	}
-	return s, ""
 }

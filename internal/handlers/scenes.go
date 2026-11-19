@@ -157,12 +157,16 @@ type sceneFilters struct {
 }
 
 func (h *SceneHandlers) handleList(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+	filters, err := parseSceneFilters(args)
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
+
 	scenes, err := client.ListScenes(ctx)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Error listing scenes: %v", err)), nil
 	}
 
-	filters := parseSceneFilters(args)
 	result := filterScenes(scenes, filters)
 
 	formatStr, _ := args["format"].(string)
@@ -544,14 +548,21 @@ func normalizeSceneID(sceneID string) (entityID, configID string) {
 	return "scene." + sceneID, sceneID
 }
 
-// parseSceneFilters extracts filter parameters from args.
-func parseSceneFilters(args map[string]any) sceneFilters {
-	nameContains, _ := args["name_contains"].(string)
-	entityContains, _ := args["entity_contains"].(string)
+// parseSceneFilters extracts filter parameters from args. A present
+// non-string filter is an error (name_contains is checked first).
+func parseSceneFilters(args map[string]any) (sceneFilters, error) {
+	nameContains, errMsg := stringArgValue("name_contains", args["name_contains"])
+	if errMsg != "" {
+		return sceneFilters{}, errors.New(errMsg)
+	}
+	entityContains, errMsg := stringArgValue("entity_contains", args["entity_contains"])
+	if errMsg != "" {
+		return sceneFilters{}, errors.New(errMsg)
+	}
 	return sceneFilters{
 		nameContains:   nameContains,
 		entityContains: entityContains,
-	}
+	}, nil
 }
 
 // entityToSceneInfo converts an Entity to sceneInfo.

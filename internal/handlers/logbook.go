@@ -143,6 +143,15 @@ func getHoursFromArgs(args map[string]any) float64 {
 
 // parseLogbookTimes parses start and end times from arguments.
 func parseLogbookTimes(args map[string]any) (startTime, endTime time.Time, err error) {
+	// A non-string bound is an error, never the default window.
+	var startTimeStr, endTimeStr string
+	if boundsErr := readStringFilters(args, []stringFilterField{
+		{"start_time", &startTimeStr},
+		{"end_time", &endTimeStr},
+	}); boundsErr != nil {
+		return time.Time{}, time.Time{}, boundsErr
+	}
+
 	now := time.Now()
 
 	// Handle hours parameter
@@ -151,7 +160,7 @@ func parseLogbookTimes(args map[string]any) (startTime, endTime time.Time, err e
 	}
 
 	// Handle start_time parameter (overrides hours if both specified)
-	if startTimeStr := getString(args, "start_time"); startTimeStr != "" {
+	if startTimeStr != "" {
 		startTime, err = parseTimeString(startTimeStr)
 		if err != nil {
 			return time.Time{}, time.Time{}, fmt.Errorf("invalid start_time format: %w", err)
@@ -165,7 +174,7 @@ func parseLogbookTimes(args map[string]any) (startTime, endTime time.Time, err e
 
 	// Handle end_time parameter
 	endTime = now
-	if endTimeStr := getString(args, "end_time"); endTimeStr != "" {
+	if endTimeStr != "" {
 		endTime, err = parseTimeString(endTimeStr)
 		if err != nil {
 			return time.Time{}, time.Time{}, fmt.Errorf("invalid end_time format: %w", err)

@@ -179,12 +179,16 @@ func (h *ConsolidatedRegistryHandlers) handleEntities(
 	client homeassistant.Client,
 	args map[string]any,
 ) (*mcp.ToolsCallResult, error) {
+	filter, err := newEntityRegistryFilterFromArgs(args)
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
+
 	entries, err := client.GetEntityRegistry(ctx)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Error getting entity registry: %v", err)), nil
 	}
 
-	filter := newEntityRegistryFilterFromArgs(args)
 	if err = filter.buildDeviceIDsInArea(ctx, client); err != nil {
 		return errorResult(fmt.Sprintf("Error getting device registry: %v", err)), nil
 	}
@@ -279,12 +283,16 @@ func (h *ConsolidatedRegistryHandlers) handleDevices(
 	client homeassistant.Client,
 	args map[string]any,
 ) (*mcp.ToolsCallResult, error) {
+	filter, err := parseDeviceRegistryFilter(args)
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
+
 	entries, err := client.GetDeviceRegistry(ctx)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Error getting device registry: %v", err)), nil
 	}
 
-	filter := parseDeviceRegistryFilter(args)
 	filtered := filterDeviceRegistry(entries, filter)
 
 	slices.SortFunc(filtered, func(a, b homeassistant.DeviceRegistryEntry) int {

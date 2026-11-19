@@ -64,31 +64,3 @@ func TestResolveAutomationTarget(t *testing.T) {
 		})
 	}
 }
-
-func TestStringIDValue(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name      string
-		v         any
-		wantValue string
-		wantErr   string
-	}{
-		{name: "nil", v: nil},
-		{name: "empty string", v: ""},
-		{name: "empty array", v: []any{}},
-		{name: "string", v: "x", wantValue: "x"},
-		{name: "number", v: float64(1), wantErr: "id must be a string, got float64"},
-		{name: "map", v: map[string]any{}, wantErr: "id must be a string, got map[string]interface {}"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			value, errMsg := stringIDValue("id", tt.v)
-			if value != tt.wantValue || errMsg != tt.wantErr {
-				t.Errorf("stringIDValue(%v) = (%q, %q), want (%q, %q)", tt.v, value, errMsg, tt.wantValue, tt.wantErr)
-			}
-		})
-	}
-}

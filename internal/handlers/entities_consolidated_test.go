@@ -1707,3 +1707,115 @@ func TestQueryEntitiesProperties_DescribeAppliesToModes(t *testing.T) {
 		}
 	}
 }
+
+func TestQueryEntities_RejectsNonStringFilters(t *testing.T) {
+	t.Parallel()
+
+	mustNotGetStates := func(t *testing.T, c *UniversalMockClient) {
+		t.Helper()
+		c.GetStatesFn = func(context.Context) ([]homeassistant.Entity, error) {
+			t.Errorf("HA must not be called for an invalid filter")
+			return nil, nil
+		}
+	}
+
+	runFilterTypeCases(t, NewConsolidatedEntityQueryHandlers().handleQueryEntities, []filterTypeCase{
+		{
+			name:      "current numeric domain",
+			args:      map[string]any{"mode": "current", "domain": float64(1)},
+			want:      "domain must be a string, got float64",
+			setupMock: mustNotGetStates,
+		},
+		{
+			name:      "current numeric area_id",
+			args:      map[string]any{"mode": "current", "area_id": float64(1)},
+			want:      "area_id must be a string, got float64",
+			setupMock: mustNotGetStates,
+		},
+		{
+			name:      "current numeric state",
+			args:      map[string]any{"mode": "current", "state": float64(1)},
+			want:      "state must be a string, got float64",
+			setupMock: mustNotGetStates,
+		},
+		{
+			name:      "current numeric state_not",
+			args:      map[string]any{"mode": "current", "state_not": float64(1)},
+			want:      "state_not must be a string, got float64",
+			setupMock: mustNotGetStates,
+		},
+		{
+			name:      "current numeric name_contains",
+			args:      map[string]any{"mode": "current", "name_contains": float64(1)},
+			want:      "name_contains must be a string, got float64",
+			setupMock: mustNotGetStates,
+		},
+		{
+			name:      "current numeric device_class",
+			args:      map[string]any{"mode": "current", "device_class": float64(1)},
+			want:      "device_class must be a string, got float64",
+			setupMock: mustNotGetStates,
+		},
+		{
+			name: "current empty array name_contains means no filter",
+			args: map[string]any{"mode": "current", "name_contains": []any{}},
+		},
+		{
+			name: "history numeric state",
+			args: map[string]any{"mode": "history", "entity_id": "sensor.x", "state": float64(1)},
+			want: "state must be a string, got float64",
+		},
+		{
+			name: "health numeric domain",
+			args: map[string]any{"mode": "health", "domain": float64(1)},
+			want: "domain must be a string, got float64",
+		},
+	})
+}
+
+func TestQueryEntitiesHistory_RejectsNonStringTimeBounds(t *testing.T) {
+	t.Parallel()
+
+	runFilterTypeCases(t, NewConsolidatedEntityQueryHandlers().handleQueryEntities, []filterTypeCase{
+		{
+			name: "numeric start_time",
+			args: map[string]any{"mode": "history", "entity_id": "sensor.x", "start_time": float64(1731000000)},
+			want: "start_time must be a string, got float64",
+			setupMock: func(t *testing.T, c *UniversalMockClient) {
+				t.Helper()
+				c.GetHistoryFn = func(context.Context, []string, time.Time, time.Time, homeassistant.HistoryOptions) (map[string][]homeassistant.HistoryEntry, error) {
+					t.Errorf("HA must not be called for an invalid time bound")
+					return nil, nil
+				}
+			},
+		},
+		{
+			name: "numeric start_time with hours",
+			args: map[string]any{"mode": "history", "entity_id": "sensor.x", "hours": float64(2), "start_time": float64(1731000000)},
+			want: "start_time must be a string, got float64",
+			setupMock: func(t *testing.T, c *UniversalMockClient) {
+				t.Helper()
+				c.GetHistoryFn = func(context.Context, []string, time.Time, time.Time, homeassistant.HistoryOptions) (map[string][]homeassistant.HistoryEntry, error) {
+					t.Errorf("HA must not be called for an invalid time bound")
+					return nil, nil
+				}
+			},
+		},
+		{
+			name: "numeric end_time",
+			args: map[string]any{"mode": "history", "entity_id": "sensor.x", "end_time": float64(1731000000)},
+			want: "end_time must be a string, got float64",
+			setupMock: func(t *testing.T, c *UniversalMockClient) {
+				t.Helper()
+				c.GetHistoryFn = func(context.Context, []string, time.Time, time.Time, homeassistant.HistoryOptions) (map[string][]homeassistant.HistoryEntry, error) {
+					t.Errorf("HA must not be called for an invalid time bound")
+					return nil, nil
+				}
+			},
+		},
+		{
+			name: "empty array start_time means default window",
+			args: map[string]any{"mode": "history", "entity_id": "sensor.x", "start_time": []any{}},
+		},
+	})
+}
