@@ -1356,6 +1356,16 @@ func TestManageTrace_Get_LatestRun(t *testing.T) {
 			args:    map[string]any{"entity_id": "automation.morning_routine"},
 			wantOut: []string{"Run ID: r3 (latest)"},
 		},
+		{
+			name:    "nil run_id selects newest",
+			args:    map[string]any{"automation_id": "morning_routine", "run_id": nil},
+			wantOut: []string{"Run ID: r3 (latest)"},
+		},
+		{
+			name:    "empty-array run_id selects newest",
+			args:    map[string]any{"automation_id": "morning_routine", "run_id": []any{}},
+			wantOut: []string{"Run ID: r3 (latest)"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1662,4 +1672,32 @@ func TestManageTrace_RejectsInapplicableArgs(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestManageTrace_Get_RejectsNonStringRunID pins that a present non-string run_id is
+// rejected before Home Assistant is called, instead of silently selecting the newest
+// run (issue #392). A missing target is still reported first.
+func TestManageTrace_Get_RejectsNonStringRunID(t *testing.T) {
+	t.Parallel()
+
+	runFilterTypeCases(t, NewTraceHandlers().HandleManageTrace, []filterTypeCase{
+		{
+			name:      "numeric run_id",
+			args:      map[string]any{"action": "get", "automation_id": "morning_routine", "run_id": float64(12345)},
+			want:      "run_id must be a string, got float64",
+			setupMock: mustNotCallHA,
+		},
+		{
+			name:      "bool run_id",
+			args:      map[string]any{"action": "get", "automation_id": "morning_routine", "run_id": true},
+			want:      "run_id must be a string, got bool",
+			setupMock: mustNotCallHA,
+		},
+		{
+			name:      "missing target wins over bad run_id",
+			args:      map[string]any{"action": "get", "run_id": float64(1)},
+			want:      "entity_id or automation_id is required",
+			setupMock: mustNotCallHA,
+		},
+	})
 }

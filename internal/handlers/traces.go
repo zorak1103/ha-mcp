@@ -392,9 +392,15 @@ func (h *TraceHandlers) handleGetTrace(ctx context.Context, client homeassistant
 		return errorResult("entity_id or automation_id is required for get action"), nil
 	}
 
+	// Read run_id strictly before any HA call: a loose read turns a JSON number into ""
+	// and silently selects the newest run instead of the requested one.
+	runID, runIDErr := stringArgValue("run_id", args["run_id"])
+	if runIDErr != "" {
+		return errorResult(runIDErr), nil
+	}
+
 	itemID, resolved := resolveTraceItemID(ctx, client, domain, entityID)
 
-	runID, _ := args["run_id"].(string)
 	selectedRunID := ""
 	if runID == "" {
 		latest, result := latestTraceRunID(ctx, client, domain, itemID, entityID, resolved, format)

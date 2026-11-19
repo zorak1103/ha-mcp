@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 	"github.com/zorak1103/ha-mcp/internal/mcp"
@@ -18,6 +19,30 @@ type filterTypeCase struct {
 	args      map[string]any
 	want      string
 	setupMock func(t *testing.T, c *UniversalMockClient)
+}
+
+// mustNotCallHA makes every client read that a strict-argument test can reach
+// fail the test: an invalid argument must be rejected before Home Assistant is
+// called. Use it as a filterTypeCase setupMock.
+func mustNotCallHA(t *testing.T, c *UniversalMockClient) {
+	t.Helper()
+	fail := func() { t.Errorf("HA must not be called for an invalid argument") }
+	c.GetStatesFn = func(context.Context) ([]homeassistant.Entity, error) { fail(); return nil, nil }
+	c.GetHistoryFn = func(context.Context, []string, time.Time, time.Time, homeassistant.HistoryOptions) (map[string][]homeassistant.HistoryEntry, error) {
+		fail()
+		return nil, nil
+	}
+	c.GetEntityRegistryFn = func(context.Context) ([]homeassistant.EntityRegistryEntry, error) { fail(); return nil, nil }
+	c.GetEntityRegistryEntryFn = func(context.Context, string) (*homeassistant.EntityRegistryEntry, error) { fail(); return nil, nil }
+	c.GetDeviceRegistryFn = func(context.Context) ([]homeassistant.DeviceRegistryEntry, error) { fail(); return nil, nil }
+	c.GetConfigEntriesFn = func(context.Context, string) ([]homeassistant.ConfigEntryFull, error) { fail(); return nil, nil }
+	c.GetLovelaceConfigFn = func(context.Context, string) (map[string]any, error) { fail(); return nil, nil }
+	c.ListDashboardsFn = func(context.Context) ([]homeassistant.DashboardEntry, error) { fail(); return nil, nil }
+	c.ListAutomationsFn = func(context.Context) ([]homeassistant.Automation, error) { fail(); return nil, nil }
+	c.ListScriptsFn = func(context.Context) ([]homeassistant.Entity, error) { fail(); return nil, nil }
+	c.ListScenesFn = func(context.Context) ([]homeassistant.Entity, error) { fail(); return nil, nil }
+	c.GetSystemLogFn = func(context.Context) ([]homeassistant.SystemLogEntry, error) { fail(); return nil, nil }
+	c.SendHACSCommandFn = func(context.Context, string, map[string]any) (any, error) { fail(); return nil, nil }
 }
 
 // runFilterTypeCases runs each case in parallel against a fresh mock client.
