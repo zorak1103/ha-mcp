@@ -992,5 +992,14 @@ func TestHACSList_RejectsNonStringSearch(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "empty array search means no filter",
+			args: map[string]any{"action": "list", "search": []any{}},
+			setupMock: func(_ *testing.T, c *UniversalMockClient) {
+				c.SendHACSCommandFn = func(context.Context, string, map[string]any) (any, error) {
+					return []any{}, nil
+				}
+			},
+		},
 	})
 }

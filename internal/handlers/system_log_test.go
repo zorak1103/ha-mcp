@@ -271,5 +271,6 @@ func TestSystemLogList_RejectsNonStringFilters(t *testing.T) {
 			setupMock: mustNotCallHA,
 		},
 		{name: "empty level means no filter", args: map[string]any{"action": "list", "level": ""}},
+		{name: "empty array level means no filter", args: map[string]any{"action": "list", "level": []any{}}},
 	})
 }

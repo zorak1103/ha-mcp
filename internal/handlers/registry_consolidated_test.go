@@ -888,5 +888,9 @@ func TestGetRegistry_RejectsNonStringFilters(t *testing.T) {
 			name: "entities empty domain means no filter",
 			args: map[string]any{"type": "entities", "domain": ""},
 		},
+		{
+			name: "entities empty array domain means no filter",
+			args: map[string]any{"type": "entities", "domain": []any{}},
+		},
 	})
 }

@@ -1765,9 +1765,10 @@ func TestDashboardFind_RejectsNonStringSearch(t *testing.T) {
 
 	runFilterTypeCases(t, NewDashboardHandlers().handleManageDashboard, []filterTypeCase{
 		{
-			name: "numeric search",
-			args: map[string]any{"action": "find", "search": float64(1)},
-			want: "search must be a string, got float64",
+			name:      "numeric search",
+			args:      map[string]any{"action": "find", "search": float64(1)},
+			want:      "search must be a string, got float64",
+			setupMock: mustNotCallHA,
 		},
 		{
 			name: "empty search keeps the required error",

@@ -214,5 +214,6 @@ func TestListServices_RejectsNonStringDomain(t *testing.T) {
 			},
 		},
 		{name: "empty domain means no filter", args: map[string]any{"domain": ""}},
+		{name: "empty array domain means no filter", args: map[string]any{"domain": []any{}}},
 	})
 }

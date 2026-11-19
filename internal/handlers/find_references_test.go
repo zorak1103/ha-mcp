@@ -540,9 +540,10 @@ func TestFindReferences_RejectsNonStringSearch(t *testing.T) {
 
 	runFilterTypeCases(t, NewFindReferencesHandlers().handleFindReferences, []filterTypeCase{
 		{
-			name: "numeric search",
-			args: map[string]any{"search": float64(1)},
-			want: "search must be a string, got float64",
+			name:      "numeric search",
+			args:      map[string]any{"search": float64(1)},
+			want:      "search must be a string, got float64",
+			setupMock: mustNotCallHA,
 		},
 		{
 			name: "empty search keeps the required error",
