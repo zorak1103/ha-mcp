@@ -838,3 +838,152 @@ func TestNaturalAutomationFormatter_FormatDetail_Max(t *testing.T) {
 		}
 	})
 }
+
+// TestNaturalAutomationFormatter_ListEntityID verifies that triggers and conditions whose
+// entity_id is a list (the form the HA UI editor writes) render their entities instead of
+// an empty slot (issue #379).
+func TestNaturalAutomationFormatter_ListEntityID(t *testing.T) {
+	t.Parallel()
+
+	f := NewNaturalAutomationFormatter()
+
+	triggerTests := []struct {
+		name    string
+		trigger map[string]any
+		want    string
+	}{
+		{
+			name:    "state trigger with single-entry list",
+			trigger: map[string]any{"trigger": "state", "entity_id": []any{"binary_sensor.example_contact"}, "to": "on"},
+			want:    "state: binary_sensor.example_contact, to: on",
+		},
+		{
+			name: "state trigger with multi-entry list",
+			trigger: map[string]any{
+				"trigger": "state", "entity_id": []any{"binary_sensor.a", "binary_sensor.b"},
+				"to": "off", "for": "00:10:00",
+			},
+			want: "state: binary_sensor.a, binary_sensor.b, to: off, for: 00:10:00",
+		},
+		{
+			name:    "state trigger with plain string still works",
+			trigger: map[string]any{"platform": "state", "entity_id": "binary_sensor.c", "to": "on"},
+			want:    "state: binary_sensor.c, to: on",
+		},
+		{
+			name:    "numeric_state trigger with list",
+			trigger: map[string]any{"trigger": "numeric_state", "entity_id": []any{"sensor.a", "sensor.b"}, "above": float64(5)},
+			want:    "numeric_state: sensor.a, sensor.b above 5",
+		},
+		{
+			name:    "zone trigger with list",
+			trigger: map[string]any{"trigger": "zone", "entity_id": []any{"person.a"}, "zone": "zone.home", "event": "enter"},
+			want:    "zone: person.a enter zone.home",
+		},
+		{
+			name:    "unknown platform with list",
+			trigger: map[string]any{"trigger": "calendar_like", "entity_id": []any{"calendar.x"}},
+			want:    "calendar_like: calendar.x",
+		},
+		{
+			name:    "state trigger with to list",
+			trigger: map[string]any{"trigger": "state", "entity_id": "binary_sensor.a", "to": []any{"on", "unavailable"}},
+			want:    "state: binary_sensor.a, to: on or unavailable",
+		},
+		{
+			name: "state trigger with from list and to string",
+			trigger: map[string]any{
+				"trigger": "state", "entity_id": []any{"cover.a"},
+				"from": []any{"open", "opening"}, "to": "closed",
+			},
+			want: "state: cover.a, from: open or opening, to: closed",
+		},
+		{
+			name:    "state trigger with null to stays omitted",
+			trigger: map[string]any{"trigger": "state", "entity_id": "sensor.a", "to": nil},
+			want:    "state: sensor.a",
+		},
+		{
+			name:    "empty list entries are skipped",
+			trigger: map[string]any{"trigger": "state", "entity_id": []any{"", "binary_sensor.d"}, "to": []any{"on", ""}},
+			want:    "state: binary_sensor.d, to: on",
+		},
+		{
+			name:    "list without usable strings renders like a missing entity_id",
+			trigger: map[string]any{"trigger": "calendar_like", "entity_id": []any{float64(1)}},
+			want:    "calendar_like",
+		},
+		{
+			name:    "non-string list entries are skipped",
+			trigger: map[string]any{"trigger": "state", "entity_id": []any{float64(1), "binary_sensor.d"}, "to": "on"},
+			want:    "state: binary_sensor.d, to: on",
+		},
+	}
+	for _, tt := range triggerTests {
+		t.Run("trigger/"+tt.name, func(t *testing.T) {
+			if got := f.formatTrigger(tt.trigger); got != tt.want {
+				t.Errorf("formatTrigger() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+
+	conditionTests := []struct {
+		name string
+		cond map[string]any
+		want string
+	}{
+		{
+			name: "state condition with list",
+			cond: map[string]any{"condition": "state", "entity_id": []any{"light.a", "light.b"}, "state": "on"},
+			want: "state: light.a, light.b = on",
+		},
+		{
+			name: "state condition with state list",
+			cond: map[string]any{"condition": "state", "entity_id": "light.a", "state": []any{"on", "dim"}},
+			want: "state: light.a = on or dim",
+		},
+		{
+			name: "state condition with entity list and state list",
+			cond: map[string]any{"condition": "state", "entity_id": []any{"light.a", "light.b"}, "state": []any{"on", "dim"}},
+			want: "state: light.a, light.b = on or dim",
+		},
+		{
+			name: "numeric_state condition with list",
+			cond: map[string]any{"condition": "numeric_state", "entity_id": []any{"sensor.t"}, "below": float64(20)},
+			want: "numeric_state: sensor.t below 20",
+		},
+		{
+			name: "other condition type with list",
+			cond: map[string]any{"condition": "custom", "entity_id": []any{"sensor.x"}},
+			want: "custom: sensor.x",
+		},
+	}
+	for _, tt := range conditionTests {
+		t.Run("condition/"+tt.name, func(t *testing.T) {
+			if got := f.formatCondition(tt.cond); got != tt.want {
+				t.Errorf("formatCondition() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+
+	t.Run("FormatDetail renders issue #379 scenario", func(t *testing.T) {
+		automation := homeassistant.Automation{
+			EntityID: "automation.example_a",
+			State:    "on",
+			Config: &homeassistant.AutomationConfig{
+				ID:    "example_a",
+				Alias: "Example",
+				Triggers: []any{
+					map[string]any{"trigger": "state", "entity_id": []any{"binary_sensor.example_contact"}, "to": "on"},
+				},
+			},
+		}
+		result, err := f.FormatDetail(context.Background(), automation)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(result, "- state: binary_sensor.example_contact, to: on") {
+			t.Errorf("expected list entity_id in trigger line, got:\n%s", result)
+		}
+	})
+}

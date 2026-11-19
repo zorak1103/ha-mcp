@@ -343,7 +343,7 @@ func (f *NaturalAutomationFormatter) formatTrigger(trigger any) string {
 		platform, _ = triggerMap["trigger"].(string)
 	}
 
-	entityID, _ := triggerMap["entity_id"].(string)
+	entityID := stringOrList(triggerMap["entity_id"], entityListSep)
 
 	if result := f.formatKnownTrigger(platform, entityID, triggerMap); result != "" {
 		return result
@@ -388,8 +388,8 @@ func (f *NaturalAutomationFormatter) formatKnownTrigger(platform, entityID strin
 }
 
 func (f *NaturalAutomationFormatter) formatStateTrigger(entityID string, triggerMap map[string]any) string {
-	from, _ := triggerMap["from"].(string)
-	to, _ := triggerMap["to"].(string)
+	from := stringOrList(triggerMap["from"], stateListSep)
+	to := stringOrList(triggerMap["to"], stateListSep)
 
 	var parts []string
 	parts = append(parts, entityID)
@@ -419,6 +419,35 @@ func (f *NaturalAutomationFormatter) formatNumericStateTrigger(entityID string, 
 		parts = append(parts, "for "+forDur)
 	}
 	return "numeric_state: " + strings.Join(parts, " ")
+}
+
+// List separators for stringOrList. A list of state values (trigger to/from, condition
+// state) matches any one of them, so it reads as "on or off"; an entity list is neutral
+// because a condition requires all entities to match while a trigger fires on any.
+const (
+	entityListSep = ", "
+	stateListSep  = " or "
+)
+
+// stringOrList renders a trigger/condition field that HA accepts either as a single
+// string or as a list (the form the UI editor writes for entity_id, to, from, state).
+// List entries are joined with sep; non-string and empty entries are skipped, and any
+// other value (including null) renders as "".
+func stringOrList(v any, sep string) string {
+	switch val := v.(type) {
+	case string:
+		return val
+	case []any:
+		parts := make([]string, 0, len(val))
+		for _, item := range val {
+			if s, ok := item.(string); ok && s != "" {
+				parts = append(parts, s)
+			}
+		}
+		return strings.Join(parts, sep)
+	default:
+		return ""
+	}
 }
 
 // formatForDuration extracts a "for" duration from a trigger/condition map.
@@ -499,11 +528,11 @@ func (f *NaturalAutomationFormatter) formatCondition(condition any) string {
 	}
 
 	condType, _ := condMap["condition"].(string)
-	entityID, _ := condMap["entity_id"].(string)
+	entityID := stringOrList(condMap["entity_id"], entityListSep)
 
 	switch condType {
 	case "state":
-		state, _ := condMap["state"].(string)
+		state := stringOrList(condMap["state"], stateListSep)
 		return fmt.Sprintf("state: %s = %s", entityID, state)
 	case "time":
 		after, _ := condMap["after"].(string)
