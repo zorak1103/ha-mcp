@@ -355,3 +355,21 @@ func TestCollectSectionReferencePaths_TriggerSection(t *testing.T) {
 		t.Errorf("context = %q, want 'trigger: state'", got[0].Context)
 	}
 }
+
+// TestCollectSectionReferencePaths_CommaSeparatedEntityID pins that analyze_entity finds
+// an entity inside a comma-separated entity_id string (issue #387).
+func TestCollectSectionReferencePaths_CommaSeparatedEntityID(t *testing.T) {
+	t.Parallel()
+
+	section := []any{
+		map[string]any{
+			"action": "light.turn_on",
+			"target": map[string]any{"entity_id": "light.a, light.b"},
+		},
+	}
+	got := collectSectionReferencePaths(section, "actions", "action", "light.b")
+	want := []ReferencePath{{Path: "/actions/0/target/entity_id", Context: "action: light.turn_on"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("collectSectionReferencePaths() = %v, want %v", got, want)
+	}
+}

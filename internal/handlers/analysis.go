@@ -1066,11 +1066,7 @@ func (h *AnalysisHandlers) shouldRecurseIntoKey(key string) bool {
 func (h *AnalysisHandlers) extractEntityIDs(m map[string]any) []string {
 	var ids []string
 	for _, item := range formatter.StringList(m[attrEntityID]) {
-		for part := range strings.SplitSeq(item, ",") {
-			if id := strings.TrimSpace(part); id != "" {
-				ids = append(ids, id)
-			}
-		}
+		ids = append(ids, splitEntityIDString(item)...)
 	}
 	return ids
 }

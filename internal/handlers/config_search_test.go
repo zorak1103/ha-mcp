@@ -481,3 +481,68 @@ func TestAllDashboardURLPaths_ListDashboardsError(t *testing.T) {
 		t.Errorf("expected nil paths on error, got %v", got)
 	}
 }
+
+// --- comma-separated entity_id strings (issue #387) ---
+
+// TestCollectMatchPaths_CommaSeparatedEntityID pins that a string under an entity_id
+// key is also matched part by part (HA's cv.comp_entity_ids accepts "light.a, light.b"),
+// one path per leaf, while other keys and list items are not split.
+func TestCollectMatchPaths_CommaSeparatedEntityID(t *testing.T) {
+	t.Parallel()
+
+	exact := func(id string) func(string) bool { return func(s string) bool { return s == id } }
+
+	tests := []struct {
+		name  string
+		node  any
+		match func(string) bool
+		want  []string
+	}{
+		{"first part", map[string]any{"target": map[string]any{"entity_id": "light.a, light.b"}}, exact("light.a"), []string{"/target/entity_id"}},
+		{"second part", map[string]any{"target": map[string]any{"entity_id": "light.a, light.b"}}, exact("light.b"), []string{"/target/entity_id"}},
+		{"spaces and empty parts", map[string]any{"entity_id": " light.a ,, light.b ,"}, exact("light.b"), []string{"/entity_id"}},
+		{"whole string still matches", map[string]any{"entity_id": "light.a, light.b"}, exact("light.a, light.b"), []string{"/entity_id"}},
+		{"no part matches", map[string]any{"entity_id": "light.a, light.b"}, exact("light.c"), nil},
+		{"other keys not split", map[string]any{"name": "light.a, light.b"}, exact("light.a"), nil},
+		{"list items not split", map[string]any{"entity_id": []any{"light.a, light.b"}}, exact("light.a"), nil},
+		{"substring counted once", map[string]any{"entity_id": "light.a, light.b"}, func(s string) bool { return strings.Contains(s, "light") }, []string{"/entity_id"}},
+		{"template parts don't match", map[string]any{"entity_id": "{{ ['light.a','light.b'] | first }}"}, exact("light.a"), nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := collectMatchPaths(tt.node, "", tt.match)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("collectMatchPaths() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestScanDashboardConfig_CommaSeparatedEntityID(t *testing.T) {
+	t.Parallel()
+
+	config := map[string]any{
+		"views": []any{
+			map[string]any{
+				"cards": []any{
+					map[string]any{
+						"type": "button",
+						"tap_action": map[string]any{
+							"action": "perform-action",
+							"target": map[string]any{"entity_id": "light.a, light.b"},
+						},
+					},
+				},
+			},
+		},
+	}
+	hits := scanDashboardConfig("dash", config, func(s string) bool { return s == "light.b" })
+	if len(hits) != 1 {
+		t.Fatalf("expected 1 hit, got %d: %v", len(hits), hits)
+	}
+	if want := "/views/0/cards/0/tap_action/target/entity_id"; hits[0].Path != want {
+		t.Errorf("path = %q, want %q", hits[0].Path, want)
+	}
+}

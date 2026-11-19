@@ -27,9 +27,11 @@ type ConfigHit struct {
 
 // collectMatchPaths recursively walks node looking for string leaves that satisfy
 // match, returning the RFC 6901 pointer path to each match, rooted at prefix.
-// Map keys are visited in sorted order for deterministic output. This is the
-// generic core behind collectEntityPaths (exact-match) and the substring-based
-// dashboard/free-text scanners below.
+// Map keys are visited in sorted order for deterministic output. A string under an
+// entity_id key also matches when any of its comma-separated parts does (see
+// entityIDStringMatches); it still yields one path. This is the generic core behind
+// collectEntityPaths (exact-match) and the substring-based dashboard/free-text
+// scanners below.
 func collectMatchPaths(node any, prefix string, match func(string) bool) []string {
 	if node == nil {
 		return nil
@@ -56,12 +58,37 @@ func collectMatchPaths(node any, prefix string, match func(string) bool) []strin
 
 		var paths []string
 		for _, k := range keys {
-			sub := collectMatchPaths(v[k], prefix+"/"+jsonpatch.EscapeSegment(k), match)
-			paths = append(paths, sub...)
+			path := prefix + "/" + jsonpatch.EscapeSegment(k)
+			if s, ok := v[k].(string); ok && k == attrEntityID {
+				if entityIDStringMatches(s, match) {
+					paths = append(paths, path)
+				}
+				continue
+			}
+			paths = append(paths, collectMatchPaths(v[k], path, match)...)
 		}
 		return paths
 	}
 	return nil
+}
+
+// splitEntityIDString splits an entity_id string the way HA's cv.comp_entity_ids
+// does: on ",", each part trimmed of spaces, empty parts dropped, order kept.
+func splitEntityIDString(s string) []string {
+	var ids []string
+	for part := range strings.SplitSeq(s, ",") {
+		if id := strings.TrimSpace(part); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// entityIDStringMatches reports whether an entity_id string, or any of its
+// comma-separated parts, satisfies match. HA splits only a bare string, so a list
+// item is never passed here.
+func entityIDStringMatches(s string, match func(string) bool) bool {
+	return match(s) || slices.ContainsFunc(splitEntityIDString(s), match)
 }
 
 // scanDashboardConfig walks a dashboard config's views - including nested
