@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"reflect"
 	"sort"
 	"strings"
@@ -1022,8 +1023,8 @@ func TestAnalysisHandlers_extractDependenciesRecursive(t *testing.T) {
 			val: map[string]any{
 				"entity_id": []any{"light.one", "light.two"},
 			},
-			wantCount:  1,
-			wantEntity: "light.one",
+			wantCount:  2,
+			wantEntity: "light.two",
 		},
 	}
 
@@ -1053,11 +1054,14 @@ func TestAnalysisHandlers_extractDirectEntityDependency(t *testing.T) {
 	h := NewAnalysisHandlers()
 
 	tests := []struct {
-		name       string
-		m          map[string]any
-		wantCount  int
-		wantEntity string
-		wantType   string
+		name            string
+		m               map[string]any
+		preSeen         map[string]DependencyEntry
+		wantCount       int
+		wantEntity      string
+		wantType        string
+		wantEntities    []string
+		wantDescription string
 	}{
 		{
 			name:      "empty map",
@@ -1081,8 +1085,57 @@ func TestAnalysisHandlers_extractDirectEntityDependency(t *testing.T) {
 		{
 			name:       "duplicate entity not added",
 			m:          map[string]any{"entity_id": "light.existing"},
+			preSeen:    map[string]DependencyEntry{"light.existing": {EntityID: "light.existing", Type: "original"}},
 			wantCount:  1,
 			wantEntity: "light.existing",
+		},
+		{
+			name: "list entity_id adds every entity",
+			m: map[string]any{
+				"platform":  "state",
+				"entity_id": []any{"binary_sensor.a", "binary_sensor.b"},
+				"to":        "on",
+			},
+			wantCount:       2,
+			wantEntities:    []string{"binary_sensor.a", "binary_sensor.b"},
+			wantType:        "state",
+			wantDescription: "State changes to 'on'",
+		},
+		{
+			name:         "list entity_id skips non-string and empty items",
+			m:            map[string]any{"entity_id": []any{"light.a", 42, ""}},
+			wantCount:    1,
+			wantEntities: []string{"light.a"},
+		},
+		{
+			name:      "empty list entity_id",
+			m:         map[string]any{"entity_id": []any{}},
+			wantCount: 0,
+		},
+		{
+			name:         "list entity_id keeps earlier entry and adds the rest",
+			m:            map[string]any{"entity_id": []any{"light.existing", "light.new"}},
+			preSeen:      map[string]DependencyEntry{"light.existing": {EntityID: "light.existing", Type: "original"}},
+			wantCount:    2,
+			wantEntities: []string{"light.existing", "light.new"},
+		},
+		{
+			name:         "comma-separated entity_id string adds every entity",
+			m:            map[string]any{"entity_id": "light.a, light.b"},
+			wantCount:    2,
+			wantEntities: []string{"light.a", "light.b"},
+		},
+		{
+			name:         "lenient: comma inside a list item is split too (HA rejects this config)",
+			m:            map[string]any{"entity_id": []any{"light.a, light.b", "light.c"}},
+			wantCount:    3,
+			wantEntities: []string{"light.a", "light.b", "light.c"},
+		},
+		{
+			name:         "trailing comma drops the empty part",
+			m:            map[string]any{"entity_id": "light.a,"},
+			wantCount:    1,
+			wantEntities: []string{"light.a"},
 		},
 	}
 
@@ -1091,9 +1144,7 @@ func TestAnalysisHandlers_extractDirectEntityDependency(t *testing.T) {
 			t.Parallel()
 
 			seen := make(map[string]DependencyEntry)
-			if tt.name == "duplicate entity not added" {
-				seen["light.existing"] = DependencyEntry{EntityID: "light.existing", Type: "original"}
-			}
+			maps.Copy(seen, tt.preSeen)
 
 			h.extractDirectEntityDependency(tt.m, seen)
 
@@ -1101,11 +1152,32 @@ func TestAnalysisHandlers_extractDirectEntityDependency(t *testing.T) {
 				t.Errorf("extractDirectEntityDependency() found %d entities, want %d", len(seen), tt.wantCount)
 			}
 
+			for id, pre := range tt.preSeen {
+				if seen[id] != pre {
+					t.Errorf("extractDirectEntityDependency() overwrote %q: got %+v, want %+v", id, seen[id], pre)
+				}
+			}
+
 			if tt.wantEntity != "" && tt.wantType != "" {
-				if entry, exists := seen[tt.wantEntity]; exists {
-					if entry.Type != tt.wantType && tt.name != "duplicate entity not added" {
-						t.Errorf("extractDirectEntityDependency() type = %q, want %q", entry.Type, tt.wantType)
-					}
+				if entry, exists := seen[tt.wantEntity]; exists && entry.Type != tt.wantType {
+					t.Errorf("extractDirectEntityDependency() type = %q, want %q", entry.Type, tt.wantType)
+				}
+			}
+
+			for _, id := range tt.wantEntities {
+				entry, exists := seen[id]
+				if !exists {
+					t.Errorf("extractDirectEntityDependency() did not find expected entity %q", id)
+					continue
+				}
+				if _, pre := tt.preSeen[id]; pre {
+					continue
+				}
+				if entry.Type != tt.wantType {
+					t.Errorf("extractDirectEntityDependency() %q type = %q, want %q", id, entry.Type, tt.wantType)
+				}
+				if tt.wantDescription != "" && entry.Description != tt.wantDescription {
+					t.Errorf("extractDirectEntityDependency() %q description = %q, want %q", id, entry.Description, tt.wantDescription)
 				}
 			}
 		})
@@ -1118,10 +1190,11 @@ func TestAnalysisHandlers_extractTargetEntityDependency(t *testing.T) {
 	h := NewAnalysisHandlers()
 
 	tests := []struct {
-		name       string
-		m          map[string]any
-		wantCount  int
-		wantEntity string
+		name         string
+		m            map[string]any
+		wantCount    int
+		wantEntity   string
+		wantEntities []string
 	}{
 		{
 			name:      "no target field",
@@ -1149,6 +1222,24 @@ func TestAnalysisHandlers_extractTargetEntityDependency(t *testing.T) {
 			},
 			wantCount: 0,
 		},
+		{
+			name: "target with list entity_id adds every entity",
+			m: map[string]any{
+				"service": "light.turn_on",
+				"target":  map[string]any{"entity_id": []any{"light.a", "light.b"}},
+			},
+			wantCount:    2,
+			wantEntities: []string{"light.a", "light.b"},
+		},
+		{
+			name: "target with comma-separated entity_id adds every entity",
+			m: map[string]any{
+				"service": "light.turn_on",
+				"target":  map[string]any{"entity_id": "light.a,light.b"},
+			},
+			wantCount:    2,
+			wantEntities: []string{"light.a", "light.b"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1167,6 +1258,17 @@ func TestAnalysisHandlers_extractTargetEntityDependency(t *testing.T) {
 					t.Errorf("extractTargetEntityDependency() did not find expected entity %q", tt.wantEntity)
 				} else if entry.Type != "target" {
 					t.Errorf("extractTargetEntityDependency() type = %q, want 'target'", entry.Type)
+				}
+			}
+
+			for _, id := range tt.wantEntities {
+				entry, exists := seen[id]
+				if !exists {
+					t.Errorf("extractTargetEntityDependency() did not find expected entity %q", id)
+					continue
+				}
+				if entry.Type != "target" || entry.Description != "Action target" {
+					t.Errorf("extractTargetEntityDependency() %q = %+v, want type 'target', description 'Action target'", id, entry)
 				}
 			}
 		})
@@ -2958,5 +3060,44 @@ func TestAnalysisHandlers_FormatAnalysisNatural_NameOrder(t *testing.T) {
 	}
 	if count := strings.Count(result, "light.kitchen"); count != 1 {
 		t.Errorf("formatAnalysisNatural() = %q, expected entity_id to appear exactly once, got %d", result, count)
+	}
+}
+
+// TestAnalysisHandlers_generateTriggerDescription_State pins get_entity_dependencies'
+// state trigger description: HA accepts to/from as a string or a list, a list renders
+// as quoted alternatives joined by " or ", and to: null or a list without string items
+// reads as "field absent" (issue #385). A from-only trigger stays "State trigger".
+func TestAnalysisHandlers_generateTriggerDescription_State(t *testing.T) {
+	t.Parallel()
+
+	h := NewAnalysisHandlers()
+
+	tests := []struct {
+		name string
+		m    map[string]any
+		want string
+	}{
+		{"to string", map[string]any{"to": "on"}, "State changes to 'on'"},
+		{"from and to strings", map[string]any{"from": "off", "to": "on"}, "State change from 'off' to 'on'"},
+		{"to list", map[string]any{"to": []any{"on", "unavailable"}}, "State changes to 'on' or 'unavailable'"},
+		{"from string to list", map[string]any{"from": "off", "to": []any{"on", "unavailable"}}, "State change from 'off' to 'on' or 'unavailable'"},
+		{"from list to string", map[string]any{"from": []any{"off", "unknown"}, "to": "on"}, "State change from 'off' or 'unknown' to 'on'"},
+		{"single-item list", map[string]any{"to": []any{"on"}}, "State changes to 'on'"},
+		{"non-string item skipped", map[string]any{"to": []any{"on", 5}}, "State changes to 'on'"},
+		{"all non-string items", map[string]any{"to": []any{1, 2}}, "State trigger"},
+		{"empty list", map[string]any{"to": []any{}}, "State trigger"},
+		// Known simplification: HA reads to: null as "state changes only, not attribute
+		// changes"; the description does not distinguish it from an absent to.
+		{"to null", map[string]any{"to": nil}, "State trigger"},
+		{"from-only list", map[string]any{"from": []any{"off", "unknown"}}, "State trigger"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := h.generateTriggerDescription(tt.m, "state"); got != tt.want {
+				t.Errorf("generateTriggerDescription(%v, \"state\") = %q, want %q", tt.m, got, tt.want)
+			}
+		})
 	}
 }
