@@ -35,9 +35,10 @@ func TestExtractDomain(t *testing.T) {
 
 func TestNewEntityRegistryFilterFromArgs(t *testing.T) {
 	tests := []struct {
-		name string
-		args map[string]any
-		want *entityRegistryFilter
+		name    string
+		args    map[string]any
+		want    *entityRegistryFilter
+		wantErr string
 	}{
 		{
 			name: "empty args",
@@ -65,20 +66,33 @@ func TestNewEntityRegistryFilterFromArgs(t *testing.T) {
 			},
 		},
 		{
-			name: "wrong types ignored",
+			name: "non-bool include_disabled ignored",
 			args: map[string]any{
-				"domain":           123,
 				"include_disabled": "true",
 			},
 			want: &entityRegistryFilter{
 				deviceIDsInArea: make(map[string]bool),
 			},
 		},
+		{
+			name:    "non-string domain rejected",
+			args:    map[string]any{"domain": 123},
+			wantErr: "domain must be a string, got int",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := newEntityRegistryFilterFromArgs(tt.args)
+			got, err := newEntityRegistryFilterFromArgs(tt.args)
+			if tt.wantErr != "" {
+				if err == nil || err.Error() != tt.wantErr {
+					t.Fatalf("newEntityRegistryFilterFromArgs() error = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("newEntityRegistryFilterFromArgs() error = %v", err)
+			}
 			if diff := cmp.Diff(tt.want, got, cmp.AllowUnexported(entityRegistryFilter{})); diff != "" {
 				t.Errorf("newEntityRegistryFilterFromArgs() mismatch (-want +got):\n%s", diff)
 			}

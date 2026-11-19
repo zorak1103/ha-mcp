@@ -182,6 +182,11 @@ func (h *HACSHandlers) handleInfo(ctx context.Context, client homeassistant.Clie
 }
 
 func (h *HACSHandlers) handleList(ctx context.Context, client homeassistant.Client, args map[string]any, format string) (*mcp.ToolsCallResult, error) {
+	search, errMsg := stringArgValue("search", args["search"])
+	if errMsg != "" {
+		return errorResult(errMsg), nil
+	}
+
 	// HACS API does not accept any server-side filters - all filtering is client-side
 	result, err := client.SendHACSCommand(ctx, "hacs/repositories/list", nil)
 	if err != nil {
@@ -190,7 +195,6 @@ func (h *HACSHandlers) handleList(ctx context.Context, client homeassistant.Clie
 
 	// Client-side filters
 	category := getStringArg(args, "category")
-	search := getStringArg(args, "search")
 	installedOnly := getBoolArg(args, "installed_only")
 	pendingUpdate := getBoolArg(args, "pending_update")
 	if repos, ok := result.([]any); ok {

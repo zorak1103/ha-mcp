@@ -825,3 +825,68 @@ func TestGetRegistryProperties_DescribeAppliesToTypes(t *testing.T) {
 		}
 	}
 }
+
+func TestGetRegistry_RejectsNonStringFilters(t *testing.T) {
+	t.Parallel()
+
+	mustNotFetch := func(t *testing.T, c *UniversalMockClient) {
+		t.Helper()
+		c.GetEntityRegistryFn = func(context.Context) ([]homeassistant.EntityRegistryEntry, error) {
+			t.Errorf("HA must not be called for an invalid filter")
+			return nil, nil
+		}
+		c.GetDeviceRegistryFn = func(context.Context) ([]homeassistant.DeviceRegistryEntry, error) {
+			t.Errorf("HA must not be called for an invalid filter")
+			return nil, nil
+		}
+	}
+
+	runFilterTypeCases(t, NewConsolidatedRegistryHandlers().handleGetRegistry, []filterTypeCase{
+		{
+			name:      "entities numeric domain",
+			args:      map[string]any{"type": "entities", "domain": float64(1)},
+			want:      "domain must be a string, got float64",
+			setupMock: mustNotFetch,
+		},
+		{
+			name:      "entities numeric platform",
+			args:      map[string]any{"type": "entities", "platform": float64(1)},
+			want:      "platform must be a string, got float64",
+			setupMock: mustNotFetch,
+		},
+		{
+			name:      "entities numeric device_id",
+			args:      map[string]any{"type": "entities", "device_id": float64(1)},
+			want:      "device_id must be a string, got float64",
+			setupMock: mustNotFetch,
+		},
+		{
+			name:      "entities numeric area_id",
+			args:      map[string]any{"type": "entities", "area_id": float64(1)},
+			want:      "area_id must be a string, got float64",
+			setupMock: mustNotFetch,
+		},
+		{
+			name:      "devices numeric area_id",
+			args:      map[string]any{"type": "devices", "area_id": float64(1)},
+			want:      "area_id must be a string, got float64",
+			setupMock: mustNotFetch,
+		},
+		{
+			name:      "devices numeric manufacturer",
+			args:      map[string]any{"type": "devices", "manufacturer": float64(1)},
+			want:      "manufacturer must be a string, got float64",
+			setupMock: mustNotFetch,
+		},
+		{
+			name:      "devices numeric model",
+			args:      map[string]any{"type": "devices", "model": float64(1)},
+			want:      "model must be a string, got float64",
+			setupMock: mustNotFetch,
+		},
+		{
+			name: "entities empty domain means no filter",
+			args: map[string]any{"type": "entities", "domain": ""},
+		},
+	})
+}

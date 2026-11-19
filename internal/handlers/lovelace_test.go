@@ -1759,3 +1759,48 @@ func TestHandleManageDashboard_TargetResolution(t *testing.T) {
 
 	runHandlerTestCases(t, tests, h.handleManageDashboard)
 }
+
+func TestDashboardFind_RejectsNonStringSearch(t *testing.T) {
+	t.Parallel()
+
+	runFilterTypeCases(t, NewDashboardHandlers().handleManageDashboard, []filterTypeCase{
+		{
+			name: "numeric search",
+			args: map[string]any{"action": "find", "search": float64(1)},
+			want: "search must be a string, got float64",
+		},
+		{
+			name: "empty search keeps the required error",
+			args: map[string]any{"action": "find", "search": ""},
+			want: "search is required for action=find",
+		},
+	})
+}
+
+func TestDashboardGet_RejectsNonStringView(t *testing.T) {
+	t.Parallel()
+
+	runFilterTypeCases(t, NewDashboardHandlers().handleManageDashboard, []filterTypeCase{
+		{
+			name: "numeric view",
+			args: map[string]any{"action": "get", "view": float64(1)},
+			want: "view must be a string, got float64",
+			setupMock: func(t *testing.T, c *UniversalMockClient) {
+				t.Helper()
+				c.GetLovelaceConfigFn = func(context.Context, string) (map[string]any, error) {
+					t.Errorf("HA must not be called for an invalid filter")
+					return map[string]any{"views": []any{}}, nil
+				}
+			},
+		},
+		{
+			name: "empty array view means no filter",
+			args: map[string]any{"action": "get", "view": []any{}},
+			setupMock: func(_ *testing.T, c *UniversalMockClient) {
+				c.GetLovelaceConfigFn = func(context.Context, string) (map[string]any, error) {
+					return map[string]any{"views": []any{}}, nil
+				}
+			},
+		},
+	})
+}

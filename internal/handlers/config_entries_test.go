@@ -493,3 +493,23 @@ func TestRegisterConfigEntryTools(t *testing.T) {
 		t.Error("RegisterConfigEntryTools() registered no tools")
 	}
 }
+
+func TestConfigEntryList_RejectsNonStringDomain(t *testing.T) {
+	t.Parallel()
+
+	runFilterTypeCases(t, NewConfigEntryHandlers().handleManageConfigEntry, []filterTypeCase{
+		{
+			name: "numeric domain",
+			args: map[string]any{"action": "list", "domain": float64(1)},
+			want: "domain must be a string, got float64",
+			setupMock: func(t *testing.T, c *UniversalMockClient) {
+				t.Helper()
+				c.GetConfigEntriesFn = func(context.Context, string) ([]homeassistant.ConfigEntryFull, error) {
+					t.Errorf("HA must not be called for an invalid filter")
+					return nil, nil
+				}
+			},
+		},
+		{name: "empty domain means no filter", args: map[string]any{"action": "list", "domain": ""}},
+	})
+}

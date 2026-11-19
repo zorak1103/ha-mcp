@@ -270,7 +270,10 @@ func (h *DashboardHandlers) handleGet(
 	if errResult != nil {
 		return errResult, nil
 	}
-	viewFilter, _ := args["view"].(string)
+	viewFilter, errMsg := stringArgValue("view", args["view"])
+	if errMsg != "" {
+		return errorResult(errMsg), nil
+	}
 	verbose, _ := args["verbose"].(bool)
 
 	config, err := client.GetLovelaceConfig(ctx, urlPath)
@@ -460,7 +463,10 @@ func (h *DashboardHandlers) handlePatch(ctx context.Context, client homeassistan
 // fallback cannot locate content in a large dashboard). If url_path is omitted,
 // every dashboard (including the default one) is searched.
 func (h *DashboardHandlers) handleFind(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	search, _ := args["search"].(string)
+	search, errMsg := stringArgValue("search", args["search"])
+	if errMsg != "" {
+		return errorResult(errMsg), nil
+	}
 	if search == "" {
 		return errorResult("search is required for action=find"), nil
 	}

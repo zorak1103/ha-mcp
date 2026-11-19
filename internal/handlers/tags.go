@@ -117,13 +117,17 @@ func (h *TagHandlers) handleManageTag(ctx context.Context, client homeassistant.
 }
 
 func (h *TagHandlers) handleList(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+	nameContains, errMsg := stringArgValue("name_contains", args["name_contains"])
+	if errMsg != "" {
+		return errorResult(errMsg), nil
+	}
+
 	tags, err := client.GetTags(ctx)
 	if err != nil {
 		return errorResult(fmt.Sprintf("error listing tags: %v", err)), nil
 	}
 
 	// Apply name filter if provided
-	nameContains, _ := args["name_contains"].(string)
 	if nameContains != "" {
 		tags = h.filterTagsByName(tags, nameContains)
 	}

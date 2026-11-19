@@ -129,13 +129,17 @@ func (h *FloorHandlers) handleManageFloor(ctx context.Context, client homeassist
 }
 
 func (h *FloorHandlers) handleList(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+	nameContains, errMsg := stringArgValue("name_contains", args["name_contains"])
+	if errMsg != "" {
+		return errorResult(errMsg), nil
+	}
+
 	floors, err := client.GetFloorRegistry(ctx)
 	if err != nil {
 		return errorResult(fmt.Sprintf("error listing floors: %v", err)), nil
 	}
 
 	// Apply name filter if provided
-	nameContains, _ := args["name_contains"].(string)
 	if nameContains != "" {
 		floors = h.filterFloorsByName(floors, nameContains)
 	}

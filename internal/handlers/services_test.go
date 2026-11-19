@@ -196,3 +196,23 @@ func TestServiceHandlers_ServiceWithTarget(t *testing.T) {
 		t.Error("expected has_target field in output")
 	}
 }
+
+func TestListServices_RejectsNonStringDomain(t *testing.T) {
+	t.Parallel()
+
+	runFilterTypeCases(t, NewServiceHandlers().handleListServices, []filterTypeCase{
+		{
+			name: "numeric domain",
+			args: map[string]any{"domain": float64(1)},
+			want: "domain must be a string, got float64",
+			setupMock: func(t *testing.T, c *UniversalMockClient) {
+				t.Helper()
+				c.GetServicesFn = func(context.Context) ([]homeassistant.Service, error) {
+					t.Errorf("HA must not be called for an invalid filter")
+					return nil, nil
+				}
+			},
+		},
+		{name: "empty domain means no filter", args: map[string]any{"domain": ""}},
+	})
+}

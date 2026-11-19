@@ -542,3 +542,28 @@ func TestZoneHandlers_RegisterTools(t *testing.T) {
 		t.Error("manage_zone tool not registered")
 	}
 }
+
+func TestZoneList_RejectsNonStringFilters(t *testing.T) {
+	t.Parallel()
+
+	mustNotList := func(t *testing.T, c *UniversalMockClient) {
+		t.Helper()
+		c.GetZonesFn = func(context.Context) ([]homeassistant.ZoneRegistryEntry, error) {
+			t.Errorf("HA must not be called for an invalid filter")
+			return nil, nil
+		}
+	}
+
+	runFilterTypeCases(t, NewZoneHandlers().handleManageZone, []filterTypeCase{
+		{
+			name:      "numeric name_contains",
+			args:      map[string]any{"action": "list", "name_contains": float64(7)},
+			want:      "name_contains must be a string, got float64",
+			setupMock: mustNotList,
+		},
+		{
+			name: "empty array name_contains means no filter",
+			args: map[string]any{"action": "list", "name_contains": []any{}},
+		},
+	})
+}

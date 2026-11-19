@@ -97,7 +97,7 @@ func TestHandleFindReferences(t *testing.T) {
 			name:         "non-string search",
 			args:         map[string]any{"search": 42},
 			wantError:    true,
-			wantContains: []string{"search is required: pass the entity_id"},
+			wantContains: []string{"search must be a string, got int"},
 		},
 		{
 			name:         "empty search",
@@ -533,4 +533,21 @@ func TestHandleFindReferences_ParallelCallsShareLoads(t *testing.T) {
 	if texts[0] == "" || texts[0] != texts[1] {
 		t.Errorf("payloads differ or are empty:\n%s\n---\n%s", texts[0], texts[1])
 	}
+}
+
+func TestFindReferences_RejectsNonStringSearch(t *testing.T) {
+	t.Parallel()
+
+	runFilterTypeCases(t, NewFindReferencesHandlers().handleFindReferences, []filterTypeCase{
+		{
+			name: "numeric search",
+			args: map[string]any{"search": float64(1)},
+			want: "search must be a string, got float64",
+		},
+		{
+			name: "empty search keeps the required error",
+			args: map[string]any{"search": ""},
+			want: "search is required: pass the entity_id",
+		},
+	})
 }

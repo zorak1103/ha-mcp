@@ -275,12 +275,16 @@ func (h *AutomationHandlers) handleManageAutomation(
 // =============================================================================
 
 func (h *AutomationHandlers) handleList(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+	filters, err := parseAutomationFilters(args)
+	if err != nil {
+		return errorResult(err.Error()), nil
+	}
+
 	automations, err := client.ListAutomations(ctx)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Error listing automations: %v", err)), nil
 	}
 
-	filters := parseAutomationFilters(args)
 	verbose, _ := args["verbose"].(bool)
 	format := formatter.ParseFormat(getString(args, "format"))
 
@@ -793,13 +797,19 @@ func (h *AutomationHandlers) findAutomationByID(ctx context.Context, client home
 	return nil, fmt.Errorf("automation not found: %s (tried as automation_id, entity_id, config.id, and alias/friendly_name)", searchID)
 }
 
-// parseAutomationFilters extracts filter parameters from args.
-func parseAutomationFilters(args map[string]any) automationFilters {
-	return automationFilters{
-		state:    getString(args, "state"),
-		alias:    getString(args, "alias"),
-		entityID: getString(args, attrEntityID),
+// parseAutomationFilters extracts filter parameters from args. A present
+// non-string filter is an error (reported for the first one in read order),
+// never "no filter".
+func parseAutomationFilters(args map[string]any) (automationFilters, error) {
+	var filters automationFilters
+	if err := readStringFilters(args, []stringFilterField{
+		{"state", &filters.state},
+		{"alias", &filters.alias},
+		{attrEntityID, &filters.entityID},
+	}); err != nil {
+		return automationFilters{}, err
 	}
+	return filters, nil
 }
 
 // matchesStateFilter checks if automation matches state filter.

@@ -128,13 +128,17 @@ func (h *PersonHandlers) handleManagePerson(ctx context.Context, client homeassi
 }
 
 func (h *PersonHandlers) handleList(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+	nameContains, errMsg := stringArgValue("name_contains", args["name_contains"])
+	if errMsg != "" {
+		return errorResult(errMsg), nil
+	}
+
 	persons, err := client.GetPersons(ctx)
 	if err != nil {
 		return errorResult(fmt.Sprintf("error listing persons: %v", err)), nil
 	}
 
 	// Apply name filter if provided
-	nameContains, _ := args["name_contains"].(string)
 	if nameContains != "" {
 		persons = h.filterPersonsByName(persons, nameContains)
 	}

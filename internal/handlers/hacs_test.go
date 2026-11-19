@@ -966,3 +966,31 @@ func TestHACSHandlers_GetReleasesAndCritical(t *testing.T) {
 		return h.HandleManageHACS(ctx, client, args)
 	})
 }
+
+func TestHACSList_RejectsNonStringSearch(t *testing.T) {
+	t.Parallel()
+
+	runFilterTypeCases(t, NewHACSHandlers().HandleManageHACS, []filterTypeCase{
+		{
+			name: "numeric search",
+			args: map[string]any{"action": "list", "search": float64(1)},
+			want: "search must be a string, got float64",
+			setupMock: func(t *testing.T, c *UniversalMockClient) {
+				t.Helper()
+				c.SendHACSCommandFn = func(context.Context, string, map[string]any) (any, error) {
+					t.Errorf("HA must not be called for an invalid filter")
+					return []any{}, nil
+				}
+			},
+		},
+		{
+			name: "empty search means no filter",
+			args: map[string]any{"action": "list", "search": ""},
+			setupMock: func(_ *testing.T, c *UniversalMockClient) {
+				c.SendHACSCommandFn = func(context.Context, string, map[string]any) (any, error) {
+					return []any{}, nil
+				}
+			},
+		},
+	})
+}

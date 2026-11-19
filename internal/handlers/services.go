@@ -65,6 +65,11 @@ func (h *ServiceHandlers) handleListServices(
 	client homeassistant.Client,
 	args map[string]any,
 ) (*mcp.ToolsCallResult, error) {
+	domainFilter, errMsg := stringArgValue("domain", args["domain"])
+	if errMsg != "" {
+		return errorResult(errMsg), nil
+	}
+
 	services, err := client.GetServices(ctx)
 	if err != nil {
 		return &mcp.ToolsCallResult{
@@ -74,8 +79,6 @@ func (h *ServiceHandlers) handleListServices(
 			IsError: true,
 		}, nil
 	}
-
-	domainFilter := getString(args, "domain")
 
 	if domainFilter != "" {
 		return h.handleFilteredDomain(services, domainFilter)

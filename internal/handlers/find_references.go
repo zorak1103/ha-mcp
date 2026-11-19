@@ -107,7 +107,10 @@ type findReferencesResult struct {
 }
 
 func (h *FindReferencesHandlers) handleFindReferences(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	search, _ := args["search"].(string)
+	search, errMsg := stringArgValue("search", args["search"])
+	if errMsg != "" {
+		return errorResult(errMsg), nil
+	}
 	if search == "" {
 		return errorResult(`search is required: pass the entity_id or text to look for, e.g. {"search": "light.kitchen"}`), nil
 	}

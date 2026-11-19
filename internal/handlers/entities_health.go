@@ -90,7 +90,10 @@ func (h *ConsolidatedEntityQueryHandlers) handleHealthAnalyze(
 	// Parse parameters
 	formatStr := formatter.ParseFormat(getStringArg(args, "format"))
 	categories := parseCategoriesFilter(args)
-	domain, _ := args["domain"].(string)
+	domain, errMsg := stringArgValue("domain", args["domain"])
+	if errMsg != "" {
+		return errorResult(errMsg), nil
+	}
 
 	staleDays := defaultStaleDays
 	if sd, ok := args["stale_days"].(float64); ok {

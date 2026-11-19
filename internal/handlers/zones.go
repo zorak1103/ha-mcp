@@ -133,13 +133,17 @@ func (h *ZoneHandlers) handleManageZone(ctx context.Context, client homeassistan
 }
 
 func (h *ZoneHandlers) handleList(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
+	nameContains, errMsg := stringArgValue("name_contains", args["name_contains"])
+	if errMsg != "" {
+		return errorResult(errMsg), nil
+	}
+
 	zones, err := client.GetZones(ctx)
 	if err != nil {
 		return errorResult(fmt.Sprintf("error listing zones: %v", err)), nil
 	}
 
 	// Apply name filter if provided
-	nameContains, _ := args["name_contains"].(string)
 	if nameContains != "" {
 		zones = h.filterZonesByName(zones, nameContains)
 	}
