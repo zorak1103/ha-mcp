@@ -34,6 +34,9 @@ const (
 	automationActionSchema   = "schema"
 )
 
+// automationIDListHint tells a caller who passed no automation where to find one.
+const automationIDListHint = "Use 'list' action to find IDs (shown in [brackets])"
+
 // automationForTimerReloadWarning is appended to patch/update success messages when the
 // automation has triggers with a "for:" duration. Update/patch trigger an explicit
 // automation.reload scoped to the edited automation's config id after a successful config write
@@ -125,14 +128,14 @@ func (h *AutomationHandlers) manageAutomationTool() mcp.Tool {
 
 Actions:
 - list: List automations (optional filters: state, alias, entity_id; supports verbose, limit, cursor)
-- get: Get details of a specific automation (requires automation_id)
+- get: Get details of a specific automation (requires automation_id or entity_id 'automation.<id>')
 - create: Create a new automation (requires alias, trigger, automation_action; trigger=[] for manual-only)
-- update: Update an existing automation (requires automation_id); fields not passed are kept. variables replaces the whole block ({} or null removes it)
-- delete: Delete an automation (requires automation_id)
-- toggle: Enable or disable an automation (requires automation_id, enabled)
-- trigger: Run an automation now and return the new run's run_id, state and outcome (requires automation_id; optional skip_condition, default true = conditions skipped). Use manage_trace action=get automation_id=<id> run_id=<run_id> for the full trace
+- update: Update an existing automation (requires automation_id or entity_id 'automation.<id>'); fields not passed are kept. variables replaces the whole block ({} or null removes it)
+- delete: Delete an automation (requires automation_id or entity_id 'automation.<id>')
+- toggle: Enable or disable an automation (requires automation_id or entity_id 'automation.<id>', enabled)
+- trigger: Run an automation now and return the new run's run_id, state and outcome (requires automation_id or entity_id 'automation.<id>'; optional skip_condition, default true = conditions skipped). Use manage_trace action=get automation_id=<id> run_id=<run_id> for the full trace
 - coverage: Analyze which areas/entities lack automation coverage
-- patch: Apply RFC 6902 JSON Patch operations (requires automation_id, operations)
+- patch: Apply RFC 6902 JSON Patch operations (requires automation_id or entity_id 'automation.<id>', operations)
 - schema: Return reference for all valid trigger, condition, and action types with required/optional fields
 
 Trigger shape: legacy types (state, numeric_state, ...) use flat keys (entity_id, for); purpose-specific triggers (e.g. power.crossed_threshold) use trigger/target/options. get returns the stored shape; write the shape that matches each trigger's type. See action=schema.`,
@@ -147,7 +150,7 @@ Trigger shape: legacy types (state, numeric_state, ...) use flat keys (entity_id
 				},
 				"automation_id": {
 					Type:        "string",
-					Description: "Automation identifier. For create: optional config/storage ID (e.g. 'my_automation') — controls the REST API key, not the entity_id (HA always derives entity_id from the slugified alias). Useful when you need a stable config ID independent of the display name. For other actions: accepts entity_id (automation.xyz), config.id (UUID), or alias/friendly_name (case-insensitive partial match). Required for get/update/delete/toggle/trigger.",
+					Description: "Automation identifier. For create: optional config/storage ID (e.g. 'my_automation') — controls the REST API key, not the entity_id (HA always derives entity_id from the slugified alias). Useful when you need a stable config ID independent of the display name. For other actions: accepts the entity ID (automation.xyz), config.id (UUID), or alias/friendly_name (case-insensitive partial match). Required for get/update/delete/toggle/trigger/patch unless entity_id is given.",
 				},
 				"alias": {
 					Type:        "string",
@@ -199,7 +202,7 @@ Trigger shape: legacy types (state, numeric_state, ...) use flat keys (entity_id
 				},
 				attrEntityID: {
 					Type:        "string",
-					Description: "Filter by entity used in the automation (for list action)",
+					Description: "For list: filter by an entity the automation uses. For get/update/delete/toggle/trigger/patch: alias of automation_id; must be 'automation.<id>'.",
 				},
 				"verbose": {
 					Type:        "boolean",
@@ -356,9 +359,9 @@ func formatNaturalPaginationNote(paginated PaginatedResponse[homeassistant.Autom
 }
 
 func (h *AutomationHandlers) handleGet(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	automationID, ok := args["automation_id"].(string)
-	if !ok || automationID == "" {
-		return errorResult("automation_id is required for get action. Use 'list' action to find IDs (shown in [brackets])"), nil
+	automationID, errResult := resolveAutomationTarget(automationActionGet, automationIDListHint, args)
+	if errResult != nil {
+		return errResult, nil
 	}
 
 	_, configID := normalizeAutomationID(automationID)
@@ -467,9 +470,9 @@ func (h *AutomationHandlers) handleUpdate(ctx context.Context, client homeassist
 		return errorResult(err.Error()), nil
 	}
 
-	automationID, ok := args["automation_id"].(string)
-	if !ok || automationID == "" {
-		return errorResult("automation_id is required for update action. Use 'list' action to find IDs (shown in [brackets])"), nil
+	automationID, errResult := resolveAutomationTarget(automationActionUpdate, automationIDListHint, args)
+	if errResult != nil {
+		return errResult, nil
 	}
 
 	entityID, configID := normalizeAutomationID(automationID)
@@ -524,9 +527,9 @@ func (h *AutomationHandlers) handleUpdate(ctx context.Context, client homeassist
 }
 
 func (h *AutomationHandlers) handleDelete(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	automationID, ok := args["automation_id"].(string)
-	if !ok || automationID == "" {
-		return errorResult("automation_id is required for delete action. Use 'list' action to find IDs (shown in [brackets])"), nil
+	automationID, errResult := resolveAutomationTarget(automationActionDelete, automationIDListHint, args)
+	if errResult != nil {
+		return errResult, nil
 	}
 
 	_, configID := normalizeAutomationID(automationID)
@@ -562,9 +565,9 @@ func (h *AutomationHandlers) handleDelete(ctx context.Context, client homeassist
 }
 
 func (h *AutomationHandlers) handleToggle(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	automationID, ok := args["automation_id"].(string)
-	if !ok || automationID == "" {
-		return errorResult("automation_id is required for toggle action. Use 'list' action to find IDs (shown in [brackets])"), nil
+	automationID, errResult := resolveAutomationTarget(automationActionToggle, automationIDListHint, args)
+	if errResult != nil {
+		return errResult, nil
 	}
 
 	enabled, ok := args["enabled"].(bool)
@@ -588,9 +591,9 @@ func (h *AutomationHandlers) handleToggle(ctx context.Context, client homeassist
 
 //nolint:funlen // Patch handler
 func (h *AutomationHandlers) handlePatch(ctx context.Context, client homeassistant.Client, args map[string]any) (*mcp.ToolsCallResult, error) {
-	automationID, ok := args["automation_id"].(string)
-	if !ok || automationID == "" {
-		return errorResult("automation_id is required for patch action"), nil
+	automationID, errResult := resolveAutomationTarget(automationActionPatch, automationIDListHint, args)
+	if errResult != nil {
+		return errResult, nil
 	}
 
 	ops, errResult := parseOperations(args)

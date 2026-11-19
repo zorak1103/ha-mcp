@@ -83,11 +83,11 @@ func (h *AutomationHandlers) handleTrigger(ctx context.Context, client homeassis
 	}, format), nil
 }
 
-// parseTriggerTarget validates automation_id and returns the automation's entity_id.
+// parseTriggerTarget validates automation_id (or its entity_id alias) and returns the automation's entity_id.
 func parseTriggerTarget(args map[string]any) (string, *mcp.ToolsCallResult) {
-	automationID, _ := args["automation_id"].(string)
-	if automationID == "" {
-		return "", errorResult("automation_id is required for trigger action. Use 'list' action to find IDs (shown in [brackets])")
+	automationID, errResult := resolveAutomationTarget(automationActionTrigger, automationIDListHint, args)
+	if errResult != nil {
+		return "", errResult
 	}
 	if strings.Contains(automationID, ".") && !strings.HasPrefix(automationID, "automation.") {
 		return "", errorResult(fmt.Sprintf("trigger action only supports automations, got: %q", automationID))

@@ -30,6 +30,7 @@ import (
 var auditFileOwners = map[string][]string{
 	"analysis.go":                         {"analyze_entity", "get_entity_dependencies"},
 	"areas.go":                            {"manage_area"},
+	"automation_target.go":                {"manage_automation", "manage_trace"},
 	"automations.go":                      {"manage_automation"},
 	"automations_coverage.go":             {"manage_automation"},
 	"automations_trigger.go":              {"manage_automation"},
@@ -539,7 +540,8 @@ func TestToolSchemas_DeclareEveryLiteralArgRead(t *testing.T) {
 	}
 
 	// readerFuncFile maps each top-level function with direct reads that is
-	// declared in an owned file to that file.
+	// declared in an owned file to that file (scanArgReads prunes functions
+	// without reads from funcReads, so every entry here has at least one).
 	readerFuncFile := make(map[string]string)
 	for file, scan := range scans {
 		if _, owned := auditFileOwners[file]; !owned {
@@ -578,18 +580,21 @@ func TestToolSchemas_DeclareEveryLiteralArgRead(t *testing.T) {
 			}
 			// (b') the same for a reader function declared in another owned
 			// file (e.g. traces_debug.go calling logbook.go's getHoursFromArgs).
+			// Such a call also counts as the file reading arguments.
+			readsViaCall := false
 			for callee, line := range scan.argCalls {
 				src, ok := readerFuncFile[callee]
 				if !ok || src == file {
 					continue
 				}
+				readsViaCall = true
 				for key := range scans[src].funcReads[callee] {
 					if !ownersDeclare(owners, key, props) {
 						failf("%s: %s read undeclared %q (via %s %s, line %d)", file, strings.Join(owners, ", "), key, src, callee, line)
 					}
 				}
 			}
-			if len(scan.reads) == 0 && len(scan.sharedCalls) == 0 {
+			if len(scan.reads) == 0 && len(scan.sharedCalls) == 0 && !readsViaCall {
 				failf("%s: listed in auditFileOwners but reads no tool arguments; remove the entry", file)
 			}
 		case len(scan.reads) > 0 || len(scan.sharedCalls) > 0:

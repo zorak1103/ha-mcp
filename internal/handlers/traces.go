@@ -40,27 +40,27 @@ func RegisterTraceTools(registry *mcp.Registry) {
 
 	registry.RegisterTool(mcp.Tool{
 		Name:        "manage_trace",
-		Description: "View automation and script execution traces. Supports list (view all traces), get (view one trace's details: pass automation_id or entity_id; run_id defaults to the newest run), and debug (consolidated automation debug report: config, latest trace, trigger entity states, and logbook).",
+		Description: "View automation and script execution traces. Supports list (traces of a domain, or of one automation/script via automation_id or entity_id), get (one trace's details: pass automation_id or entity_id; run_id defaults to the newest run), and debug (consolidated automation debug report for automation_id or entity_id 'automation.<id>': config, latest trace, trigger entity states, and logbook).",
 		InputSchema: mcp.JSONSchema{
 			Type: "object",
 			Properties: map[string]mcp.JSONSchema{
 				"action": {
 					Type:        "string",
-					Description: "Action to perform: 'list' (list all traces), 'get' (get specific trace details), or 'debug' (consolidated automation debug report).",
+					Description: "Action to perform: 'list' (list traces of a domain or of one automation/script), 'get' (get specific trace details), or 'debug' (consolidated automation debug report).",
 					Enum:        []string{traceActionList, traceActionGet, traceActionDebug},
 				},
 				"domain": {
 					Type:        "string",
-					Description: "Domain to query traces for: 'automation' or 'script'. Required for the 'list' action unless entity_id is provided (which auto-derives it). Optional for 'get' (derived from entity_id/automation_id; must agree when given).",
+					Description: "Domain to query traces for: 'automation' or 'script'. Required for 'list' unless automation_id or entity_id is given (which derives it). Optional for 'get' (derived from entity_id/automation_id; must agree when given). Not used by 'debug'.",
 					Enum:        []string{traceDomainAutomation, traceDomainScript},
 				},
 				attrEntityID: {
 					Type:        "string",
-					Description: "Entity ID, e.g. 'automation.morning_routine' or 'script.wake_up'. For 'get': required unless automation_id is given (auto-derives domain). For 'list': optional, auto-derives domain and filters traces by item.",
+					Description: "Entity ID, e.g. 'automation.morning_routine' or 'script.wake_up'. For 'get': required unless automation_id is given (derives domain). For 'list': optional, derives domain and filters traces to that item. For 'debug': alias of automation_id, must be 'automation.<id>'.",
 				},
 				"automation_id": {
 					Type:        "string",
-					Description: "Automation entity ID or bare ID, e.g. 'automation.morning_routine' or 'morning_routine'. Required for 'debug'; for 'get' an alternative to entity_id (both must name the same automation if both are given).",
+					Description: "Automation entity ID or object ID (the id shown in [brackets] by manage_automation list), e.g. 'automation.morning_routine' or 'morning_routine'. Aliases and config UUIDs are not resolved here. Required for 'debug' unless entity_id is given. For 'list' and 'get' an alternative to entity_id (both must name the same automation if both are given); list then shows only that automation's traces.",
 				},
 				"run_id": {
 					Type:        "string",
@@ -100,37 +100,38 @@ func (h *TraceHandlers) HandleManageTrace(ctx context.Context, client homeassist
 		format = formatNatural
 	}
 
-	// Route to action handler
+	var run func(context.Context, homeassistant.Client, map[string]any, string) (*mcp.ToolsCallResult, error)
 	switch action {
 	case traceActionList:
-		return h.handleListTraces(ctx, client, args, format)
+		run = h.handleListTraces
 	case traceActionGet:
-		return h.handleGetTrace(ctx, client, args, format)
+		run = h.handleGetTrace
 	case traceActionDebug:
-		return h.handleDebugTrace(ctx, client, args, format)
+		run = h.handleDebugTrace
 	default:
 		return errorResult(fmt.Sprintf("invalid action %q, must be one of: list, get, debug", action)), nil
 	}
+
+	if res := rejectInapplicableArgs(args, "action", action, traceArgActions, ""); res != nil {
+		return res, nil
+	}
+	return run(ctx, client, args, format)
 }
 
-// resolveTraceListParams derives domain and the entity_id from entity_id (when provided),
-// validates the prefix, and checks for conflicts with an explicit domain parameter.
-// The returned entityID must still be mapped to HA's trace item_id via resolveTraceItemID.
-func resolveTraceListParams(entityID, domain string) (resolvedDomain, resolvedEntityID, errMsg string) {
-	if entityID == "" {
-		return domain, "", ""
-	}
-	derived, errMsg := validateTraceEntityID(entityID, domain)
-	if errMsg != "" {
-		return "", "", errMsg
-	}
-	return derived, entityID, ""
+// traceArgActions lists the manage_trace arguments that only some actions read, so the others
+// reject them instead of dropping them silently. automation_id and entity_id are read by every
+// action, and format is exempt.
+var traceArgActions = map[string][]string{
+	"domain": {traceActionList, traceActionGet},
+	"run_id": {traceActionGet},
+	"hours":  {traceActionDebug},
+	"wait":   {traceActionList},
 }
 
 // validateTraceEntityID checks an entity_id intended for a trace lookup: it must be
 // "automation.<id>" or "script.<id>", and - when domain is already known (get always supplies
 // it; list only when explicitly passed) - the prefixes must agree. Shared by handleGetTrace and
-// resolveTraceListParams so the two actions can't drift on what counts as a valid entity_id
+// resolveTraceTarget so list and get can't drift on what counts as a valid entity_id
 // (get's own inline check used to accept a bare id or one starting with "." unchecked).
 func validateTraceEntityID(entityID, domain string) (derivedDomain, errMsg string) {
 	dotIdx := strings.Index(entityID, ".")
@@ -197,18 +198,17 @@ func unresolvedItemIDWarning(entityID string) string {
 		"Check the entity_id is correct and the entity exists.", entityID)
 }
 
-// handleListTraces lists all traces for a domain.
+// handleListTraces lists the traces of a domain, or of one automation/script when automation_id
+// or entity_id is given.
 func (h *TraceHandlers) handleListTraces(ctx context.Context, client homeassistant.Client, args map[string]any, format string) (*mcp.ToolsCallResult, error) {
-	domain, _ := args["domain"].(string)
-	entityID, _ := args[attrEntityID].(string)
 	wait, _ := args["wait"].(bool)
 
-	domain, traceEntityID, errMsg := resolveTraceListParams(entityID, domain)
+	domain, traceEntityID, errMsg := resolveTraceTarget(args)
 	if errMsg != "" {
 		return errorResult(errMsg), nil
 	}
 	if domain == "" {
-		return errorResult("domain is required for list action: pass domain 'automation' or 'script', or an entity_id like 'automation.morning_routine'"), nil
+		return errorResult("domain is required for list action: pass domain 'automation' or 'script', or automation_id / entity_id like 'automation.morning_routine'"), nil
 	}
 
 	// Build command data
@@ -321,30 +321,46 @@ func latestTraceEntry(traces []any) map[string]any {
 	return latest
 }
 
-// resolveTraceGetTarget turns the get action's automation_id / entity_id / domain arguments into
+// resolveTraceTarget turns the automation_id / entity_id / domain arguments of list and get into
 // one trace target. automation_id (bare or "automation."-prefixed) is an alternative spelling of
 // an automation entity_id; when both are given they must name the same entity. The domain is
 // derived from the entity_id prefix, and an explicit domain must agree with it - a mismatch would
 // otherwise resolve item_id against the wrong domain and return an unrelated entity's traces.
-func resolveTraceGetTarget(args map[string]any) (domain, entityID, errMsg string) {
+// With no target at all it returns the explicit domain and an empty entityID, so the caller
+// decides whether that is an error (get) or a domain-wide list.
+//
+// It deliberately does not use resolveAutomationTarget: trace lookups also accept script.*
+// entity IDs. A non-string ID is rejected (stringIDValue) because the server's type check lets a
+// JSON number through, which would otherwise read as absent and turn a filtered list into an
+// unfiltered one. The entityID must still be mapped to HA's item_id via resolveTraceItemID.
+func resolveTraceTarget(args map[string]any) (domain, entityID, errMsg string) {
 	explicitDomain, _ := args["domain"].(string)
-	entityID, _ = args[attrEntityID].(string)
+	automationID, errMsg := stringIDValue("automation_id", args["automation_id"])
+	if errMsg != "" {
+		return "", "", errMsg
+	}
+	entityID, errMsg = stringIDValue(attrEntityID, args[attrEntityID])
+	if errMsg != "" {
+		return "", "", errMsg
+	}
 
-	if automationID, _ := args["automation_id"].(string); automationID != "" {
-		if strings.Contains(automationID, ".") && !strings.HasPrefix(automationID, "automation.") {
-			return "", "", fmt.Sprintf("automation_id %q is invalid: must be 'automation.<id>' or a bare automation id", automationID)
+	if entityID != "" {
+		if _, errMsg = validateTraceEntityID(entityID, ""); errMsg != "" {
+			return "", "", errMsg
 		}
-		autoEntityID, _ := normalizeAutomationID(automationID)
-		if entityID != "" && entityID != autoEntityID {
-			return "", "", fmt.Sprintf("automation_id %q conflicts with entity_id %q", automationID, entityID)
+	}
+	if automationID != "" {
+		if entityID, errMsg = mergeTraceAutomationID(automationID, entityID); errMsg != "" {
+			return "", "", errMsg
 		}
-		entityID = autoEntityID
+		if explicitDomain != "" && explicitDomain != traceDomainAutomation {
+			return "", "", fmt.Sprintf("automation_id %q conflicts with explicit domain %q", automationID, explicitDomain)
+		}
 	}
 
 	if entityID == "" {
-		return "", "", "entity_id or automation_id is required for get action"
+		return explicitDomain, "", ""
 	}
-
 	derived, errMsg := validateTraceEntityID(entityID, explicitDomain)
 	if errMsg != "" {
 		return "", "", errMsg
@@ -352,12 +368,28 @@ func resolveTraceGetTarget(args map[string]any) (domain, entityID, errMsg string
 	return derived, entityID, ""
 }
 
+// mergeTraceAutomationID turns automation_id into an automation entity_id and checks it against
+// an already validated entity_id (empty when not given): the two must name the same entity.
+func mergeTraceAutomationID(automationID, entityID string) (merged, errMsg string) {
+	if strings.Contains(automationID, ".") && !strings.HasPrefix(automationID, automationEntityPrefix) {
+		return "", fmt.Sprintf("automation_id %q is invalid: must be 'automation.<id>' or a bare automation id", automationID)
+	}
+	autoEntityID, _ := normalizeAutomationID(automationID)
+	if entityID != "" && entityID != autoEntityID {
+		return "", fmt.Sprintf("automation_id %q conflicts with entity_id %q", automationID, entityID)
+	}
+	return autoEntityID, ""
+}
+
 // handleGetTrace retrieves one trace by automation_id or entity_id. Without run_id it lists the
 // traces under the same item_id and fetches the newest one.
 func (h *TraceHandlers) handleGetTrace(ctx context.Context, client homeassistant.Client, args map[string]any, format string) (*mcp.ToolsCallResult, error) {
-	domain, entityID, errMsg := resolveTraceGetTarget(args)
+	domain, entityID, errMsg := resolveTraceTarget(args)
 	if errMsg != "" {
 		return errorResult(errMsg), nil
+	}
+	if entityID == "" {
+		return errorResult("entity_id or automation_id is required for get action"), nil
 	}
 
 	itemID, resolved := resolveTraceItemID(ctx, client, domain, entityID)

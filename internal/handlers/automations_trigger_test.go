@@ -193,6 +193,22 @@ func TestTrigger_RejectsNonAutomationID(t *testing.T) {
 	}
 }
 
+func TestTrigger_RejectsNonAutomationEntityID(t *testing.T) {
+	t.Parallel()
+
+	client, rec := newTriggerClient(newRunAfterBaseline(nil), nil)
+	result, err := runTrigger(injectFastWait(time.Second), client, map[string]any{"entity_id": "script.x"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError || !strings.Contains(resultText(t, result), "is not an automation") {
+		t.Errorf("want an is-not-an-automation error, got %q", resultText(t, result))
+	}
+	if len(rec.serviceCalls()) != 0 {
+		t.Error("CallService must not be called for a non-automation entity_id")
+	}
+}
+
 func TestTrigger_UnknownEntityIsAnError(t *testing.T) {
 	t.Parallel()
 
@@ -254,6 +270,26 @@ func TestTrigger_ServiceCallShape(t *testing.T) {
 				t.Errorf("unexpected extra service data: %v", data)
 			}
 		})
+	}
+}
+
+func TestTrigger_AcceptsEntityIDAlias(t *testing.T) {
+	t.Parallel()
+
+	client, rec := newTriggerClient(newRunAfterBaseline(triggerTrace("r2", "2026-10-30T09:00:00Z", "stopped", "finished")), nil)
+	result, err := runTrigger(injectFastWait(time.Second), client, map[string]any{"entity_id": triggerTestEntityID})
+	if err != nil || result.IsError {
+		t.Fatalf("unexpected failure: %v / %q", err, resultText(t, result))
+	}
+	text := resultText(t, result)
+	for _, want := range []string{triggerTestEntityID, "r2", "finished"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("output %q should contain %q", text, want)
+		}
+	}
+	calls := rec.serviceCalls()
+	if len(calls) != 1 || calls[0].data["entity_id"] != triggerTestEntityID {
+		t.Errorf("want one service call for %s, got %v", triggerTestEntityID, calls)
 	}
 }
 

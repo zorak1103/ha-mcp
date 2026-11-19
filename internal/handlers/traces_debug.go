@@ -70,17 +70,17 @@ type triggerEntityInfo struct {
 
 // handleDebugTrace handles the debug action: builds a consolidated automation debug report.
 func (h *TraceHandlers) handleDebugTrace(ctx context.Context, client homeassistant.Client, args map[string]any, format string) (*mcp.ToolsCallResult, error) {
-	automationID, _ := args["automation_id"].(string)
-	if automationID == "" {
-		return errorResult("automation_id is required for debug action"), nil
+	target, errRes := resolveAutomationTarget(traceActionDebug, "", args)
+	if errRes != nil {
+		return errRes, nil
 	}
 
 	// Reject non-automation entity IDs (e.g., "light.living_room")
-	if strings.Contains(automationID, ".") && !strings.HasPrefix(automationID, "automation.") {
-		return errorResult(fmt.Sprintf("debug action only supports automations, got: %q", automationID)), nil
+	if strings.Contains(target, ".") && !strings.HasPrefix(target, automationEntityPrefix) {
+		return errorResult(fmt.Sprintf("debug action only supports automations, got: %q", target)), nil
 	}
 
-	entityID, _ := normalizeAutomationID(automationID)
+	entityID, _ := normalizeAutomationID(target)
 
 	hours := getHoursFromArgs(args)
 	if hours <= 0 {
