@@ -109,6 +109,7 @@ type WSOperations interface {
 	SetHelperValue(ctx context.Context, entityID string, value any) error
 	ListScripts(ctx context.Context) ([]Entity, error)
 	GetScript(ctx context.Context, scriptID string) (*Script, error)
+	GetScriptConfig(ctx context.Context, entityID string) (*ScriptConfig, error)
 	ListScenes(ctx context.Context) ([]Entity, error)
 	GetEntityRegistry(ctx context.Context) ([]EntityRegistryEntry, error)
 	GetEntityRegistryEntry(ctx context.Context, entityID string) (*EntityRegistryEntry, error)
@@ -1305,6 +1306,11 @@ func (c *HybridClient) ListScripts(ctx context.Context) ([]Entity, error) {
 // GetScript retrieves a specific script by ID.
 func (c *HybridClient) GetScript(ctx context.Context, scriptID string) (*Script, error) {
 	return c.ws.GetScript(ctx, scriptID)
+}
+
+// GetScriptConfig retrieves only the configuration of a script (no state dump).
+func (c *HybridClient) GetScriptConfig(ctx context.Context, entityID string) (*ScriptConfig, error) {
+	return c.ws.GetScriptConfig(ctx, entityID)
 }
 
 // CreateScript creates a new script using the REST API.

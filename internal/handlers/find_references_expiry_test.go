@@ -44,13 +44,13 @@ func TestFindReferences_ContextExpiryMidScanIsReported(t *testing.T) {
 		name      string
 		source    string
 		wantHitID string
-		setupMock func(m *UniversalMockClient, expire context.CancelFunc)
+		setupMock func(t *testing.T, m *UniversalMockClient)
 	}{
 		{
 			name:      "automation",
 			source:    "automation",
 			wantHitID: "automation.first",
-			setupMock: func(m *UniversalMockClient, expire context.CancelFunc) {
+			setupMock: func(_ *testing.T, m *UniversalMockClient) {
 				m.ListAutomationsFn = func(context.Context) ([]homeassistant.Automation, error) {
 					return []homeassistant.Automation{{EntityID: "automation.first"}, {EntityID: "automation.second"}}, nil
 				}
@@ -61,7 +61,7 @@ func TestFindReferences_ContextExpiryMidScanIsReported(t *testing.T) {
 							Config:   &homeassistant.AutomationConfig{Actions: matchingSteps},
 						}, nil
 					}
-					expire()
+					<-ctx.Done()
 					return nil, ctx.Err()
 				}
 			},
@@ -70,18 +70,20 @@ func TestFindReferences_ContextExpiryMidScanIsReported(t *testing.T) {
 			name:      "script",
 			source:    "script",
 			wantHitID: "script.first",
-			setupMock: func(m *UniversalMockClient, expire context.CancelFunc) {
+			setupMock: func(t *testing.T, m *UniversalMockClient) {
+				t.Helper()
 				m.ListScriptsFn = func(context.Context) ([]homeassistant.Entity, error) {
 					return []homeassistant.Entity{{EntityID: "script.first"}, {EntityID: "script.second"}}, nil
 				}
-				m.GetScriptFn = func(ctx context.Context, id string) (*homeassistant.Script, error) {
+				m.GetScriptFn = func(context.Context, string) (*homeassistant.Script, error) {
+					t.Error("find_references must not call GetScript")
+					return nil, nil
+				}
+				m.GetScriptConfigFn = func(ctx context.Context, id string) (*homeassistant.ScriptConfig, error) {
 					if id == "script.first" {
-						return &homeassistant.Script{
-							EntityID: "script.first",
-							Config:   &homeassistant.ScriptConfig{Sequence: matchingSteps},
-						}, nil
+						return &homeassistant.ScriptConfig{Sequence: matchingSteps}, nil
 					}
-					expire()
+					<-ctx.Done()
 					return nil, ctx.Err()
 				}
 			},
@@ -90,7 +92,7 @@ func TestFindReferences_ContextExpiryMidScanIsReported(t *testing.T) {
 			name:      "dashboard",
 			source:    "dashboard",
 			wantHitID: "",
-			setupMock: func(m *UniversalMockClient, expire context.CancelFunc) {
+			setupMock: func(_ *testing.T, m *UniversalMockClient) {
 				m.ListDashboardsFn = func(context.Context) ([]homeassistant.DashboardEntry, error) {
 					return []homeassistant.DashboardEntry{{URLPath: "second"}}, nil
 				}
@@ -100,7 +102,7 @@ func TestFindReferences_ContextExpiryMidScanIsReported(t *testing.T) {
 							map[string]any{"type": "entity", "entity": search},
 						}}}}, nil
 					}
-					expire()
+					<-ctx.Done()
 					return nil, ctx.Err()
 				}
 			},
@@ -111,13 +113,15 @@ func TestFindReferences_ContextExpiryMidScanIsReported(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			ctx, expire := context.WithCancel(context.Background())
-			defer expire()
-
 			client := &UniversalMockClient{}
-			tt.setupMock(client, expire)
+			tt.setupMock(t, client)
 
-			payload := decodeFindReferencesJSON(ctx, t, NewFindReferencesHandlers(), client, map[string]any{
+			// The caller's context stays alive: the expiry comes from the loader's own
+			// deadline, because the shared load runs detached from the caller's context.
+			// A fetch limit of 1 keeps the fetches sequential, so the first config is
+			// read before the second one blocks until the deadline.
+			h := NewFindReferencesHandlersWithLoader(newConfigLoader(1, 50*time.Millisecond))
+			payload := decodeFindReferencesJSON(context.Background(), t, h, client, map[string]any{
 				"search": search,
 				"types":  []any{tt.source},
 			})
@@ -147,7 +151,8 @@ func TestHandleFindReferences_EnforcesOwnScanDeadline(t *testing.T) {
 
 	const search = "device_tracker.example_phone"
 
-	h := NewFindReferencesHandlers()
+	// The loader's own 50 ms load timeout keeps the stalled mock from leaking for 25 s.
+	h := NewFindReferencesHandlersWithLoader(newConfigLoader(configFetchLimit, 50*time.Millisecond))
 	h.scanTimeout = 50 * time.Millisecond
 
 	client := &UniversalMockClient{
@@ -185,6 +190,47 @@ func TestHandleFindReferences_EnforcesOwnScanDeadline(t *testing.T) {
 	}
 	if len(payload.Hits) != 1 || payload.Hits[0].ObjectID != "scene.evening" {
 		t.Errorf("expected the scene hit to survive the automation timeout, got %+v", payload.Hits)
+	}
+}
+
+// TestHandleFindReferences_CallerDeadlineKeepsPartialHits uses production-like
+// ordering: the handler's scan deadline starts before the shared load and ends
+// before the loader's own timeout, and the hit read before the deadline is kept.
+func TestHandleFindReferences_CallerDeadlineKeepsPartialHits(t *testing.T) {
+	t.Parallel()
+
+	const search = "device_tracker.example_phone"
+	h := NewFindReferencesHandlersWithLoader(newConfigLoader(1, time.Minute))
+	h.scanTimeout = 600 * time.Millisecond
+
+	client := &UniversalMockClient{
+		ListAutomationsFn: func(context.Context) ([]homeassistant.Automation, error) {
+			return []homeassistant.Automation{{EntityID: "automation.first"}, {EntityID: "automation.second"}}, nil
+		},
+		GetAutomationFn: func(ctx context.Context, id string) (*homeassistant.Automation, error) {
+			if id == "first" {
+				return &homeassistant.Automation{
+					EntityID: "automation.first",
+					Config: &homeassistant.AutomationConfig{Actions: []any{
+						map[string]any{"action": "light.turn_on", "target": map[string]any{"entity_id": search}},
+					}},
+				}, nil
+			}
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	}
+
+	payload := decodeFindReferencesJSON(context.Background(), t, h, client, map[string]any{
+		"search": search,
+		"types":  []any{"automation"},
+	})
+
+	if !slices.Equal(payload.FailedSources, []string{"automation"}) {
+		t.Errorf("failed_sources = %v, want [automation]", payload.FailedSources)
+	}
+	if len(payload.Hits) != 1 || payload.Hits[0].ObjectID != "automation.first" {
+		t.Errorf("hits = %+v, want the automation.first hit read before the deadline", payload.Hits)
 	}
 }
 

@@ -122,6 +122,13 @@ func (s *ScriptIntegrationTestSuite) TestScriptMaxFieldPreservation() {
 	s.Require().NotNil(fetched.Config, "GetScript must return Config")
 	s.Equal(4, fetched.Config.Max, "Max should be 4 after create")
 
+	// GetScriptConfig must return the same stored config without the state dump
+	cfgOnly, err := s.Client().GetScriptConfig(s.Context(), scriptEntityID)
+	s.Require().NoError(err)
+	s.Require().NotNil(cfgOnly)
+	s.Equal(fetched.Config.Sequence, cfgOnly.Sequence, "GetScriptConfig sequence must match GetScript")
+	s.Equal(fetched.Config.Max, cfgOnly.Max)
+
 	// Update description only (no max arg — the round-trip preservation test)
 	// UpdateScript expects bare scriptID, not the entity ID with "script." prefix
 	updatedCfg := *fetched.Config

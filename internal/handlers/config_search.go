@@ -136,11 +136,10 @@ func buildCardContext(cardType, entity string) string {
 // finishes, then returns every successful helper's hits together with an
 // error naming the number of unreadable helpers and the first one, so callers
 // can report the scan as incomplete without discarding the partial results.
-func scanHelperTemplates(ctx context.Context, client homeassistant.Client, match func(string) bool) ([]ConfigHit, error) {
-	entries, err := client.GetEntityRegistry(ctx)
-	if err != nil {
-		return nil, err
-	}
+// The options are read through loader; a load error (e.g. the load's deadline)
+// is returned as is, with the hits of the helpers that were read.
+func scanHelperTemplates(ctx context.Context, loader *ConfigLoader, client homeassistant.Client, match func(string) bool) ([]ConfigHit, error) {
+	helpers, loadErr := loader.HelperTemplateOptions(ctx, client)
 
 	var (
 		hits          []ConfigHit
@@ -148,19 +147,18 @@ func scanHelperTemplates(ctx context.Context, client homeassistant.Client, match
 		firstEntityID string
 		firstErr      error
 	)
-	for _, entry := range entries {
-		if entry.Platform != platformTemplate || entry.ConfigEntryID == "" {
-			continue
-		}
-		options, optErr := client.GetConfigEntryOptions(ctx, entry.ConfigEntryID)
-		if optErr != nil {
+	for _, helper := range helpers {
+		if helper.Err != nil {
 			if failed == 0 {
-				firstEntityID, firstErr = entry.EntityID, optErr
+				firstEntityID, firstErr = helper.EntityID, helper.Err
 			}
 			failed++
 			continue
 		}
-		hits = append(hits, templateOptionHits(entry.EntityID, options, match)...)
+		hits = append(hits, templateOptionHits(helper.EntityID, helper.Options, match)...)
+	}
+	if loadErr != nil {
+		return hits, loadErr
 	}
 	if failed > 0 {
 		return hits, fmt.Errorf("could not read options for %d template helper(s) (first: %s: %w)", failed, firstEntityID, firstErr)

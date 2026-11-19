@@ -182,6 +182,9 @@ func (m *mockClientForPool) ListScripts(_ context.Context) ([]Entity, error) { r
 func (m *mockClientForPool) GetScript(_ context.Context, _ string) (*Script, error) {
 	return nil, nil
 }
+func (m *mockClientForPool) GetScriptConfig(_ context.Context, _ string) (*ScriptConfig, error) {
+	return nil, nil
+}
 func (m *mockClientForPool) CreateScript(_ context.Context, _ string, _ ScriptConfig) error {
 	return nil
 }

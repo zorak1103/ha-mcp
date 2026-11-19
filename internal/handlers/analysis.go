@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/zorak1103/ha-mcp/internal/handlers/formatter"
@@ -22,11 +23,66 @@ const (
 )
 
 // AnalysisHandlers provides MCP tool handlers for entity analysis operations.
-type AnalysisHandlers struct{}
+type AnalysisHandlers struct {
+	// scanTimeout bounds one analyze_entity call's scan. See defaultConfigScanTimeout.
+	scanTimeout time.Duration
+	// loader reads the configs; concurrent calls on the same client share its loads.
+	loader *ConfigLoader
+	// loads, set only on the per-call copy made by forCall, hands the entity and
+	// area scans of one analyze_entity call the same automation and script loads.
+	loads *callLoads
+}
 
-// NewAnalysisHandlers creates a new AnalysisHandlers instance.
+// callLoads memoizes one analyze_entity call's automation and script loads. The
+// entity scans and the area scan run in separate goroutines; without the memo the
+// second of them would start a fresh load (and fetch every config again) whenever
+// the first one's shared load had already finished.
+type callLoads struct {
+	automations func() ([]LoadedAutomation, error)
+	scripts     func() ([]LoadedScript, error)
+}
+
+// forCall returns a copy of h whose automation and script loads are read at most
+// once for the call, under ctx, for client.
+func (h *AnalysisHandlers) forCall(ctx context.Context, client homeassistant.Client) *AnalysisHandlers {
+	c := *h
+	loader := h.loader
+	c.loads = &callLoads{
+		automations: sync.OnceValues(func() ([]LoadedAutomation, error) { return loader.Automations(ctx, client) }),
+		scripts:     sync.OnceValues(func() ([]LoadedScript, error) { return loader.Scripts(ctx, client) }),
+	}
+	return &c
+}
+
+// loadAutomations reads the automations through the call's memo when there is one.
+// The memo uses the ctx and client captured by forCall, not its arguments, so
+// callers must pass the same scanCtx and client they gave forCall.
+func (h *AnalysisHandlers) loadAutomations(ctx context.Context, client homeassistant.Client) ([]LoadedAutomation, error) {
+	if h.loads != nil {
+		return h.loads.automations()
+	}
+	return h.loader.Automations(ctx, client)
+}
+
+// loadScripts reads the scripts through the call's memo when there is one.
+// The memo uses the ctx and client captured by forCall, not its arguments, so
+// callers must pass the same scanCtx and client they gave forCall.
+func (h *AnalysisHandlers) loadScripts(ctx context.Context, client homeassistant.Client) ([]LoadedScript, error) {
+	if h.loads != nil {
+		return h.loads.scripts()
+	}
+	return h.loader.Scripts(ctx, client)
+}
+
+// NewAnalysisHandlers creates a new AnalysisHandlers instance with its own ConfigLoader.
 func NewAnalysisHandlers() *AnalysisHandlers {
-	return &AnalysisHandlers{}
+	return NewAnalysisHandlersWithLoader(NewConfigLoader())
+}
+
+// NewAnalysisHandlersWithLoader creates an AnalysisHandlers that reads configs
+// through loader, so tools given the same loader share in-flight loads.
+func NewAnalysisHandlersWithLoader(loader *ConfigLoader) *AnalysisHandlers {
+	return &AnalysisHandlers{scanTimeout: defaultConfigScanTimeout, loader: loader}
 }
 
 // RegisterTools registers all analysis-related tools with the registry.
@@ -38,7 +94,7 @@ func (h *AnalysisHandlers) RegisterTools(registry *mcp.Registry) {
 func (h *AnalysisHandlers) analyzeEntityTool() mcp.Tool {
 	return mcp.Tool{
 		Name:        "analyze_entity",
-		Description: "Analyze an entity and find all automations, scripts, scenes, dashboards, and template-helper templates that reference it. Returns a comprehensive overview including registry metadata (platform, area, device, labels) and how the entity is controlled and used in Home Assistant. The response's references.scanned_sources field lists exactly which config types were searched, so a \"no references found\" result can be trusted.",
+		Description: "Analyze an entity and find all automations, scripts, scenes, dashboards, and template-helper templates that reference it. Returns a comprehensive overview including registry metadata (platform, area, device, labels) and how the entity is controlled and used in Home Assistant. The response's references.scanned_sources field lists exactly which config types were searched, so a \"no references found\" result can be trusted. The scan stops after about 25 seconds; sources it could not finish are listed in references.failed_sources (and named in a warning in natural format), so check that field before trusting an empty result.",
 		InputSchema: mcp.JSONSchema{
 			Type:        "object",
 			Description: "Parameters for analyzing an entity",
@@ -235,7 +291,9 @@ func (h *AnalysisHandlers) handleAnalyzeEntity(ctx context.Context, client homea
 	includeHistory, _ := args["include_history"].(bool)
 	verbose, _ := args["verbose"].(bool)
 
-	analysis, err := h.buildEntityAnalysis(ctx, client, entityID, includeHistory, verbose)
+	scanCtx, cancel := context.WithTimeout(ctx, h.scanTimeout)
+	defer cancel()
+	analysis, err := h.buildEntityAnalysis(scanCtx, client, entityID, includeHistory, verbose)
 	if err != nil {
 		return &mcp.ToolsCallResult{
 			Content: []mcp.ContentBlock{mcp.NewTextContent(err.Error())},
@@ -306,20 +364,8 @@ func (h *AnalysisHandlers) buildEntityAnalysis(ctx context.Context, client homea
 
 	// Find all references. Groups come from the pre-existing AnalysisSnapshot,
 	// while area references are tracked as an independent scan outcome.
-	outcomes := []ScanOutcome{
-		{Source: "automations", Err: h.findAutomationReferences(ctx, client, entityID, analysis.References, verbose)},
-		{Source: "scripts", Err: h.findScriptReferences(ctx, client, entityID, analysis.References, verbose)},
-		{Source: "scenes", Err: h.findSceneReferences(ctx, client, entityID, analysis.References)},
-		{Source: "dashboards", Err: h.findDashboardReferences(ctx, client, entityID, analysis.References)},
-		{Source: "helper_templates", Err: h.findHelperTemplateReferences(ctx, client, entityID, analysis.References)},
-	}
+	outcomes := h.forCall(ctx, client).runAnalysisScans(ctx, client, snapshot, entityID, analysis.References, verbose)
 	h.findGroupReferencesWithSnapshot(snapshot, entityID, analysis.References)
-
-	// Find area-based references using snapshot (entity controlled via area_id in automations/scripts).
-	outcomes = append(outcomes, ScanOutcome{
-		Source: "areas",
-		Err:    h.findAreaReferencesWithSnapshot(ctx, client, snapshot, entityID, analysis.References),
-	})
 
 	scanned, failed := splitScanOutcomes(outcomes)
 	scanned = append(scanned, "groups")
@@ -340,6 +386,49 @@ func (h *AnalysisHandlers) buildEntityAnalysis(ctx context.Context, client homea
 	return analysis, nil
 }
 
+// analysisScan pairs a scan source name with the scan to run for it.
+type analysisScan struct {
+	source string
+	run    func() error
+}
+
+// runAnalysisScans runs the reference scans concurrently and returns their
+// outcomes in the fixed source order (automations, scripts, scenes, dashboards,
+// helper_templates, areas), whatever order they finish in. Each scan writes only
+// its own EntityReferences field (the area scan alone writes AreaReferences) and
+// its own outcome slot, so no locking is needed.
+func (h *AnalysisHandlers) runAnalysisScans(ctx context.Context, client homeassistant.Client, snapshot *AnalysisSnapshot, entityID string, refs *EntityReferences, verbose bool) []ScanOutcome {
+	scans := []analysisScan{
+		{"automations", func() error { return h.findAutomationReferences(ctx, client, entityID, refs, verbose) }},
+		{"scripts", func() error { return h.findScriptReferences(ctx, client, entityID, refs, verbose) }},
+		{"scenes", func() error { return h.findSceneReferences(ctx, client, entityID, refs) }},
+		{"dashboards", func() error { return h.findDashboardReferences(ctx, client, entityID, refs) }},
+		{"helper_templates", func() error { return h.findHelperTemplateReferences(ctx, client, entityID, refs) }},
+		// Entity controlled via area_id in automations/scripts.
+		{"areas", func() error { return h.findAreaReferencesWithSnapshot(ctx, client, snapshot, entityID, refs) }},
+	}
+
+	outcomes := make([]ScanOutcome, len(scans))
+	var wg sync.WaitGroup
+	for i, scan := range scans {
+		outcomes[i].Source = scan.source
+		wg.Go(func() { outcomes[i].Err = recoverScan(scan.source, scan.run) })
+	}
+	wg.Wait()
+	return outcomes
+}
+
+// recoverScan runs fn and turns a panic into that source's error, so one
+// failing scan neither crashes the server nor hides the other sources' results.
+func recoverScan(source string, fn func() error) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%s scan panicked: %v", source, r)
+		}
+	}()
+	return fn()
+}
+
 func countTotalReferences(refs *EntityReferences) int {
 	return len(refs.Automations) +
 		len(refs.Scripts) +
@@ -350,57 +439,56 @@ func countTotalReferences(refs *EntityReferences) int {
 		len(refs.HelperTemplates)
 }
 
+// findAutomationReferences scans the loaded automation configs. Configs that
+// could not be read are skipped; if the load was interrupted, the references
+// found in the configs read so far are kept and the load error is returned.
 func (h *AnalysisHandlers) findAutomationReferences(ctx context.Context, client homeassistant.Client, entityID string, refs *EntityReferences, verbose bool) error {
-	automations, err := client.ListAutomations(ctx)
-	if err != nil {
-		return err
-	}
+	automations, loadErr := h.loadAutomations(ctx, client)
 
 	for _, auto := range automations {
-		autoID := strings.TrimPrefix(auto.EntityID, "automation.")
-		fullAuto, getErr := client.GetAutomation(ctx, autoID)
-		if getErr != nil || fullAuto.Config == nil {
+		if auto.Err != nil || auto.Config == nil {
 			continue
 		}
 
-		usedIn := h.findEntityUsageInAutomation(fullAuto.Config, entityID)
+		usedIn := h.findEntityUsageInAutomation(auto.Config, entityID)
 		if len(usedIn) > 0 {
 			ref := AutomationReference{
-				EntityID:      auto.EntityID,
-				Alias:         auto.FriendlyName,
-				State:         auto.State,
-				LastTriggered: auto.LastTriggered,
+				EntityID:      auto.Entity.EntityID,
+				Alias:         auto.Entity.FriendlyName,
+				State:         auto.Entity.State,
+				LastTriggered: auto.Entity.LastTriggered,
 				UsedIn:        usedIn,
 			}
-			ref.Paths = collectAutomationReferencePaths(fullAuto.Config, entityID)
+			ref.Paths = collectAutomationReferencePaths(auto.Config, entityID)
 			if verbose {
-				ref.Excerpts = collectEntityExcerpts(fullAuto.Config, entityID)
+				ref.Excerpts = collectEntityExcerpts(auto.Config, entityID)
 			}
 			refs.Automations = append(refs.Automations, ref)
 		}
 	}
-	return nil
+	return loadErr
 }
 
+// findScriptReferences scans the loaded script configs (read via
+// GetScriptConfig, not GetScript, which costs a full get_states per script).
+// Configs that could not be read are skipped; if the load was interrupted, the
+// references found so far are kept and the load error is returned.
 func (h *AnalysisHandlers) findScriptReferences(ctx context.Context, client homeassistant.Client, entityID string, refs *EntityReferences, verbose bool) error {
-	scripts, err := client.ListScripts(ctx)
-	if err != nil {
-		return err
-	}
+	scripts, loadErr := h.loadScripts(ctx, client)
 
 	for _, script := range scripts {
-		full, getErr := client.GetScript(ctx, script.EntityID)
-		if getErr != nil || full.Config == nil {
+		if script.Err != nil || script.Config == nil {
 			continue
 		}
-		sequence := full.Config.Sequence
+		sequence := script.Config.Sequence
 		if !searchInConfigSlice(sequence, entityID) {
 			continue
 		}
 
+		fn, _ := script.Entity.Attributes["friendly_name"].(string)
 		ref := ScriptReference{
-			EntityID:     script.EntityID,
-			FriendlyName: full.FriendlyName,
+			EntityID:     script.Entity.EntityID,
+			FriendlyName: fn,
 			UsedIn:       usedInAction,
 		}
 		ref.Paths = collectSectionReferencePaths(sequence, "sequence", "action", entityID)
@@ -409,7 +497,7 @@ func (h *AnalysisHandlers) findScriptReferences(ctx context.Context, client home
 		}
 		refs.Scripts = append(refs.Scripts, ref)
 	}
-	return nil
+	return loadErr
 }
 
 func (h *AnalysisHandlers) findSceneReferences(ctx context.Context, client homeassistant.Client, entityID string, refs *EntityReferences) error {
@@ -445,20 +533,18 @@ func (h *AnalysisHandlers) findSceneReferences(ctx context.Context, client homea
 // entity references, both as a direct card/chip "entity" field and embedded in
 // a card's Jinja template text (e.g. an icon_color template calling
 // states('entity_id')). Dashboards were previously not scanned at all, so an
-// entity referenced only this way was invisible to analyze_entity.
+// entity referenced only this way was invisible to analyze_entity. Dashboards
+// that could not be read are skipped; if the load was interrupted, the
+// references found so far are kept and the load error is returned.
 func (h *AnalysisHandlers) findDashboardReferences(ctx context.Context, client homeassistant.Client, entityID string, refs *EntityReferences) error {
-	urlPaths, err := allDashboardURLPaths(ctx, client)
-	if err != nil {
-		return err
-	}
+	dashboards, loadErr := h.loader.Dashboards(ctx, client)
 
 	match := func(s string) bool { return strings.Contains(s, entityID) }
-	for _, urlPath := range urlPaths {
-		config, err := client.GetLovelaceConfig(ctx, urlPath)
-		if err != nil {
+	for _, dash := range dashboards {
+		if dash.Err != nil {
 			continue
 		}
-		hits := scanDashboardConfig(urlPath, config, match)
+		hits := scanDashboardConfig(dash.URLPath, dash.Config, match)
 		if len(hits) == 0 {
 			continue
 		}
@@ -466,9 +552,9 @@ func (h *AnalysisHandlers) findDashboardReferences(ctx context.Context, client h
 		for _, hit := range hits {
 			paths = append(paths, ReferencePath{Path: hit.Path, Context: hit.Context})
 		}
-		refs.Dashboards = append(refs.Dashboards, DashboardReference{URLPath: urlPath, Paths: paths})
+		refs.Dashboards = append(refs.Dashboards, DashboardReference{URLPath: dash.URLPath, Paths: paths})
 	}
-	return nil
+	return loadErr
 }
 
 // findHelperTemplateReferences scans template-helper Jinja template fields
@@ -480,7 +566,7 @@ func (h *AnalysisHandlers) findDashboardReferences(ctx context.Context, client h
 // be read); that error is returned after the refs are appended.
 func (h *AnalysisHandlers) findHelperTemplateReferences(ctx context.Context, client homeassistant.Client, entityID string, refs *EntityReferences) error {
 	match := func(s string) bool { return strings.Contains(s, entityID) }
-	hits, scanErr := scanHelperTemplates(ctx, client, match)
+	hits, scanErr := scanHelperTemplates(ctx, h.loader, client, match)
 
 	fieldsByEntity := make(map[string][]string)
 	var order []string
@@ -541,29 +627,30 @@ func (h *AnalysisHandlers) findAreaReferencesWithSnapshot(ctx context.Context, c
 	return errors.Join(scanErrs...)
 }
 
+// findAreaAutomationReferences scans the loaded automation configs for the
+// entity's area. Unlike the entity scans it reports configs that could not be
+// read, as well as an interrupted load, alongside the references it found.
 func (h *AnalysisHandlers) findAreaAutomationReferences(ctx context.Context, client homeassistant.Client, entityArea string, refs *EntityReferences) error {
-	automations, err := client.ListAutomations(ctx)
-	if err != nil {
-		return fmt.Errorf("listing automations: %w", err)
-	}
+	automations, loadErr := h.loadAutomations(ctx, client)
 
 	var scanErrs []error
+	if loadErr != nil {
+		scanErrs = append(scanErrs, fmt.Errorf("listing automations: %w", loadErr))
+	}
 	for _, auto := range automations {
-		autoID := strings.TrimPrefix(auto.EntityID, "automation.")
-		fullAuto, getErr := client.GetAutomation(ctx, autoID)
-		if getErr != nil {
-			scanErrs = append(scanErrs, fmt.Errorf("getting automation %s: %w", auto.EntityID, getErr))
+		if auto.Err != nil {
+			scanErrs = append(scanErrs, fmt.Errorf("getting automation %s: %w", auto.Entity.EntityID, auto.Err))
 			continue
 		}
-		if fullAuto.Config == nil {
+		if auto.Config == nil {
 			continue
 		}
 
-		usedIn := h.findAreaUsageInConfig(fullAuto.Config.Triggers, fullAuto.Config.Conditions, fullAuto.Config.Actions, entityArea)
+		usedIn := h.findAreaUsageInConfig(auto.Config.Triggers, auto.Config.Conditions, auto.Config.Actions, entityArea)
 		if len(usedIn) > 0 {
 			refs.AreaReferences = append(refs.AreaReferences, AreaReference{
-				EntityID: auto.EntityID,
-				Alias:    auto.FriendlyName,
+				EntityID: auto.Entity.EntityID,
+				Alias:    auto.Entity.FriendlyName,
 				Type:     traceDomainAutomation,
 				AreaID:   entityArea,
 				UsedIn:   usedIn,
@@ -573,31 +660,36 @@ func (h *AnalysisHandlers) findAreaAutomationReferences(ctx context.Context, cli
 	return errors.Join(scanErrs...)
 }
 
+// findAreaScriptReferences scans the loaded script configs' sequences for the
+// entity's area (the live script state has no "sequence" attribute). Like its
+// automation sibling it reports configs that could not be read, as well as an
+// interrupted load, alongside the references it found.
 func (h *AnalysisHandlers) findAreaScriptReferences(ctx context.Context, client homeassistant.Client, entityArea string, refs *EntityReferences) error {
-	scripts, err := client.ListScripts(ctx)
-	if err != nil {
-		return fmt.Errorf("listing scripts: %w", err)
-	}
+	scripts, loadErr := h.loadScripts(ctx, client)
 
+	var scanErrs []error
+	if loadErr != nil {
+		scanErrs = append(scanErrs, fmt.Errorf("listing scripts: %w", loadErr))
+	}
 	for _, script := range scripts {
-		sequence, ok := script.Attributes["sequence"].([]any)
-		if !ok || !h.searchAreaInSlice(sequence, entityArea) {
+		if script.Err != nil {
+			scanErrs = append(scanErrs, fmt.Errorf("getting script %s: %w", script.Entity.EntityID, script.Err))
+			continue
+		}
+		if script.Config == nil || !h.searchAreaInSlice(script.Config.Sequence, entityArea) {
 			continue
 		}
 
-		fn := ""
-		if name, ok := script.Attributes["friendly_name"].(string); ok {
-			fn = name
-		}
+		fn, _ := script.Entity.Attributes["friendly_name"].(string)
 		refs.AreaReferences = append(refs.AreaReferences, AreaReference{
-			EntityID: script.EntityID,
+			EntityID: script.Entity.EntityID,
 			Alias:    fn,
 			Type:     traceDomainScript,
 			AreaID:   entityArea,
 			UsedIn:   []string{usedInAction},
 		})
 	}
-	return nil
+	return errors.Join(scanErrs...)
 }
 
 // findAreaUsageInConfig searches for area usage in automation config.
@@ -1582,7 +1674,7 @@ func (h *AnalysisHandlers) formatDependenciesNatural(deps *EntityDependencies) s
 }
 
 // RegisterAnalysisTools registers all analysis-related tools with the registry.
-func RegisterAnalysisTools(registry *mcp.Registry) {
-	h := NewAnalysisHandlers()
+func RegisterAnalysisTools(registry *mcp.Registry, loader *ConfigLoader) {
+	h := NewAnalysisHandlersWithLoader(loader)
 	h.RegisterTools(registry)
 }

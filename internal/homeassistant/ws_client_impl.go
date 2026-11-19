@@ -498,7 +498,24 @@ func (c *wsClientImpl) GetScript(ctx context.Context, scriptID string) (*Script,
 		LastTriggered: getStringAttr(state.Attributes, "last_triggered"),
 	}
 
-	// Get the full script configuration via WebSocket
+	cfg, err := c.GetScriptConfig(ctx, entityID)
+	if err != nil {
+		return nil, err
+	}
+
+	script.Config = cfg
+	return script, nil
+}
+
+// GetScriptConfig retrieves only the stored configuration of a script.
+// Sends a single script/config WebSocket command and, unlike GetScript, does not
+// fetch the entity state (a full get_states dump), so it is cheap to call in a loop.
+// entityID may be "script.x" or the bare "x".
+func (c *wsClientImpl) GetScriptConfig(ctx context.Context, entityID string) (*ScriptConfig, error) {
+	if !strings.HasPrefix(entityID, scriptPrefix) {
+		entityID = scriptPrefix + entityID
+	}
+
 	result, err := c.ws.SendCommand(ctx, "script/config", map[string]any{
 		"entity_id": entityID,
 	})
@@ -514,8 +531,7 @@ func (c *wsClientImpl) GetScript(ctx context.Context, scriptID string) (*Script,
 		return nil, fmt.Errorf("failed to unmarshal script config: %w", err)
 	}
 
-	script.Config = &response.Config
-	return script, nil
+	return &response.Config, nil
 }
 
 // =============================================================================

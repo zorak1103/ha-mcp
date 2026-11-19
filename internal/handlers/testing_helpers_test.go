@@ -75,11 +75,12 @@ type UniversalMockClient struct {
 	SetHelperValueFn     func(ctx context.Context, entityID string, value any) error
 
 	// Script operations
-	ListScriptsFn  func(ctx context.Context) ([]homeassistant.Entity, error)
-	GetScriptFn    func(ctx context.Context, scriptID string) (*homeassistant.Script, error)
-	CreateScriptFn func(ctx context.Context, scriptID string, config homeassistant.ScriptConfig) error
-	UpdateScriptFn func(ctx context.Context, scriptID string, config homeassistant.ScriptConfig) error
-	DeleteScriptFn func(ctx context.Context, scriptID string) error
+	ListScriptsFn     func(ctx context.Context) ([]homeassistant.Entity, error)
+	GetScriptFn       func(ctx context.Context, scriptID string) (*homeassistant.Script, error)
+	GetScriptConfigFn func(ctx context.Context, entityID string) (*homeassistant.ScriptConfig, error)
+	CreateScriptFn    func(ctx context.Context, scriptID string, config homeassistant.ScriptConfig) error
+	UpdateScriptFn    func(ctx context.Context, scriptID string, config homeassistant.ScriptConfig) error
+	DeleteScriptFn    func(ctx context.Context, scriptID string) error
 
 	// Scene operations
 	ListScenesFn  func(ctx context.Context) ([]homeassistant.Entity, error)
@@ -334,6 +335,13 @@ func (m *UniversalMockClient) GetScript(ctx context.Context, scriptID string) (*
 		return m.GetScriptFn(ctx, scriptID)
 	}
 	return &homeassistant.Script{EntityID: "script." + scriptID}, nil
+}
+
+func (m *UniversalMockClient) GetScriptConfig(ctx context.Context, entityID string) (*homeassistant.ScriptConfig, error) {
+	if m.GetScriptConfigFn != nil {
+		return m.GetScriptConfigFn(ctx, entityID)
+	}
+	return &homeassistant.ScriptConfig{}, nil
 }
 
 func (m *UniversalMockClient) CreateScript(ctx context.Context, scriptID string, config homeassistant.ScriptConfig) error {

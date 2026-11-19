@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -63,12 +65,9 @@ func TestHandleFindReferences(t *testing.T) {
 	scriptEntity := homeassistant.Entity{
 		EntityID: "script.example",
 	}
-	scriptConfig := &homeassistant.Script{
-		EntityID: "script.example",
-		Config: &homeassistant.ScriptConfig{
-			Sequence: []any{
-				map[string]any{"action": "notify.mobile_app", "target": map[string]any{"entity_id": "device_tracker.example_phone"}},
-			},
+	scriptConfig := &homeassistant.ScriptConfig{
+		Sequence: []any{
+			map[string]any{"action": "notify.mobile_app", "target": map[string]any{"entity_id": "device_tracker.example_phone"}},
 		},
 	}
 
@@ -122,6 +121,10 @@ func TestHandleFindReferences(t *testing.T) {
 					return []homeassistant.Entity{scriptEntity}, nil
 				}
 				m.GetScriptFn = func(context.Context, string) (*homeassistant.Script, error) {
+					t.Error("find_references must not call GetScript")
+					return nil, nil
+				}
+				m.GetScriptConfigFn = func(context.Context, string) (*homeassistant.ScriptConfig, error) {
 					return scriptConfig, nil
 				}
 				m.ListScenesFn = func(context.Context) ([]homeassistant.Entity, error) {
@@ -266,10 +269,11 @@ func TestHandleFindReferences_ConcurrentScannersPreserveRequestOrder(t *testing.
 			return []homeassistant.Entity{{EntityID: "script.example"}}, nil
 		},
 		GetScriptFn: func(context.Context, string) (*homeassistant.Script, error) {
-			return &homeassistant.Script{
-				EntityID: "script.example",
-				Config:   &homeassistant.ScriptConfig{Sequence: []any{map[string]any{"action": "notify.mobile_app", "target": map[string]any{"entity_id": "device_tracker.example_phone"}}}},
-			}, nil
+			t.Error("find_references must not call GetScript")
+			return nil, nil
+		},
+		GetScriptConfigFn: func(context.Context, string) (*homeassistant.ScriptConfig, error) {
+			return &homeassistant.ScriptConfig{Sequence: []any{map[string]any{"action": "notify.mobile_app", "target": map[string]any{"entity_id": "device_tracker.example_phone"}}}}, nil
 		},
 	}
 
@@ -431,4 +435,102 @@ func TestHandleFindReferences_PartialScanFailureReportedInBothFormats(t *testing
 	}
 
 	runHandlerTestCases(t, tests, h.handleFindReferences)
+}
+
+func TestHandleFindReferences_ScriptScanUsesGetScriptConfig(t *testing.T) {
+	t.Parallel()
+
+	const search = "light.kitchen"
+	var configCalls atomic.Int32
+	client := &UniversalMockClient{
+		ListScriptsFn: func(context.Context) ([]homeassistant.Entity, error) {
+			return []homeassistant.Entity{{EntityID: "script.first"}, {EntityID: "script.second"}}, nil
+		},
+		GetScriptFn: func(context.Context, string) (*homeassistant.Script, error) {
+			t.Error("find_references must not call GetScript")
+			return nil, nil
+		},
+		GetScriptConfigFn: func(_ context.Context, entityID string) (*homeassistant.ScriptConfig, error) {
+			configCalls.Add(1)
+			if entityID == "script.first" {
+				return &homeassistant.ScriptConfig{Sequence: []any{
+					map[string]any{"action": "light.turn_on", "target": map[string]any{"entity_id": search}},
+				}}, nil
+			}
+			return &homeassistant.ScriptConfig{Sequence: []any{map[string]any{"action": "light.turn_off"}}}, nil
+		},
+	}
+
+	payload := decodeFindReferencesJSON(context.Background(), t, NewFindReferencesHandlers(), client, map[string]any{
+		"search": search,
+		"types":  []any{"script"},
+	})
+
+	if len(payload.Hits) != 1 {
+		t.Fatalf("hits = %+v, want exactly one", payload.Hits)
+	}
+	if hit := payload.Hits[0]; hit.ObjectID != "script.first" || hit.Path != "/sequence/0/target/entity_id" {
+		t.Errorf("hit = %+v, want script.first at /sequence/0/target/entity_id", hit)
+	}
+	if got := configCalls.Load(); got != 2 {
+		t.Errorf("GetScriptConfig calls = %d, want 2", got)
+	}
+}
+
+func TestHandleFindReferences_ParallelCallsShareLoads(t *testing.T) {
+	t.Parallel()
+
+	const search = "light.kitchen"
+	var lists, gets atomic.Int32
+	release := make(chan struct{})
+	client := &UniversalMockClient{
+		ListAutomationsFn: func(context.Context) ([]homeassistant.Automation, error) {
+			lists.Add(1)
+			<-release
+			return []homeassistant.Automation{{EntityID: "automation.a"}, {EntityID: "automation.b"}}, nil
+		},
+		GetAutomationFn: func(_ context.Context, id string) (*homeassistant.Automation, error) {
+			gets.Add(1)
+			return &homeassistant.Automation{
+				EntityID: "automation." + id,
+				Config: &homeassistant.AutomationConfig{Actions: []any{
+					map[string]any{"action": "light.turn_on", "target": map[string]any{"entity_id": search}},
+				}},
+			}, nil
+		},
+	}
+	loader := newConfigLoader(configFetchLimit, time.Minute)
+	joined := joinSignal(t, loader)
+	h := NewFindReferencesHandlersWithLoader(loader)
+
+	texts := make([]string, 2)
+	var wg sync.WaitGroup
+	for i := range texts {
+		wg.Go(func() {
+			result, err := h.handleFindReferences(context.Background(), client, map[string]any{
+				"search": search,
+				"types":  []any{"automation"},
+				"format": "json",
+			})
+			if err != nil || result.IsError {
+				t.Errorf("call %d failed: %v %+v", i, err, result)
+				return
+			}
+			texts[i] = result.Content[0].Text
+		})
+	}
+	waitJoins(t, joined, 2)
+	close(release)
+	wg.Wait()
+	expectNoMoreJoins(t, joined)
+
+	if got := lists.Load(); got != 1 {
+		t.Errorf("ListAutomations calls = %d, want 1", got)
+	}
+	if got := gets.Load(); got != 2 {
+		t.Errorf("GetAutomation calls = %d, want 2 (once per automation)", got)
+	}
+	if texts[0] == "" || texts[0] != texts[1] {
+		t.Errorf("payloads differ or are empty:\n%s\n---\n%s", texts[0], texts[1])
+	}
 }
