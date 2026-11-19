@@ -346,3 +346,45 @@ func (s *AutomationToolDispatchTestSuite) TestManageAutomationTrigger() {
 	})
 	s.True(unknown.IsError, "triggering a nonexistent automation must be an error")
 }
+
+// TestGetByEntityIDAlias pins issue #381: entity_id 'automation.<id>' addresses
+// a single automation exactly like automation_id, while an entity_id of another
+// domain is rejected by name instead of falling back to a search.
+func (s *AutomationToolDispatchTestSuite) TestGetByEntityIDAlias() {
+	automationID := GenerateTestID("auto_alias")
+
+	s.RegisterCleanup(func() {
+		_ = s.Client().DeleteAutomation(s.Context(), automationID)
+	})
+
+	err := s.Client().CreateAutomation(s.Context(), homeassistant.AutomationConfig{
+		ID:    automationID,
+		Alias: automationID,
+		Mode:  "single",
+		Triggers: []any{
+			map[string]any{"platform": "state", "entity_id": "sun.sun"},
+		},
+		Actions: []any{
+			map[string]any{"service": "logbook.log", "data": map[string]any{"name": "mcptest", "message": "alias"}},
+		},
+	})
+	s.Require().NoError(err, "Failed to create automation")
+
+	created, err := s.WaitForAutomation(automationID, 30*time.Second)
+	s.Require().NoError(err, "Automation did not appear")
+	s.Require().NotEmpty(created.EntityID)
+
+	got := s.CallTool("manage_automation", map[string]any{
+		"action":    "get",
+		"entity_id": created.EntityID,
+	})
+	s.Require().False(got.IsError, "get by entity_id alias should succeed: %s", resultText(got))
+	s.Contains(resultText(got), automationID)
+
+	other := s.CallTool("manage_automation", map[string]any{
+		"action":    "get",
+		"entity_id": "light.mcptest_none",
+	})
+	s.True(other.IsError, "a non-automation entity_id must be an error")
+	s.Contains(resultText(other), "is not an automation")
+}

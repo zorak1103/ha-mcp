@@ -53,8 +53,9 @@ func TestHandleDebugTrace_MissingAutomationID(t *testing.T) {
 	if !result.IsError {
 		t.Error("expected IsError to be true")
 	}
-	if !strings.Contains(result.Content[0].Text, "automation_id") {
-		t.Errorf("expected error about automation_id, got: %s", result.Content[0].Text)
+	want := "automation_id is required for debug action (or pass entity_id 'automation.<id>')"
+	if result.Content[0].Text != want {
+		t.Errorf("error text = %q, want %q", result.Content[0].Text, want)
 	}
 }
 
@@ -168,6 +169,59 @@ func TestHandleDebugTrace_NaturalFormat(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Errorf("output missing %q\nfull output:\n%s", want, text)
 		}
+	}
+}
+
+// TestHandleDebugTrace_EntityIDAlias verifies that entity_id 'automation.<id>' works as an alias
+// of automation_id for the debug action (issue #381).
+func TestHandleDebugTrace_EntityIDAlias(t *testing.T) {
+	t.Parallel()
+
+	var gotID string
+	client := &UniversalMockClient{
+		GetAutomationFn: func(_ context.Context, id string) (*homeassistant.Automation, error) {
+			gotID = id
+			return mockAutomationForDebug(), nil
+		},
+		SendHACSCommandFn: func(_ context.Context, _ string, _ map[string]any) (any, error) {
+			return []any{}, nil
+		},
+		GetLogbookFn: func(_ context.Context, _, _ string, _ []string) ([]homeassistant.LogbookEntry, error) {
+			return nil, nil
+		},
+	}
+
+	result, err := NewTraceHandlers().HandleManageTrace(context.Background(), client, map[string]any{
+		"action":    "debug",
+		"entity_id": "automation.morning_routine",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+	}
+	if gotID != "morning_routine" {
+		t.Errorf("GetAutomation received %q, want %q", gotID, "morning_routine")
+	}
+}
+
+// TestHandleDebugTrace_NonAutomationEntityID verifies that a non-automation entity_id is rejected.
+func TestHandleDebugTrace_NonAutomationEntityID(t *testing.T) {
+	t.Parallel()
+
+	result, err := NewTraceHandlers().HandleManageTrace(context.Background(), &UniversalMockClient{}, map[string]any{
+		"action":    "debug",
+		"entity_id": "script.x",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected error result, got: %s", result.Content[0].Text)
+	}
+	if !strings.Contains(result.Content[0].Text, "is not an automation") {
+		t.Errorf("expected 'is not an automation', got: %s", result.Content[0].Text)
 	}
 }
 

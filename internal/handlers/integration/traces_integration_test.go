@@ -163,6 +163,49 @@ func (s *TraceIntegrationTestSuite) TestGetTrace_LatestByAutomationID() {
 	s.Contains(resultText(natural), "(latest)")
 }
 
+// TestManageTraceList_ByAutomationID verifies manage_trace list filters by automation_id together
+// with an explicit domain (the exact repro of #378, which used to return every automation's
+// traces) and that debug accepts entity_id 'automation.<id>' as an alias (#381).
+//
+// The helper creates the automation with ID == Alias == automationID, so object id, config id and
+// unique_id are all identical. This test therefore cannot tell resolution through the registry
+// unique_id apart from an item_id built directly from automation_id; only the unit test with a
+// differing UniqueID pins that rule.
+func (s *TraceIntegrationTestSuite) TestManageTraceList_ByAutomationID() {
+	automationID, entityID, traces := s.createTriggeredAutomationWithTrace()
+
+	result := s.CallTool("manage_trace", map[string]any{
+		"action":        "list",
+		"domain":        "automation",
+		"automation_id": automationID,
+		"format":        "json",
+	})
+	s.Require().False(result.IsError, "manage_trace list by automation_id should succeed: %s", resultText(result))
+
+	var listed []any
+	s.Require().NoError(json.Unmarshal([]byte(resultText(result)), &listed), "list JSON should parse as an array")
+
+	runIDSet := func(items []any) map[string]bool {
+		set := make(map[string]bool, len(items))
+		for _, item := range items {
+			if m, ok := item.(map[string]any); ok {
+				if id, _ := m["run_id"].(string); id != "" {
+					set[id] = true
+				}
+			}
+		}
+		return set
+	}
+	s.Require().NotEmpty(runIDSet(traces), "the helper's trace list must carry run_ids")
+	s.Equal(runIDSet(traces), runIDSet(listed), "list by automation_id must return exactly this automation's traces")
+
+	debug := s.CallTool("manage_trace", map[string]any{
+		"action":    "debug",
+		"entity_id": entityID,
+	})
+	s.False(debug.IsError, "manage_trace debug by entity_id should succeed: %s", resultText(debug))
+}
+
 // createTriggeredAutomationWithTrace creates a state-triggered mcptest_ automation, fires it via an
 // input_button press and waits (manage_trace list wait=true) until it has at least one trace.
 // Returns the bare automation id, its entity_id, and the trace list.

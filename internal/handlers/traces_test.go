@@ -373,7 +373,7 @@ func TestHandleGetTrace_ExplicitParamsBackwardCompat(t *testing.T) {
 
 // TestManageTrace_Get_DomainEntityIDMismatch verifies that a domain/entity_id prefix conflict
 // is rejected rather than silently resolving against the wrong domain (which could return
-// another entity's traces - see resolveTraceListParams's identical check for the list action).
+// another entity's traces - see resolveTraceTarget, shared by list and get).
 func TestManageTrace_Get_DomainEntityIDMismatch(t *testing.T) {
 	t.Parallel()
 
@@ -559,6 +559,153 @@ func TestManageTrace_List_EntityIDFilter(t *testing.T) {
 	}
 }
 
+// TestManageTrace_List_ByAutomationID verifies that automation_id filters the list action the
+// same way entity_id does (issue #378): the item_id comes from the registry unique_id, never
+// from automation_id itself.
+func TestManageTrace_List_ByAutomationID(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		args map[string]any
+	}{
+		{name: "bare automation_id", args: map[string]any{"action": "list", "automation_id": "ev_charging"}},
+		{name: "prefixed automation_id", args: map[string]any{"action": "list", "automation_id": "automation.ev_charging"}},
+		{name: "explicit domain with automation_id", args: map[string]any{"action": "list", "domain": "automation", "automation_id": "ev_charging"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var capturedData map[string]any
+			client := &UniversalMockClient{
+				GetEntityRegistryEntryFn: func(_ context.Context, entityID string) (*homeassistant.EntityRegistryEntry, error) {
+					if entityID != "automation.ev_charging" {
+						return nil, fmt.Errorf("entity %q not found", entityID)
+					}
+					return &homeassistant.EntityRegistryEntry{EntityID: entityID, UniqueID: "1700000000001"}, nil
+				},
+				SendHACSCommandFn: func(_ context.Context, cmd string, data map[string]any) (any, error) {
+					if cmd != "trace/list" {
+						return nil, fmt.Errorf("wrong command: %s", cmd)
+					}
+					capturedData = data
+					return []any{}, nil
+				},
+			}
+
+			result, err := NewTraceHandlers().HandleManageTrace(context.Background(), client, tt.args)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result.IsError {
+				t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+			}
+			if len(capturedData) != 2 || capturedData["domain"] != "automation" || capturedData["item_id"] != "1700000000001" {
+				t.Errorf("trace/list data = %v, want {domain: automation, item_id: 1700000000001}", capturedData)
+			}
+		})
+	}
+}
+
+// TestManageTrace_List_TargetErrors verifies that a bad or contradictory target is an error and
+// never reaches HA (an unfiltered list would be the silent failure of issue #378).
+func TestManageTrace_List_TargetErrors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		args map[string]any
+		want string
+	}{
+		{
+			name: "automation_id with domain script",
+			args: map[string]any{"action": "list", "domain": "script", "automation_id": "ev_charging"},
+			want: `automation_id "ev_charging" conflicts with explicit domain "script"`,
+		},
+		{
+			name: "automation_id with a foreign prefix",
+			args: map[string]any{"action": "list", "automation_id": "light.kitchen"},
+			want: `automation_id "light.kitchen" is invalid`,
+		},
+		{
+			name: "automation_id and entity_id disagree",
+			args: map[string]any{"action": "list", "automation_id": "a", "entity_id": "automation.b"},
+			want: "conflicts with entity_id",
+		},
+		{
+			name: "numeric automation_id",
+			args: map[string]any{"action": "list", "domain": "automation", "automation_id": float64(1)},
+			want: "automation_id must be a string, got float64",
+		},
+		{
+			name: "no target and no domain",
+			args: map[string]any{"action": "list"},
+			want: "domain is required for list action: pass domain 'automation' or 'script', or automation_id / entity_id like 'automation.morning_routine'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			client := &UniversalMockClient{
+				SendHACSCommandFn: func(_ context.Context, cmd string, _ map[string]any) (any, error) {
+					t.Errorf("HA must not be called, got command %q", cmd)
+					return nil, nil
+				},
+			}
+
+			result, err := NewTraceHandlers().HandleManageTrace(context.Background(), client, tt.args)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !result.IsError {
+				t.Fatalf("expected error result, got: %s", result.Content[0].Text)
+			}
+			if !strings.Contains(result.Content[0].Text, tt.want) {
+				t.Errorf("error text = %q, want it to contain %q", result.Content[0].Text, tt.want)
+			}
+		})
+	}
+}
+
+// TestManageTrace_List_AutomationIDConfigUUID pins the documented limitation: automation_id is an
+// entity/object id only. A bare config UUID with no registry entry degrades to an object id with
+// resolved=false, so trace/list is sent with that value and the unresolved-item_id warning shows.
+func TestManageTrace_List_AutomationIDConfigUUID(t *testing.T) {
+	t.Parallel()
+
+	var capturedData map[string]any
+	client := &UniversalMockClient{
+		SendHACSCommandFn: func(_ context.Context, cmd string, data map[string]any) (any, error) {
+			if cmd != "trace/list" {
+				return nil, fmt.Errorf("wrong command: %s", cmd)
+			}
+			capturedData = data
+			return []any{}, nil
+		},
+	}
+
+	result, err := NewTraceHandlers().HandleManageTrace(context.Background(), client, map[string]any{
+		"action":        "list",
+		"automation_id": "1700000000001",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+	}
+	if capturedData["domain"] != "automation" || capturedData["item_id"] != "1700000000001" {
+		t.Errorf("trace/list data = %v, want domain automation and item_id 1700000000001", capturedData)
+	}
+	if !strings.Contains(result.Content[0].Text, "could not be resolved") {
+		t.Errorf("expected the unresolved-item_id warning, got: %s", result.Content[0].Text)
+	}
+}
+
 // TestResolveTraceItemID verifies entity_id → trace item_id mapping:
 // scripts resolve via the entity registry unique_id (renamed entities keep their
 // original unique_id, which is what HA keys traces by), automations via the config ID.
@@ -678,7 +825,7 @@ func TestManageTrace_List_MissingDomainAndEntityID(t *testing.T) {
 
 // TestManageTrace_GetMissingParams verifies validation for get action.
 // A missing domain (derived from the entity_id prefix) and a missing run_id (defaults to the
-// latest run) are no longer errors - see TestResolveTraceGetTarget and
+// latest run) are no longer errors - see TestResolveTraceTarget and
 // TestManageTrace_Get_LatestRun. Only a missing target remains one.
 func TestManageTrace_GetMissingParams(t *testing.T) {
 	t.Parallel()
@@ -1004,11 +1151,11 @@ func TestFormatTracesNatural_DictTimestamp(t *testing.T) {
 	}
 }
 
-// TestResolveTraceGetTarget covers how the get action turns automation_id / entity_id / domain
+// TestResolveTraceTarget covers how the list and get actions turn automation_id / entity_id / domain
 // into one trace target: automation_id is an alternative spelling of an automation entity_id,
 // the domain is derived from the prefix, and any disagreement between the three is an error
 // rather than a silent pick.
-func TestResolveTraceGetTarget(t *testing.T) {
+func TestResolveTraceTarget(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -1056,7 +1203,18 @@ func TestResolveTraceGetTarget(t *testing.T) {
 		{
 			name:    "automation_id with domain script",
 			args:    map[string]any{"automation_id": "test", "domain": "script"},
-			wantErr: "conflicts with explicit domain",
+			wantErr: `automation_id "test" conflicts with explicit domain "script"`,
+		},
+		{
+			// the prefix check on entity_id runs before the automation_id conflict check
+			name:    "automation_id with a non-trace entity_id",
+			args:    map[string]any{"automation_id": "x", "entity_id": "light.y"},
+			wantErr: `entity_id prefix "light" is not supported for trace lookups; use 'automation' or 'script'`,
+		},
+		{
+			name:    "numeric automation_id is rejected, not treated as absent",
+			args:    map[string]any{"automation_id": float64(1700000000001)},
+			wantErr: "automation_id must be a string, got float64",
 		},
 		{
 			name:    "automation_id with a non-automation prefix",
@@ -1064,9 +1222,13 @@ func TestResolveTraceGetTarget(t *testing.T) {
 			wantErr: "automation_id",
 		},
 		{
-			name:    "no target at all",
-			args:    map[string]any{"domain": "automation"},
-			wantErr: "entity_id or automation_id is required",
+			name:       "domain only is not an error",
+			args:       map[string]any{"domain": "automation"},
+			wantDomain: "automation",
+		},
+		{
+			name: "no target at all",
+			args: map[string]any{},
 		},
 		{
 			name:    "entity_id conflicting with domain",
@@ -1079,7 +1241,7 @@ func TestResolveTraceGetTarget(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			domain, entityID, errMsg := resolveTraceGetTarget(tt.args)
+			domain, entityID, errMsg := resolveTraceTarget(tt.args)
 			if tt.wantErr != "" {
 				if !strings.Contains(errMsg, tt.wantErr) {
 					t.Errorf("errMsg = %q, want it to contain %q", errMsg, tt.wantErr)
@@ -1389,5 +1551,115 @@ func TestManageTrace_Get_LatestRunListError(t *testing.T) {
 	}
 	if !strings.Contains(result.Content[0].Text, "failed to list traces") {
 		t.Errorf("error text = %q, want it to mention the trace/list failure", result.Content[0].Text)
+	}
+}
+
+// TestManageTrace_RejectsInapplicableArgs verifies that an argument the chosen action does not
+// read is an error before any Home Assistant call, while an empty value counts as absent.
+func TestManageTrace_RejectsInapplicableArgs(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		args       map[string]any
+		wantHACall bool
+		wantEquals string
+		wantSubstr string
+		wantAnyErr bool
+	}{
+		{
+			name:       "list with run_id",
+			args:       map[string]any{"action": "list", "domain": "automation", "run_id": "abc"},
+			wantEquals: "argument(s) not applicable to action=list: run_id (only for action=get).",
+		},
+		{
+			name:       "list with hours",
+			args:       map[string]any{"action": "list", "domain": "automation", "hours": 6},
+			wantSubstr: "hours (only for action=debug)",
+		},
+		{
+			name:       "list with hours zero",
+			args:       map[string]any{"action": "list", "domain": "automation", "hours": 0},
+			wantAnyErr: true,
+		},
+		{
+			name:       "get with wait",
+			args:       map[string]any{"action": "get", "automation_id": "x", "wait": true},
+			wantSubstr: "wait (only for action=list)",
+		},
+		{
+			name:       "get with wait false",
+			args:       map[string]any{"action": "get", "automation_id": "x", "wait": false},
+			wantAnyErr: true,
+		},
+		{
+			name:       "debug with domain",
+			args:       map[string]any{"action": "debug", "automation_id": "x", "domain": "automation"},
+			wantSubstr: "domain (only for action=list|get)",
+		},
+		{
+			name:       "debug with run_id",
+			args:       map[string]any{"action": "debug", "automation_id": "x", "run_id": "r1"},
+			wantSubstr: "run_id (only for action=get)",
+		},
+		{
+			name:       "list with empty run_id counts as absent",
+			args:       map[string]any{"action": "list", "domain": "automation", "run_id": ""},
+			wantHACall: true,
+		},
+		{
+			name:       "list with format is exempt",
+			args:       map[string]any{"action": "list", "domain": "automation", "format": "json"},
+			wantHACall: true,
+		},
+		{
+			name:       "invalid action wins over applicability",
+			args:       map[string]any{"action": "foo", "run_id": "r1"},
+			wantEquals: `invalid action "foo", must be one of: list, get, debug`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			client := &UniversalMockClient{
+				SendHACSCommandFn: func(context.Context, string, map[string]any) (any, error) {
+					if !tt.wantHACall {
+						t.Errorf("unexpected SendHACSCommand call")
+					}
+					return []any{}, nil
+				},
+				GetAutomationFn: func(context.Context, string) (*homeassistant.Automation, error) {
+					t.Errorf("unexpected GetAutomation call")
+					return nil, errors.New("unexpected call")
+				},
+				GetEntityRegistryEntryFn: func(context.Context, string) (*homeassistant.EntityRegistryEntry, error) {
+					t.Errorf("unexpected GetEntityRegistryEntry call")
+					return nil, errors.New("unexpected call")
+				},
+			}
+
+			result, err := NewTraceHandlers().HandleManageTrace(context.Background(), client, tt.args)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tt.wantHACall {
+				if result.IsError {
+					t.Fatalf("unexpected error result: %s", result.Content[0].Text)
+				}
+				return
+			}
+			if !result.IsError {
+				t.Fatalf("expected an error result, got: %s", result.Content[0].Text)
+			}
+			text := result.Content[0].Text
+			if tt.wantEquals != "" && text != tt.wantEquals {
+				t.Errorf("error = %q, want %q", text, tt.wantEquals)
+			}
+			if tt.wantSubstr != "" && !strings.Contains(text, tt.wantSubstr) {
+				t.Errorf("error = %q, want it to contain %q", text, tt.wantSubstr)
+			}
+		})
 	}
 }

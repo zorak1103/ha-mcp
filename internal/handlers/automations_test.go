@@ -353,6 +353,34 @@ func TestManageAutomation_Get(t *testing.T) {
 			wantContains: []string{"Test Automation", "enabled"},
 		},
 		{
+			name:         "success - entity_id alias",
+			args:         map[string]any{"action": "get", "entity_id": "automation.test_automation"},
+			client:       &mockAutomationClient{automation: testAutomation},
+			wantContains: []string{"Test Automation", "enabled"},
+		},
+		{
+			name:         "error - entity_id is not an automation",
+			args:         map[string]any{"action": "get", "entity_id": "light.kitchen"},
+			client:       &mockAutomationClient{automation: testAutomation},
+			wantError:    true,
+			wantContains: []string{"is not an automation", "light.kitchen"},
+		},
+		{
+			name: "success - alias containing a dot is not treated as an entity ID",
+			args: map[string]any{"action": "get", "automation_id": "Test v2.0"},
+			client: &mockAutomationClient{
+				automations: []homeassistant.Automation{{EntityID: "automation.test_automation"}},
+				automationMap: map[string]*homeassistant.Automation{
+					"test_automation": {
+						EntityID:     "automation.test_automation",
+						FriendlyName: "Test v2.0",
+						Config:       &homeassistant.AutomationConfig{ID: "test_automation", Alias: "Test v2.0"},
+					},
+				},
+			},
+			wantContains: []string{"Test v2.0"},
+		},
+		{
 			name:         "error - missing automation_id",
 			args:         map[string]any{"action": "get"},
 			client:       &mockAutomationClient{},
@@ -694,6 +722,17 @@ func TestManageAutomation_Update(t *testing.T) {
 			wantContains: []string{"updated successfully"},
 		},
 		{
+			name: "success - entity_id alias",
+			args: map[string]any{"action": "update", "entity_id": "automation.test_automation", "alias": "Updated"},
+			setupClient: func() *mockAutomationClient {
+				return &mockAutomationClient{
+					automation:          newExistingAutomation(),
+					getEntityRegistryFn: storageManagedRegistry("automation.test_automation"),
+				}
+			},
+			wantContains: []string{"updated successfully"},
+		},
+		{
 			name:         "error - missing automation_id",
 			args:         map[string]any{"action": "update"},
 			setupClient:  func() *mockAutomationClient { return &mockAutomationClient{} },
@@ -774,6 +813,12 @@ func TestManageAutomation_Delete(t *testing.T) {
 			wantContains: []string{"deleted successfully"},
 		},
 		{
+			name:         "success - entity_id alias",
+			args:         map[string]any{"action": "delete", "entity_id": "automation.test_automation"},
+			client:       &mockAutomationClient{automation: defaultAutomation},
+			wantContains: []string{"deleted successfully"},
+		},
+		{
 			name:         "error - missing automation_id",
 			args:         map[string]any{"action": "delete"},
 			client:       &mockAutomationClient{automation: defaultAutomation},
@@ -826,6 +871,12 @@ func TestManageAutomation_Toggle(t *testing.T) {
 		{
 			name:         "success - enable",
 			args:         map[string]any{"action": "toggle", "automation_id": "test", "enabled": true},
+			client:       &mockAutomationClient{},
+			wantContains: []string{"enabled successfully"},
+		},
+		{
+			name:         "success - enable via entity_id alias",
+			args:         map[string]any{"action": "toggle", "entity_id": "automation.test", "enabled": true},
 			client:       &mockAutomationClient{},
 			wantContains: []string{"enabled successfully"},
 		},
@@ -934,7 +985,28 @@ func TestManageAutomation_Patch(t *testing.T) {
 				"operations": []any{map[string]any{"op": "replace", "path": "/mode", "value": "queued"}},
 			},
 			wantError:    true,
-			wantContains: []string{"automation_id is required"},
+			wantContains: []string{"automation_id is required for patch action", "Use 'list' action"},
+		},
+		{
+			name: "patch - success via entity_id alias",
+			args: map[string]any{
+				"action":    "patch",
+				"entity_id": "automation.morning_routine",
+				"operations": []any{
+					map[string]any{"op": "replace", "path": "/mode", "value": "queued"},
+				},
+			},
+			setupMock: func(m *UniversalMockClient) {
+				m.GetAutomationFn = func(_ context.Context, _ string) (*homeassistant.Automation, error) {
+					cfg := *baseConfig
+					return &homeassistant.Automation{EntityID: "automation.morning_routine", Config: &cfg}, nil
+				}
+				m.UpdateAutomationFn = func(_ context.Context, _ string, _ homeassistant.AutomationConfig) error {
+					return nil
+				}
+				m.GetEntityRegistryFn = storageManagedRegistry("automation.morning_routine")
+			},
+			wantContains: []string{"patched successfully"},
 		},
 		{
 			name: "patch - missing operations",
