@@ -1113,6 +1113,9 @@ func (h *AnalysisHandlers) generateTriggerDescription(m map[string]any, triggerT
 		} else if to != "" {
 			return fmt.Sprintf("State changes to %s", to)
 		}
+		if formatter.StateChangesOnly(m) {
+			return "State trigger (" + formatter.StateChangesOnlyLabel + ")"
+		}
 		return "State trigger"
 	case excerptTriggerNumericState:
 		if above, ok := m["above"]; ok {

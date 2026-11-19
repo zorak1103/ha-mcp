@@ -900,9 +900,14 @@ func TestNaturalAutomationFormatter_ListEntityID(t *testing.T) {
 			want: "state: cover.a, from: open or opening, to: closed",
 		},
 		{
-			name:    "state trigger with null to stays omitted",
+			name:    "state trigger with null to means state changes only",
 			trigger: map[string]any{"trigger": "state", "entity_id": "sensor.a", "to": nil},
-			want:    "state: sensor.a",
+			want:    "state: sensor.a, state changes only",
+		},
+		{
+			name:    "state trigger with null from and for",
+			trigger: map[string]any{"trigger": "state", "entity_id": "sensor.a", "from": nil, "for": "00:05:00"},
+			want:    "state: sensor.a, state changes only, for: 00:05:00",
 		},
 		{
 			name:    "empty list entries are skipped",
@@ -1019,6 +1024,38 @@ func TestStringList(t *testing.T) {
 			}
 			if !slices.Equal(got, tt.want) {
 				t.Errorf("StringList(%#v) = %#v, want %#v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestStateChangesOnly pins when a state trigger fires on state changes only: a from or
+// to key present with a null value, while neither key has a value (issue #388).
+func TestStateChangesOnly(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		trigger map[string]any
+		want    bool
+	}{
+		{"no from or to", map[string]any{}, false},
+		{"to null", map[string]any{"to": nil}, true},
+		{"from null", map[string]any{"from": nil}, true},
+		{"from and to null", map[string]any{"from": nil, "to": nil}, true},
+		{"from value to null", map[string]any{"from": "off", "to": nil}, false},
+		{"from null to value", map[string]any{"from": nil, "to": "on"}, false},
+		{"to empty list", map[string]any{"to": []any{}}, false},
+		{"to null from empty list", map[string]any{"to": nil, "from": []any{}}, true},
+		{"attribute trigger with to null", map[string]any{"attribute": "temperature", "to": nil}, false},
+		{"empty attribute with to null", map[string]any{"attribute": "", "to": nil}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := StateChangesOnly(tt.trigger); got != tt.want {
+				t.Errorf("StateChangesOnly(%v) = %v, want %v", tt.trigger, got, tt.want)
 			}
 		})
 	}

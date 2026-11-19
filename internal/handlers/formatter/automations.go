@@ -400,6 +400,9 @@ func (f *NaturalAutomationFormatter) formatStateTrigger(entityID string, trigger
 	if to != "" {
 		parts = append(parts, "to: "+to)
 	}
+	if StateChangesOnly(triggerMap) {
+		parts = append(parts, StateChangesOnlyLabel)
+	}
 	if forDur := formatForDuration(triggerMap); forDur != "" {
 		parts = append(parts, "for: "+forDur)
 	}
@@ -429,6 +432,31 @@ const (
 	entityListSep = ", "
 	StateListSep  = " or "
 )
+
+// StateChangesOnlyLabel is the wording for a state trigger that fires on state changes
+// only (see StateChangesOnly), shared by the natural formatter and the analysis tools.
+const StateChangesOnlyLabel = "state changes only"
+
+// StateChangesOnly reports whether a state trigger fires on state changes only: HA
+// ignores attribute-only changes once from or to is given, and a key present with a
+// null value is the way to say so without naming a state. It is true when from or to
+// is present with a nil value and neither has a value (see StringList); a from/to
+// value already implies a state change, so nothing more needs saying then. With an
+// attribute key HA compares that attribute instead of the state, so it is false.
+func StateChangesOnly(trigger map[string]any) bool {
+	if attr, ok := trigger["attribute"].(string); ok && attr != "" {
+		return false
+	}
+	if len(StringList(trigger["from"])) > 0 || len(StringList(trigger["to"])) > 0 {
+		return false
+	}
+	for _, key := range []string{"from", "to"} {
+		if v, present := trigger[key]; present && v == nil {
+			return true
+		}
+	}
+	return false
+}
 
 // StringList reads a trigger/condition field that HA accepts either as a single
 // string or as a list (the form the UI editor writes for entity_id, to, from, state).

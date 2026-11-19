@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/zorak1103/ha-mcp/internal/handlers/formatter"
 	"github.com/zorak1103/ha-mcp/internal/homeassistant"
 )
 
@@ -99,6 +100,9 @@ func summarizeTriggerNode(node map[string]any, entityID string) string {
 		}
 		if to := quotedAlternatives(node["to"], "%q"); to != "" {
 			parts = append(parts, "→ "+to)
+		}
+		if formatter.StateChangesOnly(node) {
+			parts = append(parts, "("+formatter.StateChangesOnlyLabel+")")
 		}
 		if id, ok := node["id"].(string); ok {
 			parts = append(parts, fmt.Sprintf("(id: %q)", id))

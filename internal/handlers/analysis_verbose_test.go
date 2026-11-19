@@ -48,12 +48,16 @@ func TestSummarizeTriggerNode_State(t *testing.T) {
 			want:     `state binary_sensor.a`,
 		},
 		{
-			// Known simplification: HA reads to: null as "state changes only, not
-			// attribute changes"; the excerpt does not distinguish it from an absent to.
-			name:     "null to reads as absent",
+			name:     "null to means state changes only",
 			node:     map[string]any{"trigger": "state", "entity_id": "binary_sensor.a", "to": nil},
 			entityID: "binary_sensor.a",
-			want:     `state binary_sensor.a`,
+			want:     `state binary_sensor.a (state changes only)`,
+		},
+		{
+			name:     "null from with id",
+			node:     map[string]any{"trigger": "state", "entity_id": "binary_sensor.a", "from": nil, "id": "t1"},
+			entityID: "binary_sensor.a",
+			want:     `state binary_sensor.a (state changes only) (id: "t1")`,
 		},
 		{
 			name:     "legacy platform key with list to",
