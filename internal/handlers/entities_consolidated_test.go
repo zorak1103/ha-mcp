@@ -1761,14 +1761,16 @@ func TestQueryEntities_RejectsNonStringFilters(t *testing.T) {
 			args: map[string]any{"mode": "current", "name_contains": []any{}},
 		},
 		{
-			name: "history numeric state",
-			args: map[string]any{"mode": "history", "entity_id": "sensor.x", "state": float64(1)},
-			want: "state must be a string, got float64",
+			name:      "history numeric state",
+			args:      map[string]any{"mode": "history", "entity_id": "sensor.x", "state": float64(1)},
+			want:      "state must be a string, got float64",
+			setupMock: mustNotCallHA,
 		},
 		{
-			name: "health numeric domain",
-			args: map[string]any{"mode": "health", "domain": float64(1)},
-			want: "domain must be a string, got float64",
+			name:      "health numeric domain",
+			args:      map[string]any{"mode": "health", "domain": float64(1)},
+			want:      "domain must be a string, got float64",
+			setupMock: mustNotCallHA,
 		},
 	})
 }

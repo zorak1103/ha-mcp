@@ -299,13 +299,18 @@ func TestQueryDevicesHealth_RejectsNonStringManufacturer(t *testing.T) {
 
 	runFilterTypeCases(t, NewDeviceQueryHandlers().handleQueryDevices, []filterTypeCase{
 		{
-			name: "health numeric manufacturer",
-			args: map[string]any{"mode": "health", "manufacturer": float64(1)},
-			want: "manufacturer must be a string, got float64",
+			name:      "health numeric manufacturer",
+			args:      map[string]any{"mode": "health", "manufacturer": float64(1)},
+			want:      "manufacturer must be a string, got float64",
+			setupMock: mustNotCallHA,
 		},
 		{
 			name: "health empty manufacturer means no filter",
 			args: map[string]any{"mode": "health", "manufacturer": ""},
+		},
+		{
+			name: "health empty array manufacturer means no filter",
+			args: map[string]any{"mode": "health", "manufacturer": []any{}},
 		},
 	})
 }

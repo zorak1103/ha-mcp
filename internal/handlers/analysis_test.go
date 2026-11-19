@@ -3065,8 +3065,10 @@ func TestAnalysisHandlers_FormatAnalysisNatural_NameOrder(t *testing.T) {
 
 // TestAnalysisHandlers_generateTriggerDescription_State pins get_entity_dependencies'
 // state trigger description: HA accepts to/from as a string or a list, a list renders
-// as quoted alternatives joined by " or ", and to: null or a list without string items
-// reads as "field absent" (issue #385). A from-only trigger stays "State trigger".
+// as quoted alternatives joined by " or ", and a list without string items reads as
+// "field absent" (issue #385). A from/to key present with a null value and no from/to
+// value means HA ignores attribute-only changes (issue #388). A from-only trigger with a
+// value stays "State trigger".
 func TestAnalysisHandlers_generateTriggerDescription_State(t *testing.T) {
 	t.Parallel()
 
@@ -3086,9 +3088,9 @@ func TestAnalysisHandlers_generateTriggerDescription_State(t *testing.T) {
 		{"non-string item skipped", map[string]any{"to": []any{"on", 5}}, "State changes to 'on'"},
 		{"all non-string items", map[string]any{"to": []any{1, 2}}, "State trigger"},
 		{"empty list", map[string]any{"to": []any{}}, "State trigger"},
-		// Known simplification: HA reads to: null as "state changes only, not attribute
-		// changes"; the description does not distinguish it from an absent to.
-		{"to null", map[string]any{"to": nil}, "State trigger"},
+		{"to null", map[string]any{"to": nil}, "State trigger (state changes only)"},
+		{"from null", map[string]any{"from": nil}, "State trigger (state changes only)"},
+		{"from string to null", map[string]any{"from": "off", "to": nil}, "State trigger"},
 		{"from-only list", map[string]any{"from": []any{"off", "unknown"}}, "State trigger"},
 	}
 

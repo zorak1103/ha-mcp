@@ -1066,11 +1066,7 @@ func (h *AnalysisHandlers) shouldRecurseIntoKey(key string) bool {
 func (h *AnalysisHandlers) extractEntityIDs(m map[string]any) []string {
 	var ids []string
 	for _, item := range formatter.StringList(m[attrEntityID]) {
-		for part := range strings.SplitSeq(item, ",") {
-			if id := strings.TrimSpace(part); id != "" {
-				ids = append(ids, id)
-			}
-		}
+		ids = append(ids, splitEntityIDString(item)...)
 	}
 	return ids
 }
@@ -1116,6 +1112,9 @@ func (h *AnalysisHandlers) generateTriggerDescription(m map[string]any, triggerT
 			return fmt.Sprintf("State change from %s to %s", from, to)
 		} else if to != "" {
 			return fmt.Sprintf("State changes to %s", to)
+		}
+		if formatter.StateChangesOnly(m) {
+			return "State trigger (" + formatter.StateChangesOnlyLabel + ")"
 		}
 		return "State trigger"
 	case excerptTriggerNumericState:

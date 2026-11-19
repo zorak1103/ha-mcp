@@ -540,9 +540,10 @@ func TestFindReferences_RejectsNonStringSearch(t *testing.T) {
 
 	runFilterTypeCases(t, NewFindReferencesHandlers().handleFindReferences, []filterTypeCase{
 		{
-			name: "numeric search",
-			args: map[string]any{"search": float64(1)},
-			want: "search must be a string, got float64",
+			name:      "numeric search",
+			args:      map[string]any{"search": float64(1)},
+			want:      "search must be a string, got float64",
+			setupMock: mustNotCallHA,
 		},
 		{
 			name: "empty search keeps the required error",
@@ -550,4 +551,42 @@ func TestFindReferences_RejectsNonStringSearch(t *testing.T) {
 			want: "search is required: pass the entity_id",
 		},
 	})
+}
+
+// TestFindReferences_CommaSeparatedEntityID pins that find_references matches an entity
+// inside a comma-separated entity_id string, in exact and substring mode (issue #387).
+func TestFindReferences_CommaSeparatedEntityID(t *testing.T) {
+	t.Parallel()
+
+	for _, mode := range []string{"exact", "substring"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+
+			client := &UniversalMockClient{
+				ListAutomationsFn: func(context.Context) ([]homeassistant.Automation, error) {
+					return []homeassistant.Automation{{EntityID: "automation.example"}}, nil
+				},
+				GetAutomationFn: func(context.Context, string) (*homeassistant.Automation, error) {
+					return &homeassistant.Automation{EntityID: "automation.example", Config: &homeassistant.AutomationConfig{
+						Actions: []any{map[string]any{
+							"action": "light.turn_on",
+							"target": map[string]any{"entity_id": "light.a, light.b"},
+						}},
+					}}, nil
+				},
+			}
+			args := map[string]any{"search": "light.b", "match_mode": mode, "types": []any{"automation"}}
+			result, err := NewFindReferencesHandlers().handleFindReferences(context.Background(), client, args)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			text := resultText(t, result)
+			if result.IsError {
+				t.Fatalf("unexpected error result: %s", text)
+			}
+			if !strings.Contains(text, "/actions/0/target/entity_id") {
+				t.Errorf("result does not contain the reference path:\n%s", text)
+			}
+		})
+	}
 }

@@ -511,5 +511,6 @@ func TestConfigEntryList_RejectsNonStringDomain(t *testing.T) {
 			},
 		},
 		{name: "empty domain means no filter", args: map[string]any{"action": "list", "domain": ""}},
+		{name: "empty array domain means no filter", args: map[string]any{"action": "list", "domain": []any{}}},
 	})
 }

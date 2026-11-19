@@ -259,15 +259,18 @@ func TestSystemLogList_RejectsNonStringFilters(t *testing.T) {
 
 	runFilterTypeCases(t, NewSystemLogHandlers().handleManageSystemLog, []filterTypeCase{
 		{
-			name: "numeric level",
-			args: map[string]any{"action": "list", "level": float64(1)},
-			want: "level must be a string, got float64",
+			name:      "numeric level",
+			args:      map[string]any{"action": "list", "level": float64(1)},
+			want:      "level must be a string, got float64",
+			setupMock: mustNotCallHA,
 		},
 		{
-			name: "numeric integration",
-			args: map[string]any{"action": "list", "integration": float64(1)},
-			want: "integration must be a string, got float64",
+			name:      "numeric integration",
+			args:      map[string]any{"action": "list", "integration": float64(1)},
+			want:      "integration must be a string, got float64",
+			setupMock: mustNotCallHA,
 		},
 		{name: "empty level means no filter", args: map[string]any{"action": "list", "level": ""}},
+		{name: "empty array level means no filter", args: map[string]any{"action": "list", "level": []any{}}},
 	})
 }

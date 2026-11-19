@@ -100,6 +100,15 @@ func (h *SystemLogHandlers) handleSystemLogList(
 	client homeassistant.Client,
 	args map[string]any,
 ) (*mcp.ToolsCallResult, error) {
+	// Validate the filters before fetching the log, so a bad call costs no round trip.
+	var level, integration string
+	if err := readStringFilters(args, []stringFilterField{
+		{"level", &level},
+		{"integration", &integration},
+	}); err != nil {
+		return errorResult(err.Error()), nil
+	}
+
 	entries, err := client.GetSystemLog(ctx)
 	if err != nil {
 		return &mcp.ToolsCallResult{
@@ -108,10 +117,7 @@ func (h *SystemLogHandlers) handleSystemLogList(
 		}, nil
 	}
 
-	entries, err = filterSystemLogEntries(entries, args)
-	if err != nil {
-		return errorResult(err.Error()), nil
-	}
+	entries = filterSystemLogEntries(entries, level, integration, getInt(args, "limit"))
 
 	includeException := true
 	if v, ok := args["include_exception"].(bool); ok {
@@ -150,19 +156,12 @@ func (h *SystemLogHandlers) handleSystemLogClear(ctx context.Context, client hom
 	}, nil
 }
 
-// filterSystemLogEntries applies level, integration, and limit filters. A
-// present non-string level or integration is an error (level is checked first).
-func filterSystemLogEntries(entries []homeassistant.SystemLogEntry, args map[string]any) ([]homeassistant.SystemLogEntry, error) {
-	var level, integration string
-	if err := readStringFilters(args, []stringFilterField{
-		{"level", &level},
-		{"integration", &integration},
-	}); err != nil {
-		return nil, err
-	}
+// filterSystemLogEntries applies the level, integration and limit filters; the
+// caller has already read level and integration strictly. Empty filters and a
+// limit <= 0 mean "no filter".
+func filterSystemLogEntries(entries []homeassistant.SystemLogEntry, level, integration string, limitVal int) []homeassistant.SystemLogEntry {
 	level = strings.ToLower(level)
 	integration = strings.ToLower(integration)
-	limitVal := getInt(args, "limit")
 
 	var filtered []homeassistant.SystemLogEntry
 	for _, e := range entries {
@@ -178,7 +177,7 @@ func filterSystemLogEntries(entries []homeassistant.SystemLogEntry, args map[str
 	if limitVal > 0 && len(filtered) > limitVal {
 		filtered = filtered[:limitVal]
 	}
-	return filtered, nil
+	return filtered
 }
 
 // formatSystemLogNatural produces a human-readable log summary.
